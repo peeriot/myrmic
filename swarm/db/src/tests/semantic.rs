@@ -1,4 +1,4 @@
-use super::open_tmp;
+use super::{open_tmp, write};
 
 use crate::domain::Scope;
 use crate::semantic::{Query, Update};
@@ -853,5 +853,365 @@ async fn semantic_literals() {
         "bio",
         r#""""Multi-line biography
             with special chars & symbols!""""#
+    );
+}
+
+/// One triple in the default graph, two quads in `graph1`, one in `graph2`.
+const GRAPHS_SETUP: &str = r#"
+    PREFIX purl: <http://purl.org/dc/elements/1.1/>
+
+    INSERT DATA {
+        <http://example.org/book/0> purl:title "Default Book" .
+
+        GRAPH <http://example.org/graph1> {
+            <http://example.org/book/1> purl:title "Book One" ;
+                purl:creator "Alice" .
+        }
+
+        GRAPH <http://example.org/graph2> {
+            <http://example.org/book/2> purl:title "Book Two" .
+        }
+    }
+"#;
+
+fn apply(tx: &mut Transaction, scope: Scope<'_>, update: &str) {
+    try_apply(tx, scope, update).expect("unable to apply update");
+}
+
+fn try_apply(tx: &mut Transaction, scope: Scope<'_>, update: &str) -> anyhow::Result<()> {
+    let update = Update::parse(update, None).context("unable to parse update")?;
+
+    tx.sem_update(scope, update)
+}
+
+/// The default graph alone.
+fn count_default(tx: &mut Transaction, scope: Scope<'_>) -> usize {
+    collect_solutions(tx, scope, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }").len()
+}
+
+/// Every named graph, which never includes the default one.
+fn count_named(tx: &mut Transaction, scope: Scope<'_>) -> usize {
+    collect_solutions(tx, scope, "SELECT ?s ?p ?o WHERE { GRAPH ?g { ?s ?p ?o } }").len()
+}
+
+fn count_graph(tx: &mut Transaction, scope: Scope<'_>, graph: &str) -> usize {
+    let query = format!("SELECT ?s ?p ?o WHERE {{ GRAPH <{graph}> {{ ?s ?p ?o }} }}");
+
+    collect_solutions(tx, scope, &query).len()
+}
+
+fn graph_names(tx: &mut Transaction, scope: Scope<'_>) -> Vec<String> {
+    const QUERY: &str = r"
+        SELECT ?graph
+        WHERE {
+          GRAPH ?graph {}
+        }
+    ";
+
+    let mut names = collect_solutions(tx, scope, QUERY)
+        .into_iter()
+        .map(|solution| {
+            let Some(Term::NamedNode(node)) = solution.get("graph") else {
+                panic!("Expected a named node.");
+            };
+
+            String::from(node.as_str())
+        })
+        .collect::<Vec<_>>();
+
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn sem_clear_graph_keeps_the_graph() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph1"), 2);
+    assert_eq!(count_named(&mut tx, scope), 3);
+
+    apply(&mut tx, scope, "CLEAR GRAPH <http://example.org/graph1>");
+
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph1"), 0);
+    assert_eq!(
+        count_graph(&mut tx, scope, "http://example.org/graph2"),
+        1,
+        "the other named graph should be untouched"
+    );
+    assert_eq!(
+        count_default(&mut tx, scope),
+        1,
+        "the default graph should be untouched"
+    );
+
+    assert_eq!(
+        graph_names(&mut tx, scope),
+        vec![
+            String::from("http://example.org/graph1"),
+            String::from("http://example.org/graph2"),
+        ],
+        "CLEAR leaves the graph itself in place"
+    );
+}
+
+#[tokio::test]
+async fn sem_drop_graph_removes_the_graph() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, "DROP GRAPH <http://example.org/graph1>");
+
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph1"), 0);
+    assert_eq!(count_named(&mut tx, scope), 1);
+    assert_eq!(count_default(&mut tx, scope), 1);
+
+    assert_eq!(
+        graph_names(&mut tx, scope),
+        vec![String::from("http://example.org/graph2")],
+        "DROP removes the graph itself"
+    );
+}
+
+#[tokio::test]
+async fn sem_clear_default_keeps_named_graphs() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, "CLEAR DEFAULT");
+
+    assert_eq!(
+        count_default(&mut tx, scope),
+        0,
+        "only the default graph triple should be gone"
+    );
+    assert_eq!(count_named(&mut tx, scope), 3);
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph1"), 2);
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph2"), 1);
+}
+
+#[tokio::test]
+async fn sem_clear_named_keeps_the_default_graph() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, "CLEAR NAMED");
+
+    assert_eq!(
+        count_default(&mut tx, scope),
+        1,
+        "the default graph triple should survive"
+    );
+    assert_eq!(count_named(&mut tx, scope), 0);
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph1"), 0);
+
+    assert_eq!(
+        graph_names(&mut tx, scope),
+        vec![
+            String::from("http://example.org/graph1"),
+            String::from("http://example.org/graph2"),
+        ],
+    );
+}
+
+#[tokio::test]
+async fn sem_drop_named_removes_every_graph() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, "DROP NAMED");
+
+    assert_eq!(
+        count_default(&mut tx, scope),
+        1,
+        "the default graph triple should survive"
+    );
+    assert_eq!(count_named(&mut tx, scope), 0);
+    assert!(graph_names(&mut tx, scope).is_empty());
+}
+
+#[tokio::test]
+async fn sem_drop_all_empties_the_scope() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, "DROP ALL");
+
+    assert_eq!(count_default(&mut tx, scope), 0);
+    assert_eq!(count_named(&mut tx, scope), 0);
+    assert!(graph_names(&mut tx, scope).is_empty());
+}
+
+#[tokio::test]
+async fn sem_clear_all_empties_the_scope_but_keeps_graphs() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, "CLEAR ALL");
+
+    assert_eq!(count_default(&mut tx, scope), 0);
+    assert_eq!(count_named(&mut tx, scope), 0);
+    assert_eq!(
+        graph_names(&mut tx, scope),
+        vec![
+            String::from("http://example.org/graph1"),
+            String::from("http://example.org/graph2"),
+        ],
+    );
+}
+
+#[tokio::test]
+async fn sem_drop_missing_graph() {
+    const MISSING: &str = "DROP GRAPH <http://example.org/nope>";
+    const MISSING_SILENT: &str = "DROP SILENT GRAPH <http://example.org/nope>";
+    const MISSING_CLEAR: &str = "CLEAR GRAPH <http://example.org/nope>";
+
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+
+    assert!(
+        try_apply(&mut tx, scope, MISSING).is_err(),
+        "dropping a missing graph should fail"
+    );
+    assert!(
+        try_apply(&mut tx, scope, MISSING_CLEAR).is_err(),
+        "clearing a missing graph should fail"
+    );
+
+    try_apply(&mut tx, scope, MISSING_SILENT).expect("SILENT should swallow the error");
+
+    assert_eq!(
+        count_default(&mut tx, scope),
+        1,
+        "nothing should have changed"
+    );
+    assert_eq!(
+        count_named(&mut tx, scope),
+        3,
+        "nothing should have changed"
+    );
+}
+
+#[tokio::test]
+async fn sem_load_is_unsupported() {
+    const LOAD: &str = "LOAD <http://example.org/data.ttl>";
+    const LOAD_SILENT: &str = "LOAD SILENT <http://example.org/data.ttl>";
+
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+
+    assert!(try_apply(&mut tx, scope, LOAD).is_err());
+    try_apply(&mut tx, scope, LOAD_SILENT).expect("SILENT should swallow the error");
+
+    assert_eq!(
+        count_default(&mut tx, scope),
+        1,
+        "nothing should have changed"
+    );
+    assert_eq!(
+        count_named(&mut tx, scope),
+        3,
+        "nothing should have changed"
+    );
+}
+
+/// `Some(None)`, `Some(Some(_))` and `None` are three distinct graph selections;
+/// the default graph is not part of the named graph space, or vice versa.
+#[tokio::test]
+async fn sem_default_graph_is_separate_from_named_graphs() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+
+    let solution = single_select(
+        &mut tx,
+        scope,
+        "SELECT ?title WHERE { ?book <http://purl.org/dc/elements/1.1/title> ?title }",
+    );
+    assert_term!(solution, "title", "\"Default Book\"");
+
+    assert_eq!(
+        count_default(&mut tx, scope),
+        1,
+        "a bare pattern should not reach into the named graphs"
+    );
+    assert_eq!(
+        count_named(&mut tx, scope),
+        3,
+        "a graph variable should not reach into the default graph"
+    );
+    assert_eq!(count_graph(&mut tx, scope, "http://example.org/graph1"), 2);
+}
+
+/// Removal and insertion land on the same transaction timestamp, so the store's
+/// ordering rules have to resolve them by operation order, not by key order.
+#[tokio::test]
+async fn sem_drop_and_insert_in_one_update() {
+    const DROP_THEN_INSERT: &str = r#"
+        PREFIX purl: <http://purl.org/dc/elements/1.1/>
+
+        DROP GRAPH <http://example.org/graph1>;
+
+        INSERT DATA {
+            GRAPH <http://example.org/graph1> {
+                <http://example.org/book/3> purl:title "Book Three" .
+            }
+        }
+    "#;
+
+    const INSERT_THEN_CLEAR: &str = r#"
+        PREFIX purl: <http://purl.org/dc/elements/1.1/>
+
+        INSERT DATA {
+            GRAPH <http://example.org/graph3> {
+                <http://example.org/book/4> purl:title "Book Four" .
+            }
+        };
+
+        CLEAR GRAPH <http://example.org/graph3>
+    "#;
+
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    apply(&mut tx, scope, GRAPHS_SETUP);
+    apply(&mut tx, scope, DROP_THEN_INSERT);
+
+    assert_eq!(
+        count_graph(&mut tx, scope, "http://example.org/graph1"),
+        1,
+        "the insert should survive the preceding drop"
+    );
+
+    apply(&mut tx, scope, INSERT_THEN_CLEAR);
+
+    assert_eq!(
+        count_graph(&mut tx, scope, "http://example.org/graph3"),
+        0,
+        "the clear should remove the preceding insert"
     );
 }

@@ -9,14 +9,15 @@ use std::rc::Rc;
 use anyhow::Context as _;
 
 use crate::semantic::{
-    EncodedTerm, EncodedTriple, convert_graph_name, convert_triple, encode_term_collected,
-    encode_term_transient, fill_ground_quad_pattern, fill_quad_pattern,
+    EncodedQuad, EncodedTerm, EncodedTriple, convert_graph_name, convert_triple,
+    encode_term_collected, encode_term_transient, fill_ground_quad_pattern, fill_quad_pattern,
 };
 use oxrdf::{BlankNode, Literal, NamedNode, Term, Triple};
 use oxsdatatypes::Boolean;
 use rustc_hash::FxHashMap;
 use skey::StoreKey;
 use spareval::{ExpressionTerm, ExpressionTriple, InternalQuad, QuerySolution};
+use spargebra::algebra::GraphTarget;
 use spargebra::term::{GroundQuadPattern, QuadPattern};
 
 fn sem_insert_hash_lookup<M>(
@@ -156,27 +157,226 @@ fn sem_delete_quad<M>(
 ) -> anyhow::Result<()> {
     let term = match graph_name {
         oxrdf::GraphName::DefaultGraph => {
-            tx.erase(&from_triple(scope, TriEncoding::Spo, triple.clone()))?;
-            tx.erase(&from_triple(scope, TriEncoding::Pos, triple.clone()))?;
-            tx.erase(&from_triple(scope, TriEncoding::Osp, triple.clone()))?;
-
             // No common code for the default graph.
-            return Ok(());
+            return erase_encoded_triple(tx, scope, triple);
         }
         oxrdf::GraphName::BlankNode(node) => encode_term_transient(&node),
         oxrdf::GraphName::NamedNode(node) => encode_term_transient(&node),
     };
 
-    let quad = triple.in_graph(term);
+    erase_encoded_quad(tx, scope, triple.in_graph(term))
+}
 
+fn erase_encoded_triple<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    triple: EncodedTriple,
+) -> anyhow::Result<()> {
+    tx.erase(&from_triple(scope, TriEncoding::Spo, triple.clone()))?;
+    tx.erase(&from_triple(scope, TriEncoding::Pos, triple.clone()))?;
+    tx.erase(&from_triple(scope, TriEncoding::Osp, triple))?;
+
+    Ok(())
+}
+
+fn erase_encoded_quad<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    quad: EncodedQuad,
+) -> anyhow::Result<()> {
     tx.erase(&from_quad(scope, QuadEncoding::Spog, quad.clone()))?;
     tx.erase(&from_quad(scope, QuadEncoding::Posg, quad.clone()))?;
     tx.erase(&from_quad(scope, QuadEncoding::Ospg, quad.clone()))?;
     tx.erase(&from_quad(scope, QuadEncoding::Gspo, quad.clone()))?;
     tx.erase(&from_quad(scope, QuadEncoding::Gpos, quad.clone()))?;
-    tx.erase(&from_quad(scope, QuadEncoding::Gosp, quad.clone()))?;
+    tx.erase(&from_quad(scope, QuadEncoding::Gosp, quad))?;
 
     Ok(())
+}
+
+/// Whether a target's named graphs survive the operation as empty graphs.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum GraphNames {
+    Keep,
+    Remove,
+}
+
+/// `CLEAR`: empties the graphs a target names, leaving the graph index untouched.
+pub(super) fn sem_clear<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    target: &GraphTarget,
+    silent: bool,
+) -> anyhow::Result<()> {
+    clear_target(tx, scope, target, silent, GraphNames::Keep)
+}
+
+/// `DROP`: as `CLEAR`, but the named graphs stop existing as well.
+pub(super) fn sem_drop<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    target: &GraphTarget,
+    silent: bool,
+) -> anyhow::Result<()> {
+    clear_target(tx, scope, target, silent, GraphNames::Remove)
+}
+
+fn clear_target<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    target: &GraphTarget,
+    silent: bool,
+    names: GraphNames,
+) -> anyhow::Result<()> {
+    match target {
+        GraphTarget::DefaultGraph => clear_default_graph(tx, scope),
+        GraphTarget::NamedNode(node) => {
+            let term: EncodedTerm = encode_term_transient(node);
+            let key = scope.graph_name(term.clone());
+
+            // Only a specific graph can be missing; the other targets always apply.
+            if tx
+                .get(&key)
+                .context("unable to look up graph name")?
+                .is_none()
+            {
+                if silent {
+                    return Ok(());
+                }
+
+                anyhow::bail!("graph <{}> does not exist", node.as_str());
+            }
+
+            clear_named_graph(tx, scope, &term)?;
+
+            if names == GraphNames::Remove {
+                tx.erase(&key).context("unable to erase graph name")?;
+            }
+
+            Ok(())
+        }
+        GraphTarget::NamedGraphs => clear_named_graphs(tx, scope, names),
+        GraphTarget::AllGraphs => {
+            clear_default_graph(tx, scope)?;
+            clear_named_graphs(tx, scope, names)
+        }
+    }
+}
+
+fn clear_default_graph<M>(tx: &mut Transaction<M>, scope: Scope<'_>) -> anyhow::Result<()> {
+    for triple in collect_triples(&*tx, scope)? {
+        erase_encoded_triple(&mut *tx, scope, triple)?;
+    }
+
+    Ok(())
+}
+
+fn clear_named_graph<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    graph_name: &EncodedTerm,
+) -> anyhow::Result<()> {
+    for quad in collect_quads(&*tx, scope, Some(graph_name))? {
+        erase_encoded_quad(&mut *tx, scope, quad)?;
+    }
+
+    Ok(())
+}
+
+fn clear_named_graphs<M>(
+    tx: &mut Transaction<M>,
+    scope: Scope<'_>,
+    names: GraphNames,
+) -> anyhow::Result<()> {
+    // Walking the quads rather than the graph index also covers blank node
+    // graph names, which never get an index entry.
+    for quad in collect_quads(&*tx, scope, None)? {
+        erase_encoded_quad(&mut *tx, scope, quad)?;
+    }
+
+    if names == GraphNames::Remove {
+        for name in collect_graph_names(&*tx, scope)? {
+            tx.erase(&scope.graph_name(name))
+                .context("unable to erase graph name")?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Collected up front because the scan borrows the transaction we erase through.
+fn collect_triples<M>(tx: &Transaction<M>, scope: Scope<'_>) -> anyhow::Result<Vec<EncodedTriple>> {
+    let (encoding, lower, upper) = partial_triple_into_range(scope, None, None, None)
+        .context("unable to build triple range")?;
+
+    let mut triples = vec![];
+
+    for entry in tx.range_latest(lower, upper) {
+        let raw = entry.context("unable to read triple entry")?;
+        let key: crate::domain::TripleKey<'_> =
+            StoreKey::decode_from_bytes(&raw).context("unable to decode triple key")?;
+
+        let (subject, predicate, object) = encoding.sort(key.a, key.b, key.c);
+
+        triples.push(EncodedTriple {
+            subject,
+            predicate,
+            object,
+        });
+    }
+
+    Ok(triples)
+}
+
+/// `graph_name` of `None` collects every named graph in the scope.
+fn collect_quads<M>(
+    tx: &Transaction<M>,
+    scope: Scope<'_>,
+    graph_name: Option<&EncodedTerm>,
+) -> anyhow::Result<Vec<EncodedQuad>> {
+    let (encoding, lower, upper) = partial_quad_into_range(scope, None, None, None, graph_name)
+        .context("unable to build quad range")?;
+
+    let mut quads = vec![];
+
+    for entry in tx.range_latest(lower, upper) {
+        let raw = entry.context("unable to read quad entry")?;
+        let key: crate::domain::QuadKey<'_> =
+            StoreKey::decode_from_bytes(&raw).context("unable to decode quad key")?;
+
+        let (subject, predicate, object, graph_name) = encoding.sort(key.a, key.b, key.c, key.d);
+
+        quads.push(EncodedQuad {
+            subject,
+            predicate,
+            object,
+            graph_name,
+        });
+    }
+
+    Ok(quads)
+}
+
+fn collect_graph_names<M>(
+    tx: &Transaction<M>,
+    scope: Scope<'_>,
+) -> anyhow::Result<Vec<EncodedTerm>> {
+    let prefix = scope
+        .only_graph_name()
+        .encode()
+        .context("unable to encode graph name prefix")?;
+
+    let mut names = vec![];
+
+    for entry in tx.prefix_latest(&prefix) {
+        let raw = entry.context("unable to read graph name entry")?;
+        let key: crate::domain::GraphName<'_> =
+            StoreKey::decode_from_bytes(&raw).context("unable to decode graph name key")?;
+
+        names.push(key.name);
+    }
+
+    Ok(names)
 }
 
 fn sem_insert_quad<M>(
@@ -406,10 +606,17 @@ impl<'tx, M> DataView<'tx, M> {
         predicate: Option<&InternalTerm<'tx, Self>>,
         object: Option<&InternalTerm<'tx, Self>>,
     ) -> QuadIter<'tx, Self> {
-        let default_iter = select_from_default_graph(&self.tx, scope, subject, predicate, object);
-        let named_iter = select_from_named_graph(&self.tx, scope, subject, predicate, object, None);
+        select_from_default_graph(&self.tx, scope, subject, predicate, object)
+    }
 
-        Box::new(default_iter.chain(named_iter))
+    fn select_from_named_graphs(
+        &self,
+        scope: Scope<'_>,
+        subject: Option<&InternalTerm<'tx, Self>>,
+        predicate: Option<&InternalTerm<'tx, Self>>,
+        object: Option<&InternalTerm<'tx, Self>>,
+    ) -> QuadIter<'tx, Self> {
+        select_from_named_graph(&self.tx, scope, subject, predicate, object, None)
     }
 
     fn select_from_named_graph(
@@ -515,12 +722,17 @@ impl<'a, M> spareval::QueryableDataset<'a> for DataView<'a, M> {
         let scope: Scope<'_> = StoreKey::decode_from_bytes(self.scope.as_slice())
             .expect("scope was double checked before building this dataview.");
 
-        if let Some(graph_name) = graph_name.flatten() {
-            return self.select_from_named_graph(scope, subject, predicate, object, graph_name)
-                as QuadIter<'a, Self>;
+        // `Some(None)` is the default graph, `Some(Some(_))` one named graph, and
+        // `None` every named graph — never the default one.
+        match graph_name {
+            Some(Some(graph_name)) => self
+                .select_from_named_graph(scope, subject, predicate, object, graph_name)
+                as QuadIter<'a, Self>,
+            Some(None) => self.select_from_default_graph(scope, subject, predicate, object)
+                as QuadIter<'a, Self>,
+            None => self.select_from_named_graphs(scope, subject, predicate, object)
+                as QuadIter<'a, Self>,
         }
-
-        self.select_from_default_graph(scope, subject, predicate, object) as QuadIter<'a, Self>
     }
 
     fn internalize_term(&self, term: Term) -> Result<Self::InternalTerm, Self::Error> {

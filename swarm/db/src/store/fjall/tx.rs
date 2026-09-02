@@ -1755,32 +1755,23 @@ impl<M> Transaction<M> {
                         .context("unable to insert semantic graph name")?;
                 }
                 Op::Load {
-                    silent: _,
-                    source: _,
+                    silent,
+                    source,
                     destination: _,
                 } => {
-                    #[expect(clippy::todo, reason = "TODO: implement SPARQL LOAD support")]
-                    {
-                        todo!("add support for loading")
+                    // Fetching the source would mean arbitrary I/O from inside the
+                    // transaction, so `LOAD` is rejected rather than half-supported.
+                    if !silent {
+                        anyhow::bail!("LOAD is not supported (source: <{}>)", source.as_str());
                     }
                 }
-                Op::Drop {
-                    silent: _,
-                    graph: _,
-                } => {
-                    #[expect(clippy::todo, reason = "TODO: implement SPARQL DROP support")]
-                    {
-                        todo!("add support for dropping")
-                    }
+                Op::Drop { silent, graph } => {
+                    semantic::sem_drop(&mut *self, scope, &graph, silent)
+                        .context("unable to drop semantic graph")?;
                 }
-                Op::Clear {
-                    silent: _,
-                    graph: _,
-                } => {
-                    #[expect(clippy::todo, reason = "TODO: implement SPARQL CLEAR support")]
-                    {
-                        todo!("add support for clear")
-                    }
+                Op::Clear { silent, graph } => {
+                    semantic::sem_clear(&mut *self, scope, &graph, silent)
+                        .context("unable to clear semantic graph")?;
                 }
             }
         }
