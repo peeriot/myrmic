@@ -2,6 +2,12 @@
 
 A firmware ecosystem that uses the WAMR WASM runtime to host functionality for Peeriot's embedded framework
 
+The firmware is a library: [`crates/esp-firmware`](crates/esp-firmware/) brings up a swarm node
+and hosts a cell, and [`modem-esp32`](modem-esp32/) is the stock binary built on it. To build a
+different firmware — your own BLE stack, a native cell in place of a WASM one, a GPIO kept back
+from the cell — write a crate against `esp-firmware` rather than forking `modem-esp32`; start
+from [`firmware-examples/`](firmware-examples/).
+
 ## Supported Chips
 
 * ESP32-C5
@@ -33,6 +39,16 @@ guide for selecting the appropriate ESP SoC for your myrmic application.
 default, so BLE is not compiled in and the `ble` runtime tag is not emitted. This is because the BLE requires a 
 considerable amount of RAM. Enabling the BLE is possible, but it reduces drastically the complexity of cells that can be
 hosted on the SoC. BLE can be enabled it by enabling the `"ble"`  feature in [`modem-esp32/Cargo.toml`](modem-esp32/Cargo.toml).
+
+  BLE also costs **flash**: it adds ~0.5 MB, taking the image to ~2.06 MB. That fits the default 3 MB app partition
+  but **not** a 2 MB one, so keep `firmware_size` above that in any
+  [`partitions.toml`](modem-esp32/partitions.toml.example) you write; the build script warns when `ble` is on and
+  `firmware_size` is 2 MB or less, and the link fails outright if the image overflows the partition. Flashing an
+  oversized image is refused **only if espflash is given the generated partition table** —
+  `esp-firmware-build` writes an `espflash.toml` beside your `Cargo.toml` so it is, and the cargo `runner`
+  ([`espflash-runner.sh`](espflash-runner.sh)) passes it too. Flash with neither and espflash falls back to its own
+  chip-sized table, writes an image that straddles the AOT region, and the board boot-loops with
+  `invalid segment length 0xffffffff`.
 
 ² The implementation of BLE on the supported chips is based on the combination of the Espressif controller blob and the
 NimBLE host stack. This is done so that BLE certification is possible by using qualified or qualifiable components. This

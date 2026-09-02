@@ -55,6 +55,10 @@ members = [
     "embedded/esp-hal/crates/esp-mmu-consts",
     "embedded/hil-tests",
     "embedded/esp-hal/modem-esp32",
+    "embedded/esp-hal/crates/esp-firmware",
+    "embedded/esp-hal/crates/esp-firmware-macros",
+    "embedded/esp-hal/crates/esp-firmware-build",
+    "embedded/esp-hal/firmware-examples",
     "sdk/signal-layer/esp-codegen",
     "sdk/signal-layer/signal-layer-types",
     "sdk/signal-layer/signal-layer-core",
@@ -519,6 +523,9 @@ cell-db-service = { path = "embedded/esp-hal/crates/cell-db-service" }
 esp-common = { path = "embedded/esp-hal/crates/esp-common" }
 esp-network = { path = "embedded/esp-hal/crates/esp-network" }
 esp-mmu-consts = { path = "embedded/esp-hal/crates/esp-mmu-consts" }
+esp-firmware = { path = "embedded/esp-hal/crates/esp-firmware" }
+esp-firmware-macros = { path = "embedded/esp-hal/crates/esp-firmware-macros" }
+esp-firmware-build = { path = "embedded/esp-hal/crates/esp-firmware-build" }
 
 # Signal Layer core
 signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.4.0", default-features = false }

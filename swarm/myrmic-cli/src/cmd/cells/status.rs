@@ -425,13 +425,11 @@ fn table(
                         sri: node.entry.sri.to_string(),
                         kind: match &node.entry.kind {
                             PlacementKind::Wasm { .. } => "wasm",
+                            PlacementKind::Native { .. } => "native",
                             PlacementKind::Bridge { .. } => "bridge",
                             PlacementKind::Placeholder => "N/A",
                         },
-                        runtime: match &node.entry.kind {
-                            PlacementKind::Wasm { runtime } => Some(runtime.id().to_string()),
-                            PlacementKind::Bridge { .. } | PlacementKind::Placeholder => None,
-                        },
+                        runtime: node.entry.kind.host().map(|id| id.to_string()),
                         age: incarnation_age(&node.entry.gen_id, now),
                         class: node
                             .instance

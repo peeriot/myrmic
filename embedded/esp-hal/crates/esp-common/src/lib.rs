@@ -2,13 +2,9 @@
 //! firmware crate pins one workspace-controlled dependency instead of each of
 //! them (requested for easier firmware generation).
 //!
-//! Re-exports only. The firmware keeps as direct dependencies:
-//! `embassy-executor` and `esp-rtos` (their proc-macros emit absolute crate
-//! paths — and the executor version stays a firmware-side choice), plus the
-//! crates the esp-codegen-generated pipeline module names directly (`esp-hal`,
-//! `wasm-runtime`, `embassy-sync`, `embassy-time`, `static_cell`, `log` and
-//! the signal-layer infrastructure), and `wasm-storage` (the firmware build
-//! script emits an absolute path to it).
+//! Re-exports only. A firmware keeps as direct dependencies just what its own
+//! code names — for the esp-codegen-generated pipeline module that is
+//! `esp-hal`, `wasm-runtime` and the signal-layer infrastructure.
 
 #![no_std]
 

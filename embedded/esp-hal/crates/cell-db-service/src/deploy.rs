@@ -37,17 +37,51 @@ pub(crate) enum DeployError {
 }
 
 /// Handle deployment
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the whole deployment context, threaded from the one service loop that owns it"
+)]
 pub(crate) async fn handle(
     client: &Client,
     zid: ZenohIdProto,
     last_deploy_id: &mut Option<Id>,
     wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
     cell: Option<&(Sri, Vec<Command>)>,
+    native_held: bool,
     awaiting_deletion_confirmation: &mut bool,
     watched: &mut Option<cell_protocol::supervision::WatchedCell>,
 ) {
     if let Some(cmd) = poll_for_deployment(client, zid, last_deploy_id).await {
         match cmd {
+            DeploymentCommand::Deploy {
+                sri,
+                class,
+                payload,
+                gen_id,
+                lineage,
+            } if native_held => {
+                // A node hosts one cell, and this node's firmware is it. The
+                // orchestrator should not have got here — the native placement
+                // row marks this node occupied — so refuse loudly rather than
+                // letting a module displace the firmware's own cell.
+                let _ = (class, payload, lineage);
+                log::error!(
+                    "[db-client] refusing to deploy '{sri}': this node's cell slot is held by \
+                     its firmware"
+                );
+                confirm_deployment(
+                    client,
+                    zid,
+                    DeploymentConfirmation::Deployed {
+                        failure: Some(alloc::string::String::from(
+                            "node's cell slot is held by native firmware",
+                        )),
+                        sri,
+                    },
+                )
+                .await;
+                let _ = gen_id;
+            }
             DeploymentCommand::Deploy {
                 sri,
                 class,

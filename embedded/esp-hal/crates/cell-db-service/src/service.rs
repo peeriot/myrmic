@@ -51,6 +51,11 @@ const SUB_ERROR_BACKOFF: Duration = Duration::from_secs(1);
 /// The DB service loop. `session_lease` is the zenoh session lease the
 /// firmware configured (it sizes the subscription fallback timers); `wall_time`
 /// reads the swarm-synced wall clock, which stamps the node-lease sequence.
+///
+/// `native` is the cell this node's own firmware implements, if any. It fills
+/// the cell slot from the first iteration — the identity was resolved offline —
+/// so no deployment can take the slot, and its placement row is asserted on the
+/// node-maintenance tick alongside the exec registration.
 #[allow(
     clippy::too_many_lines,
     reason = "The select loop reads clearest in one place"
@@ -62,6 +67,7 @@ pub async fn service(
     db_responses: Sender<'static, CriticalSectionRawMutex, DbClientResponse, 1>,
     session_lease: Duration,
     wall_time: fn() -> Option<core::time::Duration>,
+    native: Option<crate::NativeCell>,
 ) {
     let subscription_fallback_period = subscription_fallback_period(session_lease);
     log::trace!("[db-client] Started");
@@ -69,8 +75,14 @@ pub async fn service(
     let client = Client::new(&session);
     let zid = session.zid().await;
 
-    // Context
-    let mut cell: Option<(Sri, Vec<Command>)> = None;
+    // Context. A native cell occupies the slot from the outset: its identity
+    // was folded from its SRN offline, so nothing is pending and no deployment
+    // may take the slot from it.
+    let mut cell: Option<(Sri, Vec<Command>)> =
+        native.as_ref().map(|n| (n.sri, n.commands.clone()));
+    // Cleared once the native cell's placement row is committed, so the claim
+    // is asserted on the maintenance tick and retried until it lands.
+    let mut native_claimed = false;
     let mut last_deploy_id = None;
     let mut subscribed_events: Vec<(Event, Cursor)> = Vec::new();
     let mut awaiting_deletion_confirmation: bool = false;
@@ -199,6 +211,7 @@ pub async fn service(
                     &mut last_deploy_id,
                     wasm_transfer,
                     cell.as_ref(),
+                    native.is_some(),
                     &mut awaiting_deletion_confirmation,
                     &mut watched,
                 )
@@ -224,6 +237,17 @@ pub async fn service(
             Either6::Third(()) => {
                 if command_in_flight {
                     command_in_flight = false;
+                    // A WASM cell's handler removes the message inside its own
+                    // transaction. A native cell has no such transaction, so
+                    // the removal happens here, once the firmware has signalled
+                    // it is done — keeping delivery at-least-once across a
+                    // reset mid-handling.
+                    if native.is_some()
+                        && let Some((sri, _)) = cell.as_ref()
+                        && let Some(msg_id) = last_delivered.clone()
+                    {
+                        mailbox::discard_message(&client, sri, msg_id).await;
+                    }
                 } else {
                     next_mailbox_fallback = Instant::now() + subscription_fallback_period;
                     // A fresh poke or fallback tick licenses another attempt at whatever is at the
@@ -299,6 +323,37 @@ pub async fn service(
                         } else {
                             myrmic::LEASE_RETRY_PERIOD
                         };
+                }
+
+                // Tell the swarm this node's slot is held by its firmware.
+                // Rides the maintenance tick so a failed write is retried and a
+                // reconnect re-asserts it. Held back until the boot sweep is
+                // done, for the same reason the lease is: the sweep releases
+                // rows a previous incarnation left behind, this one included.
+                if let Some(native) = native.as_ref()
+                    && !native_claimed
+                    && swept
+                    && let Some(now) = wall_time()
+                {
+                    // Wall-clock millis fit u64 for the next half-billion
+                    // years; the u128 is uhlc's carrier type, not a range.
+                    #[allow(clippy::cast_possible_truncation)]
+                    let now_ms = now.as_millis() as u64;
+                    let gen_id = crate::native::incarnation(zid, now_ms);
+                    if crate::native::claim(&client, zid, native, gen_id).await {
+                        native_claimed = true;
+                        (native.online)();
+                        log::info!(
+                            "[native] cell '{}' ({}) is addressable",
+                            native.name,
+                            native.sri
+                        );
+                    } else {
+                        log::warn!(
+                            "[native] claim for '{}' failed; retrying next round",
+                            native.name
+                        );
+                    }
                 }
             }
             // Fencing verification pass

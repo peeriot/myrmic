@@ -248,10 +248,7 @@ async fn read_row(client: &Client, sri: &Sri, my_exec: RuntimeId) -> RowRead<Row
                     // Placeholder rows (mid-deploy) and bridge rows carry no
                     // exec placement; this exec's own id stands in and only
                     // the generation is compared.
-                    let node = match &entry.kind {
-                        PlacementKind::Wasm { runtime } => runtime.id(),
-                        PlacementKind::Bridge { .. } | PlacementKind::Placeholder => my_exec,
-                    };
+                    let node = entry.kind.host().unwrap_or(my_exec);
                     RowRead::Ok((node, entry.gen_id))
                 }
                 Err(_) => RowRead::Failed,

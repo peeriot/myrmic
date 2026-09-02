@@ -1345,6 +1345,7 @@ dependencies = [
  "myrmic-common",
  "myrmic-tags",
  "portable-atomic-util",
+ "serde",
  "thiserror 2.0.20",
  "wasm-runtime",
  "wasm-storage",
@@ -4076,6 +4077,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-firmware"
+version = "0.2.1"
+dependencies = [
+ "cell-protocol",
+ "critical-section",
+ "embassy-executor",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "esp-common",
+ "esp-firmware-macros",
+ "esp-hal",
+ "esp-rtos",
+ "log",
+ "myrmic-common",
+ "static_cell",
+ "wasm-runtime",
+ "wasm-storage",
+]
+
+[[package]]
+name = "esp-firmware-build"
+version = "0.2.1"
+dependencies = [
+ "esp-mmu-consts",
+ "serde",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "esp-firmware-macros"
+version = "0.2.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "esp-hal"
 version = "1.2.0-rc.0"
 source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8cba14e17ef51f5a53f1608ca4379966b2acabc6"
@@ -4897,6 +4936,17 @@ name = "find-msvc-tools"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+
+[[package]]
+name = "firmware-examples"
+version = "0.2.1"
+dependencies = [
+ "embassy-executor",
+ "embassy-time",
+ "esp-firmware",
+ "esp-firmware-build",
+ "log",
+]
 
 [[package]]
 name = "fixedbitset"
@@ -7499,23 +7549,17 @@ dependencies = [
 name = "modem-esp32"
 version = "0.4.0"
 dependencies = [
- "critical-section",
  "embassy-embedded-hal",
- "embassy-executor",
  "embassy-sync 0.8.0",
  "embassy-time",
- "esp-common",
+ "esp-firmware",
+ "esp-firmware-build",
  "esp-hal",
- "esp-mmu-consts",
- "esp-rtos",
  "log",
  "myrmic-signal-layer-types",
- "serde",
  "signal-layer-core",
  "static_cell",
- "toml 0.8.23",
  "wasm-runtime",
- "wasm-storage",
 ]
 
 [[package]]

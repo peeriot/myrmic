@@ -1,0 +1,33 @@
+[package]
+name              = "firmware-examples"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+publish           = false
+description       = "Worked examples of building a myrmic firmware on esp-firmware. Doubles as the template for a new firmware crate."
+
+[lints]
+workspace = true
+
+[features]
+default = ["esp32c6"]
+
+# Target SoC. A firmware crate declares its own chip feature and forwards it:
+# `esp_firmware::board!` and `esp_firmware_build::configure()` both read the
+# chip from the crate that invokes them.
+esp32c5  = ["esp-firmware/esp32c5", "ble"]
+esp32c6  = ["esp-firmware/esp32c6"]
+esp32c61 = ["esp-firmware/esp32c61", "ble"]
+
+ble = ["esp-firmware/ble"]
+
+[dependencies]
+esp-firmware = { workspace = true }
+
+# Only `own_ble` and `native_cell` use these; `default` needs esp-firmware alone.
+embassy-executor = { workspace = true }
+embassy-time     = { workspace = true }
+log              = { workspace = true }
+
+[build-dependencies]
+esp-firmware-build = { workspace = true }
