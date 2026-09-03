@@ -60,6 +60,10 @@ const SUB_ERROR_BACKOFF: Duration = Duration::from_secs(1);
     clippy::too_many_lines,
     reason = "The select loop reads clearest in one place"
 )]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "The firmware hands the service its whole environment in one call"
+)]
 pub async fn service(
     session: Session<'static, NoopRawMutex>,
     wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
@@ -91,7 +95,7 @@ pub async fn service(
 
     let node_lease_renewal_interval = node_lease_renewal_interval.clamp(
         core::time::Duration::from_secs(5),
-        core::time::Duration::from_secs(120),
+        core::time::Duration::from_mins(2),
     );
     let node_lease_renewal_interval = crate::time::to_embassy(node_lease_renewal_interval);
 

@@ -68,7 +68,7 @@ impl Board {
     ///
     /// `T` crosses to the cell as postcard and the cell checks its type id, so
     /// it must be a [`WireType`] the cell also knows: a primitive, or one of
-    /// [`signal_layer_types`](crate::signal_layer_types).
+    /// [`signal_layer_types`].
     ///
     /// # Errors
     ///

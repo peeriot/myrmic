@@ -125,9 +125,16 @@ pub fn build(
 
     let mut cmd = Command::new("cargo");
     cmd.current_dir(manifest_dir);
-    cmd.args(["+nightly", "build", "--release", "--target", TARGET, "--manifest-path"])
-        .arg(manifest_path)
-        .args(["--bin", &bin]);
+    cmd.args([
+        "+nightly",
+        "build",
+        "--release",
+        "--target",
+        TARGET,
+        "--manifest-path",
+    ])
+    .arg(manifest_path)
+    .args(["--bin", &bin]);
     let default_partitions = configure(&mut cmd, manifest_dir, flash_size, runtime_name, |key| {
         std::env::var_os(key).is_some()
     })?;

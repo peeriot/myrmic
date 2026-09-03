@@ -57,7 +57,7 @@ pub struct Config {
     pub node_lease_ttl: Duration,
 
     /// Liveness-lease renewal period, slower than the Linux exec's 10s to
-    /// respect the radio budget; [`node_lease_ttl`] absorbs the sparser cadence.
+    /// respect the radio budget; [`Self::node_lease_ttl`] absorbs the sparser cadence.
     pub node_lease_renewal_interval: Duration,
 }
 
@@ -72,7 +72,7 @@ impl Default for Config {
             ble_host_priority: 30,
             net_priority: 1,
             wasm_priority: 0,
-            node_lease_ttl: Duration::from_secs(60),
+            node_lease_ttl: Duration::from_mins(1),
             node_lease_renewal_interval: Duration::from_secs(20),
         }
     }

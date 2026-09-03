@@ -13,10 +13,10 @@ mod deploy;
 mod mailbox;
 mod myrmic;
 mod native;
-mod time;
 mod requests;
 mod service;
 mod supervision;
+mod time;
 
 pub use native::NativeCell;
 pub use service::service;

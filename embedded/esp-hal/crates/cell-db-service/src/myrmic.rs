@@ -24,7 +24,7 @@ use zenoh_result::{ZResult, zerror};
 use crate::service::DEFAULT_TIMEOUT;
 
 /// The period chosen for re-registering the exec runtime in the registry
-pub(crate) const REGISTRATION_PERIOD: EmbDuration = EmbDuration::from_secs(1 * 60);
+pub(crate) const REGISTRATION_PERIOD: EmbDuration = EmbDuration::from_secs(60);
 /// The retention period of the exec registration which overlaps the [`REGISTRATION_PERIOD`] to
 /// guarantee the entry always lives in the registry (when no problem occurs).
 const RETENTION_PERIOD_S: u64 = REGISTRATION_PERIOD.as_secs() + 60;
