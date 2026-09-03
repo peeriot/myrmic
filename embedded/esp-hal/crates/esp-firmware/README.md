@@ -82,6 +82,45 @@ That row also marks the node **occupied**, so the orchestrator will not place a
 WASM cell here — and if one is somehow directed at this node anyway, the deploy
 is refused rather than displacing your firmware's cell.
 
+## Taps and outlets
+
+The two directions across the cell boundary. A `Tap` is a value the firmware
+publishes and the cell reads; an `Outlet` is a command the cell writes and the
+firmware acts on. A Signal Layer pipeline declares them from YAML; a firmware
+can declare its own on the board, and the cell cannot tell the two apart.
+
+```rust
+#[esp_firmware::main]
+async fn setup(board: &mut Board, spawner: Spawner) {
+    let temperature = board.tap::<f32>("temperature").unwrap();
+    let relay = board.outlet::<DigitalState>("relay").unwrap();
+    let pin = board.take_pin(8).unwrap();
+    spawner.spawn(sample(temperature).unwrap());
+    spawner.spawn(drive(relay, pin).unwrap());
+}
+
+#[embassy_executor::task]
+async fn drive(relay: Outlet<DigitalState>, mut pin: Flex<'static>) {
+    loop {
+        let (_at, cmd) = relay.changed().await;   // wakes on the cell's write
+        pin.set_level(cmd.on.into());
+    }
+}
+```
+
+`Tap::update` stamps the value with the time of the call; `EventTap::emit`
+queues a discrete event; `Outlet::changed` waits for the next command and
+`Outlet::read` peeks at the latest. The handles are `Copy` and `'static`, so
+they move into tasks freely. Names are the contract with the cell, which
+resolves them through `myrmic_sdk::tap` and `myrmic_sdk::outlet`; payloads
+cross as postcard and the cell checks their type id, so use a primitive or one
+of the `signal_layer_types` both sides know. `start` hands the registries to the runtime, so declare before it
+runs — in `setup`, or before your own `start` call.
+
+A generated pipeline registers its slots into the same registries through
+`board.taps()` and `board.outlets()`, so pipeline and hand-declared slots
+coexist on one board.
+
 ## Peripherals the board does not hold
 
 `Board` holds only what the shipped subsystems use. RMT, SPI, I2C, LEDC and the
@@ -150,6 +189,8 @@ all of the above; copy it to start a new firmware.
 | [`src/lib.rs`](src/lib.rs) | `start` — the boot order, priorities and the channels wiring the subsystems together. |
 | [`src/board.rs`](src/board.rs) | `Board` and the `board!` claim macro. |
 | [`src/cell.rs`](src/cell.rs) | `Network`, `Cell` — native cell registration and the myrmic message API. |
+| [`src/tap.rs`](src/tap.rs) | `Tap`, `EventTap` — values the firmware publishes for the cell. |
+| [`src/outlet.rs`](src/outlet.rs) | `Outlet` — commands the cell writes for the firmware, with a wake on write. |
 | [`src/config.rs`](src/config.rs) | Stack sizes and thread priorities, with the reasoning for each default. |
 | [`src/net.rs`](src/net.rs) | The network-service thread: WiFi, zenoh session, cell db service. |
 | [`src/wasm.rs`](src/wasm.rs) | The WASM host tasks (request handler, cell pump, module storage). |

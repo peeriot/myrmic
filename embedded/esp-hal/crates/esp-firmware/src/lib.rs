@@ -45,6 +45,38 @@
 //!
 //! Everything still on the board when `setup` returns is started for you.
 //!
+//! # Taps and outlets
+//!
+//! The two directions across the cell boundary. A [`Tap`] is a value the
+//! firmware publishes and the cell reads; an [`Outlet`] is a command the cell
+//! writes and the firmware acts on. Declare them on the board, then move the
+//! handles into the tasks that own the hardware:
+//!
+//! ```ignore
+//! #[esp_firmware::main]
+//! async fn setup(board: &mut Board, spawner: Spawner) {
+//!     let temperature = board.tap::<f32>("temperature").unwrap();
+//!     let relay = board.outlet::<DigitalState>("relay").unwrap();
+//!     let pin = board.take_pin(8).unwrap();
+//!     spawner.spawn(sample(temperature).unwrap());
+//!     spawner.spawn(drive(relay, pin).unwrap());
+//! }
+//!
+//! #[embassy_executor::task]
+//! async fn drive(relay: Outlet<DigitalState>, mut pin: Flex<'static>) {
+//!     loop {
+//!         let (_at, cmd) = relay.changed().await;
+//!         pin.set_level(cmd.on.into());
+//!     }
+//! }
+//! ```
+//!
+//! The cell reaches them through `myrmic_sdk::tap` and `myrmic_sdk::outlet`
+//! by the same names. Payloads cross as postcard, so use a primitive or one of
+//! [`signal_layer_types`] both sides know. A generated Signal Layer pipeline
+//! registers its slots into the same registries via [`Board::taps`] and
+//! [`Board::outlets`]; both kinds coexist.
+//!
 //! # What your crate still owns
 //!
 //! `#![no_std]`, `#![no_main]`, a `build.rs` calling
@@ -64,8 +96,10 @@ mod board;
 mod cell;
 mod config;
 mod net;
+mod outlet;
 #[cfg(feature = "stack-hwm")]
 mod stack_hwm;
+mod tap;
 mod wasm;
 
 #[cfg(feature = "ble")]
@@ -74,6 +108,8 @@ mod ble;
 pub use board::Board;
 pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
+pub use outlet::Outlet;
+pub use tap::{DeclareError, EventTap, Tap};
 
 /// Marks the firmware entry point.
 ///
@@ -128,6 +164,8 @@ pub use esp_firmware_macros::main;
 pub use embassy_executor;
 pub use esp_hal;
 pub use esp_rtos;
+pub use signal_layer_core::{OutletRegistry, TapRegistry, Timestamp};
+pub use signal_layer_types;
 pub use wasm_runtime::Pins;
 pub use wasm_storage::PartitionLayout;
 
@@ -179,6 +217,18 @@ pub fn network() -> Network {
 pub fn start(board: Board, spawner: Spawner) {
     let parts = board.into_parts();
     let config = parts.config;
+
+    // The registries go to the runtime first: the host functions read them
+    // from the WAMR thread, which nothing below may start before they are in.
+    if !parts.taps.is_empty() || !parts.outlets.is_empty() {
+        log::info!(
+            "[esp-firmware] {} tap(s), {} outlet(s) declared",
+            parts.taps.len(),
+            parts.outlets.len()
+        );
+    }
+    wasm_runtime::init_tap_registry(parts.taps);
+    wasm_runtime::init_outlet_registry(parts.outlets);
 
     #[cfg(feature = "ble")]
     if let Some(bt) = parts.bt {

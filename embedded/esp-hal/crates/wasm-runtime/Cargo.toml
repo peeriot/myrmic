@@ -18,10 +18,6 @@ esp32c6 = ["wasm-storage/esp32c6"]
 esp32c61 = ["wasm-storage/esp32c61"]
 # BLE support
 ble = ["dep:esp-nimble-host"]
-# Signal Layer — enables init_tap_registry and the tap host function implementations.
-# Tap host functions are always registered (returning errors when no registry is present),
-# but init_tap_registry is only available when this feature is active.
-signal-layer = []
 # Test-only: registers the `selftest` host import that lets a guest cell trigger
 # a deliberate liveness stall, to exercise the on-die watchdog from HIL tests.
 # Never enable in a shipped build.

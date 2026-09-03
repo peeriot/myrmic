@@ -9,6 +9,7 @@ directory to start a new firmware crate.
 | [`default.rs`](src/bin/default.rs) | The whole firmware, unmodified — what `modem-esp32` is. |
 | [`own_ble.rs`](src/bin/own_ble.rs) | Replacing the shipped BLE stack, and keeping a GPIO back from the cell. |
 | [`native_cell.rs`](src/bin/native_cell.rs) | Being the cell natively, with no WASM runtime at all. |
+| [`taps.rs`](src/bin/taps.rs) | Publishing a tap and acting on an outlet, declared by the firmware rather than a pipeline. |
 
 ```sh
 cd embedded/esp-hal

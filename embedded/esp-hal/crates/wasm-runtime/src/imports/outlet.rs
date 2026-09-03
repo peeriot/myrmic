@@ -24,19 +24,19 @@ use wamr_rust_sdk::sys::NativeSymbol;
 use crate::Error;
 use crate::macros::{host_function, host_function_decl};
 
-// `OUTLET_REGISTRY` mirrors `TAP_REGISTRY`: written exactly once by `init()`,
-// which is called exclusively from the generated
-// `pipeline_config::setup_outlet_registry()` before WAMR starts. All host
-// functions that access it run on the single WAMR thread after init completes,
-// so no synchronisation is required.
+// `OUTLET_REGISTRY` mirrors `TAP_REGISTRY`: written by `init()`, which
+// `esp_firmware::start` calls once from the main executor before the WAMR
+// thread exists. All host functions that access it run on the single WAMR
+// thread after init completes, so no synchronisation is required.
 static mut OUTLET_REGISTRY: Option<OutletRegistry> = None;
 
-/// Install the outlet registry. Called exclusively from the generated
-/// `pipeline_config::setup_outlet_registry()`; must complete before WAMR starts.
-#[cfg(feature = "signal-layer")]
-pub(crate) fn init(registry: OutletRegistry) {
-    // SAFETY: see `OUTLET_REGISTRY` comment — single writer before WAMR, single-threaded reads after.
-    unsafe { OUTLET_REGISTRY = Some(registry) };
+/// Install the outlet registry; must complete before WAMR starts.
+pub(crate) fn init(incoming: OutletRegistry) {
+    if registry().is_some() {
+        log::warn!("[wasm] outlet registry replaced: earlier registrations are gone");
+    }
+    // SAFETY: see `OUTLET_REGISTRY` comment — writes only before WAMR, single-threaded reads after.
+    unsafe { OUTLET_REGISTRY = Some(incoming) };
 }
 
 fn registry() -> Option<&'static OutletRegistry> {

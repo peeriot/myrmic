@@ -30,7 +30,6 @@ pipeline = [
     "dep:signal-layer-core",
     "dep:signal-layer-types",
     "dep:embassy-embedded-hal",
-    "wasm-runtime/signal-layer",
 ]
 
 # Emit structured heap-stats snapshots at key milestones over the log channel.

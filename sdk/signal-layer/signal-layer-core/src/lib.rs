@@ -68,6 +68,9 @@ pub enum TapError {
     BufferTooSmall,
     Empty,
     RegistryFull,
+    /// A slot with this name is already registered. Names are the handles
+    /// cells resolve by, so a second registration would be unreachable.
+    Duplicate,
     /// A command payload failed to decode into the slot's declared type.
     /// Raised on the write path ([`AnyWritable::write_bytes`]) — the "declared
     /// type" half of command validation (OUT-08).
@@ -499,6 +502,9 @@ impl TapRegistry {
         reason = "MAX_TAPS is 16, so len() never exceeds u32::MAX."
     )]
     pub fn register(&mut self, name: &'static str, slot: SlotEntry) -> Result<u32, TapError> {
+        if self.resolve(name).is_some() {
+            return Err(TapError::Duplicate);
+        }
         let handle = self.slots.len() as u32;
         self.slots
             .push((name, slot))
@@ -608,6 +614,9 @@ impl OutletRegistry {
         reason = "MAX_OUTLETS is 8, so len() never exceeds u32::MAX."
     )]
     pub fn register(&mut self, name: &'static str, slot: OutletEntry) -> Result<u32, TapError> {
+        if self.resolve(name).is_some() {
+            return Err(TapError::Duplicate);
+        }
         let handle = self.slots.len() as u32;
         self.slots
             .push((name, slot))
@@ -924,5 +933,45 @@ mod tests {
             registry.register("overflow", OutletEntry::retained(&OVERFLOW)),
             Err(TapError::RegistryFull)
         );
+    }
+
+    #[test]
+    fn tap_registry_rejects_duplicate_name() {
+        static FIRST: RetainedSlot<f32> = RetainedSlot::new();
+        static SECOND: EventSlot<f32> = EventSlot::new();
+
+        let mut registry = TapRegistry::new();
+        let handle = registry
+            .register("temperature", SlotEntry::retained(&FIRST))
+            .unwrap();
+        assert_eq!(
+            registry.register("temperature", SlotEntry::event(&SECOND)),
+            Err(TapError::Duplicate)
+        );
+
+        // The first registration is untouched and still resolves.
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.resolve("temperature"), Some(handle));
+        assert_eq!(
+            registry.get(handle).map(SlotEntry::kind),
+            Some(TapKind::Retained)
+        );
+    }
+
+    #[test]
+    fn outlet_registry_rejects_duplicate_name() {
+        static FIRST: RetainedSlot<f32> = RetainedSlot::new();
+        static SECOND: RetainedSlot<f32> = RetainedSlot::new();
+
+        let mut registry = OutletRegistry::new();
+        let handle = registry
+            .register("led", OutletEntry::retained(&FIRST))
+            .unwrap();
+        assert_eq!(
+            registry.register("led", OutletEntry::retained(&SECOND)),
+            Err(TapError::Duplicate)
+        );
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.resolve("led"), Some(handle));
     }
 }

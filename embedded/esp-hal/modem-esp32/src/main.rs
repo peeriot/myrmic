@@ -19,18 +19,17 @@ async fn setup() {}
 // With a pipeline, the board claims its own hardware first: the codegen-emitted
 // macros move the bus peripherals named by the board manifest and the pins it
 // reserves out of `Peripherals`, and only what is left is offered to the cell.
+// The pipeline's slots go into the board's registries, which `start` hands to
+// the runtime; the generated `setup_*_registry` entry points are not used.
 #[cfg(feature = "pipeline")]
 #[esp_firmware::main]
 async fn setup(mut peripherals: Peripherals, spawner: Spawner) {
     let board_peripherals = pipeline_board_peripherals!(peripherals);
     let pins = pipeline_pins!(peripherals);
 
-    let tap_count = pipeline_config::setup_tap_registry();
-    log::info!("[tap] Registry initialised ({tap_count} taps)");
-    let outlet_count = pipeline_config::setup_outlet_registry();
-    log::info!("[outlet] Registry initialised ({outlet_count} outlets)");
-
-    let board = esp_firmware::board!(peripherals, pins = pins);
+    let mut board = esp_firmware::board!(peripherals, pins = pins);
+    pipeline_config::register_taps(board.taps()).expect("pipeline taps fit the registry");
+    pipeline_config::register_outlets(board.outlets()).expect("pipeline outlets fit the registry");
     pipeline_config::spawn_sources(&spawner, board_peripherals);
     esp_firmware::start(board, spawner);
 }
