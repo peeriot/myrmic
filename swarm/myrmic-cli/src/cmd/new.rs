@@ -1,3 +1,4 @@
+use myrmic_build::firmware::Chip;
 use textus::Template as _;
 
 use crate::args::Ctx;
@@ -10,8 +11,10 @@ pub struct New {
     #[clap(short, long)]
     name: Option<String>,
 
+    /// Scaffold a firmware crate for this chip (`esp32c5`, `esp32c6`, `esp32c61`)
+    /// instead of a cell.
     #[clap(short, long, require_equals = true, num_args = 0..=1, default_missing_value = "esp32c6")]
-    firmware: Option<String>,
+    firmware: Option<Chip>,
 
     #[clap(long, alias = "repo")]
     sdk: Option<String>,
@@ -45,7 +48,7 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
 
     validate_name(name)?;
 
-    if let Some(chip) = firmware.as_deref() {
+    if let Some(chip) = firmware {
         crate::info!(ctx, "Creating firmware '{}' for {}", name, chip);
     } else {
         crate::info!(ctx, "Creating '{}'", name);
@@ -54,13 +57,15 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
     let repo = crate::utils::resolve_repo(ctx, repo.as_deref())?;
 
     let result = if let Some(chip) = firmware {
-        let firmware_sdk = repo.clone().resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
+        let firmware_sdk = repo
+            .clone()
+            .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
         let firmware_build =
             repo.resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
 
         let template = TemplateNewFirmware {
             name,
-            chip: &chip,
+            chip: chip.name(),
             firmware_sdk,
             firmware_build,
         };

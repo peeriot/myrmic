@@ -54,10 +54,14 @@ pub enum Command {
     ///
     /// Creates a fresh Rust crate wired up against peeriot's `myrmic_sdk`, ready to build.
     New(new::New),
-    /// Build a cell or an application suite.
+    /// Build a cell, a firmware, or an application suite.
     ///
     /// Compiles the cell to the provided platform (default is `linux`)
     /// Can also be used to generate an api file to provide external parties your cell's API.
+    ///
+    /// A crate whose `[package.metadata.myrmic]` names a `firmware` chip is built
+    /// as an ESP firmware image instead: the ELF `espflash` flashes, plus the
+    /// partition table it should be flashed with.
     ///
     /// If compiling an `app_specs.yml`, then all artifacts will be bundled into a `nest` archive.
     Build(build::Build),

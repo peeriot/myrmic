@@ -6,9 +6,10 @@ use std::path::PathBuf;
 
 #[derive(clap::Parser)]
 pub struct Build {
-    /// Path to the cell directory, Cargo.toml, or `app_specs.yml` to build (defaults to the current directory).
+    /// Path to the cell or firmware directory, Cargo.toml, or `app_specs.yml` to build (defaults to the current directory).
     path: Option<PathBuf>,
     /// Comma-separated list of build platforms to compile for (e.g. `linux`).
+    /// Ignored for a firmware crate, whose chip comes from its manifest.
     #[clap(long)]
     platform: Option<String>,
 

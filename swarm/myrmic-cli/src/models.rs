@@ -477,7 +477,7 @@ impl Repo {
             Repo::Git(url, rev) => CargoDep::Git(url, rev),
             Repo::Path(path) => {
                 let resolved = path.join(known_path);
-                let path = resolved.exists().then_some(resolved).unwrap_or(path);
+                let path = if resolved.exists() { resolved } else { path };
                 CargoDep::Path(path)
             }
         }

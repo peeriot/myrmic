@@ -3,7 +3,7 @@ use crate::models::{self, CellInstance};
 use crate::platforms::Platform;
 use crate::utils::PathType;
 use anyhow::Context;
-use myrmic_build::cargo;
+use myrmic_build::{cargo, firmware};
 use sorg_common::{HttpBridgeApi, MqttBridge};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -106,6 +106,13 @@ pub fn build_app(
 
         match ty {
             PathType::Toml => {
+                if let Some(chip) = firmware::chip_of(&path)? {
+                    anyhow::bail!(
+                        "class `{id}` points at a {chip} firmware crate, not a cell; build it on \
+                         its own with `myrmic build {}`",
+                        og_path.display()
+                    );
+                }
                 if let Some(cc) = build_cell(ctx, path.as_ref(), &platforms, &cargo_target)? {
                     info.classes.insert(id, cc);
                 }
@@ -227,15 +234,77 @@ pub fn build_toml(
             );
         }
         for member in &ws.members {
-            if let Some(cc) = build_cell(ctx, member, platforms, &cargo_target)? {
+            if let Some(cc) = build_member(ctx, member, platforms, &cargo_target)? {
                 classes.push(cc);
             }
         }
-    } else if let Some(cc) = build_cell(ctx, &info.manifest_path, platforms, &cargo_target)? {
+    } else if let Some(cc) = build_member(ctx, &info.manifest_path, platforms, &cargo_target)? {
         classes.push(cc);
     }
 
     Ok(classes)
+}
+
+/// Builds one crate of a `myrmic build <path>` run. A firmware crate yields an
+/// ELF and no cell class; anything else is a cell.
+fn build_member(
+    ctx: Ctx,
+    path: &Path,
+    platforms: &[Platform],
+    cargo_target: &myrmic_build::CargoTarget,
+) -> anyhow::Result<Option<CellClass>> {
+    match firmware::chip_of(path)? {
+        Some(chip) => {
+            build_firmware(ctx, path, chip, platforms, cargo_target)?;
+            Ok(None)
+        }
+        None => build_cell(ctx, path, platforms, cargo_target),
+    }
+}
+
+fn build_firmware(
+    ctx: Ctx,
+    path: &Path,
+    chip: firmware::Chip,
+    platforms: &[Platform],
+    cargo_target: &myrmic_build::CargoTarget,
+) -> anyhow::Result<()> {
+    if platforms != Platform::DEFAULT {
+        crate::warn!(
+            ctx,
+            "--platform is ignored for a firmware crate; the chip ({chip}) comes from \
+             `[package.metadata.myrmic] firmware`"
+        );
+    }
+    crate::info!(ctx, "Building {chip} firmware: {}", path.display());
+
+    let built = firmware::build(path, cargo_target)?;
+
+    if let Some(partitions) = &built.default_partitions {
+        crate::info!(
+            ctx,
+            "No partitions.toml beside the crate; using the default layout ({partitions})"
+        );
+    }
+    crate::info!(ctx, "Firmware: {}", built.elf.display());
+    match &built.partition_table {
+        Some(table) => {
+            crate::info!(ctx, "Partition table: {}", table.display());
+            crate::info!(
+                ctx,
+                "Flash with: espflash flash --partition-table {} {}",
+                table.display(),
+                built.elf.display()
+            );
+        }
+        None => crate::warn!(
+            ctx,
+            "no espflash.toml beside the crate names a partition table; flashing will fall \
+             back to espflash's default table and may write an oversized image"
+        ),
+    }
+
+    Ok(())
 }
 
 /// Maps the CLI's build platforms to `myrmic-build` platforms

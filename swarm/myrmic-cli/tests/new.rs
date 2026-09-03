@@ -191,6 +191,38 @@ fn new_scaffolds_serde_for_state_types() {
     let _ = project.close();
 }
 
+/// `--firmware` names a chip the firmware build knows. Anything else is refused
+/// up front instead of scaffolding a crate whose chip feature can never resolve.
+#[test]
+fn new_firmware_refuses_an_unknown_chip() {
+    let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
+    let firmware = project.path().join("fw");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
+        .arg("new")
+        .arg(&firmware)
+        .arg("--firmware=esp32")
+        .arg("--sdk")
+        .arg(local_sdk())
+        .output()
+        .expect("failed to run myrmic new");
+
+    assert!(
+        !output.status.success(),
+        "myrmic new accepted an unknown chip\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("esp32c6"),
+        "the error should list the supported chips, got:\n{stderr}"
+    );
+    assert!(
+        !firmware.exists(),
+        "nothing should be scaffolded for an unknown chip"
+    );
+}
+
 fn local_sdk() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

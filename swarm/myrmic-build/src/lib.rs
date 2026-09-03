@@ -12,4 +12,5 @@ pub use myrmic_tags::Platform;
 mod build;
 pub mod cargo;
 mod compile;
+pub mod firmware;
 pub mod spawn_patch;

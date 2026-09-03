@@ -27,7 +27,8 @@
 //! makes `espflash` refuse to flash a firmware image that would overflow into
 //! the AOT region — enforcing the ceiling with the stock bootloader.
 //!
-//! With no `partitions.toml` present, a 4 MB layout is used.
+//! With no `partitions.toml` present, the layout `myrmic build` hands over in
+//! [`PARTITIONS_ENV`] is used; without that either, a 4 MB layout.
 
 use std::path::Path;
 
@@ -73,6 +74,12 @@ const DEFAULT_AOT_SIZE: u64 = 0x10_0000;
 /// stack costs ~0.5 MB of flash and the image comes out around 2.06 MB.
 const BLE_CRAMPED_FIRMWARE_SIZE: u64 = 0x20_0000;
 
+/// Environment variable through which `myrmic build` hands a firmware crate its
+/// partition layout when the crate has no `partitions.toml`. The value is the
+/// compact form of [`Partitions::to_compact`]. A private contract between the
+/// CLI and this crate, not a user-facing knob.
+pub const PARTITIONS_ENV: &str = "ESP_FIRMWARE_PARTITIONS";
+
 /// Per-chip constraints.
 struct Chip {
     /// Feature name, used only for diagnostics.
@@ -89,17 +96,124 @@ struct Config {
     partitions: Partitions,
 }
 
-/// The partition knobs
-#[derive(Deserialize, Default)]
-struct Partitions {
-    /// Firmware partition size (includes bootloader) (e.g. `"2M"`,
-    /// `"0x1F0000"`, `2031616`).
-    firmware_size: Option<String>,
+/// The partition knobs of `partitions.toml`. Every knob is optional; an unset
+/// one takes its default when the layout is derived.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Partitions {
+    /// Firmware partition size, bootloader included (e.g. `"2M"`, `"0x1F0000"`,
+    /// `2031616`).
+    #[serde(deserialize_with = "de_size")]
+    pub firmware_size: Option<u64>,
     /// AOT XIP storage size. It includes both a 64 KB metadata region and the
     /// AOT XIP module.
-    aot_size: Option<String>,
+    #[serde(deserialize_with = "de_size")]
+    pub aot_size: Option<u64>,
     /// Total usable flash on the target device. Defaults to 4M.
-    flash_size: Option<String>,
+    #[serde(deserialize_with = "de_size")]
+    pub flash_size: Option<u64>,
+}
+
+impl Partitions {
+    /// The layout `myrmic build` supplies to a crate without a `partitions.toml`:
+    /// the AOT region keeps its default size and the firmware takes the rest of
+    /// the flash. With no known flash size this is the 4 MB default.
+    pub fn default_layout(flash_size: Option<u64>) -> Self {
+        let flash_size = flash_size.unwrap_or(DEFAULT_FLASH_SIZE);
+        Self {
+            firmware_size: Some(flash_size.saturating_sub(DEFAULT_AOT_SIZE)),
+            aot_size: Some(DEFAULT_AOT_SIZE),
+            flash_size: Some(flash_size),
+        }
+    }
+
+    /// The set knobs as comma-separated `key=0xHEX` pairs — the value carried in
+    /// [`PARTITIONS_ENV`].
+    pub fn to_compact(&self) -> String {
+        [
+            ("firmware", self.firmware_size),
+            ("aot", self.aot_size),
+            ("flash", self.flash_size),
+        ]
+        .into_iter()
+        .filter_map(|(key, size)| size.map(|size| format!("{key}={size:#x}")))
+        .collect::<Vec<_>>()
+        .join(",")
+    }
+
+    /// Decodes the form produced by [`Self::to_compact`]. Sizes accept whatever
+    /// `partitions.toml` accepts.
+    pub fn parse_compact(compact: &str) -> Result<Self, String> {
+        let mut partitions = Self::default();
+        for pair in compact.split(',').filter(|pair| !pair.trim().is_empty()) {
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("expected key=size, got {pair:?}"))?;
+            let size = parse_size(value)
+                .ok_or_else(|| format!("invalid size {value:?} for {}", key.trim()))?;
+            let slot = match key.trim() {
+                "firmware" => &mut partitions.firmware_size,
+                "aot" => &mut partitions.aot_size,
+                "flash" => &mut partitions.flash_size,
+                other => return Err(format!("unknown partition knob {other:?}")),
+            };
+            *slot = Some(size);
+        }
+        Ok(partitions)
+    }
+
+    /// Chooses the knobs a build uses: a `partitions.toml` wins outright, then
+    /// the layout `myrmic build` passed in [`PARTITIONS_ENV`], else defaults.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a malformed env value — tooling writes it, so that is a bug.
+    pub fn select(file: Option<Self>, env: Option<&str>) -> Self {
+        if let Some(file) = file {
+            return file;
+        }
+        match env {
+            Some(compact) => Self::parse_compact(compact)
+                .unwrap_or_else(|e| panic!("malformed {PARTITIONS_ENV}: {e}")),
+            None => Self::default(),
+        }
+    }
+}
+
+/// The set knobs, spelled as `partitions.toml` lines so they can be pasted
+/// into one.
+impl std::fmt::Display for Partitions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let knobs = [
+            ("firmware_size", self.firmware_size),
+            ("aot_size", self.aot_size),
+            ("flash_size", self.flash_size),
+        ];
+        let mut first = true;
+        for (key, size) in knobs {
+            let Some(size) = size else { continue };
+            if !first {
+                f.write_str(", ")?;
+            }
+            first = false;
+            write!(f, "{key} = \"{}\"", spell_size(size))?;
+        }
+        Ok(())
+    }
+}
+
+/// `2M` / `1984K` for round sizes, hex otherwise — the forms `partitions.toml`
+/// accepts.
+fn spell_size(bytes: u64) -> String {
+    const K: u64 = 1024;
+    const M: u64 = 1024 * K;
+    if bytes > 0 && bytes.is_multiple_of(M) {
+        format!("{}M", bytes / M)
+    } else if bytes > 0 && bytes.is_multiple_of(K) {
+        format!("{}K", bytes / K)
+    } else {
+        format!("{bytes:#X}")
+    }
 }
 
 /// Generates the flash layout, the app partition table, and the main-stack and
@@ -118,31 +232,22 @@ pub fn configure() {
     let config_path = Path::new(&manifest_dir).join("partitions.toml");
     println!("cargo:rerun-if-changed={}", config_path.display());
 
-    let config: Config = if config_path.exists() {
+    let file = config_path.exists().then(|| {
         let text = std::fs::read_to_string(&config_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", config_path.display()));
-        toml::from_str(&text)
-            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", config_path.display()))
-    } else {
-        Config::default()
-    };
+        let config: Config = toml::from_str(&text)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", config_path.display()));
+        config.partitions
+    });
+
+    println!("cargo:rerun-if-env-changed={PARTITIONS_ENV}");
+    let env = std::env::var(PARTITIONS_ENV).ok();
+    let partitions = Partitions::select(file, env.as_deref());
 
     // Defaults to a 4 MB layout (3M `firmware_size` + 1M `aot_size`, see #1347).
-    let firmware_size = resolve(
-        config.partitions.firmware_size.as_deref(),
-        DEFAULT_FIRMWARE_SIZE,
-        "firmware_size",
-    );
-    let aot_size = resolve(
-        config.partitions.aot_size.as_deref(),
-        DEFAULT_AOT_SIZE,
-        "aot_size",
-    );
-    let flash_size = resolve(
-        config.partitions.flash_size.as_deref(),
-        DEFAULT_FLASH_SIZE,
-        "flash_size",
-    );
+    let firmware_size = partitions.firmware_size.unwrap_or(DEFAULT_FIRMWARE_SIZE);
+    let aot_size = partitions.aot_size.unwrap_or(DEFAULT_AOT_SIZE);
+    let flash_size = partitions.flash_size.unwrap_or(DEFAULT_FLASH_SIZE);
 
     if aot_size < RECOMMENDED_MIN_AOT_SIZE {
         println!(
@@ -382,13 +487,27 @@ fn detect_chip() -> Chip {
     selected.expect("no esp32c* chip feature enabled; enable one of esp32c5/c6/c61")
 }
 
-/// Resolve an optional size string to bytes, falling back to `default`.
-fn resolve(value: Option<&str>, default: u64, label: &str) -> u64 {
-    match value {
-        Some(s) => parse_size(s).unwrap_or_else(|| {
-            panic!("invalid {label} value {s:?}: use bytes, 0x-hex, or a K/M suffix")
+/// Deserializes a size given as a suffixed or hex string (`"2M"`, `"0x1F0000"`)
+/// or as a bare integer byte count.
+fn de_size<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Bytes(u64),
+        Text(String),
+    }
+
+    match Option::<Raw>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Raw::Bytes(bytes)) => Ok(Some(bytes)),
+        Some(Raw::Text(text)) => parse_size(&text).map(Some).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "invalid size {text:?}: use bytes, 0x-hex, or a K/M suffix"
+            ))
         }),
-        None => default,
     }
 }
 
@@ -478,4 +597,109 @@ fn out_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(
         std::env::var("OUT_DIR").expect("OUT_DIR is set for every build script"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const M: u64 = 1024 * 1024;
+
+    fn layout(firmware: u64, aot: u64, flash: u64) -> Partitions {
+        Partitions {
+            firmware_size: Some(firmware),
+            aot_size: Some(aot),
+            flash_size: Some(flash),
+        }
+    }
+
+    #[test]
+    fn compact_form_round_trips_every_knob() {
+        let full = layout(2 * M, 2 * M, 4 * M);
+        assert_eq!(Partitions::parse_compact(&full.to_compact()).unwrap(), full);
+    }
+
+    #[test]
+    fn compact_form_carries_only_the_knobs_that_are_set() {
+        let partial = Partitions {
+            flash_size: Some(8 * M),
+            ..Partitions::default()
+        };
+        assert_eq!(partial.to_compact(), "flash=0x800000");
+        assert_eq!(
+            Partitions::parse_compact("flash=0x800000").unwrap(),
+            partial
+        );
+    }
+
+    #[test]
+    fn compact_form_rejects_unknown_keys_and_unparseable_sizes() {
+        let err = Partitions::parse_compact("bogus=1M").unwrap_err();
+        assert!(err.contains("bogus"), "{err}");
+        let err = Partitions::parse_compact("flash=lots").unwrap_err();
+        assert!(err.contains("lots"), "{err}");
+        assert!(Partitions::parse_compact("flash").is_err());
+    }
+
+    #[test]
+    fn default_layout_without_a_flash_size_is_the_4m_split() {
+        assert_eq!(Partitions::default_layout(None), layout(3 * M, M, 4 * M));
+    }
+
+    #[test]
+    fn default_layout_with_a_known_flash_size_keeps_aot_and_gives_the_rest_to_firmware() {
+        assert_eq!(
+            Partitions::default_layout(Some(8 * M)),
+            layout(7 * M, M, 8 * M)
+        );
+    }
+
+    #[test]
+    fn toml_sizes_accept_suffixed_strings_hex_strings_and_bare_integers() {
+        let parsed: Partitions = toml::from_str(
+            "firmware_size = \"2M\"\naot_size = \"0x200000\"\nflash_size = 4194304\n",
+        )
+        .unwrap();
+        assert_eq!(parsed, layout(2 * M, 2 * M, 4 * M));
+    }
+
+    #[test]
+    fn partitions_toml_beats_the_env_which_beats_the_built_in_default() {
+        let file = layout(4 * M, 2 * M, 8 * M);
+        let env = "flash=0x1000000";
+        assert_eq!(Partitions::select(Some(file.clone()), Some(env)), file);
+        assert_eq!(
+            Partitions::select(None, Some(env)),
+            Partitions {
+                flash_size: Some(16 * M),
+                ..Partitions::default()
+            }
+        );
+        assert_eq!(Partitions::select(None, None), Partitions::default());
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+
+    const M: u64 = 1024 * 1024;
+
+    #[test]
+    fn display_spells_the_set_knobs_the_way_partitions_toml_does() {
+        let full = Partitions {
+            firmware_size: Some(2 * M),
+            aot_size: Some(1984 * 1024),
+            flash_size: Some(0x3F_1234),
+        };
+        assert_eq!(
+            full.to_string(),
+            "firmware_size = \"2M\", aot_size = \"1984K\", flash_size = \"0x3F1234\""
+        );
+        let partial = Partitions {
+            flash_size: Some(8 * M),
+            ..Partitions::default()
+        };
+        assert_eq!(partial.to_string(), "flash_size = \"8M\"");
+    }
 }

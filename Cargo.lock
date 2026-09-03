@@ -7600,6 +7600,7 @@ dependencies = [
  "anyhow",
  "aot-compiler",
  "claims",
+ "esp-firmware-build",
  "heck",
  "myrmic-common",
  "myrmic-tags",
