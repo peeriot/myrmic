@@ -1,32 +1,29 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::io::IsTerminal as _;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use cell_protocol::{CellInstance, Gen, PlacementEntry, PlacementKind, Sri};
 
 use crate::args::Ctx;
+use crate::live::{self, Phase, Pops};
 use crate::render::{BOLD, DIMMED, NONE, RESET, styled_id, unique_prefix_lengths, width};
 
 #[cfg(test)]
 mod tests;
 
-#[derive(clap::Parser, Default)]
+#[derive(clap::Parser)]
 pub struct Status {
     /// SRIs or SRNs to show; each match is rendered with its whole spawn
     /// subtree. If omitted, lists all registered cells.
     #[clap(value_name = "SRI/SRN")]
     targets: Vec<String>,
+
+    #[clap(flatten)]
+    live: live::Opts,
 }
 
 pub async fn handle(ctx: Ctx, cmd: Status) -> Result<()> {
-    let session = ctx.session().await?;
-    let client = ctx.sorg(session);
-
-    let (cells, instances) = tokio::join!(client.list_placements(), client.list_instances());
-    let (cells, instances) = (cells?, instances?);
-
     let targets = cmd
         .targets
         .iter()
@@ -37,13 +34,105 @@ pub async fn handle(ctx: Ctx, cmd: Status) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let styled = std::io::stdout().is_terminal();
-    print!(
-        "{}",
-        render(cells, instances, &targets, styled, SystemTime::now())
-    );
+    let session = ctx.session().await?;
+    let view = View {
+        client: ctx.sorg(session),
+        listing: Listing::new(targets),
+    };
+    live::run(cmd.live, view).await
+}
 
-    Ok(())
+struct View {
+    client: sorg_client::Client,
+    listing: Listing,
+}
+
+type Snapshot = (Vec<PlacementEntry>, Vec<CellInstance>);
+
+impl live::View for View {
+    type Snapshot = Snapshot;
+
+    async fn fetch(&self) -> Result<Snapshot> {
+        let (cells, instances) =
+            tokio::join!(self.client.list_placements(), self.client.list_instances());
+        Ok((cells?, instances?))
+    }
+
+    fn apply(&mut self, snapshot: Snapshot, now: Instant) {
+        self.listing.apply(snapshot, now);
+    }
+
+    fn draw(&self, now: Instant, styled: bool) -> String {
+        self.listing.draw(now, styled)
+    }
+
+    fn settle(&mut self) {
+        self.listing.settle();
+    }
+}
+
+/// The cells being shown: the last snapshot, plus cells that have since gone
+/// and are still fading out. A respawn changes the generation, so it pops
+/// like an arrival while the row stays where it is.
+struct Listing {
+    targets: Vec<(String, Sri)>,
+    rows: HashMap<Sri, (PlacementEntry, Option<CellInstance>)>,
+    pops: Pops<Sri, Gen>,
+}
+
+impl Listing {
+    fn new(targets: Vec<(String, Sri)>) -> Self {
+        Self {
+            targets,
+            rows: HashMap::new(),
+            pops: Pops::new(live::FADE),
+        }
+    }
+
+    fn apply(&mut self, (cells, instances): Snapshot, now: Instant) {
+        self.pops
+            .observe(now, cells.iter().map(|c| (c.sri, c.gen_id)));
+
+        let mut by_sri: HashMap<Sri, CellInstance> =
+            instances.into_iter().map(|i| (i.sri, i)).collect();
+        let mut rows: HashMap<Sri, _> = cells
+            .into_iter()
+            .map(|entry| {
+                let instance = by_sri.remove(&entry.sri);
+                (entry.sri, (entry, instance))
+            })
+            .collect();
+        for sri in self.pops.departing(now) {
+            if let Some(row) = self.rows.remove(sri) {
+                rows.insert(*sri, row);
+            }
+        }
+        self.rows = rows;
+    }
+
+    fn draw(&self, now: Instant, styled: bool) -> String {
+        let (cells, instances): (Vec<_>, Vec<_>) = self
+            .rows
+            .values()
+            .filter(|(entry, _)| self.pops.phase(&entry.sri, now) != Phase::Gone)
+            .map(|(entry, instance)| (entry.clone(), instance.clone()))
+            .unzip();
+        let instances = instances.into_iter().flatten().collect();
+        let highlight = |sri: &Sri| styled.then(|| self.pops.phase(sri, now).sgr()).flatten();
+        render(
+            cells,
+            instances,
+            &self.targets,
+            styled,
+            SystemTime::now(),
+            &highlight,
+        )
+    }
+
+    fn settle(&mut self) {
+        self.pops.settle();
+        self.rows.retain(|sri, _| self.pops.present(sri));
+    }
 }
 
 /// A registered cell joined with its instance row (the lineage source), plus
@@ -219,12 +308,14 @@ fn place_tree(forest: &Forest, idx: usize, groups: &mut Vec<Group>, visited: &mu
     forest.push_subtree(idx, String::new(), "", &mut groups[group].1, visited);
 }
 
+/// `highlight` gives a row's colour when it is fading in or out.
 fn render(
     cells: Vec<PlacementEntry>,
     instances: Vec<CellInstance>,
     targets: &[(String, Sri)],
     styled: bool,
     now: SystemTime,
+    highlight: &dyn Fn(&Sri) -> Option<&'static str>,
 ) -> String {
     let forest = Forest::build(cells, instances);
     let mut out = String::new();
@@ -262,12 +353,21 @@ fn render(
     }
 
     if !groups.is_empty() {
-        table(&forest, &groups, targets.is_empty(), styled, now, &mut out);
+        table(
+            &forest,
+            &groups,
+            targets.is_empty(),
+            styled,
+            now,
+            highlight,
+            &mut out,
+        );
     }
     out
 }
 
 struct Row {
+    key: Sri,
     cell: String,
     sri: String,
     kind: &'static str,
@@ -309,6 +409,7 @@ fn table(
     sectioned: bool,
     styled: bool,
     now: SystemTime,
+    highlight: &dyn Fn(&Sri) -> Option<&'static str>,
     out: &mut String,
 ) {
     let sections: Vec<(Option<&str>, Vec<Row>)> = groups
@@ -319,6 +420,7 @@ fn table(
                 .map(|(prefix, idx)| {
                     let node = &forest.nodes[*idx];
                     Row {
+                        key: node.entry.sri,
                         cell: format!("{prefix}{}", node.name.as_deref().unwrap_or(NONE)),
                         sri: node.entry.sri.to_string(),
                         kind: match &node.entry.kind {
@@ -398,7 +500,15 @@ fn table(
                 class = row.class,
                 srn = row.srn,
             );
-            let _ = writeln!(out, "{}", line.trim_end());
+            let line = line.trim_end();
+            match highlight(&row.key) {
+                Some(sgr) => {
+                    let _ = writeln!(out, "{}", live::paint(line, sgr));
+                }
+                None => {
+                    let _ = writeln!(out, "{line}");
+                }
+            }
         }
     }
 }

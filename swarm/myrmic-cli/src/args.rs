@@ -120,7 +120,8 @@ pub enum Command {
     /// Inspect and manage cells on myrmic.
     ///
     /// Subcommands manage cell classes, show cell status, and tear down cells.
-    /// With no subcommand, lists registered cells.
+    /// With no subcommand, lists registered cells, refreshing until
+    /// interrupted when run in a terminal (`--once` prints a single listing).
     #[clap(alias = "cell")]
     Cells(cells::Cells),
     /// Manage local myrmic runtimes.
@@ -129,6 +130,11 @@ pub enum Command {
     /// With no subcommand, lists known runtimes.
     #[clap(alias = "runtime", alias = "rt")]
     Runtimes(runtimes::Runtimes),
+    /// Show the nodes on the myrmic network.
+    ///
+    /// Lists every node seen on the network with its registry name, kind and
+    /// tags, refreshing until interrupted when run in a terminal (`--once`
+    /// prints a single listing).
     #[clap(alias = "nodes")]
     Network(network::Network),
 

@@ -37,6 +37,7 @@ mod archive;
 mod args;
 mod build;
 mod deploy;
+mod live;
 mod log;
 mod models;
 mod nest;

@@ -54,6 +54,17 @@ fn sri(path: &str) -> Sri {
     Sri::of_path(path).unwrap()
 }
 
+/// Renders with no row fading in or out.
+fn show(
+    cells: Vec<PlacementEntry>,
+    instances: Vec<CellInstance>,
+    targets: &[(String, Sri)],
+    styled: bool,
+    now: SystemTime,
+) -> String {
+    render(cells, instances, targets, styled, now, &|_| None)
+}
+
 /// A respawn mints a fresh generation, so the age column resets while the
 /// sri and runtime stay put — the whole point of the column.
 #[test]
@@ -68,7 +79,7 @@ fn age_column_tracks_the_current_incarnation() {
     let snapshot = |gen_id: Gen| {
         let mut entry = wasm(sri("sensor"), &rt);
         entry.gen_id = gen_id;
-        render(
+        show(
             vec![entry],
             vec![instance(sri("sensor"), "sensor", None, None)],
             &[],
@@ -160,7 +171,7 @@ fn lists_all_cells_as_a_spawn_tree() {
     );
 
     assert_eq!(
-        render(cells, instances, &[], false, SystemTime::UNIX_EPOCH),
+        show(cells, instances, &[], false, SystemTime::UNIX_EPOCH),
         expected
     );
 }
@@ -200,7 +211,7 @@ fn marks_unreconstructable_srn_prefixes() {
     );
 
     assert_eq!(
-        render(cells, instances, &[], false, SystemTime::UNIX_EPOCH),
+        show(cells, instances, &[], false, SystemTime::UNIX_EPOCH),
         expected
     );
 }
@@ -225,7 +236,7 @@ fn filters_to_the_targets_subtrees() {
     );
 
     assert_eq!(
-        render(cells, instances, &targets, false, SystemTime::UNIX_EPOCH),
+        show(cells, instances, &targets, false, SystemTime::UNIX_EPOCH),
         expected
     );
 }
@@ -248,7 +259,7 @@ Cell nope is not registered
     );
 
     assert_eq!(
-        render(cells, instances, &targets, false, SystemTime::UNIX_EPOCH),
+        show(cells, instances, &targets, false, SystemTime::UNIX_EPOCH),
         expected
     );
 }
@@ -256,7 +267,7 @@ Cell nope is not registered
 #[test]
 fn reports_an_empty_registry() {
     assert_eq!(
-        render(vec![], vec![], &[], false, SystemTime::UNIX_EPOCH),
+        show(vec![], vec![], &[], false, SystemTime::UNIX_EPOCH),
         "No cells registered\n"
     );
 }
@@ -265,7 +276,7 @@ fn reports_an_empty_registry() {
 fn highlights_the_unique_runtime_prefix_when_styled() {
     let (cells, instances) = tree_fixture();
 
-    let out = render(cells, instances, &[], true, SystemTime::UNIX_EPOCH);
+    let out = show(cells, instances, &[], true, SystemTime::UNIX_EPOCH);
 
     assert!(out.contains(&format!("{BOLD_CYAN}a{RESET}{DIMMED}abb1122{RESET}")));
 }
@@ -331,7 +342,7 @@ fn groups_trees_into_app_sections() {
     );
 
     assert_eq!(
-        render(cells, instances, &[], false, SystemTime::UNIX_EPOCH),
+        show(cells, instances, &[], false, SystemTime::UNIX_EPOCH),
         expected
     );
 }
@@ -340,7 +351,7 @@ fn groups_trees_into_app_sections() {
 fn styles_the_app_section_rules() {
     let (cells, instances) = apped_fixture();
 
-    let out = render(cells, instances, &[], true, SystemTime::UNIX_EPOCH);
+    let out = show(cells, instances, &[], true, SystemTime::UNIX_EPOCH);
 
     assert!(out.contains(&format!("{DIMMED}────{RESET} {BOLD}beta{RESET}")));
 }
@@ -364,7 +375,170 @@ fn shows_placeholders_as_na() {
     );
 
     assert_eq!(
-        render(cells, vec![], &[], false, SystemTime::UNIX_EPOCH),
+        show(cells, vec![], &[], false, SystemTime::UNIX_EPOCH),
         expected
+    );
+}
+
+/// A fading row is coloured end to end: the id column's own reset must not
+/// return the rest of the row to normal.
+#[test]
+fn paints_highlighted_rows_end_to_end() {
+    let rt = exec(runtime_id("bbcc112233445566"), "edge");
+    let cells = vec![wasm(sri("sensor"), &rt), wasm(sri("pump"), &rt)];
+    let instances = vec![
+        instance(sri("sensor"), "sensor", None, None),
+        instance(sri("pump"), "pump", None, None),
+    ];
+    let fading = sri("sensor");
+
+    let out = render(cells, instances, &[], true, SystemTime::UNIX_EPOCH, &|s| {
+        (*s == fading).then_some("<g>")
+    });
+
+    let row = |name: &str| out.lines().find(|l| l.contains(name)).unwrap().to_owned();
+    let sensor = row("sensor");
+    assert!(sensor.starts_with("<g>"), "{sensor:?}");
+    assert!(sensor.ends_with(RESET), "{sensor:?}");
+    assert!(sensor.contains(&format!("{RESET}<g>")), "{sensor:?}");
+    assert!(!row("pump").contains("<g>"));
+}
+
+/// The row for `name` in a styled listing, with any colour it was painted.
+fn painted_row(out: &str, name: &str) -> String {
+    out.lines()
+        .find(|l| l.contains(name))
+        .unwrap_or_else(|| panic!("no row for {name} in {out:?}"))
+        .to_owned()
+}
+
+/// A cell that turns up fades in, a cell that goes fades out struck through
+/// and is dropped once the fade is over — or straight away when settling for
+/// the final frame.
+#[test]
+fn arrivals_and_departures_fade_through_the_listing() {
+    let t0 = Instant::now();
+    let at = |ms: u64| t0 + Duration::from_millis(ms);
+    let rt = exec(runtime_id("bbcc112233445566"), "edge");
+    let sensor = || {
+        (
+            vec![wasm(sri("sensor"), &rt)],
+            vec![instance(sri("sensor"), "sensor", None, None)],
+        )
+    };
+    let both = || {
+        (
+            vec![wasm(sri("sensor"), &rt), wasm(sri("pump"), &rt)],
+            vec![
+                instance(sri("sensor"), "sensor", None, None),
+                instance(sri("pump"), "pump", None, None),
+            ],
+        )
+    };
+    let arriving = Phase::Arriving(0).sgr().unwrap();
+    let departing = Phase::Departing(0).sgr().unwrap();
+
+    let mut listing = Listing::new(vec![]);
+    listing.apply(sensor(), at(0));
+    assert!(painted_row(&listing.draw(at(0), true), "sensor").starts_with("  "));
+
+    listing.apply(both(), at(100));
+    let out = listing.draw(at(100), true);
+    assert!(painted_row(&out, "pump").starts_with(arriving));
+    assert!(painted_row(&out, "sensor").starts_with("  "));
+    assert!(!listing.draw(at(100), false).contains(arriving));
+
+    listing.apply(sensor(), at(200));
+    let out = listing.draw(at(200), true);
+    assert!(painted_row(&out, "pump").starts_with(departing));
+    assert!(!listing.draw(at(200) + live::FADE, true).contains("pump"));
+
+    listing.apply(sensor(), at(300));
+    listing.settle();
+    let out = listing.draw(at(300), true);
+    assert!(!out.contains("pump"));
+    assert!(painted_row(&out, "sensor").starts_with("  "));
+}
+
+/// A respawn keeps the sri and changes the generation: the row stays put and
+/// fades in again rather than being replaced.
+#[test]
+fn a_respawn_fades_in_where_it_stands() {
+    let t0 = Instant::now();
+    let rt = exec(runtime_id("bbcc112233445566"), "edge");
+    let incarnation = |gen_id: Gen| {
+        let mut entry = wasm(sri("sensor"), &rt);
+        entry.gen_id = gen_id;
+        (
+            vec![entry],
+            vec![instance(sri("sensor"), "sensor", None, None)],
+        )
+    };
+
+    let mut listing = Listing::new(vec![]);
+    listing.apply(incarnation(Gen::from_parts(1, 1)), t0);
+    listing.apply(
+        incarnation(Gen::from_parts(2, 1)),
+        t0 + Duration::from_millis(100),
+    );
+
+    let out = listing.draw(t0 + Duration::from_millis(100), true);
+    assert_eq!(out.matches("sensor").count(), 3, "{out:?}"); // cell, class, srn of one row
+    assert!(painted_row(&out, "sensor").starts_with(Phase::Arriving(0).sgr().unwrap()));
+}
+
+/// `m cells` is `m cells status`, so the status arguments are accepted
+/// directly. They belong to status alone: another subcommand rejects them,
+/// and once one is given, a later subcommand name is just another target.
+#[test]
+fn bare_cells_takes_the_status_arguments() {
+    use clap::Parser as _;
+
+    use crate::args::{Args, Command};
+    use crate::cmd::cells::{Cells, Cmd};
+
+    let args =
+        Args::try_parse_from(["myrmic", "cells", "--once", "--interval", "1s", "sensor"]).unwrap();
+    let Command::Cells(Cells { cmd: None, status }) = args.command else {
+        panic!("expected bare cells");
+    };
+    assert!(status.live.once);
+    assert_eq!(Duration::from(status.live.interval), Duration::from_secs(1));
+    assert_eq!(status.targets, ["sensor"]);
+
+    let args = Args::try_parse_from(["myrmic", "cell", "status", "--once"]).unwrap();
+    let Command::Cells(Cells {
+        cmd: Some(Cmd::Status(status)),
+        ..
+    }) = args.command
+    else {
+        panic!("expected cells status");
+    };
+    assert!(status.live.once);
+
+    assert!(Args::try_parse_from(["myrmic", "cells", "teardown", "--once"]).is_err());
+
+    let args = Args::try_parse_from(["myrmic", "cells", "--once", "teardown"]).unwrap();
+    let Command::Cells(Cells { cmd: None, status }) = args.command else {
+        panic!("expected bare cells");
+    };
+    assert_eq!(status.targets, ["teardown"]);
+}
+
+#[test]
+fn live_is_the_default_at_two_and_a_half_seconds() {
+    use clap::Parser as _;
+
+    use crate::args::{Args, Command};
+    use crate::cmd::cells::Cells;
+
+    let args = Args::try_parse_from(["myrmic", "cells"]).unwrap();
+    let Command::Cells(Cells { cmd: None, status }) = args.command else {
+        panic!("expected bare cells");
+    };
+    assert!(!status.live.once);
+    assert_eq!(
+        Duration::from(status.live.interval),
+        Duration::from_millis(2_500)
     );
 }

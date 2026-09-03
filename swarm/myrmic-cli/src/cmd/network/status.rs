@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use std::io::IsTerminal as _;
+use std::time::Instant;
 
 use anyhow::Context;
 
@@ -7,6 +7,7 @@ use cell_protocol::{ExecRuntimeInfo, RuntimeId};
 use introspection_client::v1::{NodeStatus, ParticipantInfo};
 
 use crate::args::Ctx;
+use crate::live::{self, Phase, Pops};
 use crate::render::{NONE, cell, styled_id, unique_prefix_lengths, width};
 
 /// Caps for the self-reported columns. Every value in them comes from another
@@ -16,31 +17,99 @@ const NAME_CHARS: usize = 48;
 const KIND_CHARS: usize = 16;
 const TAGS_CHARS: usize = 64;
 
-#[derive(clap::Parser, Default)]
-pub struct Status {}
+#[derive(clap::Parser)]
+pub struct Status {
+    #[clap(flatten)]
+    live: live::Opts,
+}
 
-pub async fn handle(ctx: Ctx, _cmd: Status) -> anyhow::Result<()> {
+pub async fn handle(ctx: Ctx, cmd: Status) -> anyhow::Result<()> {
     let session = ctx.session().await?;
-    let client = ctx.introspection(session.clone()).await;
+    let view = View {
+        client: ctx.introspection(session.clone()).await,
+        session,
+        listing: Listing::new(),
+    };
+    live::run(cmd.live, view).await
+}
 
-    let (statuses, runtimes) = tokio::join!(
-        client.swarm_status(),
-        sorg_common::exec_registry::list_registered_execs(&session),
-    );
+struct View {
+    session: zenoh::Session,
+    client: introspection_client::v1::Client,
+    listing: Listing,
+}
 
-    let statuses = statuses.context("unable to query network status")?;
-    let runtimes = runtimes.context("unable to query registered runtimes")?;
+impl live::View for View {
+    type Snapshot = Vec<NodeDetails>;
 
-    let nodes = join_nodes(&statuses, runtimes);
+    async fn fetch(&self) -> anyhow::Result<Vec<NodeDetails>> {
+        let (statuses, runtimes) = tokio::join!(
+            self.client.swarm_status(),
+            sorg_common::exec_registry::list_registered_execs(&self.session),
+        );
+        let statuses = statuses.context("unable to query network status")?;
+        let runtimes = runtimes.context("unable to query registered runtimes")?;
+        Ok(join_nodes(&statuses, runtimes))
+    }
 
-    let styled = std::io::stdout().is_terminal();
-    print!("{}", render(&nodes, styled));
+    fn apply(&mut self, nodes: Vec<NodeDetails>, now: Instant) {
+        self.listing.apply(nodes, now);
+    }
 
-    Ok(())
+    fn draw(&self, now: Instant, styled: bool) -> String {
+        self.listing.draw(now, styled)
+    }
+
+    fn settle(&mut self) {
+        self.listing.settle();
+    }
+}
+
+/// The nodes being shown: the last snapshot, plus nodes that have since gone
+/// and are still fading out.
+struct Listing {
+    nodes: Vec<NodeDetails>,
+    pops: Pops<RuntimeId>,
+}
+
+impl Listing {
+    fn new() -> Self {
+        Self {
+            nodes: vec![],
+            pops: Pops::new(live::FADE),
+        }
+    }
+
+    fn apply(&mut self, mut nodes: Vec<NodeDetails>, now: Instant) {
+        self.pops.observe(now, nodes.iter().map(|n| (n.id, ())));
+        for id in self.pops.departing(now) {
+            if let Some(node) = self.nodes.iter().find(|n| n.id == *id) {
+                nodes.push(node.clone());
+            }
+        }
+        sort_nodes(&mut nodes);
+        self.nodes = nodes;
+    }
+
+    fn draw(&self, now: Instant, styled: bool) -> String {
+        let shown: Vec<&NodeDetails> = self
+            .nodes
+            .iter()
+            .filter(|n| self.pops.phase(&n.id, now) != Phase::Gone)
+            .collect();
+        let highlight = |id: &RuntimeId| styled.then(|| self.pops.phase(id, now).sgr()).flatten();
+        render(&shown, styled, &highlight)
+    }
+
+    fn settle(&mut self) {
+        self.pops.settle();
+        self.nodes.retain(|n| self.pops.present(&n.id));
+    }
 }
 
 /// A node on the network, with its exec registry entry when it has one, and
 /// its self-description when it gave one (a CLI invocation, say).
+#[derive(Clone)]
 struct NodeDetails {
     id: RuntimeId,
     exec: Option<ExecRuntimeInfo>,
@@ -136,9 +205,14 @@ fn join_nodes(statuses: &[NodeStatus], runtimes: Vec<ExecRuntimeInfo>) -> Vec<No
         }
     }
 
-    // Named runtimes first, then self-described participants, each
-    // alphabetically; everything else by id. Cached, so each key is built once
-    // rather than on both sides of every comparison.
+    sort_nodes(&mut nodes);
+    nodes
+}
+
+/// Named runtimes first, then self-described participants, each
+/// alphabetically; everything else by id. Cached, so each key is built once
+/// rather than on both sides of every comparison.
+fn sort_nodes(nodes: &mut [NodeDetails]) {
     nodes.sort_by_cached_key(|n| {
         let name = n.exec.as_ref().and_then(ExecRuntimeInfo::name);
         let participant = n.participant.as_ref().map(|p| p.name.as_str());
@@ -150,11 +224,14 @@ fn join_nodes(statuses: &[NodeStatus], runtimes: Vec<ExecRuntimeInfo>) -> Vec<No
             n.id.to_string(),
         )
     });
-
-    nodes
 }
 
-fn render(nodes: &[NodeDetails], styled: bool) -> String {
+/// `highlight` gives a row's colour when it is fading in or out.
+fn render(
+    nodes: &[&NodeDetails],
+    styled: bool,
+    highlight: &dyn Fn(&RuntimeId) -> Option<&'static str>,
+) -> String {
     if nodes.is_empty() {
         return "No nodes reported. Is an introspection plugin running on the network?\n"
             .to_string();
@@ -171,6 +248,7 @@ fn render(nodes: &[NodeDetails], styled: bool) -> String {
         .map(|(i, ((node, id), &uniq_len))| {
             let (id, id_width) = styled_id(id, uniq_len, styled);
             Row {
+                key: node.id,
                 idx: i.to_string(),
                 name: cell(&node.name(), NAME_CHARS),
                 kind: cell(&node.kind(), KIND_CHARS),
@@ -204,7 +282,15 @@ fn render(nodes: &[NodeDetails], styled: bool) -> String {
             id = row.id,
             tags = row.tags,
         );
-        let _ = writeln!(out, "{}", line.trim_end());
+        let line = line.trim_end();
+        match highlight(&row.key) {
+            Some(sgr) => {
+                let _ = writeln!(out, "{}", live::paint(line, sgr));
+            }
+            None => {
+                let _ = writeln!(out, "{line}");
+            }
+        }
     }
 
     out
@@ -213,6 +299,7 @@ fn render(nodes: &[NodeDetails], styled: bool) -> String {
 /// A table row, with the id pre-rendered and its visible width kept alongside
 /// so the styled escapes do not throw the padding off.
 struct Row {
+    key: RuntimeId,
     idx: String,
     name: String,
     kind: String,
@@ -223,11 +310,18 @@ struct Row {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use cell_protocol::{CapabilityTag, ExecutionCapabilities};
     use zenoh::config::ZenohId;
 
     use super::*;
     use crate::render::{BOLD_CYAN, DIMMED, RESET};
+
+    /// Renders with no row fading in or out.
+    fn show(nodes: &[NodeDetails], styled: bool) -> String {
+        render(&nodes.iter().collect::<Vec<_>>(), styled, &|_| None)
+    }
 
     /// Builds an id that displays as `hex`; zenoh renders an id's bytes
     /// little-endian, so the leading byte has to be non-zero.
@@ -269,7 +363,7 @@ mod tests {
     #[test]
     fn renders_nothing_when_the_network_is_empty() {
         assert_eq!(
-            render(&join_nodes(&[], vec![]), false),
+            show(&join_nodes(&[], vec![]), false),
             "No nodes reported. Is an introspection plugin running on the network?\n"
         );
     }
@@ -289,7 +383,7 @@ mod tests {
         );
 
         assert_eq!(
-            render(&nodes, false),
+            show(&nodes, false),
             "\
 Discovered 3 node(s)
 
@@ -318,7 +412,7 @@ Discovered 3 node(s)
         );
 
         assert_eq!(
-            render(&nodes, false),
+            show(&nodes, false),
             "\
 Discovered 2 node(s)
 
@@ -336,7 +430,7 @@ Discovered 2 node(s)
 
         let nodes = join_nodes(&[cli(c, "m network status", None)], vec![]);
 
-        assert!(render(&nodes, false).contains("m network status  cli"));
+        assert!(show(&nodes, false).contains("m network status  cli"));
     }
 
     /// Participant strings come from whoever is on the network. An escape
@@ -350,7 +444,7 @@ Discovered 2 node(s)
             &[cli(c, "m db monitor\n\x1b[2Jwiped", Some("jezza@spin"))],
             vec![],
         );
-        let out = render(&nodes, false);
+        let out = show(&nodes, false);
 
         assert!(!out.contains('\x1b'));
         assert!(out.contains("m db monitor[2Jwiped @ jezza@spin"));
@@ -369,7 +463,7 @@ Discovered 2 node(s)
             &[status(a, &[c], &[]), cli(c, &"x".repeat(200), None)],
             vec![exec(a, "default", &["linux"])],
         );
-        let out = render(&nodes, false);
+        let out = show(&nodes, false);
 
         assert!(out.contains(&format!("{}…", "x".repeat(NAME_CHARS - 1))));
         for line in out.lines().skip(2) {
@@ -388,7 +482,7 @@ Discovered 2 node(s)
         let peer = join_nodes(&[status(a, &[b, c], &[])], vec![]);
         let router = join_nodes(&[status(a, &[], &[b, c])], vec![]);
 
-        assert_eq!(render(&peer, false), render(&router, false));
+        assert_eq!(show(&peer, false), show(&router, false));
     }
 
     /// A runtime in the registry that nothing on the network links to still
@@ -401,7 +495,7 @@ Discovered 2 node(s)
         let nodes = join_nodes(&[status(a, &[], &[])], vec![exec(b, "offline", &[])]);
 
         assert_eq!(nodes.len(), 2);
-        assert!(render(&nodes, false).contains("offline"));
+        assert!(show(&nodes, false).contains("offline"));
     }
 
     /// Ids that share more than [`ID_CHARS`] characters widen the column until
@@ -414,7 +508,7 @@ Discovered 2 node(s)
         let nodes = join_nodes(&[status(a, &[b], &[])], vec![]);
 
         assert_eq!(
-            render(&nodes, false),
+            show(&nodes, false),
             "\
 Discovered 2 node(s)
 
@@ -430,8 +524,111 @@ Discovered 2 node(s)
         let a = id("aabb112233445566");
         let b = id("bbcc112233445566");
 
-        let out = render(&join_nodes(&[status(a, &[b], &[])], vec![]), true);
+        let out = show(&join_nodes(&[status(a, &[b], &[])], vec![]), true);
 
         assert!(out.contains(&format!("{BOLD_CYAN}a{RESET}{DIMMED}abb1122{RESET}")));
+    }
+
+    /// A fading row is coloured end to end: the id column's own reset must
+    /// not return the rest of the row to normal.
+    #[test]
+    fn paints_highlighted_rows_end_to_end() {
+        let a = id("aabb112233445566");
+        let c = id("ccdd112233445566");
+        let nodes = join_nodes(
+            &[status(a, &[c], &[])],
+            vec![exec(a, "default", &["linux"])],
+        );
+        let fading = RuntimeId::from(c);
+
+        let out = render(&nodes.iter().collect::<Vec<_>>(), true, &|id| {
+            (*id == fading).then_some("<g>")
+        });
+
+        // count, blank, header, then the rows
+        let rows: Vec<&str> = out.lines().skip(3).collect();
+        assert!(!rows[0].contains("<g>"), "{:?}", rows[0]);
+        assert!(rows[1].starts_with("<g>"), "{:?}", rows[1]);
+        assert!(rows[1].ends_with(RESET), "{:?}", rows[1]);
+        assert!(rows[1].contains(&format!("{RESET}<g>")), "{:?}", rows[1]);
+    }
+
+    /// A node that joins fades in, a node that leaves fades out struck
+    /// through and is dropped once the fade is over — or straight away when
+    /// settling for the final frame.
+    #[test]
+    fn arrivals_and_departures_fade_through_the_listing() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let a = id("aabb112233445566");
+        let b = id("bbcc112233445566");
+        let alone = || join_nodes(&[status(a, &[], &[])], vec![exec(a, "default", &[])]);
+        let both = || {
+            join_nodes(
+                &[status(a, &[b], &[])],
+                vec![exec(a, "default", &[]), exec(b, "second", &[])],
+            )
+        };
+        let row = |out: &str, name: &str| {
+            out.lines()
+                .find(|l| l.contains(name))
+                .unwrap_or_else(|| panic!("no row for {name} in {out:?}"))
+                .to_owned()
+        };
+        let arriving = Phase::Arriving(0).sgr().unwrap();
+        let departing = Phase::Departing(0).sgr().unwrap();
+
+        let mut listing = Listing::new();
+        listing.apply(alone(), at(0));
+        assert!(row(&listing.draw(at(0), true), "default").starts_with("  "));
+
+        listing.apply(both(), at(100));
+        let out = listing.draw(at(100), true);
+        assert!(row(&out, "second").starts_with(arriving));
+        assert!(row(&out, "default").starts_with("  "));
+        assert!(out.starts_with("Discovered 2 node(s)"));
+
+        listing.apply(alone(), at(200));
+        let out = listing.draw(at(200), true);
+        assert!(row(&out, "second").starts_with(departing));
+        assert!(out.starts_with("Discovered 2 node(s)"));
+        let out = listing.draw(at(200) + live::FADE, true);
+        assert!(!out.contains("second"));
+        assert!(out.starts_with("Discovered 1 node(s)"));
+
+        listing.apply(alone(), at(300));
+        listing.settle();
+        assert!(!listing.draw(at(300), true).contains("second"));
+    }
+
+    /// `m network` is `m network status`, so the status arguments are
+    /// accepted directly.
+    #[test]
+    fn bare_network_takes_the_status_arguments() {
+        use clap::Parser as _;
+
+        use crate::args::{Args, Command};
+        use crate::cmd::network::{Cmd, Network};
+
+        let args = Args::try_parse_from(["myrmic", "network", "--once"]).unwrap();
+        let Command::Network(Network { cmd: None, status }) = args.command else {
+            panic!("expected bare network");
+        };
+        assert!(status.live.once);
+
+        let args =
+            Args::try_parse_from(["myrmic", "nodes", "status", "--interval", "500ms"]).unwrap();
+        let Command::Network(Network {
+            cmd: Some(Cmd::Status(status)),
+            ..
+        }) = args.command
+        else {
+            panic!("expected network status");
+        };
+        assert!(!status.live.once);
+        assert_eq!(
+            Duration::from(status.live.interval),
+            Duration::from_millis(500)
+        );
     }
 }
