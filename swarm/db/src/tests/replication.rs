@@ -1934,3 +1934,90 @@ async fn replica_tracks_active() {
     assert_eq!(store2.replica_status(&scope_a).unwrap(), Some(ReplicationStatus::Requested));
     assert!(store2.replica_status(&scope_b).unwrap().is_none());
 }
+
+fn announced_heads(messages: Vec<ReplicaMessage>, scope: &api::Scope) -> ScopeFrontier {
+    messages
+        .into_iter()
+        .find_map(|m| match m {
+            ReplicaMessage::Announce(a) => a.known.get(scope).map(|sa| sa.heads.clone()),
+            _ => None,
+        })
+        .expect("the scope was announced")
+}
+
+/// A burst of peer announces costs one frontier scan, not one each: every
+/// request that arrives while a scan runs shares its result, and every one of
+/// them is still answered.
+#[tokio::test]
+async fn concurrent_announces_share_one_frontier_scan() {
+    const PEERS: usize = 8;
+
+    let subject = domain::Subject::Namespace("d".to_string());
+    let (store1, transport1, replica1) = spawn_replica(&subject);
+    let (_store2, transport2, replica2) = spawn_replica(&subject);
+    let scope = api::Scope::new("d", "db", "schema");
+
+    add_key(&store1, db_scope(&scope), "a", b"1");
+    replica1.announce().await.expect("unable to announce");
+    let ReplicaMessage::Announce(announce) = transport1
+        .drain_outgoing()
+        .pop()
+        .expect("an announce was published")
+    else {
+        panic!("expected an announce");
+    };
+
+    let handlers: Vec<_> = (0..PEERS)
+        .map(|_| {
+            let replica = replica2.clone();
+            let announce = announce.clone();
+            tokio::spawn(async move {
+                replica
+                    .handle_message(transport1.id, ReplicaMessage::Announce(announce))
+                    .await;
+            })
+        })
+        .collect();
+    for handler in handlers {
+        handler.await.expect("handler panicked");
+    }
+
+    let requests = transport2
+        .drain_outgoing()
+        .into_iter()
+        .filter(|m| matches!(m, ReplicaMessage::ChangeSetReq(_)))
+        .count();
+    assert_eq!(
+        requests, PEERS,
+        "every announce is answered with a catch-up"
+    );
+    assert_eq!(
+        replica2.frontier_scans(),
+        1,
+        "one scan serves the whole burst"
+    );
+}
+
+/// A shared scan result must not outlive the next commit: an announce after a
+/// write carries the new head.
+#[tokio::test]
+async fn an_announce_carries_a_head_committed_after_the_previous_scan() {
+    let subject = domain::Subject::Namespace("d".to_string());
+    let (store, transport, replica) = spawn_replica(&subject);
+    let scope = api::Scope::new("d", "db", "schema");
+
+    add_key(&store, db_scope(&scope), "a", b"1");
+    replica.announce().await.expect("unable to announce");
+    let first = announced_heads(transport.drain_outgoing(), &scope);
+
+    add_key(&store, db_scope(&scope), "b", b"2");
+    replica.announce().await.expect("unable to announce");
+    let second = announced_heads(transport.drain_outgoing(), &scope);
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(
+        second.len(),
+        2,
+        "the second announce sees the second commit"
+    );
+}

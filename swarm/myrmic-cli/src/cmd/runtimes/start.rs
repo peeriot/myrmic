@@ -168,7 +168,9 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         }
     }
 
-    crate::block_on(async move {
+    // The fork above precedes the runtime, so a full worker pool is fork-safe.
+    let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    crate::block_on_with(workers, async move {
         pid.write_self().await?;
 
         let _guard = swarm.spawn_in_place().unwrap();

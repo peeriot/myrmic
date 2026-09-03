@@ -83,9 +83,19 @@ fn block_on<F, R>(fut: F) -> R
 where
     F: Future<Output = R>,
 {
+    block_on_with(1, fut)
+}
+
+/// `block_on` with `workers` async worker threads. A CLI command needs one; a
+/// node runs its whole data plane on this runtime, where a store scan on a
+/// lone worker stalls every other task until it finishes.
+fn block_on_with<F, R>(workers: usize, fut: F) -> R
+where
+    F: Future<Output = R>,
+{
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(1)
+        .worker_threads(workers)
         .build()
         .expect("unable to build tokio runtime");
 
@@ -165,5 +175,16 @@ mod tests {
     #[test]
     fn default_repo_errors_without_a_version_or_revision() {
         assert!(default_repo_from(None, None).is_err());
+    }
+
+    #[test]
+    fn block_on_with_sizes_the_worker_pool() {
+        let workers = |n| {
+            block_on_with(n, async {
+                tokio::runtime::Handle::current().metrics().num_workers()
+            })
+        };
+        assert_eq!(workers(1), 1);
+        assert_eq!(workers(4), 4);
     }
 }

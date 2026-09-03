@@ -90,13 +90,8 @@ impl crate::plugins::MyrmicPlugin for Plugin {
                         () = shutdown.cancelled() => break,
                     }
 
-                    match context.store.stray_scopes() {
-                        Ok(scopes) => {
-                            for scope in scopes {
-                                context.start_offload(scope, OffloadKind::Hidden);
-                            }
-                        }
-                        Err(err) => tracing::warn!("unable to scan for stray scopes: {err}"),
+                    for scope in stray_scopes(&context).await {
+                        context.start_offload(scope, OffloadKind::Hidden);
                     }
                 }
             }
@@ -876,6 +871,24 @@ async fn drive_offload(
     // `stopped()` that came from somewhere else releases nothing.
     if retired {
         release_offloaded(&context, &scope, &covered, me).await;
+    }
+}
+
+/// The scopes this node holds outside every subject it replicates, or nothing
+/// if the scan fails — a stray is offered up again on the next sweep. Scanned
+/// off the async workers: it walks every sync point the node holds.
+async fn stray_scopes(context: &StoreContext) -> Vec<models::Scope> {
+    let store = context.store.clone();
+    match tokio::task::spawn_blocking(move || store.stray_scopes()).await {
+        Ok(Ok(scopes)) => scopes,
+        Ok(Err(err)) => {
+            tracing::warn!("unable to scan for stray scopes: {err}");
+            Vec::new()
+        }
+        Err(err) => {
+            tracing::warn!("stray scope scan failed: {err}");
+            Vec::new()
+        }
     }
 }
 

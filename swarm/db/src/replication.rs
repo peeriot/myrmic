@@ -9,9 +9,10 @@ use db_commons::models::replication::{
 };
 use db_commons::models::{ReplicaMessage, Subject};
 use skey::StoreKey;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// How far behind "now" the announce baseline sits. Heads younger than this
@@ -123,6 +124,23 @@ pub enum ReplicaMode {
     Offload,
 }
 
+/// The heads this node holds for a subject, as of one scan.
+struct Frontiers {
+    /// When the scan finished; a request made before this reuses it.
+    scanned_at: Instant,
+    /// The scanning transaction's timestamp — "now" for the announce lag cut.
+    now: uhlc::Timestamp,
+    scopes: VecMap<api::Scope, domain::ScopeFrontier>,
+}
+
+/// The latest frontier scan of one subject, shared across a replicator's
+/// clones so that at most one scan is in flight for it at a time.
+#[derive(Default)]
+struct FrontierCache {
+    latest: tokio::sync::Mutex<Option<Arc<Frontiers>>>,
+    scans: AtomicU64,
+}
+
 pub struct Replicator<T: ReplicaTransport, M = ()> {
     store: Store<M>,
     stopped: tokio_util::sync::CancellationToken,
@@ -135,6 +153,7 @@ pub struct Replicator<T: ReplicaTransport, M = ()> {
     /// In-flight direct pulls, keyed by (holder, scope), so overlapping
     /// announces from the same holder don't stack duplicate pulls.
     pulling: Arc<dashmap::DashMap<(models::NodeId, api::Scope), ()>>,
+    frontier: Arc<FrontierCache>,
 }
 
 /// Holds one (holder, scope) pull slot; the slot frees on drop.
@@ -160,6 +179,7 @@ impl<T: ReplicaTransport, M> Clone for Replicator<T, M> {
             lag: self.lag,
             probes: self.probes.clone(),
             pulling: self.pulling.clone(),
+            frontier: self.frontier.clone(),
         }
     }
 }
@@ -189,6 +209,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             lag: ANNOUNCE_LAG,
             probes: Default::default(),
             pulling: Default::default(),
+            frontier: Default::default(),
         };
 
         let handle = ReplicationHandle { stopped };
@@ -269,7 +290,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             ReplicaMessage::Probe(probe) => self.handle_probe(probe).await,
             ReplicaMessage::Announce(announce) => match self.mode {
                 ReplicaMode::Full => self.handle_announce(sender, announce).await,
-                ReplicaMode::Offload => self.handle_coverage(sender, announce),
+                ReplicaMode::Offload => self.handle_coverage(sender, announce).await,
             },
             ReplicaMessage::ChangeSetReq(req) => self.handle_cs_req(req).await,
             ReplicaMessage::ChangeSet(cs) => match self.mode {
@@ -290,6 +311,69 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         self.send_announce(&probe.filter, false).await.map(drop)
     }
 
+    /// The heads this node holds for its subject.
+    ///
+    /// The scan walks every sync point of the subject, so it runs off the
+    /// async workers, one at a time per replicator; every request that arrives
+    /// while a scan runs shares its result. A burst of peer announces thereby
+    /// costs one scan rather than one each, and a result is at most one scan
+    /// duration stale — the window a concurrent commit already has against an
+    /// in-flight scan, and one a peer's next announce closes.
+    async fn frontiers(&self) -> anyhow::Result<Arc<Frontiers>> {
+        let requested = Instant::now();
+        let mut latest = self.frontier.latest.lock().await;
+        if let Some(cached) = latest.as_ref().filter(|c| c.scanned_at >= requested) {
+            return Ok(cached.clone());
+        }
+
+        let store = self.store.clone();
+        let subject = self.subject.clone();
+        let (now, scopes) = tokio::task::spawn_blocking(move || {
+            let tx = store
+                .begin_local(&TransactionOptions::read())
+                .context("unable to start transaction")?;
+
+            let (lower, upper) = domain::SyncPoint::range_from_subject(&subject)?;
+
+            let mut scopes = VecMap::<api::Scope, domain::ScopeFrontier>::new();
+            tx.collect_latest_heads(lower, upper, |scope, id, _| {
+                let (epoch, v, node_id) = id;
+
+                let duplicate_entry = scopes
+                    .entry(scope)
+                    .or_default()
+                    .insert(v, (epoch, node_id))
+                    .is_some();
+
+                if duplicate_entry {
+                    anyhow::bail!("collect_latest_heads emitted duplicate ts for one scope");
+                }
+
+                Ok(())
+            })?;
+
+            anyhow::Ok((tx.timestamp(), scopes))
+        })
+        .await
+        .context("frontier scan aborted")??;
+
+        self.frontier.scans.fetch_add(1, Ordering::Relaxed);
+        let scanned = Arc::new(Frontiers {
+            scanned_at: Instant::now(),
+            now,
+            scopes,
+        });
+        *latest = Some(scanned.clone());
+
+        Ok(scanned)
+    }
+
+    /// How many frontier scans this replicator has run; requests served from a
+    /// scan already in flight don't count.
+    pub fn frontier_scans(&self) -> u64 {
+        self.frontier.scans.load(Ordering::Relaxed)
+    }
+
     async fn send_announce(
         &self,
         filter: &[api::Scope],
@@ -297,44 +381,23 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     ) -> anyhow::Result<Vec<api::Scope>> {
         let me = self.store.node_id();
 
-        let tx = self
-            .store
-            .begin_local(&TransactionOptions::read())
-            .context("unable to start transaction")?;
+        let frontiers = self.frontiers().await?;
+        let announced: Vec<_> = frontiers
+            .scopes
+            .iter()
+            .filter(|(scope, _)| filter.is_empty() || filter.contains(scope))
+            .collect();
 
-        let (lower, upper) = domain::SyncPoint::range_from_subject(&self.subject)?;
-
-        let mut frontiers = VecMap::<api::Scope, domain::ScopeFrontier>::new();
-        tx.collect_latest_heads(lower, upper, |scope, id, _| {
-            let (epoch, v, node_id) = id;
-
-            let duplicate_entry = frontiers
-                .entry(scope)
-                .or_default()
-                .insert(v, (epoch, node_id))
-                .is_some();
-
-            if duplicate_entry {
-                anyhow::bail!("collect_latest_heads emitted duplicate ts for one scope");
-            }
-
-            Ok(())
-        })?;
-
-        if !filter.is_empty() {
-            frontiers.retain(|s, _| filter.contains(s));
-        }
-
-        tracing::trace!("[{}] announce has {} scope(s)", me, frontiers.len());
+        tracing::trace!("[{}] announce has {} scope(s)", me, announced.len());
 
         let lag_cut = floored.then(|| {
-            let now = tx.timestamp().get_time().0;
+            let now = frontiers.now.get_time().0;
             now.saturating_sub(uhlc::NTP64::from(self.lag).0)
         });
 
         let mut known = VecMap::<api::Scope, ScopeAnnounce>::new();
-        let mut scopes = Vec::with_capacity(frontiers.len());
-        for (scope, frontier) in frontiers {
+        let mut scopes = Vec::with_capacity(announced.len());
+        for (scope, frontier) in announced {
             scopes.push(scope.clone());
 
             // The baseline is capped at the newest held head, so it never
@@ -345,13 +408,13 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             });
 
             let sa = match cut {
-                None => ScopeAnnounce::full(frontier),
+                None => ScopeAnnounce::full(frontier.clone()),
                 Some(cut) => {
                     let mut sa = ScopeAnnounce {
                         baseline: Some(cut),
                         ..Default::default()
                     };
-                    for (ts, (epoch, node_id)) in frontier {
+                    for (&ts, &(epoch, node_id)) in frontier {
                         if sa.elides(ts, epoch) {
                             sa.fingerprint ^= head_fingerprint(ts, epoch, &node_id);
                         } else {
@@ -362,7 +425,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
                 }
             };
 
-            known.insert(scope, sa);
+            known.insert(scope.clone(), sa);
         }
 
         self.transport
@@ -416,22 +479,8 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         let me = self.store.node_id();
         let peer = sender.to_le_bytes();
 
-        let tx = self
-            .store
-            .begin_local(&TransactionOptions::read())
-            .context("unable to start transaction")?;
-
-        let (lower, upper) = domain::SyncPoint::range_from_subject(&self.subject)?;
-
-        let mut our_frontier = HashMap::<api::Scope, domain::ScopeFrontier>::new();
-        tx.collect_latest_heads(lower, upper, |scope, id, _| {
-            let (epoch, v, node_id) = id;
-            our_frontier
-                .entry(scope)
-                .or_default()
-                .insert(v, (epoch, node_id));
-            Ok(())
-        })?;
+        let frontiers = self.frontiers().await?;
+        let our_frontier = &frontiers.scopes;
 
         let full_replica = announce.full_replica;
         let their_known = announce.known;
@@ -527,29 +576,18 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// Only explicitly announced heads count: a floored announce's elided
     /// prefix cannot vouch for individual versions, so old holdings retire off
     /// the full announces our own announce's probe solicits.
-    fn handle_coverage(&self, sender: uhlc::ID, announce: Announce) -> anyhow::Result<()> {
+    async fn handle_coverage(&self, sender: uhlc::ID, announce: Announce) -> anyhow::Result<()> {
         let covered = if announce.full_replica {
-            let tx = self
-                .store
-                .begin_local(&TransactionOptions::read())
-                .context("unable to start transaction")?;
-
-            let (lower, upper) = domain::SyncPoint::range_from_subject(&self.subject)?;
-
-            let mut covered = true;
-            tx.collect_latest_heads(lower, upper, |scope, id, _| {
-                let (epoch, ts, _) = id;
-
-                let held = announce
-                    .known
-                    .get(&scope)
-                    .and_then(|sa| sa.heads.get(&ts))
-                    .is_some_and(|&(their_epoch, _)| their_epoch >= epoch);
-
-                covered &= held;
-                Ok(())
-            })?;
-            covered
+            let frontiers = self.frontiers().await?;
+            frontiers.scopes.iter().all(|(scope, frontier)| {
+                frontier.iter().all(|(ts, &(epoch, _))| {
+                    announce
+                        .known
+                        .get(scope)
+                        .and_then(|sa| sa.heads.get(ts))
+                        .is_some_and(|&(their_epoch, _)| their_epoch >= epoch)
+                })
+            })
         } else {
             false
         };

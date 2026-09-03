@@ -49,7 +49,7 @@ rand = { workspace = true }
 uhlc = { workspace = true }
 uuid = { workspace = true, features = ["std", "v4", "v7"] }
 serde = { workspace = true, features = ["derive", "rc"] }
-tokio = { workspace = true, features = ["rt", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
 tracing = { workspace = true }
 
 oxsdatatypes = { workspace = true }
