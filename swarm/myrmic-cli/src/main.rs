@@ -40,6 +40,7 @@ mod archive;
 mod args;
 mod build;
 mod deploy;
+mod flash;
 mod live;
 mod log;
 mod models;
@@ -57,6 +58,7 @@ mod cmd {
     pub mod database;
     pub mod delete;
     pub mod deploy;
+    pub mod flash;
     pub mod gateway;
     pub mod network;
     pub mod new;
@@ -103,6 +105,7 @@ fn main() -> Result<(), ()> {
         // Project
         args::Command::New(cmd) => cmd::new::handle(ctx, cmd),
         args::Command::Build(cmd) => cmd::build::handle(ctx, cmd),
+        args::Command::Flash(cmd) => cmd::flash::handle(ctx, cmd),
         // Management
         args::Command::Send(cmd) => block_on(cmd::send::handle(ctx, cmd)),
         args::Command::Publish(cmd) => block_on(cmd::publish::handle(ctx, cmd)),

@@ -202,9 +202,23 @@ impl std::fmt::Display for Partitions {
     }
 }
 
+/// The `[partitions]` knobs of the `partitions.toml` beside a crate's
+/// `Cargo.toml`, or `None` when the crate ships no such file.
+pub fn read_partitions_toml(manifest_dir: &Path) -> Result<Option<Partitions>, String> {
+    let path = manifest_dir.join("partitions.toml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    let config: Config =
+        toml::from_str(&text).map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+    Ok(Some(config.partitions))
+}
+
 /// `2M` / `1984K` for round sizes, hex otherwise — the forms `partitions.toml`
 /// accepts.
-fn spell_size(bytes: u64) -> String {
+pub fn spell_size(bytes: u64) -> String {
     const K: u64 = 1024;
     const M: u64 = 1024 * K;
     if bytes > 0 && bytes.is_multiple_of(M) {
@@ -227,18 +241,12 @@ fn spell_size(bytes: u64) -> String {
 pub fn configure() {
     let chip = detect_chip();
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR is set for every build script");
-    let config_path = Path::new(&manifest_dir).join("partitions.toml");
-    println!("cargo:rerun-if-changed={}", config_path.display());
-
-    let file = config_path.exists().then(|| {
-        let text = std::fs::read_to_string(&config_path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", config_path.display()));
-        let config: Config = toml::from_str(&text)
-            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", config_path.display()));
-        config.partitions
-    });
+    let manifest_dir = manifest_dir();
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("partitions.toml").display()
+    );
+    let file = read_partitions_toml(&manifest_dir).unwrap_or_else(|e| panic!("{e}"));
 
     println!("cargo:rerun-if-env-changed={PARTITIONS_ENV}");
     let env = std::env::var(PARTITIONS_ENV).ok();
@@ -639,6 +647,37 @@ mod tests {
         let err = Partitions::parse_compact("flash=lots").unwrap_err();
         assert!(err.contains("lots"), "{err}");
         assert!(Partitions::parse_compact("flash").is_err());
+    }
+
+    #[test]
+    fn read_partitions_toml_is_none_when_the_crate_has_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_partitions_toml(dir.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn read_partitions_toml_reads_the_partitions_table() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("partitions.toml"),
+            "[partitions]\nflash_size = \"8M\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_partitions_toml(dir.path()).unwrap(),
+            Some(Partitions {
+                flash_size: Some(8 * M),
+                ..Partitions::default()
+            })
+        );
+    }
+
+    #[test]
+    fn read_partitions_toml_names_the_file_in_a_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("partitions.toml"), "[partitions\n").unwrap();
+        let err = read_partitions_toml(dir.path()).unwrap_err();
+        assert!(err.contains("partitions.toml"), "{err}");
     }
 
     #[test]

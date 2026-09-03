@@ -204,7 +204,7 @@ fn parse_platforms(spec: Option<models::PlatformSpec>) -> anyhow::Result<Vec<Pla
     }
 }
 
-fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build::CargoTarget {
+pub(crate) fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build::CargoTarget {
     match target {
         models::CargoTarget::Auto => myrmic_build::CargoTarget::Auto,
         models::CargoTarget::Lib => myrmic_build::CargoTarget::Lib,
@@ -278,33 +278,38 @@ fn build_firmware(
     }
     crate::info!(ctx, "Building {chip} firmware: {}", path.display());
 
-    let built = firmware::build(path, cargo_target)?;
+    let built = firmware::build(path, cargo_target, None)?;
+    report_layout(ctx, &built);
 
+    crate::info!(ctx, "Firmware: {}", built.elf.display());
+    if let Some(table) = &built.partition_table {
+        crate::info!(ctx, "Partition table: {}", table.display());
+    }
+    crate::info!(
+        ctx,
+        "Flash with: myrmic flash {}",
+        path.parent().unwrap_or(path).display()
+    );
+
+    Ok(())
+}
+
+/// Logs where a firmware build's partition layout came from, and warns when
+/// nothing tells espflash which table to flash it with.
+pub(crate) fn report_layout(ctx: Ctx, built: &firmware::FirmwareBuild) {
     if let Some(partitions) = &built.default_partitions {
         crate::info!(
             ctx,
             "No partitions.toml beside the crate; using the default layout ({partitions})"
         );
     }
-    crate::info!(ctx, "Firmware: {}", built.elf.display());
-    match &built.partition_table {
-        Some(table) => {
-            crate::info!(ctx, "Partition table: {}", table.display());
-            crate::info!(
-                ctx,
-                "Flash with: espflash flash --partition-table {} {}",
-                table.display(),
-                built.elf.display()
-            );
-        }
-        None => crate::warn!(
+    if built.partition_table.is_none() {
+        crate::warn!(
             ctx,
             "no espflash.toml beside the crate names a partition table; flashing will fall \
              back to espflash's default table and may write an oversized image"
-        ),
+        );
     }
-
-    Ok(())
 }
 
 /// Maps the CLI's build platforms to `myrmic-build` platforms

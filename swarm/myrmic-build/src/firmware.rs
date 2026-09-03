@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Context as _;
-use esp_firmware_build::PARTITIONS_ENV;
-pub use esp_firmware_build::Partitions;
+use esp_firmware_build::{PARTITIONS_ENV, read_partitions_toml};
+pub use esp_firmware_build::{Partitions, spell_size};
 use serde::Deserialize;
 
 use crate::CargoTarget;
@@ -97,7 +97,15 @@ pub struct FirmwareBuild {
 
 /// Builds the firmware crate at `manifest_path` in release mode for [`TARGET`],
 /// compiling the binary `cargo_target` selects.
-pub fn build(manifest_path: &Path, cargo_target: &CargoTarget) -> anyhow::Result<FirmwareBuild> {
+///
+/// `flash_size` is the attached board's flash in bytes, when a board is at
+/// hand: it sizes the default partition layout, and a `partitions.toml` that
+/// claims more flash than that is rejected.
+pub fn build(
+    manifest_path: &Path,
+    cargo_target: &CargoTarget,
+    flash_size: Option<u64>,
+) -> anyhow::Result<FirmwareBuild> {
     let manifest_dir = manifest_path.parent().with_context(|| {
         format!(
             "manifest has no parent directory: {}",
@@ -116,9 +124,9 @@ pub fn build(manifest_path: &Path, cargo_target: &CargoTarget) -> anyhow::Result
     cmd.args(["build", "--release", "--target", TARGET, "--manifest-path"])
         .arg(manifest_path)
         .args(["--bin", &bin]);
-    let default_partitions = configure(&mut cmd, manifest_dir, |key| {
+    let default_partitions = configure(&mut cmd, manifest_dir, flash_size, |key| {
         std::env::var_os(key).is_some()
-    });
+    })?;
     cmd.env_remove("RUSTUP_TOOLCHAIN");
 
     let mut elf = None;
@@ -138,12 +146,14 @@ pub fn build(manifest_path: &Path, cargo_target: &CargoTarget) -> anyhow::Result
 
 /// Sets the target's link flags, the compile-time environment (only the keys
 /// `already_set` says the caller hasn't), and — for a crate without a
-/// `partitions.toml` — the default partition layout, which is returned.
+/// `partitions.toml` — the default partition layout for `flash_size`, which is
+/// returned.
 fn configure(
     cmd: &mut Command,
     manifest_dir: &Path,
+    flash_size: Option<u64>,
     already_set: impl Fn(&str) -> bool,
-) -> Option<Partitions> {
+) -> anyhow::Result<Option<Partitions>> {
     cmd.env(RUSTFLAGS_ENV, RUSTFLAGS);
     for (key, value) in DEFAULT_ENV {
         if !already_set(key) {
@@ -151,12 +161,21 @@ fn configure(
         }
     }
 
-    if manifest_dir.join("partitions.toml").exists() {
-        return None;
+    if let Some(file) = read_partitions_toml(manifest_dir).map_err(anyhow::Error::msg)? {
+        if let (Some(claimed), Some(device)) = (file.flash_size, flash_size)
+            && claimed > device
+        {
+            anyhow::bail!(
+                "partitions.toml sets flash_size = \"{}\", but the board has {} of flash",
+                spell_size(claimed),
+                spell_size(device)
+            );
+        }
+        return Ok(None);
     }
-    let partitions = Partitions::default_layout(None);
+    let partitions = Partitions::default_layout(flash_size);
     cmd.env(PARTITIONS_ENV, partitions.to_compact());
-    Some(partitions)
+    Ok(Some(partitions))
 }
 
 #[derive(Deserialize)]
@@ -226,11 +245,13 @@ mod tests {
         assert!("esp32c3".parse::<Chip>().is_err());
     }
 
+    const M: u64 = 1024 * 1024;
+
     #[test]
     fn configure_links_with_the_esp_flags_for_the_riscv_target() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        configure(&mut cmd, dir.path(), |_| false);
+        configure(&mut cmd, dir.path(), None, |_| false).unwrap();
 
         let rustflags = env_of(&cmd, RUSTFLAGS_ENV).expect("rustflags are set");
         for flag in [
@@ -251,7 +272,7 @@ mod tests {
     fn configure_leaves_env_the_caller_already_set_alone() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        configure(&mut cmd, dir.path(), |key| key == "ESP_LOG");
+        configure(&mut cmd, dir.path(), None, |key| key == "ESP_LOG").unwrap();
 
         assert_eq!(env_of(&cmd, "ESP_LOG"), None);
         assert_eq!(
@@ -264,7 +285,7 @@ mod tests {
     fn configure_supplies_the_default_partitions_only_without_a_partitions_toml() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        let supplied = configure(&mut cmd, dir.path(), |_| false);
+        let supplied = configure(&mut cmd, dir.path(), None, |_| false).unwrap();
         assert_eq!(supplied, Some(Partitions::default_layout(None)));
         assert_eq!(
             env_of(&cmd, PARTITIONS_ENV),
@@ -273,8 +294,51 @@ mod tests {
 
         std::fs::write(dir.path().join("partitions.toml"), "[partitions]\n").unwrap();
         let mut cmd = Command::new("cargo");
-        assert_eq!(configure(&mut cmd, dir.path(), |_| false), None);
+        assert_eq!(
+            configure(&mut cmd, dir.path(), None, |_| false).unwrap(),
+            None
+        );
         assert_eq!(env_of(&cmd, PARTITIONS_ENV), None);
+    }
+
+    #[test]
+    fn configure_sizes_the_default_layout_to_the_device_flash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cmd = Command::new("cargo");
+        let supplied = configure(&mut cmd, dir.path(), Some(8 * M), |_| false).unwrap();
+        assert_eq!(supplied, Some(Partitions::default_layout(Some(8 * M))));
+        assert_eq!(
+            env_of(&cmd, PARTITIONS_ENV),
+            Some(Partitions::default_layout(Some(8 * M)).to_compact())
+        );
+    }
+
+    #[test]
+    fn configure_rejects_a_partitions_toml_that_claims_more_flash_than_the_device_has() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("partitions.toml"),
+            "[partitions]\nflash_size = \"8M\"\n",
+        )
+        .unwrap();
+
+        let mut cmd = Command::new("cargo");
+        let err = configure(&mut cmd, dir.path(), Some(4 * M), |_| false).unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains("8M") && err.contains("4M"), "{err}");
+
+        // The same file is fine on a board that has the flash it claims, or
+        // when no device size is known (`myrmic build`).
+        let mut cmd = Command::new("cargo");
+        assert_eq!(
+            configure(&mut cmd, dir.path(), Some(8 * M), |_| false).unwrap(),
+            None
+        );
+        let mut cmd = Command::new("cargo");
+        assert_eq!(
+            configure(&mut cmd, dir.path(), None, |_| false).unwrap(),
+            None
+        );
     }
 
     #[test]

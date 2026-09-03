@@ -60,11 +60,19 @@ pub enum Command {
     /// Can also be used to generate an api file to provide external parties your cell's API.
     ///
     /// A crate whose `[package.metadata.myrmic]` names a `firmware` chip is built
-    /// as an ESP firmware image instead: the ELF `espflash` flashes, plus the
-    /// partition table it should be flashed with.
+    /// as an ESP firmware image instead: the ELF plus the partition table it
+    /// should be flashed with, which `myrmic flash` does in one go.
     ///
     /// If compiling an `app_specs.yml`, then all artifacts will be bundled into a `nest` archive.
     Build(build::Build),
+    /// Build a firmware and flash it onto the attached board.
+    ///
+    /// Connects to the board before building, so the crate is laid out for the
+    /// flash it actually has: without a `partitions.toml`, the firmware
+    /// partition takes whatever the AOT region leaves of it. The image is
+    /// written with the partition table that build generated, and the board
+    /// resets into it. `--monitor` keeps streaming its serial output afterwards.
+    Flash(flash::Flash),
 
     // Management
     #[clap(alias = "db")]

@@ -310,7 +310,7 @@ base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 darling = "0.21.0"
 
 rust-embed = { version = "8.5.0" }
-espflash = { version = "4.4.0" }
+espflash = { version = "4.4.0", default-features = false }
 serialport = { version = "4.9", default-features = false }
 
 flume = { version = "0.11.1", default-features = false }

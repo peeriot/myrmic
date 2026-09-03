@@ -45,6 +45,9 @@ open-telemetry = [
 anyhow = { workspace = true }
 clap = { workspace = true }
 dialoguer = { workspace = true }
+# The flasher without espflash's own CLI layer (clap, crossterm, indicatif, ...).
+espflash = { workspace = true, features = ["serialport"] }
+serialport = { workspace = true }
 
 sha2 = { workspace = true }
 myrmic-build = { workspace = true }

@@ -4102,6 +4102,7 @@ version = "0.2.1"
 dependencies = [
  "esp-mmu-consts",
  "serde",
+ "tempfile",
  "toml 0.8.23",
 ]
 
@@ -7629,6 +7630,7 @@ dependencies = [
  "db-client",
  "db-commons",
  "dialoguer",
+ "espflash",
  "filestore-client",
  "flate2",
  "fork",
@@ -7645,6 +7647,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "serialport",
  "sha2 0.10.9",
  "sorg-client",
  "sorg-common",
