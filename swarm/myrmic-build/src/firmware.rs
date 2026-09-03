@@ -124,9 +124,8 @@ pub fn build(
     };
 
     let mut cmd = Command::new("cargo");
-    // Run from the crate so a `rust-toolchain.toml` beside it picks the toolchain.
     cmd.current_dir(manifest_dir);
-    cmd.args(["build", "--release", "--target", TARGET, "--manifest-path"])
+    cmd.args(["+nightly", "build", "--release", "--target", TARGET, "--manifest-path"])
         .arg(manifest_path)
         .args(["--bin", &bin]);
     let default_partitions = configure(&mut cmd, manifest_dir, flash_size, runtime_name, |key| {

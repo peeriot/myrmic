@@ -15,7 +15,7 @@ use crate::render::{NONE, cell, styled_id, unique_prefix_lengths, width};
 /// table for every other row.
 const NAME_CHARS: usize = 48;
 const KIND_CHARS: usize = 16;
-const TAGS_CHARS: usize = 64;
+const TAGS_CHARS: usize = 128;
 
 #[derive(clap::Parser)]
 pub struct Status {
