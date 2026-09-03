@@ -7,10 +7,13 @@ use crate::{determine_name, models};
 pub struct New {
     path: std::path::PathBuf,
 
-    #[clap(long)]
+    #[clap(short, long)]
     name: Option<String>,
 
-    #[clap(long)]
+    #[clap(short, long, require_equals = true, num_args = 0..=1, default_missing_value = "esp32c6")]
+    firmware: Option<String>,
+
+    #[clap(long, alias = "repo")]
     sdk: Option<String>,
 }
 
@@ -21,23 +24,60 @@ struct TemplateNew<'a> {
     myrmic_sdk: models::CargoDep,
 }
 
+#[derive(textus::Template)]
+#[template(path = "templates/firmware", strip_suffix = ".tmpl")]
+struct TemplateNewFirmware<'a> {
+    name: &'a str,
+    chip: &'a str,
+    firmware_sdk: models::CargoDep,
+    firmware_build: models::CargoDep,
+}
+
 pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
-    let New { path, name, sdk } = cmd;
+    let New {
+        path,
+        name,
+        sdk: repo,
+        firmware,
+    } = cmd;
 
     let name = determine_name(name.as_deref(), &path)?;
 
     validate_name(name)?;
 
-    crate::info!(ctx, "Creating '{}'", name);
+    if let Some(chip) = firmware.as_deref() {
+        crate::info!(ctx, "Creating firmware '{}' for {}", name, chip);
+    } else {
+        crate::info!(ctx, "Creating '{}'", name);
+    }
 
-    let sdk = crate::utils::resolve_sdk(ctx, sdk.as_deref())?;
+    let repo = crate::utils::resolve_repo(ctx, repo.as_deref())?;
 
-    let template = TemplateNew {
-        name,
-        myrmic_sdk: sdk,
+    let result = if let Some(chip) = firmware {
+        let firmware_sdk = repo.clone().resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
+        let firmware_build =
+            repo.resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
+
+        let template = TemplateNewFirmware {
+            name,
+            chip: &chip,
+            firmware_sdk,
+            firmware_build,
+        };
+
+        template.render_into(&path)
+    } else {
+        let sdk = repo.resolve_or_assume_correct("sdk/myrmic-sdk");
+
+        let template = TemplateNew {
+            name,
+            myrmic_sdk: sdk,
+        };
+
+        template.render_into(&path)
     };
 
-    if let Err(err) = template.render_into(&path) {
+    if let Err(err) = result {
         if let Err(io_err) = std::fs::remove_dir_all(&path) {
             return Err(anyhow::Error::new(io_err).context(format!(
                 "unable to cleanup after template render failure: {}",

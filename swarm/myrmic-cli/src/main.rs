@@ -1,24 +1,27 @@
 use utils::*;
 
 /// The git repository hosting `myrmic_sdk`.
-const MYRMIC_SDK_GIT_URL: &str = "ssh://git@github.com/peeriot/myrmic.git";
-const MYRMIC_SDK_OVERRIDE: &str = "PEERIOT_MYRMIC_SDK";
+const MYRMIC_REPO_GIT_URL: &str = match option_env!("PEERIOT_MYRMIC_REPO") {
+    Some(repo) => repo,
+    None => "ssh://git@github.com/peeriot/myrmic.git",
+};
+const MYRMIC_REPO_OVERRIDE: &str = "PEERIOT_MYRMIC_REPO";
 
-/// The default `myrmic_sdk` dependency for scaffolded cells, baked in at build
-/// time: a release sets `MYRMIC_SDK_VERSION` to the published SDK release it
-/// ships alongside; otherwise the swarm repo pinned to the revision this CLI
+/// The default source of myrmic crates for scaffolded projects, baked in at
+/// build time: a release sets `MYRMIC_SDK_VERSION` to the published release it
+/// ships alongside; otherwise the myrmic repo pinned to the revision this CLI
 /// was built from (see `build.rs`).
 ///
 /// Errors when neither is known, so scaffolding never silently pins to a
-/// guessed revision — pass `--sdk` or set `PEERIOT_MYRMIC_SDK` in that case.
-fn default_sdk() -> anyhow::Result<String> {
-    default_sdk_from(
+/// guessed revision — pass `--sdk` or set `PEERIOT_MYRMIC_REPO` in that case.
+fn default_repo() -> anyhow::Result<String> {
+    default_repo_from(
         option_env!("MYRMIC_SDK_VERSION"),
         option_env!("MYRMIC_GIT_HASH"),
     )
 }
 
-fn default_sdk_from(version: Option<&str>, rev: Option<&str>) -> anyhow::Result<String> {
+fn default_repo_from(version: Option<&str>, rev: Option<&str>) -> anyhow::Result<String> {
     if let Some(version) = version {
         return Ok(version.to_owned());
     }
@@ -26,11 +29,11 @@ fn default_sdk_from(version: Option<&str>, rev: Option<&str>) -> anyhow::Result<
     let rev = rev.ok_or_else(|| {
         anyhow::anyhow!(
             "could not determine the myrmic SDK revision (this CLI was built without VCS info); \
-             pass --sdk <version|git-url|path> or set {MYRMIC_SDK_OVERRIDE}"
+             pass --sdk <version|git-url|path> or set {MYRMIC_REPO_OVERRIDE}"
         )
     })?;
 
-    Ok(format!("{MYRMIC_SDK_GIT_URL}?rev={rev}"))
+    Ok(format!("{MYRMIC_REPO_GIT_URL}?rev={rev}"))
 }
 
 mod archive;
@@ -142,19 +145,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_sdk_prefers_the_baked_release_version() {
-        let sdk = default_sdk_from(Some("0.2.1"), Some("abc12345")).unwrap();
+    fn default_repo_prefers_the_baked_release_version() {
+        let sdk = default_repo_from(Some("0.2.1"), Some("abc12345")).unwrap();
         assert_eq!(sdk, "0.2.1");
     }
 
     #[test]
-    fn default_sdk_falls_back_to_the_build_revision() {
-        let sdk = default_sdk_from(None, Some("abc12345")).unwrap();
+    fn default_repo_falls_back_to_the_build_revision() {
+        let sdk = default_repo_from(None, Some("abc12345")).unwrap();
         assert_eq!(sdk, "ssh://git@github.com/peeriot/myrmic.git?rev=abc12345");
     }
 
     #[test]
-    fn default_sdk_errors_without_a_version_or_revision() {
-        assert!(default_sdk_from(None, None).is_err());
+    fn default_repo_errors_without_a_version_or_revision() {
+        assert!(default_repo_from(None, None).is_err());
     }
 }

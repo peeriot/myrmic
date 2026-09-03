@@ -455,13 +455,33 @@ impl DeployInput {
     }
 }
 
-/// Where a scaffolded crate gets `myrmic-sdk` from. Renders as the right-hand
-/// side of a `[dependencies]` entry.
-pub enum CargoDep {
+/// Where a scaffolded crate's myrmic dependencies come from: a published
+/// release, a git repo, or a local checkout. Resolved per crate into a
+/// [`CargoDep`].
+#[derive(Debug, Clone)]
+pub enum Repo {
     /// A published release, as a cargo version requirement.
     Version(String),
     Git(String, Option<String>),
     Path(std::path::PathBuf),
+}
+
+impl Repo {
+    /// Attempts to resolve the associated dependency in the repo.
+    /// A release version applies to every crate alike.
+    /// For git repos, we rely on cargo searching and reporting the error.
+    /// But if a path is provided, we can look at the known path.
+    pub fn resolve_or_assume_correct(self, known_path: &str) -> CargoDep {
+        match self {
+            Repo::Version(req) => CargoDep::Version(req),
+            Repo::Git(url, rev) => CargoDep::Git(url, rev),
+            Repo::Path(path) => {
+                let resolved = path.join(known_path);
+                let path = resolved.exists().then_some(resolved).unwrap_or(path);
+                CargoDep::Path(path)
+            }
+        }
+    }
 }
 
 /// Anything cargo accepts in `crate = "…"`: a version or a comparator (`^0.2`,
@@ -473,7 +493,7 @@ fn looks_like_version_req(value: &str) -> bool {
     })
 }
 
-impl std::str::FromStr for CargoDep {
+impl std::str::FromStr for Repo {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -501,6 +521,15 @@ impl std::str::FromStr for CargoDep {
 
         Ok(dep)
     }
+}
+
+/// Where a scaffolded crate gets one myrmic crate from. Renders as the
+/// right-hand side of a `[dependencies]` entry.
+pub enum CargoDep {
+    /// A published release, as a cargo version requirement.
+    Version(String),
+    Git(String, Option<String>),
+    Path(std::path::PathBuf),
 }
 
 impl std::fmt::Display for CargoDep {
