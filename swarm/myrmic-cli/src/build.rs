@@ -113,7 +113,9 @@ pub fn build_app(
                         og_path.display()
                     );
                 }
-                if let Some(cc) = build_cell(ctx, path.as_ref(), &platforms, &cargo_target)? {
+                if let Some(cc) =
+                    build_cell(ctx, path.as_ref(), &platforms, &cargo_target, Some(&id))?
+                {
                     info.classes.insert(id, cc);
                 }
             }
@@ -273,7 +275,7 @@ fn build_member(
             build_firmware(ctx, path, chip, platforms, cargo_target, runtime_name)?;
             Ok(None)
         }
-        None => build_cell(ctx, path, platforms, cargo_target),
+        None => build_cell(ctx, path, platforms, cargo_target, None),
     }
 }
 
@@ -362,6 +364,7 @@ fn build_cell(
     path: &Path,
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
+    spec_id: Option<&str>,
 ) -> anyhow::Result<Option<CellClass>> {
     let _folder = path
         .parent()
@@ -412,16 +415,52 @@ fn build_cell(
         return Ok(None);
     }
 
-    // An explicitly named target becomes a class of its own, so several cells
-    // can live in one crate as separate bins; otherwise the class is the package.
-    let name = match cargo_target {
-        myrmic_build::CargoTarget::Named(target) => target.clone(),
-        myrmic_build::CargoTarget::Lib | myrmic_build::CargoTarget::Auto => package_name,
-    };
-
     Ok(Some(CellClass {
-        name,
+        name: class_name(spec_id, cargo_target, &package_name),
         wasm_path,
         riscv32imac,
     }))
+}
+
+/// The name a class is registered under and referenced by (`declare!`, the
+/// class registry, the nest). A class from an app spec is its spec id, whatever
+/// the crate calls the target — the same name the nest reader reconstructs. A
+/// standalone build takes the named target, so several cells can live in one
+/// crate as separate bins, else the package.
+fn class_name(
+    spec_id: Option<&str>,
+    cargo_target: &myrmic_build::CargoTarget,
+    package_name: &str,
+) -> String {
+    if let Some(id) = spec_id {
+        return id.to_owned();
+    }
+    match cargo_target {
+        myrmic_build::CargoTarget::Named(target) => target.clone(),
+        myrmic_build::CargoTarget::Lib | myrmic_build::CargoTarget::Auto => package_name.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use myrmic_build::CargoTarget;
+
+    use super::class_name;
+
+    #[test]
+    fn app_spec_class_is_named_by_its_id_not_its_cargo_target() {
+        let target = CargoTarget::Named("simple_sensor".to_owned());
+        assert_eq!(
+            class_name(Some("t2-simple-sensor"), &target, "simple_sensor"),
+            "t2-simple-sensor"
+        );
+    }
+
+    #[test]
+    fn standalone_class_is_named_by_target_then_package() {
+        let named = CargoTarget::Named("server".to_owned());
+        assert_eq!(class_name(None, &named, "pkg"), "server");
+        assert_eq!(class_name(None, &CargoTarget::Lib, "pkg"), "pkg");
+        assert_eq!(class_name(None, &CargoTarget::Auto, "pkg"), "pkg");
+    }
 }
