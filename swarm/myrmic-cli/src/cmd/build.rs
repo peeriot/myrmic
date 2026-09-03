@@ -17,9 +17,11 @@ pub struct Build {
     #[clap(long)]
     target: Option<models::CargoTarget>,
 
-    /// Override the app name (the bundle's grouping name; also names the
-    /// generated `.nest`). Otherwise the manifest `name:`, else the app folder.
-    #[clap(long)]
+    /// For an app spec, the app name (the bundle's grouping name; also names the
+    /// generated `.nest`); otherwise the manifest `name:`, else the app folder.
+    /// For a firmware crate, the name the device registers with, baked into the
+    /// image; otherwise the chip's name.
+    #[clap(short = 'n', long)]
     name: Option<String>,
 }
 
@@ -53,14 +55,11 @@ pub fn handle(ctx: Ctx, cmd: Build) -> anyhow::Result<()> {
             }
         },
         (path, PathType::Toml) => {
-            if name.is_some() {
-                crate::warn!(ctx, "--name was provided, but will be ignored");
-            }
-
             let cargo_target = target.unwrap_or(models::CargoTarget::Auto);
             let platforms = Platform::parse_list(platform.as_deref())?;
 
-            let _classes = build::build_toml(ctx, &path, &platforms, cargo_target)?;
+            let _classes =
+                build::build_toml(ctx, &path, &platforms, cargo_target, name.as_deref())?;
         }
         (_path, PathType::Nest | PathType::Wasm) => {
             anyhow::bail!("not a valid build target: {}", path.display());
@@ -68,4 +67,16 @@ pub fn handle(ctx: Ctx, cmd: Build) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    #[test]
+    fn n_is_short_for_the_name() {
+        let build = Build::try_parse_from(["build", "-n", "kitchen"]).unwrap();
+        assert_eq!(build.name.as_deref(), Some("kitchen"));
+    }
 }

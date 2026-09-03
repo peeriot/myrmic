@@ -29,6 +29,9 @@ const DEFAULT_ENV: [(&str, &str); 2] = [
     ("ESP_LOG", "info"),
     ("ESP_HAL_CONFIG_ENSURE_MAIN_STACK_MINIMUM", "4096"),
 ];
+/// The name the device registers with, baked into the image at compile time;
+/// without it the firmware falls back to its chip's name.
+pub const RUNTIME_NAME_ENV: &str = "RUNTIME_NAME";
 
 /// A supported target SoC, spelled as its cargo feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -100,11 +103,13 @@ pub struct FirmwareBuild {
 ///
 /// `flash_size` is the attached board's flash in bytes, when a board is at
 /// hand: it sizes the default partition layout, and a `partitions.toml` that
-/// claims more flash than that is rejected.
+/// claims more flash than that is rejected. `runtime_name` names the device on
+/// the network; given, it overrides a [`RUNTIME_NAME_ENV`] in the environment.
 pub fn build(
     manifest_path: &Path,
     cargo_target: &CargoTarget,
     flash_size: Option<u64>,
+    runtime_name: Option<&str>,
 ) -> anyhow::Result<FirmwareBuild> {
     let manifest_dir = manifest_path.parent().with_context(|| {
         format!(
@@ -124,7 +129,7 @@ pub fn build(
     cmd.args(["build", "--release", "--target", TARGET, "--manifest-path"])
         .arg(manifest_path)
         .args(["--bin", &bin]);
-    let default_partitions = configure(&mut cmd, manifest_dir, flash_size, |key| {
+    let default_partitions = configure(&mut cmd, manifest_dir, flash_size, runtime_name, |key| {
         std::env::var_os(key).is_some()
     })?;
     cmd.env_remove("RUSTUP_TOOLCHAIN");
@@ -145,13 +150,14 @@ pub fn build(
 }
 
 /// Sets the target's link flags, the compile-time environment (only the keys
-/// `already_set` says the caller hasn't), and — for a crate without a
-/// `partitions.toml` — the default partition layout for `flash_size`, which is
-/// returned.
+/// `already_set` says the caller hasn't), the runtime name when one is given,
+/// and — for a crate without a `partitions.toml` — the default partition
+/// layout for `flash_size`, which is returned.
 fn configure(
     cmd: &mut Command,
     manifest_dir: &Path,
     flash_size: Option<u64>,
+    runtime_name: Option<&str>,
     already_set: impl Fn(&str) -> bool,
 ) -> anyhow::Result<Option<Partitions>> {
     cmd.env(RUSTFLAGS_ENV, RUSTFLAGS);
@@ -159,6 +165,9 @@ fn configure(
         if !already_set(key) {
             cmd.env(key, value);
         }
+    }
+    if let Some(name) = runtime_name {
+        cmd.env(RUNTIME_NAME_ENV, name);
     }
 
     if let Some(file) = read_partitions_toml(manifest_dir).map_err(anyhow::Error::msg)? {
@@ -251,7 +260,7 @@ mod tests {
     fn configure_links_with_the_esp_flags_for_the_riscv_target() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        configure(&mut cmd, dir.path(), None, |_| false).unwrap();
+        configure(&mut cmd, dir.path(), None, None, |_| false).unwrap();
 
         let rustflags = env_of(&cmd, RUSTFLAGS_ENV).expect("rustflags are set");
         for flag in [
@@ -272,7 +281,7 @@ mod tests {
     fn configure_leaves_env_the_caller_already_set_alone() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        configure(&mut cmd, dir.path(), None, |key| key == "ESP_LOG").unwrap();
+        configure(&mut cmd, dir.path(), None, None, |key| key == "ESP_LOG").unwrap();
 
         assert_eq!(env_of(&cmd, "ESP_LOG"), None);
         assert_eq!(
@@ -282,10 +291,40 @@ mod tests {
     }
 
     #[test]
+    fn configure_bakes_in_the_runtime_name_it_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cmd = Command::new("cargo");
+        configure(&mut cmd, dir.path(), None, Some("kitchen"), |_| false).unwrap();
+
+        assert_eq!(env_of(&cmd, RUNTIME_NAME_ENV).as_deref(), Some("kitchen"));
+    }
+
+    #[test]
+    fn configure_leaves_the_runtime_name_to_the_environment_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cmd = Command::new("cargo");
+        configure(&mut cmd, dir.path(), None, None, |_| false).unwrap();
+
+        assert_eq!(env_of(&cmd, RUNTIME_NAME_ENV), None);
+    }
+
+    #[test]
+    fn an_explicit_runtime_name_overrides_one_already_in_the_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cmd = Command::new("cargo");
+        configure(&mut cmd, dir.path(), None, Some("kitchen"), |key| {
+            key == RUNTIME_NAME_ENV
+        })
+        .unwrap();
+
+        assert_eq!(env_of(&cmd, RUNTIME_NAME_ENV).as_deref(), Some("kitchen"));
+    }
+
+    #[test]
     fn configure_supplies_the_default_partitions_only_without_a_partitions_toml() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        let supplied = configure(&mut cmd, dir.path(), None, |_| false).unwrap();
+        let supplied = configure(&mut cmd, dir.path(), None, None, |_| false).unwrap();
         assert_eq!(supplied, Some(Partitions::default_layout(None)));
         assert_eq!(
             env_of(&cmd, PARTITIONS_ENV),
@@ -295,7 +334,7 @@ mod tests {
         std::fs::write(dir.path().join("partitions.toml"), "[partitions]\n").unwrap();
         let mut cmd = Command::new("cargo");
         assert_eq!(
-            configure(&mut cmd, dir.path(), None, |_| false).unwrap(),
+            configure(&mut cmd, dir.path(), None, None, |_| false).unwrap(),
             None
         );
         assert_eq!(env_of(&cmd, PARTITIONS_ENV), None);
@@ -305,7 +344,7 @@ mod tests {
     fn configure_sizes_the_default_layout_to_the_device_flash() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
-        let supplied = configure(&mut cmd, dir.path(), Some(8 * M), |_| false).unwrap();
+        let supplied = configure(&mut cmd, dir.path(), Some(8 * M), None, |_| false).unwrap();
         assert_eq!(supplied, Some(Partitions::default_layout(Some(8 * M))));
         assert_eq!(
             env_of(&cmd, PARTITIONS_ENV),
@@ -323,7 +362,7 @@ mod tests {
         .unwrap();
 
         let mut cmd = Command::new("cargo");
-        let err = configure(&mut cmd, dir.path(), Some(4 * M), |_| false).unwrap_err();
+        let err = configure(&mut cmd, dir.path(), Some(4 * M), None, |_| false).unwrap_err();
         let err = format!("{err:#}");
         assert!(err.contains("8M") && err.contains("4M"), "{err}");
 
@@ -331,12 +370,12 @@ mod tests {
         // when no device size is known (`myrmic build`).
         let mut cmd = Command::new("cargo");
         assert_eq!(
-            configure(&mut cmd, dir.path(), Some(8 * M), |_| false).unwrap(),
+            configure(&mut cmd, dir.path(), Some(8 * M), None, |_| false).unwrap(),
             None
         );
         let mut cmd = Command::new("cargo");
         assert_eq!(
-            configure(&mut cmd, dir.path(), None, |_| false).unwrap(),
+            configure(&mut cmd, dir.path(), None, None, |_| false).unwrap(),
             None
         );
     }

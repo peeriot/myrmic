@@ -22,6 +22,10 @@ pub struct Flash {
     #[clap(long)]
     target: Option<models::CargoTarget>,
 
+    /// The name the device registers with, baked into the image. Otherwise the chip's name.
+    #[clap(short = 'n', long)]
+    name: Option<String>,
+
     /// After flashing, stream the board's serial output until interrupted.
     #[clap(short, long)]
     monitor: bool,
@@ -32,6 +36,7 @@ pub fn handle(ctx: Ctx, cmd: Flash) -> anyhow::Result<()> {
         path,
         mut connect,
         target,
+        name,
         monitor,
     } = cmd;
 
@@ -65,9 +70,9 @@ pub fn handle(ctx: Ctx, cmd: Flash) -> anyhow::Result<()> {
     let info = board.info()?;
 
     let cargo_target = build::to_build_cargo_target(target.unwrap_or(models::CargoTarget::Auto));
-    crate::info!(ctx, "Building {chip} firmware: {}", manifest.display());
+    build::report_building(ctx, chip, &manifest, name.as_deref());
     let flash_size = u64::from(info.flash_size.size());
-    let built = firmware::build(&manifest, &cargo_target, Some(flash_size))?;
+    let built = firmware::build(&manifest, &cargo_target, Some(flash_size), name.as_deref())?;
     build::report_layout(ctx, &built);
 
     crate::info!(ctx, "Flashing {}...", built.elf.display());
@@ -84,4 +89,18 @@ pub fn handle(ctx: Ctx, cmd: Flash) -> anyhow::Result<()> {
         flash::monitor(ctx, &port_name, elfs)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    #[test]
+    fn n_is_short_for_the_runtime_name() {
+        let flash = Flash::try_parse_from(["flash", "-n", "kitchen"]).unwrap();
+        assert_eq!(flash.name.as_deref(), Some("kitchen"));
+        let flash = Flash::try_parse_from(["flash", "--name", "kitchen"]).unwrap();
+        assert_eq!(flash.name.as_deref(), Some("kitchen"));
+    }
 }

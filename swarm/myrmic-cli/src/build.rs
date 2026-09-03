@@ -212,34 +212,48 @@ pub(crate) fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build
     }
 }
 
+/// Builds the crate, or every member of the workspace, at `manifest_path`.
+/// `runtime_name` only means something to a firmware crate, which bakes it in
+/// as the device's name.
 pub fn build_toml(
     ctx: Ctx,
     manifest_path: &Path,
     platforms: &[Platform],
     cargo_target: models::CargoTarget,
+    runtime_name: Option<&str>,
 ) -> anyhow::Result<Vec<CellClass>> {
     let info = cargo::crate_info(manifest_path)?;
     let cargo_target = to_build_cargo_target(cargo_target);
 
-    let mut classes = vec![];
-
-    if let Some(ws) = info.as_root() {
-        // A single selector can't span a workspace; each member resolves its
-        // own target automatically (sole bin, else sole lib).
-        if cargo_target != myrmic_build::CargoTarget::Auto {
-            anyhow::bail!(
-                "`--target` selects a target within a single crate, but `{}` is a workspace; \
-                 point the build path at a specific crate",
-                manifest_path.display(),
-            );
-        }
-        for member in &ws.members {
-            if let Some(cc) = build_member(ctx, member, platforms, &cargo_target)? {
-                classes.push(cc);
+    let members: Vec<&Path> = match info.as_root() {
+        Some(ws) => {
+            // A single selector can't span a workspace; each member resolves its
+            // own target automatically (sole bin, else sole lib).
+            if cargo_target != myrmic_build::CargoTarget::Auto {
+                anyhow::bail!(
+                    "`--target` selects a target within a single crate, but `{}` is a workspace; \
+                     point the build path at a specific crate",
+                    manifest_path.display(),
+                );
             }
+            ws.members.iter().map(PathBuf::as_path).collect()
         }
-    } else if let Some(cc) = build_member(ctx, &info.manifest_path, platforms, &cargo_target)? {
-        classes.push(cc);
+        None => vec![&info.manifest_path],
+    };
+
+    let mut classes = vec![];
+    for member in &members {
+        if let Some(cc) = build_member(ctx, member, platforms, &cargo_target, runtime_name)? {
+            classes.push(cc);
+        }
+    }
+    if runtime_name.is_some() && classes.len() == members.len() {
+        crate::warn!(
+            ctx,
+            "--name was provided, but will be ignored: it names a firmware's runtime, and `{}` \
+             builds no firmware",
+            manifest_path.display()
+        );
     }
 
     Ok(classes)
@@ -252,10 +266,11 @@ fn build_member(
     path: &Path,
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
+    runtime_name: Option<&str>,
 ) -> anyhow::Result<Option<CellClass>> {
     match firmware::chip_of(path)? {
         Some(chip) => {
-            build_firmware(ctx, path, chip, platforms, cargo_target)?;
+            build_firmware(ctx, path, chip, platforms, cargo_target, runtime_name)?;
             Ok(None)
         }
         None => build_cell(ctx, path, platforms, cargo_target),
@@ -268,6 +283,7 @@ fn build_firmware(
     chip: firmware::Chip,
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
+    runtime_name: Option<&str>,
 ) -> anyhow::Result<()> {
     if platforms != Platform::DEFAULT {
         crate::warn!(
@@ -276,9 +292,9 @@ fn build_firmware(
              `[package.metadata.myrmic] firmware`"
         );
     }
-    crate::info!(ctx, "Building {chip} firmware: {}", path.display());
+    report_building(ctx, chip, path, runtime_name);
 
-    let built = firmware::build(path, cargo_target, None)?;
+    let built = firmware::build(path, cargo_target, None, runtime_name)?;
     report_layout(ctx, &built);
 
     crate::info!(ctx, "Firmware: {}", built.elf.display());
@@ -292,6 +308,24 @@ fn build_firmware(
     );
 
     Ok(())
+}
+
+/// Announces a firmware build, naming the runtime it is built for when one was
+/// given.
+pub(crate) fn report_building(
+    ctx: Ctx,
+    chip: firmware::Chip,
+    manifest_path: &Path,
+    runtime_name: Option<&str>,
+) {
+    match runtime_name {
+        Some(name) => crate::info!(
+            ctx,
+            "Building {chip} firmware for runtime `{name}`: {}",
+            manifest_path.display()
+        ),
+        None => crate::info!(ctx, "Building {chip} firmware: {}", manifest_path.display()),
+    }
 }
 
 /// Logs where a firmware build's partition layout came from, and warns when
