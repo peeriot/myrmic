@@ -510,10 +510,10 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
         };
 
         // Process cell until destroyed
-        log::info!("[WAMR] Cell awaiting messages");
+        log::debug!("[WAMR] Cell awaiting messages");
         loop {
             let msg = ctx.wait_for_cell_message();
-            log::info!("[WAMR] Received Cell message: {msg:?}");
+            log::debug!("[WAMR] Received Cell message: {msg:?}");
             match msg {
                 CellMessage::Command {
                     command,
@@ -521,7 +521,7 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
                     sender,
                     origin,
                 } => {
-                    log::info!("[WAMR] Received Cell Command message");
+                    log::debug!("[WAMR] Received Cell Command message");
                     if let Err(e) = runtime.handle_command(&command, payload, sender, origin) {
                         log::error!("Failed to run Cell command: {e}");
                     }
@@ -531,7 +531,7 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
                     payload,
                     sender,
                 } => {
-                    log::info!("[WAMR] Received Cell Event message");
+                    log::debug!("[WAMR] Received Cell Event message");
                     if let Err(e) = runtime.handle_event(&event, payload, sender) {
                         log::error!("Failed to run Cell event: {e}");
                     }
@@ -550,7 +550,7 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
                     export_name,
                     payload,
                 } => {
-                    log::info!("[WAMR] Received Cell BLE callback message");
+                    log::debug!("[WAMR] Received Cell BLE callback message");
                     if let Err(e) = runtime.handle_ble_callback(&export_name, payload) {
                         log::error!("BLE callback error for '{export_name}': {e}");
                     }

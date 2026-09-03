@@ -13,6 +13,7 @@ mod deploy;
 mod mailbox;
 mod myrmic;
 mod native;
+mod time;
 mod requests;
 mod service;
 mod supervision;

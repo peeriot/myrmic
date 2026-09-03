@@ -8,7 +8,7 @@
 //! whatever RAM `.bss` leaves the main stack.
 
 use core::ffi::c_void;
-
+use core::time::Duration;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
@@ -32,22 +32,32 @@ use crate::Config;
 /// Everything [`service_thread`] hands to [`start_service`].
 struct ServiceArgs {
     wifi: WIFI<'static>,
+    zenoh: ZenohArgs,
+}
+
+struct ZenohArgs {
     wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
     db_requests: Receiver<'static, CriticalSectionRawMutex, DbClientRequest, 1>,
     db_responses: Sender<'static, CriticalSectionRawMutex, DbClientResponse, 1>,
     zenoh_requests: RequestsReceiver,
     zenoh_responses: ResponsesSender,
+    node_lease_ttl: Duration,
+    node_lease_renewal_interval: Duration,
 }
 
 /// Starts the network service on its own [`Config::net_stack`]-sized thread.
 pub fn start_thread(wifi: WIFI<'static>, config: &Config) {
     let args = ServiceArgs {
         wifi,
-        wasm_transfer: crate::WASM_TRANSFER.sender(),
-        db_requests: crate::DB_REQUESTS.receiver(),
-        db_responses: crate::DB_RESPONSES.sender(),
-        zenoh_requests: crate::ZENOH_REQUESTS.receiver(),
-        zenoh_responses: crate::ZENOH_RESPONSES.sender(),
+        zenoh: ZenohArgs {
+            wasm_transfer: crate::WASM_TRANSFER.sender(),
+            db_requests: crate::DB_REQUESTS.receiver(),
+            db_responses: crate::DB_RESPONSES.sender(),
+            zenoh_requests: crate::ZENOH_REQUESTS.receiver(),
+            zenoh_responses: crate::ZENOH_RESPONSES.sender(),
+            node_lease_ttl: config.node_lease_ttl,
+            node_lease_renewal_interval: config.node_lease_renewal_interval,
+        },
     };
 
     // SAFETY: `service_thread` is a valid `extern "C"` entry point; its
@@ -74,15 +84,7 @@ extern "C" fn service_thread(arg: *mut c_void) {
 
     let executor = EXECUTOR.init(Executor::new());
     executor.run(|spawner| {
-        start_service(
-            spawner,
-            args.wifi,
-            args.wasm_transfer,
-            args.db_requests,
-            args.db_responses,
-            args.zenoh_requests,
-            args.zenoh_responses,
-        );
+        start_service(spawner, args);
     });
 }
 
@@ -91,30 +93,14 @@ extern "C" fn service_thread(arg: *mut c_void) {
 /// # Panics
 ///
 /// Panics if the WiFi module cannot be initialized
-fn start_service(
-    spawner: Spawner,
-    wifi: WIFI<'static>,
-    wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
-    db_requests: Receiver<'static, CriticalSectionRawMutex, DbClientRequest, 1>,
-    db_responses: Sender<'static, CriticalSectionRawMutex, DbClientResponse, 1>,
-    zenoh_requests: RequestsReceiver,
-    zenoh_responses: ResponsesSender,
-) {
+fn start_service(spawner: Spawner, args: ServiceArgs) {
+    let ServiceArgs { wifi, zenoh } = args;
+
     let (controller, stack, runner) = esp_common::esp_network::init_stack(wifi);
 
     spawner.spawn(connection(controller).unwrap());
     spawner.spawn(net_task(runner).unwrap());
-    spawner.spawn(
-        zenoh_session(
-            stack,
-            wasm_transfer,
-            db_requests,
-            db_responses,
-            zenoh_requests,
-            zenoh_responses,
-        )
-        .unwrap(),
-    );
+    spawner.spawn(zenoh_session(stack, zenoh).unwrap());
 }
 
 /// Establishes and keeps a WiFi connection
@@ -132,14 +118,17 @@ async fn net_task(mut runner: Runner<'static, Interface>) {
 /// Supervisor task: owns the Zenoh session lifecycle and reconnects on peer
 /// disconnect. The session-scoped services are composed here.
 #[embassy_executor::task]
-async fn zenoh_session(
-    stack: embassy_net::Stack<'static>,
-    wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
-    db_requests: Receiver<'static, CriticalSectionRawMutex, DbClientRequest, 1>,
-    db_responses: Sender<'static, CriticalSectionRawMutex, DbClientResponse, 1>,
-    zenoh_requests: RequestsReceiver,
-    zenoh_responses: ResponsesSender,
-) {
+async fn zenoh_session(stack: embassy_net::Stack<'static>, zenoh_args: ZenohArgs) {
+    let ZenohArgs {
+        wasm_transfer,
+        db_requests,
+        db_responses,
+        zenoh_requests,
+        zenoh_responses,
+        node_lease_ttl,
+        node_lease_renewal_interval,
+    } = zenoh_args;
+
     esp_common::esp_network::zenoh_session(
         stack,
         |session| async move {
@@ -150,6 +139,8 @@ async fn zenoh_session(
                     db_requests,
                     db_responses,
                     esp_common::esp_network::SESSION_LEASE,
+                    node_lease_ttl,
+                    node_lease_renewal_interval,
                     esp_common::esp_network::wall_time,
                     crate::cell::registration().map(|r| esp_common::cell_db_service::NativeCell {
                         sri: r.sri,

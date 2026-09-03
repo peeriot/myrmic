@@ -1,6 +1,8 @@
 //! Sizes and priorities. Hardware ownership decides *what* runs (see
 //! [`Board`](crate::Board)); this decides *how*.
 
+use core::time::Duration;
+
 /// Thread stacks and scheduling priorities for the firmware's threads.
 ///
 /// The defaults are the values the shipped firmware is validated at. They are
@@ -49,6 +51,14 @@ pub struct Config {
 
     /// Priority of the WAMR thread. Lowest, so embassy can preempt the cell.
     pub wasm_priority: u32,
+
+    /// The silence this node asks observers to tolerate: three renewal periods,
+    /// so a couple of dropped radio rounds never declare it dead.
+    pub node_lease_ttl: Duration,
+
+    /// Liveness-lease renewal period, slower than the Linux exec's 10s to
+    /// respect the radio budget; [`node_lease_ttl`] absorbs the sparser cadence.
+    pub node_lease_renewal_interval: Duration,
 }
 
 impl Default for Config {
@@ -62,6 +72,8 @@ impl Default for Config {
             ble_host_priority: 30,
             net_priority: 1,
             wasm_priority: 0,
+            node_lease_ttl: Duration::from_secs(60),
+            node_lease_renewal_interval: Duration::from_secs(20),
         }
     }
 }

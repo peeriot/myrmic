@@ -66,6 +66,8 @@ pub async fn service(
     db_requests: Receiver<'static, CriticalSectionRawMutex, DbClientRequest, 1>,
     db_responses: Sender<'static, CriticalSectionRawMutex, DbClientResponse, 1>,
     session_lease: Duration,
+    node_lease_ttl: core::time::Duration,
+    node_lease_renewal_interval: core::time::Duration,
     wall_time: fn() -> Option<core::time::Duration>,
     native: Option<crate::NativeCell>,
 ) {
@@ -86,6 +88,12 @@ pub async fn service(
     let mut last_deploy_id = None;
     let mut subscribed_events: Vec<(Event, Cursor)> = Vec::new();
     let mut awaiting_deletion_confirmation: bool = false;
+
+    let node_lease_renewal_interval = node_lease_renewal_interval.clamp(
+        core::time::Duration::from_secs(5),
+        core::time::Duration::from_secs(120),
+    );
+    let node_lease_renewal_interval = crate::time::to_embassy(node_lease_renewal_interval);
 
     // The batched transaction of the cell function currently running. The
     // runtime opens one before it dispatches and closes it when the function
@@ -318,8 +326,10 @@ pub async fn service(
                     next_lease_renewal = Instant::now()
                         + if !swept {
                             myrmic::LEASE_RETRY_PERIOD
-                        } else if myrmic::renew_node_lease(&client, zid, wall_time).await {
-                            myrmic::LEASE_RENEW_PERIOD
+                        } else if myrmic::renew_node_lease(&client, zid, node_lease_ttl, wall_time)
+                            .await
+                        {
+                            node_lease_renewal_interval
                         } else {
                             myrmic::LEASE_RETRY_PERIOD
                         };
