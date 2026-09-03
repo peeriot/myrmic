@@ -121,6 +121,10 @@ pub async fn service(
     // A boot returns this node to its flashed tags: the overlay a previous run
     // was given is dropped before any is honoured again.
     let mut overlay_cleared = false;
+    // The node's effective tags, served to cells via the runtime host functions.
+    // Refreshed each registration round; seeded with the intrinsic set so a cell
+    // asking before the first round still gets the hardware and platform tags.
+    let mut runtime_tags = myrmic::intrinsic_effective_tags(zid);
 
     // Deployment notifications arrive via a DB subscription on the exec's deployment table
     let mut deployment_sub = declare_subscription(
@@ -241,6 +245,7 @@ pub async fn service(
                     &mut awaiting_deletion_confirmation,
                     &mut watched,
                     &mut application,
+                    &runtime_tags,
                 )
                 .await;
             }
@@ -290,6 +295,13 @@ pub async fn service(
                         &mut overlay_cleared,
                     )
                     .await;
+                    // Refresh the tags served to cells before the info is consumed.
+                    runtime_tags = runtime_info
+                        .capabilities()
+                        .tags()
+                        .iter()
+                        .map(|tag| String::from(tag.as_ref()))
+                        .collect();
                     myrmic::register_exec_runtime(&client, runtime_info).await;
 
                     // If this boot followed a watchdog reset, report it to the swarm

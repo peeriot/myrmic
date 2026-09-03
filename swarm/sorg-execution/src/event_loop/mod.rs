@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use cell_protocol::node_tags::LiveTags;
 use cell_protocol::{Gen, Sri};
 use std::borrow::ToOwned;
 
@@ -37,6 +38,7 @@ type EventReceiver = tokio::sync::mpsc::Receiver<Event>;
 pub(crate) fn set_up_event_loop(
     session: Session,
     config: ExecConfig,
+    live_tags: LiveTags,
     poison_rcv: PoisonRcv,
 ) -> (Client<Event>, JoinHandle<Result<()>>) {
     let (event_sender, event_receiver) = tokio::sync::mpsc::channel(config.event_buffer_size());
@@ -44,6 +46,7 @@ pub(crate) fn set_up_event_loop(
     let join_handle = tokio::spawn(event_loop(
         session,
         config,
+        live_tags,
         client.handle(),
         event_receiver,
         poison_rcv,
@@ -54,11 +57,12 @@ pub(crate) fn set_up_event_loop(
 async fn event_loop(
     session: Session,
     config: ExecConfig,
+    live_tags: LiveTags,
     events: Client<Event>,
     mut event_rcv: EventReceiver,
     mut poison_rcv: PoisonRcv,
 ) -> Result<()> {
-    let mut runtime = Runtime::new(session, &config, events)?;
+    let mut runtime = Runtime::new(session, &config, &live_tags, events)?;
     let mut verify = tokio::time::interval(sorg_common::supervision::jittered(
         runtime.timing.verify,
         u64::from(std::process::id()),
@@ -121,9 +125,18 @@ enum CleanupAction {
 }
 
 impl Runtime {
-    fn new(session: Session, config: &ExecConfig, events: Client<Event>) -> Result<Self> {
-        let wasm_environment =
-            WasmEnvironment::new(config.runner_fuel(), config.fuel_yield_interval(), None)?;
+    fn new(
+        session: Session,
+        config: &ExecConfig,
+        live_tags: &LiveTags,
+        events: Client<Event>,
+    ) -> Result<Self> {
+        let wasm_environment = WasmEnvironment::new(
+            config.runner_fuel(),
+            config.fuel_yield_interval(),
+            None,
+            live_tags,
+        )?;
         let info = ExecRuntimeInfo::new(
             session.zid(),
             config.name().map(ToOwned::to_owned),

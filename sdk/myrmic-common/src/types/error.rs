@@ -13,6 +13,10 @@ pub const EPERM: i32 = -1;
 /// Resource temporarily unavailable, try again (POSIX `EAGAIN`).
 pub const EAGAIN: i32 = -11;
 
+/// Out of memory (POSIX `ENOMEM`): the guest-provided buffer is too small to
+/// hold the response. Query the required length and retry with a larger buffer.
+pub const ENOMEM: i32 = -12;
+
 /// Permission denied (POSIX `EACCES`).
 pub const EACCES: i32 = -13;
 

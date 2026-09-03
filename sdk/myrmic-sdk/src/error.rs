@@ -80,6 +80,7 @@ impl From<c_int> for ApiError {
         match value {
             0 => unreachable!("0 is not an error"),
             -11 => ApiError::NotReady,
+            myrmic_common::types::error::ENOMEM => ApiError::BufferTooSmall,
             -13 => ApiError::SignalLayerClaimed,
             myrmic_common::types::error::ESTALE => ApiError::Unavailable,
             -127 => ApiError::Serde("unable to serialise request"),

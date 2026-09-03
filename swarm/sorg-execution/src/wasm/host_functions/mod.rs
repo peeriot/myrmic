@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use cell_protocol::node_tags::LiveTags;
 use errors::report_error;
 use logging::log;
 use myrmic_common::types::error::GENERIC_ERROR;
@@ -36,6 +37,7 @@ mod errors;
 mod gateway;
 mod logging;
 mod outlet;
+mod runtime;
 mod sl_claim;
 mod tap;
 mod time;
@@ -58,7 +60,10 @@ macro_rules! tri {
 
 pub use crate::tri;
 
-pub(crate) fn link_cell_functions(linker: &mut Linker<CellState>) -> Result<()> {
+pub(crate) fn link_cell_functions(
+    linker: &mut Linker<CellState>,
+    live_tags: &LiveTags,
+) -> Result<()> {
     #[cfg(feature = "ble-linux")]
     link_ble_functions(linker)?;
 
@@ -75,6 +80,24 @@ pub(crate) fn link_cell_functions(linker: &mut Linker<CellState>) -> Result<()> 
             Box::new(wait_host(caller, buffer_ptr, length)) as Box<dyn Future<Output = i32> + Send>
         },
     )?;
+
+    {
+        let tags = live_tags.clone();
+        linker.func_wrap("runtime", "runtime_tags_len_host", move || {
+            runtime::runtime_tags_len(&tags)
+        })?;
+    }
+    {
+        let tags = live_tags.clone();
+        linker.func_wrap(
+            "runtime",
+            "runtime_tags_host",
+            move |caller: Caller<'_, CellState>, buffer_ptr: u32, max_length: u32| {
+                runtime::runtime_tags_host(caller, &tags, buffer_ptr, max_length)
+            },
+        )?;
+    }
+    linker.func_wrap("runtime", "runtime_id_host", runtime::runtime_id_host)?;
 
     linker.func_wrap("logging", "log_host", log)?;
 

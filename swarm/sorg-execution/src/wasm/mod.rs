@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use cell_protocol::node_tags::LiveTags;
 use sorg_common::custom_err;
 use wasmtime::{Config, Engine, Linker};
 
@@ -31,6 +32,7 @@ impl WasmEnvironment {
         runner_fuel: u64,
         fuel_yield_interval: u64,
         signal_layer_socket: Option<PathBuf>,
+        live_tags: &LiveTags,
     ) -> Result<Self> {
         let mut config = Config::new();
         config.consume_fuel(true);
@@ -58,7 +60,7 @@ impl WasmEnvironment {
             }
         });
 
-        let linker_cells = linker_for_cells(&engine, tap_client)?;
+        let linker_cells = linker_for_cells(&engine, tap_client, live_tags)?;
 
         Ok(Self {
             engine,
@@ -72,9 +74,10 @@ impl WasmEnvironment {
 fn linker_for_cells(
     engine: &Engine,
     tap_client: Arc<signal_layer_ipc::TapClient>,
+    live_tags: &LiveTags,
 ) -> Result<Linker<CellState>> {
     let mut linker = Linker::new(engine);
-    link_cell_functions(&mut linker)?;
+    link_cell_functions(&mut linker, live_tags)?;
     host_functions::link_tap_functions(&mut linker, Arc::clone(&tap_client))?;
     host_functions::link_outlet_functions(&mut linker, tap_client)?;
     Ok(linker)
