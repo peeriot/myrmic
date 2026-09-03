@@ -45,8 +45,10 @@ open-telemetry = [
 anyhow = { workspace = true }
 clap = { workspace = true }
 dialoguer = { workspace = true }
-# The flasher without espflash's own CLI layer (clap, crossterm, indicatif, ...).
-espflash = { workspace = true, features = ["serialport"] }
+# With espflash's CLI layer: port selection, connection flags, progress bars, the monitor.
+espflash = { workspace = true, features = ["cli"] }
+log = { workspace = true, features = ["std"] }
+miette = { workspace = true }
 serialport = { workspace = true }
 
 sha2 = { workspace = true }

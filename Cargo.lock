@@ -7639,6 +7639,8 @@ dependencies = [
  "humantime",
  "introspection-client",
  "libc",
+ "log",
+ "miette",
  "myrmic-build",
  "myrmic-common",
  "myrmic-tags",

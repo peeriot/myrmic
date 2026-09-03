@@ -48,6 +48,7 @@ mod nest;
 mod payload;
 mod pid;
 mod platforms;
+mod prompt;
 mod render;
 mod spawn_patch;
 mod utils;
@@ -60,6 +61,7 @@ mod cmd {
     pub mod deploy;
     pub mod flash;
     pub mod gateway;
+    pub mod monitor;
     pub mod network;
     pub mod new;
     pub mod platforms;
@@ -106,6 +108,7 @@ fn main() -> Result<(), ()> {
         args::Command::New(cmd) => cmd::new::handle(ctx, cmd),
         args::Command::Build(cmd) => cmd::build::handle(ctx, cmd),
         args::Command::Flash(cmd) => cmd::flash::handle(ctx, cmd),
+        args::Command::Monitor(cmd) => cmd::monitor::handle(ctx, cmd),
         // Management
         args::Command::Send(cmd) => block_on(cmd::send::handle(ctx, cmd)),
         args::Command::Publish(cmd) => block_on(cmd::publish::handle(ctx, cmd)),

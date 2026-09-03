@@ -362,6 +362,7 @@ rustc-hash = { version = "2.1.1", default-features = false }
 clap = { version = "4.5.23", features = ["derive"] }
 comfy-table = { version = "7.1.3", features = ["custom_styling"] }
 dialoguer = { version = "0.12", default-features = false }
+miette = "7.6.0"
 rand = "0.9.0"
 itertools = "0.14.0"
 owo-colors = "4.3.0"

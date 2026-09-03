@@ -73,6 +73,11 @@ pub enum Command {
     /// written with the partition table that build generated, and the board
     /// resets into it. `--monitor` keeps streaming its serial output afterwards.
     Flash(flash::Flash),
+    /// Watch a board's serial output with espflash's monitor.
+    ///
+    /// The port is picked as `flash` picks it. Ctrl+R resets the board, Ctrl+C
+    /// quits; `--elf` names the firmware to resolve backtrace addresses against.
+    Monitor(monitor::Monitor),
 
     // Management
     #[clap(alias = "db")]

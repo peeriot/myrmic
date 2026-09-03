@@ -69,6 +69,42 @@ pub fn emit(ctx: &crate::args::Ctx, level: Level, args: std::fmt::Arguments<'_>)
     }
 }
 
+/// Routes the `log` crate, which is how espflash talks, through [`emit`] so
+/// its lines look like ours. Later calls are no-ops.
+pub fn adopt_log_crate(ctx: crate::args::Ctx) {
+    if log::set_boxed_logger(Box::new(LogBridge { ctx })).is_ok() {
+        log::set_max_level(log::LevelFilter::Trace);
+    }
+}
+
+struct LogBridge {
+    ctx: crate::args::Ctx,
+}
+
+impl log::Log for LogBridge {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        self.ctx.is_enabled(Level::from(metadata.level()))
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        emit(&self.ctx, Level::from(record.level()), *record.args());
+    }
+
+    fn flush(&self) {}
+}
+
+impl From<log::Level> for Level {
+    fn from(level: log::Level) -> Self {
+        match level {
+            log::Level::Error => Level::Error,
+            log::Level::Warn => Level::Warn,
+            log::Level::Info => Level::Info,
+            log::Level::Debug => Level::Debug,
+            log::Level::Trace => Level::Trace,
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! __log_at {
     ($ctx:expr, $level:expr, $($arg:tt)*) => {{
