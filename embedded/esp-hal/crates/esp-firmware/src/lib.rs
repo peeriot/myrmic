@@ -20,6 +20,9 @@
 //! | [`take_watchdog`](Board::take_watchdog) | arming the MWDT/RWDT and the heartbeat |
 //! | [`take_pin`](Board::take_pin) | offering that GPIO to the cell |
 //!
+//! What no subsystem uses — RMT, SPI, I2C, LEDC — is not on the board at all.
+//! Ask [`macro@main`] for `Peripherals` next to `&mut Board` and it is yours.
+//!
 //! # A firmware
 //!
 //! ```ignore
@@ -78,27 +81,48 @@ pub use config::Config;
 /// then calls your function with whatever it asks for, and finally [`start`]s
 /// what is left on the [`Board`].
 ///
-/// Your function may take any of `&mut Board`, [`Network`] and
-/// `embassy_executor::Spawner`, in any order:
+/// Your function may take any of `&mut Board`, [`Network`],
+/// `embassy_executor::Spawner` and `esp_hal::peripherals::Peripherals`, in any
+/// order:
 ///
 /// ```ignore
 /// #[esp_firmware::main]
 /// async fn setup(board: &mut Board) { /* ... */ }
 /// ```
 ///
-/// Take `esp_hal::peripherals::Peripherals` as the first argument instead and
-/// nothing is claimed for you: the boot sequence still runs, but building the
-/// [`Board`] and calling [`start`] are yours. That is the form for a board
-/// that must claim its own hardware first — a Signal Layer pipeline, say:
+/// `Peripherals` is what the boot sequence (`PSRAM`, `TIMG0`, `FROM_CPU_INTR0`)
+/// and [`board!`] did not claim: RMT, SPI, I2C, LEDC and the rest, which no
+/// shipped subsystem uses and so the [`Board`] does not hold. Move what you need
+/// out of it. A field the board did take is a "use of moved value" error at
+/// compile time, not a conflict at runtime:
 ///
 /// ```ignore
 /// #[esp_firmware::main]
-/// async fn setup(mut peripherals: Peripherals, spawner: Spawner) {
+/// async fn setup(board: &mut Board, peripherals: Peripherals) {
+///     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
+///     let led = board.take_pin(8).unwrap();
+///     // ...
+/// }
+/// ```
+///
+/// Take `Peripherals` without a `Board` and nothing is claimed for you: the
+/// boot sequence still runs, but building the [`Board`] and calling [`start`]
+/// are yours. That is the form for a board that must claim its own hardware
+/// before `board!` decides what the cell may have — a Signal Layer pipeline,
+/// say:
+///
+/// ```ignore
+/// #[esp_firmware::main]
+/// async fn setup(peripherals: Peripherals, spawner: Spawner) {
 ///     let pins = pipeline_pins!(peripherals);
 ///     let board = esp_firmware::board!(peripherals, pins = pins);
 ///     esp_firmware::start(board, spawner);
 /// }
 /// ```
+///
+/// In either form `Peripherals` must be bound to a plain name: every claim is a
+/// partial move out of that binding, and your body sees what the claims left
+/// because it is spliced into the entry point rather than called.
 pub use esp_firmware_macros::main;
 
 pub use embassy_executor;

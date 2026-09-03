@@ -6,15 +6,18 @@
 //! sequence, binds whatever you asked for, and then starts whatever is left on
 //! the board.
 //!
-//! The body is spliced in rather than called. That is what lets a setup
-//! function take `Peripherals` and claim hardware from it: claiming moves
-//! individual fields out, and a partially-moved `Peripherals` cannot cross a
-//! function boundary — but it can stay in scope.
+//! The body is spliced in rather than called, and a `Peripherals` parameter
+//! names the binding `esp_hal::init` produces rather than a copy of it. Both
+//! follow from the same fact: claiming hardware moves individual fields out,
+//! and a partially-moved `Peripherals` can neither cross a function boundary
+//! nor be re-bound — but it can stay in scope. The boot sequence takes `PSRAM`,
+//! `TIMG0` and `FROM_CPU_INTR0` that way, `board!` takes the board's parts, and
+//! whatever is left is still there in the body.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{FnArg, ItemFn, Pat, Type};
+use syn::{FnArg, ItemFn, Pat, PatIdent, Type};
 
 /// What a setup-function parameter is asking for. Chosen by the type's final
 /// path segment, so `esp_firmware::Board` and a plain `Board` both work.
@@ -102,34 +105,49 @@ fn bindings(f: &ItemFn) -> syn::Result<Vec<(Want, &Pat, &Type)>> {
         bindings.push((want, &pat.pat, &pat.ty));
     }
 
-    let manual = bindings.iter().any(|(w, ..)| *w == Want::Peripherals);
-    if manual
-        && bindings
-            .iter()
-            .any(|(w, ..)| matches!(w, Want::Board | Want::Network))
-    {
-        return Err(syn::Error::new_spanned(
-            &f.sig,
-            "a setup function taking `Peripherals` claims the hardware itself, so it cannot \
-             also take `Board` or `Network`; build the board with `esp_firmware::board!` and \
-             call `esp_firmware::network()`",
-        ));
-    }
-
     Ok(bindings)
 }
 
 fn expand(f: &ItemFn) -> syn::Result<TokenStream2> {
     let bindings = bindings(f)?;
-    let manual = bindings.iter().any(|(w, ..)| *w == Want::Peripherals);
+    let wants = |want| bindings.iter().any(|(w, ..)| *w == want);
+
+    // `Peripherals` without a `Board` is the manual form: the caller claims
+    // what it wants, builds the board and calls `start`.
+    let manual = wants(Want::Peripherals) && !wants(Want::Board);
 
     let body = &f.block;
     let attrs = &f.attrs;
 
-    // The board is only built when the setup function did not take the
-    // peripherals for itself.
+    // The peripherals are bound under the caller's name when asked for. The
+    // boot sequence and `board!` move fields out of that binding, and the
+    // spliced body still reaches what they left — which a fresh `let` after
+    // those moves could never do.
+    let (periph, periph_let) = match bindings.iter().find(|(w, ..)| *w == Want::Peripherals) {
+        Some((_, pat, ty)) => {
+            let Pat::Ident(PatIdent {
+                by_ref: None,
+                subpat: None,
+                ident,
+                ..
+            }) = pat
+            else {
+                return Err(syn::Error::new_spanned(
+                    pat,
+                    "bind `Peripherals` to a plain name: the boot sequence and `board!` move \
+                     fields out of it, which only works on a local binding",
+                ));
+            };
+            (quote! { #ident }, quote! { let #pat: #ty })
+        }
+        None => (
+            quote! { __esp_fw_peripherals },
+            quote! { let mut __esp_fw_peripherals },
+        ),
+    };
+
     let build_board = (!manual).then(|| {
-        quote! { let mut __esp_fw_board = ::esp_firmware::board!(__esp_fw_peripherals); }
+        quote! { let mut __esp_fw_board = ::esp_firmware::board!(#periph); }
     });
     let start = (!manual).then(|| {
         quote! { ::esp_firmware::start(__esp_fw_board, __esp_fw_spawner); }
@@ -137,11 +155,12 @@ fn expand(f: &ItemFn) -> syn::Result<TokenStream2> {
 
     // The declared type is kept on the binding: it type-checks the parameter at
     // the point the user wrote it, and it keeps the `use` that names it live.
-    let lets = bindings.iter().map(|(want, pat, ty)| match want {
-        Want::Board => quote! { let #pat: #ty = &mut __esp_fw_board; },
-        Want::Network => quote! { let #pat: #ty = ::esp_firmware::network(); },
-        Want::Spawner => quote! { let #pat: #ty = __esp_fw_spawner; },
-        Want::Peripherals => quote! { let #pat: #ty = __esp_fw_peripherals; },
+    let lets = bindings.iter().filter_map(|(want, pat, ty)| match want {
+        Want::Board => Some(quote! { let #pat: #ty = &mut __esp_fw_board; }),
+        Want::Network => Some(quote! { let #pat: #ty = ::esp_firmware::network(); }),
+        Want::Spawner => Some(quote! { let #pat: #ty = __esp_fw_spawner; }),
+        // Bound where `esp_hal::init` runs, above.
+        Want::Peripherals => None,
     });
 
     // This is what `#[esp_rtos::main]` expands to, spelled with paths through
@@ -163,23 +182,23 @@ fn expand(f: &ItemFn) -> syn::Result<TokenStream2> {
                 __esp_fw_spawner: ::esp_firmware::embassy_executor::Spawner,
             ) {
                 #[allow(unused_mut)]
-                let mut __esp_fw_peripherals =
+                #periph_let =
                     ::esp_firmware::esp_hal::init(::esp_firmware::esp_hal::Config::default());
 
                 // The logger goes up before the heap so `setup_heap!`'s boot memory
                 // summary (region sizes + low-heap warning) reaches the console.
                 ::esp_firmware::__reexports::esp_common::esp_println::logger::init_logger_from_env();
-                ::esp_firmware::__reexports::esp_common::esp_heap::setup_heap!(__esp_fw_peripherals);
+                ::esp_firmware::__reexports::esp_common::esp_heap::setup_heap!(#periph);
 
                 ::esp_firmware::__reexports::log::info!("Init!");
                 ::esp_firmware::__boot_early();
 
                 let __esp_fw_timg0 = ::esp_firmware::esp_hal::timer::timg::TimerGroup::new(
-                    __esp_fw_peripherals.TIMG0,
+                    #periph.TIMG0,
                 );
                 ::esp_firmware::esp_rtos::start(
                     __esp_fw_timg0.timer0,
-                    __esp_fw_peripherals.FROM_CPU_INTR0,
+                    #periph.FROM_CPU_INTR0,
                 );
                 ::esp_firmware::__boot_late();
 

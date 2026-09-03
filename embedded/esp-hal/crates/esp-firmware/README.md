@@ -33,7 +33,7 @@ async fn setup() {}
 ```
 
 That is the whole modem firmware. To change something, ask for what you need —
-any of `&mut Board`, `Network` and `Spawner`, in any order:
+any of `&mut Board`, `Network`, `Spawner` and `Peripherals`, in any order:
 
 ```rust
 #[esp_firmware::main]
@@ -82,16 +82,34 @@ That row also marks the node **occupied**, so the orchestrator will not place a
 WASM cell here — and if one is somehow directed at this node anyway, the deploy
 is refused rather than displacing your firmware's cell.
 
-## Taking over the hardware claim
+## Peripherals the board does not hold
 
-Ask for `Peripherals` instead of a `Board` and nothing is claimed for you: the
-boot sequence still runs, but building the board and calling `start` are yours.
-This is the form for a board that must claim its own hardware first — a Signal
-Layer pipeline, say:
+`Board` holds only what the shipped subsystems use. RMT, SPI, I2C, LEDC and the
+rest stay in `Peripherals`, which you can ask for next to `&mut Board`: it is
+whatever the boot sequence and `board!` did not claim, and moving a field out
+of it is the whole gesture. A field the board did take is a "use of moved
+value" error at compile time, not a conflict at runtime.
 
 ```rust
 #[esp_firmware::main]
-async fn setup(mut peripherals: Peripherals, spawner: Spawner) {
+async fn setup(board: &mut Board, peripherals: Peripherals, spawner: Spawner) {
+    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
+    let led = board.take_pin(8).unwrap();
+    let channel = rmt.channel0.configure_tx(&config).unwrap().with_pin(led);
+    spawner.spawn(drive_ws2812(channel).unwrap());
+}
+```
+
+## Taking over the hardware claim
+
+Ask for `Peripherals` without a `Board` and nothing is claimed for you: the
+boot sequence still runs, but building the board and calling `start` are yours.
+This is the form for a board that must claim its own hardware before `board!`
+decides what the cell may have — a Signal Layer pipeline, say:
+
+```rust
+#[esp_firmware::main]
+async fn setup(peripherals: Peripherals, spawner: Spawner) {
     let pins = pipeline_pins!(peripherals);
     let board = esp_firmware::board!(peripherals, pins = pins);
     esp_firmware::start(board, spawner);
@@ -99,8 +117,8 @@ async fn setup(mut peripherals: Peripherals, spawner: Spawner) {
 ```
 
 `board!` is a macro, not a function, because claiming moves individual fields
-out of `Peripherals` — which only works inline. Everything it does not name
-stays yours.
+out of `Peripherals` — which only works inline, on a binding with a plain name.
+Everything it does not name stays yours.
 
 ## What your crate owns
 
