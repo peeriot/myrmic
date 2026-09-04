@@ -1,0 +1,40 @@
+# Linux device manifest with actuators — Raspberry Pi with a BME280 sensor,
+# a relay on a GPIO line and a fan on a hardware PWM channel.
+# Used by linux-codegen snapshot and validation tests.
+id: rpi-actuators
+chip: linux
+
+buses:
+  i2c0:
+    transport: i2c
+    pins: {}
+    freq_khz: 400
+    dev_path: /dev/i2c-1
+
+gpios:
+  general_purpose: [0, 17]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76
+
+  # Digital output: pins.out is the line offset on gpio_chip.
+  - id: relay1
+    driver: gpio-output
+    gpio_chip: /dev/gpiochip0
+    pins:
+      out: 17
+    hardware:
+      active_low: true
+
+  # PWM output: pins.out is the channel index on pwm_chip.
+  - id: fan1
+    driver: pwm-output
+    pwm_chip: pwmchip0
+    pins:
+      out: 0
+    hardware:
+      freq_khz: 25

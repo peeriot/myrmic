@@ -1,0 +1,8 @@
+name: tracking
+base_url: http://localhost
+endpoints:
+  - id: ping
+    request:
+      method: GET
+      path: /ping
+    response: {}

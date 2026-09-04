@@ -1,0 +1,20 @@
+[package]
+name = "bench-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bench-report = { path = "../report" }
+cell-protocol = { workspace = true, default-features = true }
+test-framework = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std"] }
+toml = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+uuid = { workspace = true, features = ["serde"] }

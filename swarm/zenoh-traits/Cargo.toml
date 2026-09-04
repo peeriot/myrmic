@@ -1,0 +1,40 @@
+[package]
+name = "zenoh-traits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["log", "zenoh", "zenoh-nano"]
+defmt = ["dep:defmt", "defmt-or-log/defmt", "zenoh-nano?/defmt"]
+log = ["dep:log", "defmt-or-log/log", "zenoh-nano?/log"]
+
+[dependencies]
+thiserror = { workspace = true, default-features = false }
+embedded-io-async = { workspace = true }
+embassy-futures = { workspace = true }
+embassy-sync = { workspace = true }
+
+# `zenoh-trait` impls dependencies
+
+# Common
+defmt = { workspace = true, optional = true, features = ["alloc"] }
+defmt-or-log = { workspace = true }
+log = { workspace = true, optional = true }
+
+# For the `zenoh-nano` feature
+zenoh-nano = { workspace = true, optional = true }
+
+# For the `zenoh` feature
+zenoh = { workspace = true, optional = true }
+
+[dev-dependencies]
+embassy-executor  = { workspace = true, features = ["platform-std", "executor-thread", "log"] }
+embassy-time = { workspace = true, features = ["log", "std"] }
+static_cell = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+zenoh-nano = { workspace = true, features = ["log"] }
+rand = { workspace = true }
+critical-section = { workspace = true, features = ["std"] }

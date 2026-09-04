@@ -1,0 +1,34 @@
+id: ccs811
+category: sensor-drivers
+description: >
+  ScioSense CCS811 indoor air quality sensor over I2C.
+  Reports equivalent CO2 (eCO2) and total volatile organic compounds (TVOC).
+requires:
+  buses:
+    - transport: i2c
+  optional_pins:
+    - nint
+outputs:
+  - name: eco2
+    type: f32
+    unit: ppm
+  - name: tvoc
+    type: f32
+    unit: ppb
+config_schema:
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x5A
+    description: "I2C address (ADDR to GND=0x5A, ADDR to VCC=0x5B)"
+  meas_mode:
+    scope: application
+    rust_type: MeasMode
+    default: Every1s
+    # Variants: Every1s | Every10s | Every60s
+    description: "Measurement mode — how often the sensor algorithm produces a fresh sample."
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 10000
+    description: Polling interval in milliseconds (must match or exceed meas_mode)

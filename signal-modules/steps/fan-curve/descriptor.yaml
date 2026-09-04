@@ -1,0 +1,33 @@
+id: fan-curve
+category: processing-steps
+description: >
+  Feed-forward transfer function mapping an input reading (e.g. temperature) to
+  a PWM duty via a linear curve, clamped to the output range. Drives a PWM Outlet
+  directly. Threshold/hysteresis's continuous counterpart — no PID.
+inputs:
+  - name: value
+    type: f32
+outputs:
+  - name: command
+    type: PwmDuty
+config_schema:
+  in_min:
+    scope: application
+    rust_type: f32
+    default: 0.0
+    description: "Input value mapped to out_min."
+  in_max:
+    scope: application
+    rust_type: f32
+    default: 100.0
+    description: "Input value mapped to out_max."
+  out_min:
+    scope: application
+    rust_type: f32
+    default: 0.0
+    description: "Duty (0.0–1.0) at in_min."
+  out_max:
+    scope: application
+    rust_type: f32
+    default: 1.0
+    description: "Duty (0.0–1.0) at in_max."

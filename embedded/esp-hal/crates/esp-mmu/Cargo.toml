@@ -1,0 +1,26 @@
+[package]
+name              = "esp-mmu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+esp32c5  = ["dep:esp32c5", "esp-hal/esp32c5"]
+esp32c6  = ["esp-hal/esp32c6"]
+esp32c61 = ["dep:esp32c61", "esp-hal/esp32c61"]
+
+[dependencies]
+# crates.io
+cfg-match        = { workspace = true }
+critical-section = { workspace = true }
+embassy-sync     = { workspace = true }
+esp32c5          = { workspace = true, optional = true }
+esp32c61         = { workspace = true, optional = true }
+esp-hal          = { workspace = true, features = ["unstable"] }
+esp-mmu-consts   = { workspace = true }
+log              = { workspace = true }

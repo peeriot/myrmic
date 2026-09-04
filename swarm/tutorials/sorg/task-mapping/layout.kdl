@@ -1,0 +1,45 @@
+layout {
+    pane split_direction="Vertical" {
+        pane split_direction="Horizontal" {
+            pane {
+                name "Runtime 1"
+                cwd "."
+                command "../../target/debug/swarm"
+                args "./task-mapping/runtime_one.jsonnet"
+            }
+            pane {
+                name "Runtime 2"
+                cwd "."
+                command "../../target/debug/swarm"
+                args "./task-mapping/runtime_two.jsonnet"
+            }
+            pane {
+                name "Runtime 3"
+                cwd "."
+                command "../../target/debug/swarm"
+                args "./task-mapping/runtime_three.jsonnet"
+            }
+        }
+
+        pane split_direction="Horizontal" {
+            pane {
+                name "SORG CTL"
+                cwd "./task-mapping"
+                focus true
+            }
+            pane split_direction="Horizontal" {
+                pane {
+                    name "Publisher"
+                    cwd "."
+                    command "../../target/debug/publisher"
+                }
+                pane {
+                    name "Subscriber"
+                    cwd "."
+                    command "../../target/debug/subscriber"
+                }
+            }
+        }    
+
+    }
+}

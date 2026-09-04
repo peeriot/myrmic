@@ -1,0 +1,183 @@
+name: Build and Package
+on:
+  push:
+    tags:
+      # Broad on purpose: the tag form is enforced by .ci/release/version, so a
+      # malformed release tag fails loudly instead of doing nothing.
+      - "myrmic/v*"
+
+permissions:
+  packages: read
+  contents: read
+
+# Builds only. Sharing a group with the promote workflow would let a new tag push
+# cancel a queued promote, because only one run per group stays pending.
+concurrency:
+  group: myrmic-build
+  cancel-in-progress: false
+
+env:
+  RCLONE_CONFIG_S3_TYPE: s3
+  RCLONE_CONFIG_S3_PROVIDER: Minio
+  RCLONE_CONFIG_S3_REGION: us-east-2
+  RCLONE_CONFIG_S3_ENDPOINT: https://minio.peeriot.intra
+
+jobs:
+  build:
+    # The target repository receives a release tag when a release is created there.
+    # That tag is not a build trigger, so without this guard every release would
+    # leave a red run on the repository customers see.
+    if: github.repository != 'peeriot/myrmic'
+    runs-on: general
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-4"
+      volumes:
+        - cache-cargo-user:/usr/local/cargo
+        - cache-rustup-user:/usr/local/rustup
+    outputs:
+      rc_version: ${{ steps.version.outputs.RC_VERSION }}
+      s3_prefix: ${{ steps.version.outputs.S3_PREFIX }}
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      - name: Get Version
+        id: version
+        shell: bash
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          # The App token, not the per-repository default: the check reads the target
+          # repository, which is private, and a token without access there answers
+          # 404 - the same answer as "this version has not shipped".
+          GH_TOKEN: ${{ steps.setup.outputs.token }}
+        run: |
+          ./.ci/release/version "${GITHUB_REF_NAME}"
+      - name: Guard artifact prefix
+        shell: bash
+        env:
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          S3_PREFIX: ${{ steps.version.outputs.S3_PREFIX }}
+        run: |
+          set -euo pipefail
+          # Fail closed: an empty listing and an unreachable store look identical, so
+          # reachability is proven first. Otherwise a credential or DNS failure would
+          # report "free" and this run would overwrite an existing set.
+          if ! rclone lsd "s3:${BUCKET}" >/dev/null; then
+              printf 'error: cannot reach the artifact store; refusing to assume the\n' >&2
+              printf '       prefix is unused.\n' >&2
+              exit 1
+          fi
+          if [ -n "$(rclone lsf "s3:${BUCKET}/${S3_PREFIX}" 2>/dev/null)" ]; then
+              printf 'error: s3:%s/%s already holds artifacts.\n' "$BUCKET" "$S3_PREFIX" >&2
+              printf '       Either this tag was already built - then cut the next\n' >&2
+              printf '       candidate - or a previous run failed midway, and the prefix\n' >&2
+              printf '       has to be removed before retrying.\n' >&2
+              exit 1
+          fi
+          printf 'prefix %s is free\n' "$S3_PREFIX"
+      - name: Build and package
+        shell: bash
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+          CARGO_PROFILE_RELEASE_LTO: "fat"
+          # `myrmic new` in the shipped CLI scaffolds against the published SDK of
+          # the same version, not a git revision of this repository.
+          MYRMIC_SDK_VERSION: ${{ steps.version.outputs.SOFTWARE_VERSION }}
+        run: |
+          ./.ci/release/package \
+              "${{ steps.version.outputs.RC_VERSION }}" \
+              "${{ steps.version.outputs.FINAL_VERSION }}" \
+              artifacts
+      - name: Upload artifacts
+        shell: bash
+        env:
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          S3_PREFIX: ${{ steps.version.outputs.S3_PREFIX }}
+        run: |
+          set -euo pipefail
+          rclone copy artifacts "s3:${BUCKET}/${S3_PREFIX}/"
+
+  publish:
+    runs-on: general
+    needs: [build]
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-4"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download artifacts
+        shell: bash
+        env:
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          S3_PREFIX: ${{ needs.build.outputs.s3_prefix }}
+        run: |
+          set -euo pipefail
+          rclone copy "s3:${BUCKET}/${S3_PREFIX}/" artifacts
+          # Both halves, so the release packages are known intact before a draft
+          # exists that could be approved.
+          ./.ci/release/checksums verify artifacts/candidate
+          ./.ci/release/checksums verify artifacts/release
+      - name: Publish candidate
+        shell: bash
+        env:
+          DEPLOY_USER: ${{ secrets.PACKAGE_DEPLOY_USER }}
+          DEPLOY_TOKEN: ${{ secrets.PACKAGE_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Only the candidate. The release packages stay in the object store until a
+          # human approves this candidate.
+          ./.ci/release/publish-package artifacts/candidate/*.deb artifacts/candidate/*.rpm
+      - name: Verify candidate is indexed
+        shell: bash
+        run: |
+          ./.ci/release/verify-indexed "${{ needs.build.outputs.rc_version }}"
+
+  release:
+    # Waits for publish: a draft is one click away from a release, so it must not
+    # exist for a candidate that never reached the package repository it is tested
+    # from.
+    runs-on: general
+    needs: [build, publish]
+    permissions:
+      packages: read
+      contents: write
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-4"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download candidate
+        shell: bash
+        env:
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          S3_PREFIX: ${{ needs.build.outputs.s3_prefix }}
+        run: |
+          set -euo pipefail
+          rclone copy "s3:${BUCKET}/${S3_PREFIX}/candidate/" candidate
+          ./.ci/release/checksums verify candidate
+      - name: Create draft release with candidate artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Created only once the artifacts are in hand, so a draft never sits there
+          # promising packages it does not have. This draft is what a human inspects
+          # before approving.
+          gh release create --draft --verify-tag --generate-notes \
+              --title "${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
+          gh release upload "${GITHUB_REF_NAME}" candidate/*

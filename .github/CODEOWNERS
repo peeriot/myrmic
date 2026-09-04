@@ -1,0 +1,44 @@
+# Reviewers
+# ---
+# /swarm/db/                          @Jezza
+# /swarm/db-cli/                      @Jezza
+# /swarm/db-client/                   @Jezza
+# /swarm/db-commons/                  @Jezza
+# /swarm/myrmic-cli/                  @Jezza
+# /swarm/skey/                        @Jezza
+# /swarm/skey-macros/                 @Jezza
+# /swarm/swarm/                       @Jezza
+# /swarm/swarm-api/                   @Jezza
+# /swarm/swarm-cli/                   @Jezza
+# /swarm/swarm-utils/                 @Jezza
+# /swarm/sorg-execution/src/bridge/   @Jezza
+# /swarm/sorg-execution/src/socket/   @Jezza
+# /swarm/sorg-execution/src/socket.rs @Jezza
+# /swarm/sorg-execution/src/mqtt.rs   @Jezza
+
+# /swarm/swarm-telemetry/             @cemoktra
+# /swarm/swarm-telemetry-embedded/    @cemoktra
+
+# /swarm/sorg-execution/              @FedorSmirnov89
+# /swarm/sorg-orchestration/          @FedorSmirnov89
+# /swarm/sorg-tests/                  @FedorSmirnov89
+# /swarm/cell-ctl/                    @FedorSmirnov89 @Jezza
+# /swarm/sorg-client/                 @FedorSmirnov89
+# /swarm/sorg-common/                 @FedorSmirnov89
+# /swarm/sorg-ctl/                    @FedorSmirnov89 @Jezza
+# /sdk/myrmic-sdk/                     @FedorSmirnov89 @Jezza
+# /sdk/myrmic-common/                  @FedorSmirnov89 @Jezza
+# /sdk/myrmic-common/src/codegen/             @FedorSmirnov89 @Jezza
+# /sdk/myrmic-sdk-macros/              @FedorSmirnov89 @Jezza
+
+# /swarm/cell-procotol                @FedorSmirnov89 @Jezza @Lakier15
+# /embedded/esp-hal                   @Lakier15 @hhornbacher
+# /sdk/signal-layer              @hhornbacher
+# /swarm/zenoh-nano                   @Lakier15
+# /swarm/zenoh-traits                 @Lakier15
+# /sdk/tools/aot-compiler            @Lakier15
+
+# .github/CODEOWNERS      @peeriot/devops-maintainers @Bergmann89
+/.github/workflows/     @peeriot/devops-maintainers @Bergmann89
+/.ci/release/           @peeriot/devops-maintainers @Bergmann89
+deny.toml               @peeriot/devops-maintainers @Bergmann89

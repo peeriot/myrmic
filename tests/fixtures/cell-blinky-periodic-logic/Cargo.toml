@@ -1,0 +1,19 @@
+[package]
+name = "cell-blinky-periodic-logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.myrmic]
+heap_size = 16_384
+
+[dependencies]
+myrmic-sdk = { workspace = true }
+myrmic-sdk-macros = { workspace = true }
+
+embedded-hal = { workspace = true }
+serde = { workspace = true }

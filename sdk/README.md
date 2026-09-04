@@ -1,0 +1,1 @@
+Workspace for the crates used to implement Wasm modules to be deployed in swarm.

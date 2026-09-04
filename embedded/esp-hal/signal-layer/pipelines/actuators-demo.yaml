@@ -1,0 +1,15 @@
+# Demonstrates the write side (Outlets): a digital relay and a PWM fan, both
+# driven by a WASM cell writing typed commands to named outlets.
+pipeline:
+  id: actuators-demo
+
+outlets:
+  - name: relay1_cmd
+    type: DigitalState
+    device: relay1
+
+  - name: fan1_duty
+    type: PwmDuty
+    device: fan1
+    config:
+      write_interval_ms: 50

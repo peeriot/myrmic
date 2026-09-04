@@ -1,0 +1,37 @@
+[package]
+name              = "myrmic-sdk-macros"
+version.workspace = true
+edition.workspace = true
+license           = "MIT OR Apache-2.0"
+description       = "Proc-macro crate backing myrmic-sdk: the #[cmd]/#[monitor]/#[init] export macros, the Message derive, and Wasm-import codegen used to write Myrmic cells."
+repository        = "https://github.com/peeriot/myrmic"
+readme            = "README.md"
+keywords          = ["myrmic", "wasm", "macro"]
+categories        = ["development-tools::procedural-macro-helpers", "wasm"]
+publish           = true
+include           = ["src/**/*.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[lib]
+proc-macro = true
+
+[features]
+default = ["alloc"]
+alloc = ["myrmic-sdk/alloc"]
+
+[dependencies]
+anyhow = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full", "parsing"] }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+myrmic-common = { path = "../myrmic-common", version = "0.4.0", default-features = false, features = ["codegen"] }
+
+[dev-dependencies]
+insta = "1.46.3"
+prettyplease = "0.2.37"
+myrmic-sdk = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,33 @@
+[package]
+name              = "wasm-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["bare-metal"]
+# If this is disabled, then only the metadata schema is shared which can be useful for utilities.
+bare-metal = ["dep:cfg-match", "dep:embassy-sync", "dep:embedded-storage", "dep:esp-storage", "dep:log", "dep:esp-mmu"]
+# ESP32-C5 Hardware Support
+esp32c5 = ["bare-metal", "esp-mmu/esp32c5", "esp-storage/esp32c5"]
+# ESP32-C6 Hardware Support
+esp32c6 = ["bare-metal", "esp-mmu/esp32c6", "esp-storage/esp32c6"]
+# ESP32-C61 Hardware Support
+esp32c61 = ["bare-metal", "esp-mmu/esp32c61", "esp-storage/esp32c61"]
+
+[dependencies]
+cfg-match        = { workspace = true, optional = true }
+crc              = { workspace = true }
+embassy-sync     = { workspace = true, optional = true }
+embedded-storage = { workspace = true, optional = true }
+esp-storage      = { workspace = true, optional = true }
+log              = { workspace = true, optional = true }
+postcard         = { workspace = true, features = ["alloc"] }
+serde            = { workspace = true, features = ["derive"] }
+# Local
+esp-mmu = { workspace = true, optional = true }

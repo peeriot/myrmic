@@ -1,0 +1,24 @@
+id: hysteresis
+category: processing-steps
+description: >
+  Two-threshold hysteresis controller for feed-forward actuator control. Turns
+  ON when the input rises to/above `on_threshold` and OFF when it falls to/below
+  `off_threshold`, emitting a DigitalState only on a transition (edge). Drives a
+  digital Outlet directly.
+inputs:
+  - name: value
+    type: f32
+outputs:
+  - name: command
+    type: DigitalState
+config_schema:
+  on_threshold:
+    scope: application
+    rust_type: f32
+    default: 0.0
+    description: "Assert (turn ON) when the input reaches or exceeds this value."
+  off_threshold:
+    scope: application
+    rust_type: f32
+    default: 0.0
+    description: "Deassert (turn OFF) when the input reaches or falls below this value."

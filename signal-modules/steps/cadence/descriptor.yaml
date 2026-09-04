@@ -1,0 +1,20 @@
+id: cadence
+category: processing-steps
+description: >
+  Cadence a path: pass one of every `every` samples, controlling how often the
+  downstream (typically an Outlet) is recomputed and written. On the ticks
+  between samples it either drops the value (Decimate) or re-emits the last
+  sampled value (SampleHold). Type-transparent (generic over the value it
+  carries), so it declares no fixed input/output type.
+config_schema:
+  every:
+    scope: application
+    rust_type: u32
+    default: 1
+    description: "Pass 1 of every N samples (1 = passthrough)."
+  mode:
+    scope: application
+    rust_type: CadenceMode
+    default: Decimate
+    # Variants: Decimate | SampleHold
+    description: "Between-sample behaviour: Decimate (drop) or SampleHold (re-emit last)."

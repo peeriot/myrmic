@@ -1,0 +1,89 @@
+name: Deploy Documentation
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_book:
+        description: "Deploy Book"
+        required: false
+        default: true
+        type: boolean
+      deploy_docs:
+        description: "Deploy Docs"
+        required: false
+        default: true
+        type: boolean
+  release:
+    types: [published]
+
+jobs:
+  # Deploy Book
+
+  deploy-book:
+    name: Deploy Book
+    runs-on: general
+    if: |
+      ( github.event_name == 'release' && !github.event.release.draft ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.deploy_book == true )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Copy book from volume
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        with:
+          image: bash
+          volumes: |
+            myrmic-html:/myrmic,rw,external
+          run: cp -r /myrmic/book/. ${{ github.workspace }}/book-out/
+
+      - name: Add .nojekyll
+        run: touch ${{ github.workspace }}/book-out/.nojekyll
+
+      - name: Deploy Book to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ steps.setup.outputs.token }}
+          external_repository: ${{ vars.BOOK_PAGES_REPO }}
+          publish_branch: ${{ vars.BOOK_PAGES_BRANCH }}
+          publish_dir: ${{ github.workspace }}/book-out
+          cname: ${{ vars.BOOK_CNAME }}
+
+  # Deploy Docs
+
+  deploy-docs:
+    name: Deploy Docs
+    runs-on: general
+    if: |
+      ( github.event_name == 'release' && !github.event.release.draft ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.deploy_docs == true )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Copy docs from volume
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        with:
+          image: bash
+          volumes: |
+            myrmic-html:/myrmic,rw,external
+          run: cp -r /myrmic/docs/. ${{ github.workspace }}/docs-out/
+
+      - name: Add .nojekyll
+        run: touch ${{ github.workspace }}/docs-out/.nojekyll
+
+      - name: Deploy Docs to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ steps.setup.outputs.token }}
+          external_repository: ${{ vars.DOCS_PAGES_REPO }}
+          publish_branch: ${{ vars.DOCS_PAGES_BRANCH }}
+          publish_dir: ${{ github.workspace }}/docs-out
+          cname: ${{ vars.DOCS_CNAME }}

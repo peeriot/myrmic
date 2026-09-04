@@ -1,0 +1,49 @@
+networks:
+  network_a:
+  network_b:
+
+x-service-template: &service-template
+  image: "swarm:network_tests"
+  environment:
+    # important for e2e tests to work
+    - RUST_LOG=debug
+  expose:
+    - 80
+  restart: no
+  stop_signal: SIGINT
+  privileged: true
+  cap_add:
+    - NET_ADMIN
+
+services:
+  sidecar:
+    image: "sidecar:network_tests"
+    networks:
+      network_a:
+      network_b:
+    ports:
+      - "127.0.0.1:17450:8080"
+    command: ["test-sidecar"]
+
+  router:
+    <<: *service-template
+    networks:
+      network_a:
+      network_b:
+    command: ["swarm", "/etc/peeriot/swarm/test_router.jsonnet"]
+
+  peer-a:
+    <<: *service-template
+    networks:
+      network_a:
+    depends_on:
+      - router
+    command: ["swarm", "/etc/peeriot/swarm/test_peer_gossip.jsonnet"]
+
+  peer-b:
+    <<: *service-template
+    networks:
+      network_b:
+    depends_on:
+      - router
+    command: ["swarm", "/etc/peeriot/swarm/test_peer_gossip.jsonnet"]

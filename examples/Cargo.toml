@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "ble/*",
+    "counter",
+    "greenhouse/*",
+    "chatty",
+    "spawn",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Peeriot GmbH <info@peeriot.io>"]
+publish = false
+
+[workspace.dependencies]
+assert_approx_eq = { version = "1.1.0" }
+myrmic-sdk = { path = "../sdk/myrmic-sdk", default-features = false, features = ["alloc", "cells", "cell-init"] }
+nom = { version = "8.0.0", default-features = false }
+serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
+
+heapless = { version = "0.9.3", default-features = false, features = ["alloc"] }
+
+textus = { version = "0.4.0", default-features = false }

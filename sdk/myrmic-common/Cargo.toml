@@ -1,0 +1,86 @@
+[package]
+name              = "myrmic-common"
+version.workspace = true
+edition.workspace = true
+authors           = ["Peeriot GmbH <info@peeriot.io>"]
+license           = "MIT OR Apache-2.0"
+description       = "Wire types shared across the Myrmic WASM host/guest boundary (db, cells, BLE, web), plus the host-only code generator behind myrmic-sdk-macros and the cell build tooling."
+repository        = "https://github.com/peeriot/myrmic"
+readme            = "README.md"
+keywords          = ["myrmic", "wasm", "no-std", "embedded"]
+categories        = ["embedded", "no-std", "wasm"]
+publish           = true
+# `src/types/web/url.rs` and `src/types/web/status_code.rs` are third-party
+# MIT-derived code. NOTICE and the licence texts are copied into this package
+# so a consumer who only has the published `.crate` still receives the
+# required attribution.
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "LICENSE-MIT", "LICENSE-APACHE",
+    "NOTICE",
+    "LICENSES/**",
+]
+
+[lints]
+workspace = true
+
+[features]
+default = ["db", "cells", "types-web"]
+std = ["alloc", "thiserror/std"]
+eio = [
+    "dep:embedded-io",
+    "postcard/embedded-io-06",
+]
+alloc = ["postcard/alloc", "embedded-io/alloc"]
+cells = ["alloc", "dep:uuid"]
+db = ["alloc"]
+types-web = [
+    "alloc",
+    "dep:uuid",
+    "serde/alloc",
+    "serde/derive",
+]
+url-serde = ["types-web"]
+# Host-only code generation for cell macros and build tools. Pulls in `std` and
+# the heavy `syn`/`typify`/`schemars` stack, so it is never enabled for a wasm
+# cell target - only by `myrmic-sdk-macros` and the host build tooling.
+codegen = [
+    "std",
+    "serde/std",
+    "serde/derive",
+    "dep:heck",
+    "dep:http",
+    "dep:humantime",
+    "dep:proc-macro2",
+    "dep:quote",
+    "dep:syn",
+    "dep:serde_json",
+    "dep:schemars",
+    "dep:typify-impl",
+]
+
+[dependencies]
+signal-layer-types = { workspace = true, default-features = false }
+serde = { workspace = true }
+heapless = { workspace = true, features = ["serde"] }
+uuid = { workspace = true, features = ["serde", "v5"], optional = true }
+postcard = { workspace = true, features = ["experimental-derive"] }
+embedded-io = { workspace = true, optional = true }
+
+# `codegen` feature only (host-only). See the `codegen` feature above.
+heck = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+humantime = { workspace = true, optional = true }
+proc-macro2 = { workspace = true, optional = true }
+quote = { workspace = true, optional = true }
+syn = { workspace = true, features = ["full", "parsing", "visit-mut"], optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
+schemars = { version = "0.8.22", optional = true }
+thiserror = { workspace = true }
+typify-impl = { version = "0.7.0", optional = true }
+
+[dev-dependencies]
+claims = { workspace = true }
+serde_yaml = { workspace = true }
+prettyplease = "0.2.37"

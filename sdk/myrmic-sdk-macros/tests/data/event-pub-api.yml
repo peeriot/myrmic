@@ -1,0 +1,17 @@
+cell: EventPub
+types:
+  Counter:
+    description: A simple counter value.
+    fields:
+    - name: count
+      type: i32
+commands:
+  trigger:
+    args: None
+    returns: None
+events:
+  count_changed:
+    description: Published when the counter value changes.
+    fields:
+    - name: counter
+      type: Counter

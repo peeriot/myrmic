@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(dirname $0)"
+MAIN_DIR="$(readlink -f "$SCRIPT_DIR/..")"
+
+OLD_PWD="$PWD"
+
+finish() {
+    cd "$OLD_PWD"
+}
+
+create-intermediate-ca() {
+    PREFIX="$1"
+    DOMAIN="$2"
+
+    openssl genrsa \
+        -out "$PREFIX-key.pem" \
+        4096
+    openssl req \
+        -new \
+        -key "$PREFIX-key.pem" \
+        -out "$PREFIX-req.pem" \
+        -subj "/CN=$DOMAIN/O=Peeriot/OU=$DOMAIN"
+    openssl x509 \
+        -req \
+        -in "$PREFIX-req.pem" \
+        -CA root-ca-cert.pem \
+        -CAkey root-ca-key.pem \
+        -CAcreateserial \
+        -out "$PREFIX-cert.pem" \
+        -days 36500 \
+        -sha256 \
+        -extensions v3_ca \
+        -extfile <(printf "[ v3_ca ]\nbasicConstraints=CA:TRUE\nkeyUsage=critical, digitalSignature, cRLSign, keyCertSign")
+
+    cat "$PREFIX-cert.pem" "root-ca-cert.pem" > "$PREFIX-chain.pem"
+}
+
+trap finish EXIT
+
+# Prepare Certificate Directory
+rm -rf "$MAIN_DIR/certs"
+mkdir -p "$MAIN_DIR/certs"
+cd "$MAIN_DIR/certs"
+
+# Root CA
+echo ""
+echo "Create Root CA"
+openssl genrsa \
+    -out root-ca-key.pem \
+    4096
+openssl req \
+    -x509 \
+    -new \
+    -nodes \
+    -sha256 \
+    -days 36500 \
+    -key root-ca-key.pem \
+    -out root-ca-cert.pem \
+    -subj "/CN=swarm.peeriot.intra/O=Peeriot/OU=swarm.peeriot.intra"
+
+# Mesh A Intermediate CA
+echo ""
+echo "Create Mesh A CA"
+create-intermediate-ca "mesh-a-ca" "mesh-a.swarm.peeriot.intra"
+
+# Mesh B Intermediate CA
+echo ""
+echo "Create Mesh A CA"
+create-intermediate-ca "mesh-b-ca" "mesh-b.swarm.peeriot.intra"

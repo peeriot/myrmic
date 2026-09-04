@@ -1,0 +1,30 @@
+[package]
+name              = "esp-codegen"
+version.workspace = true
+edition.workspace = true
+license           = "MIT OR Apache-2.0"
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "esp-codegen"
+path = "src/main.rs"
+
+[lib]
+name = "esp_codegen"
+path = "src/lib.rs"
+
+[dependencies]
+pipeline-codegen = { workspace = true }
+anyhow           = { workspace = true }
+clap             = { workspace = true }
+indexmap         = { version = "2" }
+proc-macro2      = { workspace = true }
+quote            = { workspace = true }
+serde_yaml       = { workspace = true }
+
+[dev-dependencies]
+# No extra dev-deps needed: golden.rs only uses the lib's public API.
+
+[lints]
+workspace = true

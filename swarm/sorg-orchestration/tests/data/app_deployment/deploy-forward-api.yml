@@ -1,0 +1,6 @@
+cell: DeployForward
+commands:
+  forward:
+    args: String
+    returns: None
+events: {}

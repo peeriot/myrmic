@@ -1,0 +1,88 @@
+# Board manifest for the ESP32-C6 DevKit used in Edgevance Node development.
+#
+# Hardware: Espressif ESP32-C6-DevKitC-1 with sensors on the I2C0 bus.
+# Wiring:   GPIO10 = SCL, GPIO11 = SDA (confirmed in modem-esp32/src/main.rs).
+
+id: esp32c6-devkit
+chip: esp32c6
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 10
+      sda: 11
+    freq_khz: 400
+
+gpios:
+  # Pins available for non-bus use on this board. A pin listed here can be:
+  #   - claimed by the Signal Layer via a `device.pins:` entry below (then it is
+  #     owned by BoardPeripherals and *not* exposed to WASM), or
+  #   - left unclaimed, in which case the WASM runtime sees it via the
+  #     codegen-emitted `pipeline_pins!(p)` macro.
+  # Pins NOT listed here are unavailable on this board (flash, USB, JTAG,
+  # strapping pins, or simply not broken out) — they will be `None` in
+  # `pipeline_pins!` regardless of what the chip supports. Bus pins
+  # (i2c0.scl, i2c0.sda) must NOT appear in this list.
+  general_purpose: [0, 1, 2, 3, 14, 18, 19, 20, 21, 22, 23]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76   # SDO pulled to GND
+
+  - id: bmp180
+    driver: bmp180
+    bus: i2c0
+    # BMP180 has a fixed address (0x77); no hardware config needed.
+
+  - id: ads1115
+    driver: ads1115
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x48   # ADDR pin tied to GND
+
+  - id: ccs811
+    driver: ccs811
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x5A   # ADDR pin tied to GND
+    pins:
+      nint: 23
+
+  - id: veml7700
+    driver: veml7700
+    bus: i2c0
+    # VEML7700 has a fixed address (0x10); no hardware config needed.
+
+  - id: wsen_itds
+    driver: wsen-itds
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x19   # SA0 pulled to VDD
+
+  # --- Actuators (write side) ---
+  - id: relay1
+    driver: gpio-output
+    # Bus-less: driven on a bare GPIO.
+    pins:
+      out: 2
+    hardware:
+      active_low: false
+
+  - id: fan1
+    driver: pwm-output
+    pins:
+      out: 3
+    hardware:
+      freq_khz: 25     # 25 kHz — quiet 4-wire fan PWM
+
+  # Hybrid: drives a relay on `out` and reads its real state on `feedback`.
+  # Bench test: jumper GPIO14 → GPIO18 so the contact tap mirrors the command.
+  - id: relay_fb
+    driver: gpio-output-feedback
+    pins:
+      out: 14
+      feedback: 18

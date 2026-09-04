@@ -1,0 +1,10 @@
+name: mqtt_bridge
+broker_url: mqtt://localhost:1883
+ingress:
+  - id: ingest_trigger
+    topic: test/ingress
+    payload: "${string:payload}"
+egress:
+  - id: publish_result
+    topic: test/egress
+    payload: "${string:payload}"

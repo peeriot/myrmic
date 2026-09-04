@@ -1,0 +1,69 @@
+# REUSE.toml — file-level licensing declarations for the Myrmic monorepo.
+#
+# Follows the REUSE Specification 3.3 (https://reuse.software/spec-3.3/).
+# Each crate additionally declares its license in Cargo.toml. Where a source file
+# carries its own SPDX header, that header takes precedence ("closest").
+# Later [[annotations]] tables take precedence over earlier ones for overlapping paths.
+
+version = 1
+SPDX-PackageName = "Myrmic"
+SPDX-PackageSupplier = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-PackageDownloadLocation = "https://github.com/peeriot/myrmic"
+
+# --- Zone A: platform (GPL-2.0-only together with the Myrmic Exception) -------------------
+
+[[annotations]]
+path = [
+  "swarm/**", "embedded/**", "tests/**", "benchmarks/**",
+  "ci/**", ".ci/**", ".github/**", ".cargo/**", ".config/**", "docker/**",
+  "Cargo.toml", "Cargo.lock", "deny.toml", "deny.patch", "osv-scanner.toml",
+  "rust-toolchain.toml", "rustfmt.toml", "clippy.toml",
+  ".gitignore", ".gitattributes", ".dockerignore", ".gitmodules",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-License-Identifier = "GPL-2.0-only WITH LicenseRef-Myrmic-exception-1.0"
+
+# --- Zone B: SDK, interface and signal-layer contract crates (MIT OR Apache-2.0) ----------
+# swarm/signal-layer/ holds the crates that are compiled into customer pipeline programs
+# (runtime support and bus shims); they are interface crates, not platform code.
+
+[[annotations]]
+path = ["sdk/**", "signal-modules/**", "swarm/signal-layer/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# --- Zone C: examples, tutorials and templates (MIT-0) --------------------------------------
+
+[[annotations]]
+path = ["examples/**", "embedded/examples/**", "swarm/tutorials/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-License-Identifier = "MIT-0"
+
+# --- Documentation (CC-BY-4.0). Code examples inside the documentation are additionally
+# offered under MIT-0; see LICENSING.md. --------------------------------------------------
+
+[[annotations]]
+path = ["doc/**", "README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
+        "LICENSING.md", "NOTICE", "SUMMARY.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# --- Legal instruments: verbatim copying only -----------------------------------------------
+
+[[annotations]]
+path = ["CLA.md", "EXCEPTION-SCOPE.md", "legal/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-License-Identifier = "LicenseRef-Peeriot-Legal-Notice"
+
+# --- Brand assets: not licensed with the code or documentation ------------------------------
+
+[[annotations]]
+path = ["doc/images/myrmic-logo.svg"]
+precedence = "override"
+SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
+SPDX-License-Identifier = "LicenseRef-Peeriot-Brand-Assets"

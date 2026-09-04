@@ -1,0 +1,23 @@
+[package]
+name              = "linux-gpio-shim"
+version.workspace = true
+edition.workspace = true
+license           = "MIT OR Apache-2.0"
+authors.workspace = true
+publish.workspace = true
+
+[lib]
+name = "linux_gpio_shim"
+path = "src/lib.rs"
+
+[dependencies]
+embedded-hal = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-embedded-hal = { workspace = true, features = ["gpio_cdev"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

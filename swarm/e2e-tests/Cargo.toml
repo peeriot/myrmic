@@ -1,0 +1,23 @@
+[package]
+name = "e2e-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+test-framework = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+allure-cargotest = "1.2.0"
+rumqttc = { workspace = true }
+rumqttd = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
+uuid = { workspace = true, features = ["v4"] }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

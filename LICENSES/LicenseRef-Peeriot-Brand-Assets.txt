@@ -1,0 +1,12 @@
+Peeriot Brand Assets - All Rights Reserved
+
+The Myrmic logo and the other brand assets in this repository (names, logos,
+wordmarks and similar material identified as brand assets) are not licensed
+under the licenses that apply to the software code, data or documentation of
+this repository. "Myrmic", "EdgeVance" and "Peeriot" are trademarks of
+Peeriot GmbH.
+
+Use of these brand assets is subject to Peeriot GmbH's trademark policy.
+Until that policy is published, no rights in the brand assets are granted
+beyond those that apply by law (such as truthful, referential use). For
+permission requests, contact Peeriot GmbH at contact@myrmic.dev.

@@ -1,0 +1,59 @@
+[package]
+name              = "wasm-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# ESP32-C5 Hardware Support
+esp32c5 = ["wasm-storage/esp32c5"]
+# ESP32-C6 Hardware Support
+esp32c6 = ["wasm-storage/esp32c6"]
+# ESP32-C61 Hardware Support
+esp32c61 = ["wasm-storage/esp32c61"]
+# BLE support
+ble = ["dep:esp-nimble-host"]
+# Signal Layer — enables init_tap_registry and the tap host function implementations.
+# Tap host functions are always registered (returning errors when no registry is present),
+# but init_tap_registry is only available when this feature is active.
+signal-layer = []
+# Test-only: registers the `selftest` host import that lets a guest cell trigger
+# a deliberate liveness stall, to exercise the on-die watchdog from HIL tests.
+# Never enable in a shipped build.
+wdt-selftest = []
+
+[dependencies]
+# crates.io
+bitflags              = { workspace = true }
+embassy-executor      = { workspace = true }
+embassy-futures       = { workspace = true }
+embassy-sync          = { workspace = true }
+embassy-time          = { workspace = true }
+esp-hal               = { workspace = true, features = ["unstable"] }            # Unstable to use gpio::Flex
+esp-radio-rtos-driver = { workspace = true }
+heapless              = { workspace = true }
+log                   = { workspace = true }
+paste                 = { workspace = true }
+portable-atomic       = { workspace = true }
+postcard              = { workspace = true, features = ["experimental-derive"] }
+riscv                 = { workspace = true }
+serde                 = { workspace = true }
+portable-atomic-util  = { workspace = true }
+static_cell           = { workspace = true }
+thiserror             = { workspace = true }
+zenoh-protocol        = { workspace = true }
+# local
+cell-protocol       = { workspace = true }
+signal-layer-core   = { workspace = true }
+db-client           = { workspace = true }
+myrmic-common       = { workspace = true, features = ["alloc", "cells"] }
+wasm-runtime-macros = { workspace = true }
+wamr-rust-sdk       = { workspace = true, default-features = false, features = ["esp-hal", "aot", "xip"] }
+myrmic-sdk          = { workspace = true }
+wasm-storage        = { workspace = true }
+esp-nimble-host     = { workspace = true, optional = true }

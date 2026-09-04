@@ -1,0 +1,17 @@
+[package]
+name = "cell-seq-main-logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.myrmic]
+heap_size = 65_536
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk = { workspace = true }
+
+serde = { workspace = true }

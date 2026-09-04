@@ -1,0 +1,200 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  NimBLE Host Configuration                                                 ║
+# ║                                                                            ║
+# ║  This file controls the compile-time configuration of the NimBLE BLE       ║
+# ║  host stack. esp-nimble-host's build.rs reads it and injects the values    ║
+# ║  as C #defines before compiling NimBLE.                                    ║
+# ║                                                                            ║
+# ║  To use a custom config in an external project, place a copy of this file  ║
+# ║  at your Cargo workspace root (the directory containing the top-level      ║
+# ║  Cargo.toml). build.rs finds it automatically via CARGO_WORKSPACE_DIR.     ║
+# ║  Alternatively, set NIMBLE_CONFIG_DIR in your project's                    ║
+# ║  .cargo/config.toml to point to the directory containing this file.        ║
+# ║                                                                            ║
+# ║  Missing values fall back to the defaults shown here.                      ║
+# ║  Memory estimates assume ESP32-C6 with WiFi+BLE coex.                      ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+# ── Roles ────────────────────────────────────────────────────────────────────
+#
+# Enable only the BLE roles your application needs. Disabling unused roles
+# saves flash (code is compiled out) and a small amount of RAM.
+#
+# For a typical Signal Layer sensor adapter (scan + connect to peripherals):
+#   central = true, observer = true, peripheral = false, broadcaster = false
+#
+# For a device that advertises services (e.g. a BLE peripheral):
+#   central = false, observer = false, peripheral = true, broadcaster = true
+
+[roles]
+# Central: can initiate connections and perform GATT client operations.
+central = true
+
+# Observer: can perform passive/active BLE scanning without connecting.
+observer = true
+
+# Peripheral: can accept incoming connections and run a GATT server.
+# Disable if you only connect TO other devices (saves ~2-4 KB flash).
+peripheral = false
+
+# Broadcaster: can send BLE advertisements.
+# Disable if you never advertise (saves ~1-2 KB flash).
+broadcaster = false
+
+
+# ── Connections ──────────────────────────────────────────────────────────────
+#
+# Each connection costs ~4-6 KB of heap at runtime (ACL buffers, L2CAP state,
+# connection handle structures). The L2CAP channel count auto-scales at
+# 3 channels per connection (signal + ATT + SM).
+#
+# If you need to connect to multiple BLE sensors simultaneously, increase
+# max_connections. The transport buffer counts (below) should be scaled
+# accordingly.
+
+[connections]
+# Maximum number of simultaneous BLE connections.
+# Memory impact: ~4-6 KB per connection + L2CAP channels.
+max_connections = 4
+
+
+# ── Transport Buffers ────────────────────────────────────────────────────────
+#
+# These control the HCI transport buffer pool between the BLE host and
+# controller. This is the most impactful memory tuning section.
+#
+# ACL buffers carry data packets (GATT reads/writes, notifications).
+# Event buffers carry HCI events (connection complete, advertising reports).
+#
+# Rule of thumb:
+#   - For 1 connection:  acl_count = 4-6,  evt_discardable_count = 4-8
+#   - For 3 connections: acl_count = 8-12, evt_discardable_count = 8-16
+#
+# If you see "r_os_mbuf_append returned 2" panics, increase acl_count or
+# msys_block_count.
+
+[transport]
+# Number of ACL data buffers (host ↔ controller). Each buffer is acl_size bytes.
+# Fewer = less memory, but may stall during heavy GATT traffic.
+# Memory impact: acl_count × acl_size ≈ 6 × 251 = ~1.5 KB
+acl_count = 6
+
+# Size of each ACL buffer in bytes. 251 is the BLE 4.2 default (max single
+# packet payload). Reduce to 128 if you never transfer more than ~120 bytes
+# per ATT operation.
+acl_size = 251
+
+# Number of HCI event buffers (for connection events, command completions).
+# Rarely needs changing.
+evt_count = 4
+
+# Number of discardable event buffers (for advertisement reports during scanning).
+# Reduce if you don't scan, or scan with filter_duplicates enabled.
+# Memory impact: evt_discardable_count × evt_size ≈ 8 × 70 = ~560 B
+evt_discardable_count = 8
+
+# Size of each event buffer in bytes.
+evt_size = 70
+
+
+# ── System mbuf Pool ─────────────────────────────────────────────────────────
+#
+# The msys pool is NimBLE's internal memory pool for packet processing.
+# All BLE data flows through this pool. If exhausted, operations fail
+# with OS_ENOMEM.
+#
+# This is separate from the Rust heap (esp_alloc) — it's allocated once
+# during nimble_port_init() from the heap, then managed internally.
+
+[msys]
+# Number of blocks in the primary msys pool.
+# More blocks = can handle more concurrent BLE operations.
+# Memory impact: block_count × block_size ≈ 8 × 292 = ~2.3 KB
+block_count = 8
+
+# Size of each msys block in bytes. 292 fits a maximum-size ACL packet
+# (251 bytes) plus L2CAP + HCI headers. Rarely needs changing.
+block_size = 292
+
+
+# ── ATT / GATT ───────────────────────────────────────────────────────────────
+#
+# These control the GATT client and server behaviour.
+
+[gatt]
+# Preferred ATT MTU announced during MTU exchange.
+# Higher = larger single reads/writes, but needs matching buffer sizes.
+# 128 is a good balance for sensor data. 256 if you transfer large payloads.
+# Memory impact: affects internal ATT buffer allocation.
+preferred_mtu = 128
+
+# Maximum concurrent GATT client procedures (discovery, read, write).
+# Increase if you perform GATT operations on multiple connections in parallel.
+max_procs = 4
+
+# Maximum prepared write entries (GATT server only).
+# Set to 0 if you only act as a GATT client (no local services).
+# Memory impact: 64 entries × ~20 bytes each = ~1.3 KB saved when set to 0.
+max_prep_entries = 0
+
+# Rate to retry stalled GATT procedures (ms). When a GATT operation can't
+# allocate memory, NimBLE retries after this interval.
+resume_rate_ms = 1000
+
+
+# ── L2CAP ────────────────────────────────────────────────────────────────────
+#
+# L2CAP channels are allocated per connection. The default formula
+# (3 × max_connections) provides signal + ATT + SM channels per connection.
+# Only change this if you use LE CoC (Connection-Oriented Channels).
+
+[l2cap]
+# Total L2CAP channels. Default: 3 × max_connections.
+# Set to 0 to use the default formula.
+max_channels = 0
+
+# Maximum concurrent L2CAP signalling procedures.
+max_sig_procs = 1
+
+
+# ── Bonding / Storage ────────────────────────────────────────────────────────
+#
+# These control how many bonded devices and CCCDs can be persisted.
+# Only relevant if security (pairing/bonding) is enabled.
+# Currently bonding is disabled — these values are only used if you
+# enable BLE_SM_BONDING in the future.
+
+[storage]
+# Maximum number of persisted bonds.
+max_bonds = 3
+
+# Maximum number of persisted client characteristic configuration descriptors.
+max_cccds = 8
+
+
+# ── Security Manager ─────────────────────────────────────────────────────────
+#
+# Controls BLE pairing. Enabling legacy=true compiles in NimBLE's SM and
+# the TinyCrypt AES library needed for key derivation. sc=true additionally
+# pulls in P-256 ECC (TinyCrypt) — omit for now unless a specific peripheral
+# requires Secure Connections.
+#
+# IO capability is set at runtime (KeyboardOnly) — not a build-time knob.
+# bonding=false means keys are never persisted; no ble_store backend needed.
+
+[security]
+# Enable Legacy pairing (AES-based STK derivation).
+legacy = true
+
+# Enable Secure Connections (P-256 ECDH). Requires hardware RNG hook.
+sc = false
+
+# Require MITM protection — mandatory for passkey authentication.
+mitm = true
+
+# Persist bond keys across connections. Needs a flash-backed ble_store.
+bonding = false
+
+# Maximum concurrent SM pairing procedures.
+max_procs = 1

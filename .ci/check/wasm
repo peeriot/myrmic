@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Cells need nightly for -Zbuild-std. Use the pinned channel the workflow passes,
+# rather than whatever floating `nightly` happens to be in the rustup volume.
+CARGO_CHANNEL=${CARGO_CHANNEL:-nightly}
+
+# Cell crates are `cdylib` and pull wasm-only SDK features, so they cannot join
+# `default-members` and are invisible to Check Code. This job is their only linter.
+pkgs=()
+for dir in "${REPO_ROOT}/tests/fixtures"/*/ \
+           "${REPO_ROOT}/benchmarks/warehouse/cells"/*/; do
+    [ -f "${dir}.ci-skip-wasm-build" ] && continue
+    [ -f "${dir}Cargo.toml" ] || continue
+    pkgs+=(-p "$(basename "$dir")")
+done
+
+if [ ${#pkgs[@]} -gt 0 ]; then
+    rustup toolchain list | grep -q "^${CARGO_CHANNEL}" \
+        || rustup toolchain install "$CARGO_CHANNEL" --profile minimal
+    rustup component add clippy rust-src --toolchain "$CARGO_CHANNEL"
+    rustup target add wasm32-unknown-unknown --toolchain "$CARGO_CHANNEL"
+
+    cargo "+$CARGO_CHANNEL" clippy \
+        --manifest-path "${REPO_ROOT}/Cargo.toml" \
+        --profile wasm-release \
+        --target wasm32-unknown-unknown \
+        -Zbuild-std=core,alloc,compiler_builtins \
+        "${pkgs[@]}"
+fi

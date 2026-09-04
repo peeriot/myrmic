@@ -1,0 +1,34 @@
+[package]
+name      = "cell-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+default = ["dep:zenoh", "opentelemetry"]
+opentelemetry = ["dep:opentelemetry"]
+
+[dependencies]
+db-commons = { workspace = true, features = ["models"] }
+myrmic-tags = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+serde       = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
+myrmic-common = { workspace = true }
+postcard = { workspace = true }
+zenoh-protocol = { workspace = true }
+zenoh = { workspace = true, optional = true }
+
+# Hosts mint and convert Gens from the session HLC; embedded targets only
+# store and compare them, so they don't carry uhlc (or its rand pull-in).
+# Embedded firmware re-reads its tags on a timer instead of watching them, so
+# tokio's watch channel is host-only too.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+uhlc = { workspace = true }
+tokio = { workspace = true, default-features = false, features = ["sync"] }
+
+[lints]
+workspace = true

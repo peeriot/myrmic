@@ -1,0 +1,54 @@
+[package]
+name = "swarm-onboarding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["log"]
+defmt = ["dep:defmt", "defmt-or-log/defmt", "zenoh-traits/defmt"]
+log = ["dep:log", "defmt-or-log/log", "zenoh-traits/log"]
+
+[dependencies]
+# Common
+defmt = { workspace = true, optional = true, features = ["alloc"] }
+defmt-or-log = { workspace = true }
+log = { workspace = true, default-features = false, optional = true }
+serde = { workspace = true, default-features = false, features = ["derive"] }
+thiserror = { workspace = true, default-features = false }
+bitflags = { workspace = true }
+
+embedded-io-async = { workspace = true }
+
+embassy-futures = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+
+zenoh-traits = { workspace = true, default-features = false }
+
+base64 = { workspace = true, default-features = false }
+serde-json-core = { workspace = true }
+#tar-no-std = { workspace = true }
+elliptic-curve = { workspace = true, default-features = false, features = ["ecdh", "pkcs8"] }
+p256 = { workspace = true, default-features = false, features = ["arithmetic"] }
+sha2 = { workspace = true, default-features = false }
+aes-gcm = { workspace = true, default-features = false, features = ["aes"] }
+rand_core = { workspace = true }
+qrcodegen-no-heap = { workspace = true }
+futures-util = { workspace = true, default-features = false }
+
+[dev-dependencies]
+zenoh-traits = { workspace = true, features = ["zenoh-nano"] }
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread", "log"] }
+embassy-time = { workspace = true, features = ["log", "std"] }
+static_cell = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+zenoh-nano = { workspace = true, features = ["log"] }
+rand = { workspace = true }
+rand-08 = { workspace = true } # For RustCrypto
+x509-cert = { workspace = true, default-features = false }
+critical-section  = { workspace = true, features = ["std"] }
+edge-nal = { workspace = true }
+edge-nal-std = { workspace = true }

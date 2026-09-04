@@ -1,0 +1,27 @@
+[package]
+name              = "myrmic-signal-layer-types"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license           = "MIT OR Apache-2.0"
+description       = "Wire types for Myrmic's embedded signal-layer host/WASM boundary: digital and PWM outlet commands, outlet faults, driver health and threshold-alarm events, serialized with postcard."
+repository        = "https://github.com/peeriot/myrmic"
+readme            = "README.md"
+keywords          = ["myrmic", "embedded", "no-std", "wasm"]
+categories        = ["embedded", "no-std", "wasm"]
+publish           = true
+include           = ["src/**/*.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[lib]
+name = "signal_layer_types"
+
+[features]
+default  = ["postcard"]
+postcard = ["dep:postcard"]
+
+[dependencies]
+serde    = { workspace = true, default-features = false, features = ["derive"] }
+postcard = { workspace = true, optional = true }
+
+[lints]
+workspace = true

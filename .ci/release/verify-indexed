@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#
+# Confirms myrmic-cli reached the apt index at the given version, not just the upload
+# endpoint.
+#
+# Usage:
+#   .ci/release/verify-indexed <package-version>
+#
+# A 2xx from the upload means the repository accepted the file. This checks the index
+# apt reads, which is what a machine installing the package depends on.
+#
+# Only the Debian index is checked. The RPM registry has no equivalent check yet.
+#
+# The index reads without authentication, so DEPLOY_USER and DEPLOY_TOKEN are used
+# only when set. That keeps the step free of credentials it does not need, and still
+# works if reads are gated later.
+
+set -euo pipefail
+
+INDEX=https://packages.peeriot.intra/api/packages/peeriot/debian/dists/trixie/main/binary-amd64/Packages
+PACKAGE=myrmic-cli
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$#" -eq 1 ] || die "usage: $0 <package-version>"
+VERSION="$1"
+
+CURL_CONFIG="$(mktemp)"
+chmod 600 "$CURL_CONFIG"
+trap 'rm -f "$CURL_CONFIG"' EXIT
+if [ -n "${DEPLOY_USER:-}" ] && [ -n "${DEPLOY_TOKEN:-}" ]; then
+    printf 'user = "%s:%s"\n' "$DEPLOY_USER" "$DEPLOY_TOKEN" >"$CURL_CONFIG"
+fi
+
+printf '\n\n--== Verify Index ==--\n\n'
+
+if ! body="$(curl --config "$CURL_CONFIG" --fail-with-body -sS "$INDEX")"; then
+    die "could not fetch the apt index at ${INDEX}. The upload itself was accepted,
+       so the package may be there but unindexed."
+fi
+
+# The version has to appear in this package's stanza. Searching the whole index would
+# match the same version line under any other package.
+found="$(printf '%s\n' "$body" | awk -v pkg="$PACKAGE" -v ver="$VERSION" '
+    /^Package:/ { in_pkg = ($2 == pkg) }
+    in_pkg && $0 == "Version: " ver { print "yes"; exit }
+')"
+
+[ "$found" = "yes" ] ||
+    die "the upload was accepted but ${PACKAGE} ${VERSION} is not in the apt index."
+
+printf 'the index lists %s %s\n' "$PACKAGE" "$VERSION"

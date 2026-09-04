@@ -1,0 +1,34 @@
+# Golden fixture (a): sensors-only pipeline.
+# BME280 source + moving-average step + retained taps.
+# Used by esp-codegen golden tests; see tests/golden.rs.
+pipeline:
+  id: golden-sensors
+
+sources:
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+
+steps:
+  - id: avg_temp
+    op: moving-average
+    input: bme280.temperature
+    config:
+      window: 4
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+  - name: humidity
+    kind: retained
+    type: f32
+    source: bme280.humidity
+
+  - name: avg_temperature
+    kind: retained
+    type: f32
+    source: avg_temp

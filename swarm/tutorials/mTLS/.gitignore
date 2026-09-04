@@ -1,0 +1,4 @@
+/artifacts
+/certs
+/extracted
+/config/zenoh.libsonnet

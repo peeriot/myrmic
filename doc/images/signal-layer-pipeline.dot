@@ -1,0 +1,28 @@
+// One source reading feeding three independent paths, from the guide's example pipeline.
+// Render: dot -Tsvg signal-layer-pipeline.dot -o signal-layer-pipeline.svg
+digraph G {
+  graph [rankdir=LR, bgcolor="transparent", nodesep=0.42, ranksep=0.55];
+  node  [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10.5,
+         margin="0.16,0.10", penwidth=1.1];
+  edge  [color="#6b7785", penwidth=1.2, arrowsize=0.7,
+         fontname="DejaVu Sans", fontsize=9, fontcolor="#6b7785"];
+
+  dev  [label="bme280\ndevice in the board file", fillcolor="#f4f6f8", color="#98a2ad"];
+  env  [label="room_environment\nsource", fillcolor="#fff2cc", color="#d6a100"];
+
+  avg  [label="avg_temp\nmoving-average", fillcolor="#eaf2ff", color="#4472c4"];
+  cad  [label="temp_cadence\ncadence", fillcolor="#eaf2ff", color="#4472c4"];
+  fan  [label="fan_control\nfan-curve", fillcolor="#eaf2ff", color="#4472c4"];
+
+  ttmp [label="temperature\nretained tap", fillcolor="#eee8f7", color="#8e72b0"];
+  tavg [label="avg_temperature\nretained tap", fillcolor="#eee8f7", color="#8e72b0"];
+  ofan [label="fan_speed\noutlet", fillcolor="#e2f0d9", color="#70ad47"];
+
+  dev -> env;
+  env -> ttmp [label="room_environment.temperature"];
+  env -> avg  [label="room_environment.temperature"];
+  env -> cad  [label="room_environment.temperature"];
+  avg -> tavg;
+  cad -> fan;
+  fan -> ofan;
+}

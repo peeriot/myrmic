@@ -1,0 +1,10 @@
+name: http_bridge
+base_url: http://localhost
+endpoints:
+  - id: fetch_data
+    request:
+      method: POST
+      path: /api/data
+      body: "${string:data}"
+    response:
+      200: "${string:result}"

@@ -1,0 +1,18 @@
+layout {
+    pane split_direction="Vertical" {
+        pane {
+            name "Laptop Swarm mTLS Node"
+            cwd "."
+            command "bash"
+            args "zenoh-nano/scripts/zellij/wifi_laptop_pane.sh"
+        }
+
+        pane {
+            name "ESP Build+Flash+Monitor"
+            cwd "."
+            command "bash"
+            args "zenoh-nano/scripts/zellij/wifi_esp_pane.sh"
+            focus true
+        }
+    }
+}

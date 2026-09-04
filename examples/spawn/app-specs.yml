@@ -1,0 +1,18 @@
+name: spawn
+
+# `parent` and `child` are two binaries of the single `spawn` crate; each is
+# built as its own class via `target: <name>`. `child` has no instance of
+# its own — the parent spawns instances of it at runtime, and `declare!("child")`
+# in the parent resolves to its content hash.
+classes:
+  - id: parent
+    build:
+      path: .
+      target: parent
+  - id: child
+    build:
+      path: .
+      target: child
+
+instances:
+  - class: parent

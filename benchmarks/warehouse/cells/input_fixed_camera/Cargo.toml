@@ -1,0 +1,20 @@
+[package]
+name = "input_fixed_camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.myrmic]
+heap_size = 65_536
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk = { workspace = true, features = ["cells", "cell-init", "db"] }
+
+serde = { workspace = true }

@@ -1,0 +1,32 @@
+#db:
+#  directory: "./db-data-${runtime_id}" // runtime_id???
+#  gc_interval: "60s"
+#  tx_idle_timeout: "5min"
+#  load_from:
+#    - path: "./secrets"
+#      scope: "keys/secrets/example"  # namespace/database/schema
+#      prefix: "/prefix/"
+#      max_depth: 1
+
+#orchestration:
+#  init_timeout_secs: 15
+
+#execution:
+#  name: "default" # always overridden by --name
+#  tags: []
+#  mailbox_poll_interval_ms: 500
+#  mailbox_batch_size: 8
+#  runner_fuel: 1_000_000
+#  fuel_yield_interval: 1000
+#  init_timeout_secs: 10
+
+#telemetry:
+#  db_retention: "1h"
+#  logs:
+#    format: "FULL"   # FULL | COMPACT | PRETTY | JSON
+#    env_filter: "swarm=info,warn"
+#    otel_endpoint: "http://localhost:4317"
+#  metrics:
+#    otel_endpoint: "http://localhost:4317"
+#  traces:
+#    otel_endpoint: "http://localhost:4317"

@@ -1,0 +1,11 @@
+name: "http"
+base_url: "http://localhost:10000"
+
+endpoints:
+  - id: test
+    request:
+      method: GET
+      path: "/test"
+      timeout_ms: 5000
+    response:
+      200: "${json:body}"

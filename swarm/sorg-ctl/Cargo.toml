@@ -1,0 +1,30 @@
+[package]
+name = "sorg-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crossterm = "0.28.1"
+
+clap = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+comfy-table = { workspace = true, features = ["custom_styling"] }
+itertools = { workspace = true }
+
+zenoh = { workspace = true, features = ["unstable"] }
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+sorg-client = { workspace = true }
+filestore-client = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,1 @@
+Requires cell-tools API files from cell-room-logic and cell-heater-logic (import_cells! macro).

@@ -1,0 +1,367 @@
+name: Push Validation
+on:
+  push:
+    branches:
+      - master
+  merge_group:
+  pull_request:
+    types: [ 'opened', 'reopened', 'synchronize', 'ready_for_review' ]
+  workflow_dispatch:
+    inputs:
+      verify_licenses:
+        description: "Verify Licenses"
+        required: false
+        type: boolean
+      check_swarm:
+        description: "Check Swarm"
+        required: false
+        type: boolean
+      check_c5:
+        description: "Check esp-hal C5"
+        required: false
+        type: boolean
+      check_c6:
+        description: "Check esp-hal C6"
+        required: false
+        type: boolean
+      check_c61:
+        description: "Check esp-hal C61"
+        required: false
+        type: boolean
+      check_wasm:
+        description: "Check WASM"
+        required: false
+        type: boolean
+
+env:
+  RUST_IMAGE: "ghcr.io/peeriot/rust:1.95.0-2"
+  RUST_ESP_IMAGE: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+  # Can be used to pin nightly, used only where nightly is actually required: -Zbuild-std for
+  # the ESP firmware, and the wasm cell check. Everything else uses the image's
+  # stable channel.
+  RUST_NIGHTLY: "nightly"
+
+jobs:
+
+  # Verify Licenses
+
+  verify_licenses:
+    name: Verify Licenses
+    runs-on: general
+    if: |
+      ( github.event_name == 'push' ) ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.verify_licenses == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Verify Licenses
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=./Cargo.lock
+          run: |
+            ./.ci/verify/licenses
+
+      # Runs even when the step above failed: the two check unrelated things, and the
+      # licenses step patches the tree (deny.patch touches deny.toml only, which this
+      # check does not read).
+      - name: Verify Interface Definition
+        if: ${{ !cancelled() }}
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          user: user
+          run: |
+            ./.ci/verify/wasm-host-interface
+
+      # Runs even when the step above failed: the two check unrelated things, and that
+      # step patches the tree.
+      - name: Verify Release Rules
+        if: ${{ !cancelled() }}
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          user: user
+          run: |
+            ./.ci/release/self-test
+
+  # Check Swarm
+
+  check_swarm:
+    name: Check Code
+    runs-on: general
+    if: |
+      ( github.event_name == 'push') ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.check_swarm == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Check
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+          ONLY_TEST_PACKAGES: |
+            db
+            filestore-client
+            sorg-execution
+            sorg-orchestration
+            sorg-client
+            sorg-common
+            sorg-tests
+            introspection-client
+            myrmic-build
+            swarm-telemetry
+            myrmic-cli
+            myrmic-sdk
+            myrmic-common
+            myrmic-sdk-macros
+            myrmic-signal-layer-types
+            signal-layer-core
+            signal-layer-ipc
+            signal-layer-linux-rt
+            pipeline-backend-api
+            pipeline-codegen
+            esp-codegen
+            linux-codegen
+            linux-i2c-shim
+            bme280-driver
+            bmp180-driver
+            ads1115-driver
+            ccs811-driver
+            veml7700-driver
+            wsen-itds-driver
+            sim-source-driver
+            gpio-output-driver
+            gpio-output-feedback-driver
+            pwm-output-driver
+            moving-average
+            threshold-trigger
+            max-value
+            min-value
+            cadence
+            fan-curve
+            hysteresis
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
+          run: |
+            ${{ github.workspace }}/.ci/check/check
+
+  # Check C5
+
+  check_c5:
+    name: Check Code Embedded C5
+    runs-on: general
+    if: |
+      ( github.event_name == 'push') ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.check_c5 == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+          submodules: true
+
+      - name: Check C5
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          COMMAND_SUFFIX: -c5
+          CARGO_CHANNEL: ${{ env.RUST_NIGHTLY }}
+          ALL_TARGETS: false
+          SKIP_TESTS: true
+        with:
+          image: ${{ env.RUST_ESP_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
+          run: |
+            ${{ github.workspace }}/.ci/check/check
+
+  # Check C6
+
+  check_c6:
+    name: Check Code Embedded C6
+    runs-on: general
+    if: |
+      ( github.event_name == 'push') ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.check_c6 == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+          submodules: true
+
+
+      - name: Check C6
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+          COMMAND_SUFFIX: -c6
+          CARGO_CHANNEL: ${{ env.RUST_NIGHTLY }}
+          ALL_TARGETS: false
+          SKIP_TESTS: true
+        with:
+          image: ${{ env.RUST_ESP_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
+          run: |
+            ${{ github.workspace }}/.ci/check/check
+
+      # REQ-FEAT-2026-HWD-SEC-002: a production build must expose no cell-callable
+      # watchdog control surface. Runs on C6 only — the import gating lives in
+      # shared code, so one chip catches any regression.
+      - name: Verify Production Surface C6
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+          COMMAND_SUFFIX: -c6
+          CARGO_CHANNEL: nightly
+        with:
+          image: ${{ env.RUST_ESP_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
+          run: |
+            ${{ github.workspace }}/.ci/verify/production-surface
+
+    # Check C61
+
+  check_c61:
+    name: Check Code Embedded C61
+    runs-on: general
+    if: |
+      ( github.event_name == 'push') ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.check_c61 == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+          submodules: true
+
+
+      - name: Check C61
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+          COMMAND_SUFFIX: -c61
+          CARGO_CHANNEL: ${{ env.RUST_NIGHTLY }}
+          ALL_TARGETS: false
+          SKIP_TESTS: true
+        with:
+          image: ${{ env.RUST_ESP_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
+          run: |
+            ${{ github.workspace }}/.ci/check/check
+
+  # Check WASM
+
+  check_wasm:
+    name: Check WASM
+    runs-on: general
+    if: |
+      ( github.event_name == 'push') ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.check_wasm == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Build WASM Crates
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_CHANNEL: ${{ env.RUST_NIGHTLY }}
+          CARGO_BUILD_JOBS: "8"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=./Cargo.lock
+          run: |
+            ./.ci/check/wasm

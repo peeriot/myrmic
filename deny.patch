@@ -1,0 +1,25 @@
+diff --git a/deny.toml b/deny.toml
+--- a/deny.toml
++++ b/deny.toml
+@@ -119,6 +119,10 @@ allow = [
+     "Unlicense",
+     "Zlib",
+ ]
++# If true, licenses are checked even for dev-dependencies. By default this is
++# false as dev-dependencies are not used by downstream crates, nor part of
++# binary artifacts.
++include-dev = true
+ # The confidence threshold for detecting a license from license text.
+ # The higher the value, the more closely the license text must be to the
+ # canonical license text of a valid SPDX license file.
+@@ -147,6 +151,10 @@ exceptions = [
+     { allow = ["MPL-2.0"], crate = "sized-chunks" },
+     { allow = ["MPL-2.0"], crate = "im-rc" },
+     { allow = ["MPL-2.0"], crate = "bitmaps" },
++    { allow = ["MPL-2.0"], crate = "espflash" },
++    { allow = ["MPL-2.0"], crate = "serialport" },
++    { allow = ["MPL-2.0"], crate = "colored" },
++    { allow = ["MPL-2.0"], crate = "alterable_logger" },
+     { allow = ["BlueOak-1.0.0"], crate = "tinyrlibc" },
+ ]
+ 

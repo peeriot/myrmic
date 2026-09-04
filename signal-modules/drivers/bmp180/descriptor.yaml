@@ -1,0 +1,32 @@
+id: bmp180
+category: sensor-drivers
+description: >
+  Bosch BMP180 temperature and barometric pressure sensor over I2C.
+requires:
+  buses:
+    - transport: i2c
+outputs:
+  - name: temperature
+    type: f32
+    unit: "°C"
+  - name: pressure
+    type: f32
+    unit: hPa
+config_schema:
+  # BMP180 has a fixed I2C address (0x77); listed here for completeness.
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x77
+    description: Fixed I2C address
+  oss:
+    scope: application
+    rust_type: Oversampling
+    default: Single
+    # Variants: Single | X2 | X4 | X8
+    description: "Pressure oversampling — higher values reduce noise at the cost of a longer conversion window (4.5–25.5 ms)."
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 1000
+    description: Polling interval in milliseconds

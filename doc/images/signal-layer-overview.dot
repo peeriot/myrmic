@@ -1,0 +1,23 @@
+// Signal Layer: from the two description files to what a cell sees.
+// Render: dot -Tsvg signal-layer-overview.dot -o signal-layer-overview.svg
+digraph G {
+  graph [rankdir=LR, bgcolor="transparent", nodesep=0.28, ranksep=0.55];
+  node  [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10.5,
+         margin="0.16,0.10", penwidth=1.1];
+  edge  [color="#6b7785", penwidth=1.2, arrowsize=0.7,
+         fontname="DejaVu Sans", fontsize=9, fontcolor="#6b7785"];
+
+  board [label="Board file\nhow this board is wired", fillcolor="#fff2cc", color="#d6a100"];
+  pipe  [label="Pipeline file\nsources · steps · taps · outlets", fillcolor="#eaf2ff", color="#4472c4"];
+  gen   [label="Code generation", fillcolor="#f4f6f8", color="#98a2ad"];
+  tasks [label="Signal Layer tasks\nread sensors · run steps · apply commands", fillcolor="#e2f0d9", color="#70ad47"];
+  io    [label="Taps and outlets\nnamed values", fillcolor="#eee8f7", color="#8e72b0"];
+  cell  [label="Cell\nWasm sandbox, no bus or pin access", fillcolor="#fde9e7", color="#c55a11"];
+
+  { rank=same; board; pipe; }
+  board -> gen [label="not portable"];
+  pipe  -> gen [label="portable"];
+  gen   -> tasks;
+  tasks -> io;
+  io    -> cell [dir=both, label="Myrmic SDK"];
+}

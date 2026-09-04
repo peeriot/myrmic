@@ -1,0 +1,31 @@
+[package]
+name              = "hil-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish           = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# crates.io
+anyhow     = { workspace = true }
+claims     = { workspace = true }
+espflash   = { workspace = true }
+serialport = { workspace = true }
+serde      = { workspace = true, features = ["derive"] }
+tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
+tracing    = { workspace = true }
+tryhard    = { workspace = true }
+serde_json = { workspace = true }
+zenoh      = { workspace = true, features = ["unstable", "default"] }
+# Local
+cell-protocol          = { workspace = true }
+module-examples-common = { workspace = true }
+myrmic-build           = { workspace = true }
+postcard               = { workspace = true }
+signal-layer-types     = { workspace = true }
+sorg-common            = { workspace = true }
+sorg-tests             = { workspace = true }
+test-framework         = { workspace = true }

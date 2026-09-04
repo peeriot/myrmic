@@ -1,0 +1,35 @@
+id: veml7700
+category: sensor-drivers
+description: >
+  Vishay VEML7700 ambient light sensor over I2C.
+requires:
+  buses:
+    - transport: i2c
+outputs:
+  - name: lux
+    type: f32
+    unit: lux
+config_schema:
+  # VEML7700 has a fixed address (0x10); listed for consistency.
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x10
+    description: Fixed I2C address
+  gain:
+    scope: application
+    rust_type: Gain
+    default: X1
+    # Variants: X1 | X2 | OneEighth | OneFourth
+    description: "Amplifier gain — lower gain raises the measurable range; higher gain improves resolution at low light."
+  integration_time:
+    scope: application
+    rust_type: IntegrationTime
+    default: Ms100
+    # Variants: Ms25 | Ms50 | Ms100 | Ms200 | Ms400 | Ms800
+    description: "ALS integration time — longer integration reduces noise at the cost of measurement latency."
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 1000
+    description: Polling interval in milliseconds (must exceed 2× integration_time)

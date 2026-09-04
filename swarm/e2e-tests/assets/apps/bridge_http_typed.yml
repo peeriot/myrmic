@@ -1,0 +1,56 @@
+# HTTP bridge, new format: the payload `types` are a JSON Schema (draft-07
+# style `definitions`). `import!` feeds this schema to `typify` to generate the
+# Rust request/response types, then emits one fire-and-forget client method per
+# endpoint. Each endpoint names the schema types it uses via `request_type` /
+# `response_type`.
+#
+# The `request` template block describes how the runtime builds the actual HTTP
+# call (`${kind:name}` placeholders, `${db:...}` lookups). The `response` block is
+# keyed by HTTP status code: each entry becomes one variant of the generated
+# `<Endpoint>Reply` enum (plus an `Unknown(u16)` catch-all).
+name: weather
+base_url: "https://api.example.com"
+
+types:
+  definitions:
+    Coordinates:
+      type: object
+      required: [lat, lon]
+      properties:
+        lat: { type: number, format: double }
+        lon: { type: number, format: double }
+
+    ForecastRequest:
+      type: object
+      required: [where, units]
+      properties:
+        where:
+          $ref: "#/definitions/Coordinates"
+        units:
+          type: string
+          enum: [metric, imperial]
+
+    ForecastResponse:
+      type: object
+      required: [station_id, observed_at, summary, temp_c]
+      properties:
+        # `format: uuid` -> uuid::Uuid, `format: date-time` -> chrono::DateTime,
+        # both resolved through wasm_sdk::gen::exports (no cell-side deps).
+        station_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        summary: { type: string }
+        temp_c: { type: number, format: double }
+        humidity: { type: integer, format: uint32 }
+
+endpoints:
+  # The request/response types are named right in the body placeholders:
+  # `${json:ForecastRequest}` resolves to the schema definition of that name.
+  # Generates `WeatherClient::get_forecast(&self, value: &ForecastRequest)`.
+  - id: get_forecast
+    request:
+      method: POST
+      path: "/v1/forecast"
+      body: "${json:ForecastRequest}"
+      timeout_ms: 5000
+    response:
+      200: "${json:ForecastResponse}"

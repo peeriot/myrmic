@@ -1,0 +1,35 @@
+[package]
+name = "sorg-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+opentelemetry = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+uuid = { workspace = true, features = ["std", "serde", "v4"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+eui48 = { workspace = true }
+
+db-client = { workspace = true, features = ["zenoh"] }
+postcard = { workspace = true }
+zenoh = { workspace = true, features = ["unstable"] }
+
+cell-protocol = { workspace = true, default-features = true }
+cell-mailbox = { workspace = true }
+myrmic-common = { workspace = true, features = ["cells", "codegen"] }
+
+[dev-dependencies]
+claims = { workspace = true }
+zenoh-protocol = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,37 @@
+[package]
+name = "warehouse-benchmark"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "warehouse_benchmark"
+path = "src/lib.rs"
+
+[[bin]]
+name = "warehouse-bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "rack-ctl"
+path = "src/bin/rack_ctl.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bench-report = { path = "../report" }
+bench-harness = { path = "../harness" }
+cell-protocol = { workspace = true, default-features = true }
+db-client = { workspace = true, features = ["replica"] }
+clap = { workspace = true }
+futures-util = { workspace = true, features = ["alloc"] }
+test-framework = { workspace = true }
+postcard = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+swarm-telemetry = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+toml = { workspace = true }
+zenoh = { workspace = true }

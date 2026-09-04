@@ -1,0 +1,19 @@
+[package]
+name = "bench-report"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cell-protocol = { workspace = true }
+test-framework = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+typst-as-lib = { version = "0.16", features = ["typst-kit-fonts", "typst-kit-embed-fonts", "packages", "ureq"] }
+typst-pdf = "0.15"
+uuid = { workspace = true, features = ["serde"] }

@@ -1,0 +1,116 @@
+---
+hide_table_of_contents: true
+---
+
+import { DocCards } from '@site/src/components/DocCards/DocCards';
+
+# Overview
+
+Myrmic is an open source edge-native runtime for building and operating distributed applications across fleets of devices. It runs application logic as WebAssembly cells - portable, isolated units that deploy and self-organize across embedded, mobile, and server targets without orchestrators, brokers, or manual wiring. The project is developed and maintained by [Peeriot](https://peeriot.io/).
+
+export const cards = [
+  {
+    title: 'Try Myrmic',
+    description: 'Get started with Myrmic and follow step-by-step tutorials covering basic applications and embedded targets.',
+    links: [
+      { label: 'Quickstart', to: '/docs/quickstart' },
+      { label: 'Smart Greenhouse', to: '/docs/tutorials/smart-greenhouse' },
+      { label: 'Embedded (coming soon)', to: '/docs/overview' },
+      { label: 'Observability (coming soon)', to: '/docs/overview' },
+    ],
+    viewAll: '/docs/tutorials',
+    viewAllLabel: 'View Tutorials',
+  },
+  {
+    title: 'Why Myrmic',
+    description: 'Learn about the thinking behind Myrmic - the problem it solves and how to think about it.',
+    links: [
+      { label: 'Rethinking the stack', to: '/docs/why-myrmic/rethinking-the-stack' },
+      { label: 'Understanding Myrmic', to: '/docs/why-myrmic/understanding-myrmic' },
+      { label: 'Modelling applications', to: '/docs/why-myrmic/modelling-applications' },
+      { label: 'Connecting physical systems', to: '/docs/why-myrmic/connecting-physical-systems' },
+      { label: 'Operating Myrmic', to: '/docs/why-myrmic/operating-myrmic' },
+    ],
+    viewAll: '/docs/why-myrmic',
+  },
+  {
+    title: 'Core Concepts',
+    description: 'The vocabulary that carries the Myrmic model - Cells, Nodes, Messages, and more.',
+    links: [
+      { label: 'Applications, Cells, and Identity', to: '/docs/concepts/applications-cells-and-identity' },
+      { label: 'Nodes, Capabilities, and the Swarm', to: '/docs/concepts/nodes-capabilities-and-the-swarm' },
+      { label: 'Messages and Mailboxes', to: '/docs/concepts/messages-and-mailboxes' },
+      { label: 'Handlers, State, and Transactions', to: '/docs/concepts/handlers-state-and-transactions' },
+      { label: 'Where Data Lives', to: '/docs/concepts/where-data-lives' },
+      { label: 'Recovery Models', to: '/docs/concepts/recovery-models' },
+      { label: 'Cell Patterns', to: '/docs/concepts/cell-patterns' },
+    ],
+    viewAll: '/docs/concepts',
+  },
+  {
+    title: 'Guides',
+    description: 'Look up common Myrmic concepts and features and learn how to use them through a short sequence of steps.',
+    links: [
+      { label: 'Cells', to: '/docs/guides/cells' },
+      { label: 'Commands', to: '/docs/guides/commands' },
+      { label: 'Events', to: '/docs/guides/events' },
+      { label: 'Message encoding', to: '/docs/guides/message-encoding' },
+      { label: 'Scheduling handlers', to: '/docs/guides/scheduling-handlers' },
+      { label: 'State and storage', to: '/docs/guides/state-and-storage' },
+      { label: 'Observability', to: '/docs/guides/observability' },
+      { label: 'Signal layer', to: '/docs/guides/signal-layer' },
+      { label: 'BLE', to: '/docs/guides/ble' },
+    ],
+    viewAll: '/docs/guides',
+  },
+  {
+    title: 'Architecture',
+    description: 'How Myrmic actually works, explained through four views and the six canonical layers.',
+    links: [
+      { label: 'The Swarm View', to: '/docs/architecture/the-swarm-view' },
+      { label: 'The Node View', to: '/docs/architecture/the-node-view' },
+      { label: 'The Cell View', to: '/docs/architecture/the-cell-view' },
+      { label: 'Failure Behaviour', to: '/docs/architecture/failure-behaviour' },
+      { label: 'The Six Layers', to: '/docs/architecture/the-six-layers' },
+    ],
+    viewAll: '/docs/architecture',
+  },
+  {
+    title: 'Target Groups',
+    description: 'Find out which use cases Myrmic is built for.',
+    links: [
+      { label: 'Asset-centric software', to: '/docs/target-groups/asset-centric-software' },
+      { label: 'Connected products', to: '/docs/target-groups/connected-products' },
+      { label: 'Real-time applications', to: '/docs/target-groups/real-time-applications' },
+      { label: 'Workflows and agents', to: '/docs/target-groups/workflows-and-agents' },
+      { label: 'Platform engineering', to: '/docs/target-groups/platform-engineering' },
+    ],
+    viewAll: '/docs/target-groups',
+  },
+  {
+    title: 'Reference',
+    description: 'CLI, SDK, and architecture reference documentation.',
+    links: [
+      { label: 'Myrmic CLI', to: '/docs/reference/myrmic-cli' },
+      { label: 'Myrmic SDK', to: '/docs/reference/myrmic-sdk' },
+      { label: 'Runtime configuration', to: '/docs/reference/configuration/runtime-configuration' },
+      { label: 'Cell and application configuration', to: '/docs/reference/configuration/cell-and-application-configuration' },
+      { label: 'Bridge configuration', to: '/docs/reference/configuration/bridge-configuration' },
+      { label: 'Signal Layer', to: '/docs/reference/signal-layer' },
+    ],
+    viewAll: '/docs/reference',
+  },
+  {
+    title: 'Community',
+    description: 'Join the conversation, contribute, and get support.',
+    links: [
+      { label: 'Community and Support', to: '/docs/community' },
+      { label: 'Contributing', to: '/docs/contribution' },
+      { label: 'Security', to: '/docs/security' },
+    ],
+    viewAll: '/docs/community',
+  },
+
+];
+
+<DocCards cards={cards} />

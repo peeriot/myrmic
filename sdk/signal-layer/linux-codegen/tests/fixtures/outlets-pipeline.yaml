@@ -1,0 +1,20 @@
+# Pipeline with outlets — used to test SR-19 rejection.
+pipeline:
+  id: outlets-test
+
+sources:
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+outlets:
+  - name: relay_cmd
+    type: DigitalState
+    device: relay1

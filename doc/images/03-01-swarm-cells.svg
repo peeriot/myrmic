@@ -1,0 +1,147 @@
+<svg viewBox="0 0 900 500" xmlns="http://www.w3.org/2000/svg"
+     role="img" aria-label="Myrmic swarm — six heterogeneous nodes communicating via events and commands">
+<defs>
+  <marker id="mc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#D97706"/>
+  </marker>
+  <marker id="me" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#4F46E5"/>
+  </marker>
+</defs>
+
+<!-- SWARM boundary -->
+<rect x="10" y="10" width="880" height="478" rx="16"
+      fill="none" stroke="#E2E8F0" stroke-width="1.5" stroke-dasharray="10 5"/>
+<text x="26" y="30" fill="#CBD5E1" font-family="system-ui,sans-serif"
+      font-size="8" letter-spacing=".2em" font-weight="700">SWARM</text>
+
+<!-- ═══ ROW 1 ═══ -->
+
+<!-- N1: Linux Node (x=30 y=55 w=128 h=114) -->
+<rect x="30"  y="55"  width="128" height="114" rx="9" fill="white" stroke="#BFDBFE" stroke-width="1.2"/>
+<rect x="40"  y="65"  width="108" height="16"  rx="3" fill="#DBEAFE"/>
+<text x="94"  y="76"  fill="#1D4ED8" font-family="system-ui,sans-serif" font-size="7.5" text-anchor="middle" font-weight="700">Linux Node</text>
+<rect x="40"  y="91"  width="108" height="72"  rx="6" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<text x="94"  y="104" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="6.5" text-anchor="middle" letter-spacing=".14em" font-weight="600">RUNTIME 1</text>
+<rect x="50"  y="112" width="40"  height="40"  rx="5" fill="#EEF2FF" stroke="#818CF8" stroke-width="1"/>
+<text x="70"  y="132" fill="#4338CA" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-1</text>
+<rect x="98"  y="112" width="40"  height="40"  rx="5" fill="#EEF2FF" stroke="#818CF8" stroke-width="1"/>
+<text x="118" y="132" fill="#4338CA" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-2</text>
+
+<!-- N2: Linux Server Node (x=386 y=55 w=128 h=162) -->
+<rect x="386" y="55"  width="128" height="162" rx="9" fill="white" stroke="#DDD6FE" stroke-width="1.2"/>
+<rect x="396" y="65"  width="108" height="16"  rx="3" fill="#EDE9FE"/>
+<text x="450" y="76"  fill="#3730A3" font-family="system-ui,sans-serif" font-size="7" text-anchor="middle" font-weight="700">Linux Server Node</text>
+<rect x="396" y="91"  width="108" height="120" rx="6" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<text x="450" y="104" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="6.5" text-anchor="middle" letter-spacing=".14em" font-weight="600">RUNTIME 2</text>
+<rect x="406" y="112" width="40"  height="40"  rx="5" fill="#EDE9FE" stroke="#A78BFA" stroke-width="1"/>
+<text x="426" y="132" fill="#6D28D9" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-3</text>
+<rect x="454" y="112" width="40"  height="40"  rx="5" fill="#EDE9FE" stroke="#A78BFA" stroke-width="1"/>
+<text x="474" y="132" fill="#6D28D9" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-4</text>
+<rect x="406" y="160" width="40"  height="40"  rx="5" fill="#EDE9FE" stroke="#A78BFA" stroke-width="1"/>
+<text x="426" y="180" fill="#6D28D9" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-5</text>
+<rect x="454" y="160" width="40"  height="40"  rx="5" fill="#EDE9FE" stroke="#A78BFA" stroke-width="1"/>
+<text x="474" y="180" fill="#6D28D9" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-6</text>
+
+<!-- N3: ESP32 Node (x=742 y=55 w=128 h=114) -->
+<rect x="742" y="55"  width="128" height="114" rx="9" fill="white" stroke="#BBF7D0" stroke-width="1.2"/>
+<rect x="752" y="65"  width="108" height="16"  rx="3" fill="#D1FAE5"/>
+<text x="806" y="76"  fill="#065F46" font-family="system-ui,sans-serif" font-size="7.5" text-anchor="middle" font-weight="700">ESP32 Node</text>
+<rect x="752" y="91"  width="108" height="72"  rx="6" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<text x="806" y="104" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="6.5" text-anchor="middle" letter-spacing=".14em" font-weight="600">RUNTIME 3</text>
+<rect x="762" y="112" width="40"  height="40"  rx="5" fill="#ECFDF5" stroke="#34D399" stroke-width="1"/>
+<text x="782" y="132" fill="#065F46" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-7</text>
+<rect x="810" y="112" width="40"  height="40"  rx="5" fill="#ECFDF5" stroke="#34D399" stroke-width="1"/>
+<text x="830" y="132" fill="#065F46" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-8</text>
+
+<!-- ═══ ROW 2 ═══ -->
+
+<!-- N4: Linux Node (x=30 y=310 w=128 h=114) -->
+<rect x="30"  y="310" width="128" height="114" rx="9" fill="white" stroke="#BFDBFE" stroke-width="1.2"/>
+<rect x="40"  y="320" width="108" height="16"  rx="3" fill="#DBEAFE"/>
+<text x="94"  y="331" fill="#1D4ED8" font-family="system-ui,sans-serif" font-size="7.5" text-anchor="middle" font-weight="700">Linux Node</text>
+<rect x="40"  y="346" width="108" height="72"  rx="6" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<text x="94"  y="359" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="6.5" text-anchor="middle" letter-spacing=".14em" font-weight="600">RUNTIME 4</text>
+<rect x="50"  y="368" width="40"  height="40"  rx="5" fill="#EEF2FF" stroke="#818CF8" stroke-width="1"/>
+<text x="70"  y="388" fill="#4338CA" font-family="'SF Mono','Cascadia Code',monospace" font-size="7.5" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-9</text>
+<rect x="98"  y="368" width="40"  height="40"  rx="5" fill="#EEF2FF" stroke="#818CF8" stroke-width="1"/>
+<text x="118" y="388" fill="#4338CA" font-family="'SF Mono','Cascadia Code',monospace" font-size="7" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-10</text>
+
+<!-- N5: ESP32 Node (x=386 y=310 w=128 h=114) -->
+<rect x="386" y="310" width="128" height="114" rx="9" fill="white" stroke="#BBF7D0" stroke-width="1.2"/>
+<rect x="396" y="320" width="108" height="16"  rx="3" fill="#D1FAE5"/>
+<text x="450" y="331" fill="#065F46" font-family="system-ui,sans-serif" font-size="7.5" text-anchor="middle" font-weight="700">ESP32 Node</text>
+<rect x="396" y="346" width="108" height="72"  rx="6" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<text x="450" y="359" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="6.5" text-anchor="middle" letter-spacing=".14em" font-weight="600">RUNTIME 5</text>
+<rect x="406" y="368" width="40"  height="40"  rx="5" fill="#ECFDF5" stroke="#34D399" stroke-width="1"/>
+<text x="426" y="388" fill="#065F46" font-family="'SF Mono','Cascadia Code',monospace" font-size="7" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-11</text>
+<rect x="454" y="368" width="40"  height="40"  rx="5" fill="#ECFDF5" stroke="#34D399" stroke-width="1"/>
+<text x="474" y="388" fill="#065F46" font-family="'SF Mono','Cascadia Code',monospace" font-size="7" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-12</text>
+
+<!-- N6: Linux Node (x=742 y=310 w=128 h=114) -->
+<rect x="742" y="310" width="128" height="114" rx="9" fill="white" stroke="#BFDBFE" stroke-width="1.2"/>
+<rect x="752" y="320" width="108" height="16"  rx="3" fill="#DBEAFE"/>
+<text x="806" y="331" fill="#1D4ED8" font-family="system-ui,sans-serif" font-size="7.5" text-anchor="middle" font-weight="700">Linux Node</text>
+<rect x="752" y="346" width="108" height="72"  rx="6" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<text x="806" y="359" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="6.5" text-anchor="middle" letter-spacing=".14em" font-weight="600">RUNTIME 6</text>
+<rect x="762" y="368" width="40"  height="40"  rx="5" fill="#EEF2FF" stroke="#818CF8" stroke-width="1"/>
+<text x="782" y="388" fill="#4338CA" font-family="'SF Mono','Cascadia Code',monospace" font-size="7" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-13</text>
+<rect x="810" y="368" width="40"  height="40"  rx="5" fill="#EEF2FF" stroke="#818CF8" stroke-width="1"/>
+<text x="830" y="388" fill="#4338CA" font-family="'SF Mono','Cascadia Code',monospace" font-size="7" text-anchor="middle" dominant-baseline="central" font-weight="600">cell-14</text>
+
+<!-- ═══ ARROWS ═══ -->
+
+<!-- EVENT 1: cell-7 (N3) → cell-1 (N1)  — arc above entire top row -->
+<path stroke-dasharray="7 5" d="M 762 125 C 680 40 220 40 138 125"
+      fill="none" stroke="#4F46E5" stroke-width="1.8" marker-end="url(#me)"/>
+<text x="450" y="34" fill="#4F46E5" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">event</text>
+
+<!-- EVENT 2: cell-7 (N3) → cell-3 (N2)  — in gap between N2 and N3 -->
+<path stroke-dasharray="7 5" d="M 762 130 C 700 116 578 116 494 130"
+      fill="none" stroke="#4F46E5" stroke-width="1.8" marker-end="url(#me)"/>
+<text x="628" y="110" fill="#4F46E5" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">event</text>
+
+<!-- EVENT 3: cell-11 (N5) → cell-9 (N4)  — in gap between N4 and N5 -->
+<path stroke-dasharray="7 5" d="M 406 382 C 336 370 240 370 138 382"
+      fill="none" stroke="#4F46E5" stroke-width="1.8" marker-end="url(#me)"/>
+<text x="272" y="364" fill="#4F46E5" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">event</text>
+
+<!-- EVENT 4: cell-12 (N5) → cell-13 (N6)  — in gap between N5 and N6 -->
+<path stroke-dasharray="7 5" d="M 494 382 C 564 370 680 370 762 382"
+      fill="none" stroke="#4F46E5" stroke-width="1.8" marker-end="url(#me)"/>
+<text x="638" y="364" fill="#4F46E5" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">event</text>
+
+<!-- COMMAND 5: cell-4 (N2) → cell-13 (N6)  — diagonal, top-center to bottom-right -->
+<path d="M 494 148 C 624 228 714 300 762 378"
+      fill="none" stroke="#D97706" stroke-width="2" marker-end="url(#mc)"/>
+<text x="656" y="250" fill="#D97706" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">command</text>
+
+<!-- COMMAND 6: cell-5 (N2) → cell-10 (N4)  — diagonal, top-center to bottom-left -->
+<path d="M 416 200 C 336 254 234 308 138 378"
+      fill="none" stroke="#D97706" stroke-width="2" marker-end="url(#mc)"/>
+<text x="294" y="264" fill="#D97706" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">command</text>
+
+<!-- COMMAND 7: cell-2 (N1) → cell-9 (N4)  — same column, through inter-row gap -->
+<path d="M 110 152 C 20 200 15 300 50 368"
+      fill="none" stroke="#D97706" stroke-width="2" marker-end="url(#mc)"/>
+<text x="65" y="240" fill="#D97706" font-family="system-ui,sans-serif"
+      font-size="8" text-anchor="middle" font-weight="600">command</text>
+
+<!-- ═══ LEGEND ═══ -->
+<rect x="248" y="444" width="378" height="38" rx="10"
+      fill="white" stroke="#E2E8F0" stroke-width="1"/>
+<line x1="272" y1="463" x2="306" y2="463"
+      stroke="#4F46E5" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#me)"/>
+<text x="320" y="460" fill="#334155" font-family="system-ui,sans-serif" font-size="10.5" font-weight="600">Event</text>
+<text x="320" y="473" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="9">broadcast to all subscribers</text>
+<line x1="458" y1="463" x2="492" y2="463"
+      stroke="#D97706" stroke-width="2" marker-end="url(#mc)"/>
+<text x="506" y="460" fill="#334155" font-family="system-ui,sans-serif" font-size="10.5" font-weight="600">Command</text>
+<text x="506" y="473" fill="#94A3B8" font-family="system-ui,sans-serif" font-size="9">directed to a specific cell</text>
+</svg>

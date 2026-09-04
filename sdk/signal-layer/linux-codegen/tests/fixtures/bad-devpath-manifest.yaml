@@ -1,0 +1,26 @@
+# Linux manifest with a malformed /dev/i2c path — used to test SR-4 path validation.
+id: rpi-bad-path
+chip: linux
+
+buses:
+  i2c0:
+    transport: i2c
+    pins: {}
+    freq_khz: 400
+    dev_path: /dev/i2c-BAD
+
+gpios:
+  general_purpose: []
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76
+
+  - id: veml7700
+    driver: veml7700
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x10

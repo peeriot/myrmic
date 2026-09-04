@@ -1,0 +1,116 @@
+#!/bin/bash
+
+set -e
+
+export SCRIPT_DIR="$(dirname $0)"
+export DOCKER_DIR="$(readlink -f "$SCRIPT_DIR/../")"
+export TOPO_DIR="$DOCKER_DIR/extracted/topology"
+export NETWORK_DOT_FILE="$TOPO_DIR/network.dot"
+export NETWORK_PNG_FILE="$TOPO_DIR/network.png"
+
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-secure-swarm}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yaml}"
+echo "Use compose file: $COMPOSE_FILE"
+
+finish() {
+    cd "$OLD_PWD"
+}
+
+write_network() {
+    echo "$@" >> "$NETWORK_DOT_FILE"
+}
+
+write_nodes() {
+    local JSON_FILE="$1"
+    local ZID KEY TYPE COLOR
+
+    while read -r ENTRY; do
+        if [ -z "$ENTRY" ]; then
+            continue
+        fi
+
+        KEY=$(echo "$ENTRY" | jq -r '.key')
+        case "$KEY" in
+            @/*/session/transport/unicast/*/link/*)
+                ;;
+            @/*/session/transport/unicast/*)
+                ZID=$(echo "$ENTRY" | jq -r '.value.zid')
+                TYPE=$(echo "$ENTRY" | jq -r '.value.whatami')
+
+                LOCAL=$(echo "$KEY" | grep -oP '@/\K[^/]+(?=/session)')
+                REMOTE=$(echo "$KEY" | grep -oP '(?<=unicast/)[^/]+')
+
+                # Node
+
+                echo "    - Node: $TYPE $ZID"
+
+                case "$TYPE" in
+                    client)  COLOR="#d92626" ;;
+                    peer) COLOR="#91d926" ;;
+                    router) COLOR="#2626d9" ;;
+                esac
+
+                VAR_PEER="PEERS_$ZID"
+
+                if [ "${!VAR_PEER}" != "true" ]; then
+                    eval "$VAR_PEER=\"true\""
+                    write_network "    \"$ZID\" [label=\"$TYPE\n${ZID:0:10}\", color=\"$COLOR\"];"
+                fi
+
+                # Edge
+
+                VAR_CONNECTION1="CONNECTION_${REMOTE}_${LOCAL}"
+                VAR_CONNECTION2="CONNECTION_${LOCAL}_${REMOTE}"
+
+                echo "    - Connection: $LOCAL <-> $REMOTE"
+
+                if [ "${!VAR_CONNECTION1}" != "true" ] && [ "${!VAR_CONNECTION2}" != "true" ]; then
+                    eval "$VAR_CONNECTION1=\"true\""
+                    eval "$VAR_CONNECTION2=\"true\""
+                    write_network "    \"$LOCAL\" -- \"$REMOTE\""
+                fi
+
+                ;;
+        esac
+    done <<< "$(jq -c ".[] | select(.key)" "$JSON_FILE")"
+}
+
+trap finish EXIT
+
+cd "$DOCKER_DIR"
+rm -rf "$TOPO_DIR"
+mkdir -p "$TOPO_DIR"
+
+if [ $# -eq 0 ]; then
+    CONTAINERS="$(docker compose -f "$COMPOSE_FILE" ps -q)"
+
+else
+    CONTAINERS="$@"
+fi
+
+write_network "graph PeerNetwork {"
+
+for CONTAINER in $CONTAINERS; do
+    echo "- Container:"
+
+    ADDRS=$(docker inspect -f '{{- $first := true}}{{range $v := .NetworkSettings.Networks}}{{if not $first}},{{end}}{{print $v.IPAddress}}{{- $first = false}}{{end}}' $CONTAINER)
+    ADDRS="${ADDRS%,}"
+    NAME=$(docker inspect -f '{{.Name}}' $CONTAINER)
+    NAME="${NAME#/}"
+    JSON_FILE="$TOPO_DIR/$NAME-$CONTAINER.json"
+
+    echo "  - ID: $CONTAINER"
+    echo "  - Name: $NAME"
+    echo "  - Addresses: $ADDRS"
+    echo "  - Data:"
+
+    ADDR="${ADDRS%%,*}"
+
+    curl "http://$ADDR/@/**" 2>/dev/null | jq --indent 4 . > "$JSON_FILE"
+
+    write_nodes "$JSON_FILE"
+done
+
+write_network "}"
+
+dot -Tpng "$NETWORK_DOT_FILE" -o "$NETWORK_PNG_FILE"

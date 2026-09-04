@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# Verifies that the production firmware exposes no cell-callable watchdog
+# control surface (REQ-FEAT-2026-HWD-SEC-002, production-profile exclusion).
+#
+# A guest cell resolves host functions by name: WAMR registers each import
+# module under a C string literal, so a module whose name is not in the binary
+# cannot be resolved by any cell. The check is therefore a search of the linked
+# firmware for the fault injector's guest-visible names.
+#
+# Two images are built and compared. The `wdt-selftest` image is a positive
+# control: asserting the names ARE present there proves the probe still detects
+# the surface, so their absence from the production image is a measurement
+# rather than an assumption. Without it this check would silently pass forever
+# if the module were ever renamed.
+
+set -eu
+
+SCRIPT_DIR="$(dirname "$0")"
+REPO_ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
+
+CARGO_CHANNEL=${CARGO_CHANNEL:-}
+COMMAND_SUFFIX=${COMMAND_SUFFIX:-}
+
+# Every chip alias targets the same triple (see `.cargo/config.toml`).
+ELF="$REPO_ROOT/target/riscv32imac-unknown-none-elf/release/modem-esp32"
+CONTROL_ELF="$(mktemp -t modem-esp32-control-XXXXXX)"
+
+OLD_PWD="$PWD"
+
+finish() {
+    rm -f "$CONTROL_ELF"
+    cd "$OLD_PWD"
+}
+
+trap finish EXIT
+
+cd "$REPO_ROOT"
+
+# Guest-visible names of the fault-injection surface: the import module WAMR
+# registers, and the exported host function behind it.
+PROBES="selftest wdt_selftest_wedge"
+
+# Occurrences of a raw byte substring in a binary. `grep` exits 1 on no match,
+# which is a valid result here, so the status is swallowed deliberately.
+count_in() {
+    local needle="$1" file="$2"
+    grep -a -o -- "$needle" "$file" 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+printf "\n\n--== Build Positive Control (wdt-selftest enabled) ==--\n\n"
+cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX" --features wdt-selftest
+cp "$ELF" "$CONTROL_ELF"
+
+printf "\n\n--== Build Production Profile ==--\n\n"
+cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX"
+
+printf "\n\n--== Verify Production Host-Function Surface ==--\n\n"
+printf "%-24s %14s %14s\n" "probe" "production" "control"
+
+failed=0
+
+for probe in $PROBES; do
+    production_hits="$(count_in "$probe" "$ELF")"
+    control_hits="$(count_in "$probe" "$CONTROL_ELF")"
+
+    printf "%-24s %14s %14s\n" "$probe" "$production_hits" "$control_hits"
+
+    if [ "$control_hits" -eq 0 ]; then
+        printf "\nPROBE BROKEN: '%s' is absent from the wdt-selftest build too.\n" "$probe"
+        printf "This check can no longer detect the fault injector. The name likely\n"
+        printf "changed in wasm-runtime/src/imports/selftest.rs; update PROBES here.\n"
+        failed=1
+    elif [ "$production_hits" -ne 0 ]; then
+        printf "\nPRODUCTION SURFACE LEAK: '%s' is present in the production firmware.\n" "$probe"
+        printf "A cell could resolve the watchdog fault injector in a shipped build.\n"
+        printf "Check that the gating in wasm-runtime/src/imports/mod.rs is intact and\n"
+        printf "that 'wdt-selftest' has not been added to a default feature set.\n"
+        failed=1
+    fi
+done
+
+if [ "$failed" -ne 0 ]; then
+    printf "\nProduction host-function surface verification FAILED.\n"
+    exit 1
+fi
+
+printf "\nProduction firmware exposes no cell-callable watchdog control surface.\n"

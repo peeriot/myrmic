@@ -1,0 +1,13 @@
+edition = "2024"
+newline_style = "Unix"
+
+#max_width = 60
+#single_line_if_else_max_width = 0
+#single_line_let_else_max_width = 0
+
+match_arm_leading_pipes = "Preserve"
+
+# Once stable:
+#imports_granularity = "Module"
+#normalize_comments = true
+#group_imports = "StdExternalCrate"

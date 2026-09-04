@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -ex
+
+CARGO_CHANNEL=${CARGO_CHANNEL:-}
+COMMAND_SUFFIX=${COMMAND_SUFFIX:-}
+
+finish() {
+    # mainly for developer local execution, clean up the *.profraw mess
+    find . -type f -name '*.profraw' -delete
+}
+
+trap finish EXIT
+
+# The integration tests SIGKILL the spawned swarm binary, which would normally
+# discard its coverage data (the .profraw is only written by an exit handler).
+# LLVM continuous mode (`%c` in LLVM_PROFILE_FILE plus runtime counter
+# relocation) writes the profile continuously via mmap, so it survives the kill.
+COVERAGE_RUSTFLAGS="-Cinstrument-coverage -Cllvm-args=--runtime-counter-relocation"
+
+# The tests in `sorg-tests` are integration tests that require the `swarm`
+# binary to be built, so we build it first before running the tests.
+printf "\n\n--== Build Swarm ==--\n\n"
+RUSTFLAGS="$COVERAGE_RUSTFLAGS" \
+    LLVM_PROFILE_FILE="swarm-%p-%m%c.profraw" \
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX" --bin swarm
+
+# Try to run all tests with default features. Failing tests are handled by the
+# regular CI pipeline, here we only care about coverage, therefore we use
+# --no-fail-fast and ignore the exit code with `|| true`.
+RUSTFLAGS="$COVERAGE_RUSTFLAGS" \
+    LLVM_PROFILE_FILE="citest-%p-%m%c.profraw" \
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
+    --no-fail-fast \
+    || true
+
+# Test additional features of swarm-telemetry
+RUSTFLAGS="$COVERAGE_RUSTFLAGS" \
+    LLVM_PROFILE_FILE="citest-%p-%m%c.profraw" \
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
+    --features export-db,export-otlp \
+    --no-fail-fast -p swarm-telemetry \
+    || true
+
+# Write the HTML report to the ./target/coverage folder. grcov does not clean
+# its output directory, so remove stale pages from previous runs first.
+rm -rf ./target/coverage
+grcov . -s . --binary-path ./target/debug/ \
+    -t html --branch --ignore-not-existing \
+    --ignore 'target/**' \
+    --ignore '**/examples/**' \
+    --ignore '**/tests/**' \
+    --ignore 'swarm/e2e-tests/**' \
+    --ignore 'swarm/tests-framework/**' \
+    -o ./target/coverage

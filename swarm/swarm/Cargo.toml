@@ -1,0 +1,173 @@
+[package]
+name = "swarm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = [
+    "plugin-orchestration",
+    "plugin-execution",
+    "plugin-introspection",
+    "plugin-onboarding",
+    "plugin-db",
+    "plugin-mqtt",
+    "plugin-test-control",
+    "plugin-embedded-log",
+    "plugin-gateway"
+]
+
+storage-manager = ["dep:zenoh-plugin-storage-manager"]
+
+plugin-onboarding = [
+    "dep:swarm-onboarding",
+    "dep:swarm-onboarding-request",
+    "dep:zenoh-traits",
+    "dep:futures",
+    "dep:thiserror",
+    "dep:rand-08",
+    "dep:embassy-time",
+    "dep:critical-section",
+]
+plugin-db = [
+    "dep:uuid",
+    "dep:db",
+    "dep:db-client",
+    "dep:db-commons",
+    "dep:postcard",
+]
+plugin-mqtt = ["dep:rumqttd"]
+plugin-orchestration = ["dep:sorg-orchestration", "dep:sorg-common"]
+plugin-execution = [
+    "dep:sorg-execution",
+    "dep:sorg-common",
+    "dep:tryhard",
+    "dep:db-client",
+    "dep:postcard",
+]
+plugin-introspection = [
+    "dep:sysinfo",
+    "dep:introspection-common",
+    "dep:zenoh-keyexpr",
+    "dep:zenoh-util",
+]
+plugin-test-control = [
+    "dep:test-control",
+    "dep:test-control-common",
+    "dep:zenoh-util",
+]
+plugin-embedded-log = [
+    "dep:swarm-telemetry-embedded",
+    "dep:postcard"
+]
+plugin-gateway = ["dep:swarm-gateway"]
+
+ble-linux = ["sorg-execution/ble-linux", "zenoh/transport_bt_gatt"]
+
+telemetry-export-db = ["swarm-telemetry/export-db"]
+telemetry-export-otlp = ["swarm-telemetry/export-otlp"]
+
+[dependencies]
+
+futures-util = { workspace = true }
+flume = { workspace = true }
+anyhow = { workspace = true }
+humantime = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std", "raw_value"] }
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+swarm-telemetry = { workspace = true }
+swarm-telemetry-embedded = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+
+rust-embed = { workspace = true }
+
+tokio = { workspace = true, default-features = false, features = [
+    "rt-multi-thread",
+] }
+
+jrsonnet-evaluator = { workspace = true }
+jrsonnet-stdlib = { workspace = true }
+jrsonnet-importers = { workspace = true }
+jrsonnet-gcmodule = { workspace = true }
+jrsonnet-gcmodule-derive = { workspace = true }
+jrsonnet-macros = { workspace = true }
+jrsonnet-types = { workspace = true }
+
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-appender-tracing = { workspace = true }
+tracing-core = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+
+uuid = { workspace = true, features = ["std", "v7"], optional = true }
+db = { workspace = true, optional = true }
+db-client = { workspace = true, features = ["replica", "polled"], optional = true }
+# Not plugin-gated: every node has a tag set, whichever plugins it runs.
+cell-protocol = { workspace = true }
+myrmic-tags = { workspace = true }
+db-commons = { workspace = true, features = ["topics", "models", "query"], optional = true }
+
+# plugin-execution
+sorg-execution = { workspace = true, optional = true }
+sorg-common = { workspace = true, optional = true }
+tryhard = { workspace = true, optional = true }
+
+# plugin-introspection
+sysinfo = { workspace = true, optional = true }
+introspection-common = { workspace = true, optional = true }
+zenoh-keyexpr = { workspace = true, optional = true }
+zenoh-util = { workspace = true, optional = true }
+
+# plugin-orchestration (sorg-common shared with plugin-execution)
+sorg-orchestration = { workspace = true, optional = true }
+
+# plugin-mqtt
+rumqttd = { workspace = true, optional = true }
+
+# plugin-onboarding
+swarm-onboarding = { workspace = true, optional = true }
+swarm-onboarding-request = { workspace = true, optional = true }
+zenoh-traits = { workspace = true, features = ["zenoh"], optional = true }
+futures = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+rand-08 = { workspace = true, features = ["getrandom"], optional = true }
+embassy-time = { version = "0.5", features = ["std", "generic-queue-8"], optional = true } # 8 because `bt-hci-linux` wrongly enables `generic-queue-8`
+critical-section = { workspace = true, features = ["std"], optional = true }
+
+# plugin-gateway
+swarm-gateway = { workspace = true, optional = true }
+
+# plugin-test-control
+test-control = { workspace = true, optional = true }
+test-control-common = { workspace = true, optional = true }
+
+#zenoh-keyexpr = { workspace = true }
+zenoh-plugin-trait = { workspace = true }
+
+#revision = { workspace = true }
+rand = { workspace = true }
+uhlc = { workspace = true }
+
+
+
+zenoh = { workspace = true, default-features = true, features = [
+    "unstable",
+    "internal",
+    "tracing-instrument",
+] }
+swarm-api = { workspace = true }
+
+zenoh-plugin-storage-manager = { workspace = true, optional = true }
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+serde_yaml = { workspace = true }

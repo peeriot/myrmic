@@ -1,0 +1,26 @@
+[package]
+name = "filestore-client"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+zenoh = { workspace = true }
+
+sorg-common = { workspace = true }
+
+db-client = { workspace = true, features = ["zenoh"] }
+
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync"] }
+sorg-tests = { workspace = true }
+claims = { workspace = true }
+swarm = { workspace = true }

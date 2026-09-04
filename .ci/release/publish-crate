@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#
+# Publishes the SDK crate packages to crates.io.
+#
+# Usage:
+#   CARGO_REGISTRY_TOKEN=... .ci/release/publish-crate <candidate-dir> <rebuilt-dir> <version>
+#
+# Accepts CARGO_REGISTRIES_CRATES_IO_TOKEN as well: cargo takes the crates.io token
+# from either spelling, and the publish names its registry explicitly.
+#   .ci/release/publish-crate --digest <crate-file>
+#
+# Runs as the last step of a promote, because it is the only irreversible action in
+# the pipeline: crates.io has no delete, a yank leaves the version taken, and the
+# name is permanent. Everything reversible is proven good before this runs.
+#
+# It compiles nothing. <rebuilt-dir> is produced by an earlier, credential-free step,
+# and `cargo publish` runs with --no-verify, so no build script or proc macro ever
+# executes in the process that holds the token.
+#
+# "Already published" is decided by asking the registry about that exact name and
+# version. The 409-is-success idiom `publish-package` uses does not transfer:
+# `cargo publish` exposes no HTTP status.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Dependency order. Repeated in `.ci/release/package`; both have to agree.
+SDK_CRATES=(myrmic-signal-layer-types myrmic-common myrmic-sdk-macros myrmic-sdk)
+
+# Overridable so the self-test can point it at a local tree instead of the network.
+INDEX="${CRATES_IO_INDEX:-https://index.crates.io}"
+
+die() {
+    printf '\n%s\n\n' "$*" >&2
+    exit 1
+}
+
+# crates.io's sparse index layout: 1- and 2-character names live in named
+# directories, 3-character names under their first letter, the rest under the first
+# two and next two characters.
+index_path() { # index_path <crate>
+    local name="$1"
+    case "${#name}" in
+        1) printf '1/%s' "$name" ;;
+        2) printf '2/%s' "$name" ;;
+        3) printf '3/%s/%s' "${name:0:1}" "$name" ;;
+        *) printf '%s/%s/%s' "${name:0:2}" "${name:2:2}" "$name" ;;
+    esac
+}
+
+# Split from the decision below so the self-test can point INDEX at a local tree.
+# curl reports '000' for a file:// URL whether or not the file exists, so that scheme
+# is handled separately instead of being funnelled into the "unknown status" branch -
+# which is what made an earlier draft of the stub test the die path rather than the
+# decision, while still reporting green.
+index_fetch() { # index_fetch <url> <out-file>  -> prints a status code
+    local url="$1" out="$2"
+    case "$url" in
+        file://*)
+            if cp "${url#file://}" "$out" 2>/dev/null; then printf '200'; else printf '404'; fi ;;
+        *)
+            curl -sS -o "$out" -w '%{http_code}' "$url" 2>/dev/null || printf '000' ;;
+    esac
+}
+
+# Answers only from evidence: a listed version means published, a 404 means not, and
+# anything else stops the promote rather than guessing.
+already_published() { # already_published <crate> <version>
+    local body status rc=0
+    body="$(mktemp)"
+    status="$(index_fetch "${INDEX}/$(index_path "$1")" "$body")"
+    case "$status" in
+        200) grep -q "\"vers\":\"$2\"" "$body" || rc=1 ;;
+        404) rc=1 ;;
+        *)   rm -f "$body"
+             die "the crates.io index answered '${status}' for $1. Refusing to guess whether
+       ${1} ${2} is already published." ;;
+    esac
+    rm -f "$body"
+    return "$rc"
+}
+
+# A .crate is a gzipped tar. Comparing archive bytes would tie the gate to gzip
+# determinism across cargo versions; comparing the member list plus a hash per member
+# compares what actually ships.
+#
+# Fails closed on an unreadable archive and on an empty member set. Without that,
+# `find | xargs sha256sum` over nothing runs sha256sum with no arguments, which
+# hashes stdin and returns the same constant every time - so two failed extractions
+# would compare equal and the gate would certify nothing.
+crate_digest() { # crate_digest <crate-file>
+    local dir count
+    dir="$(mktemp -d)"
+    tar xzf "$1" -C "$dir" 2>/dev/null || { rm -rf "$dir"; return 1; }
+    if [ "$(find "$dir" -type f | wc -l)" -eq 0 ]; then rm -rf "$dir"; return 1; fi
+    local out
+    out="$( ( cd "$dir" && find . -type f -print0 | sort -z | xargs -0 -r sha256sum ) |
+        sha256sum | cut -d' ' -f1 )" || { rm -rf "$dir"; return 1; }
+    rm -rf "$dir"
+    printf '%s\n' "$out"
+}
+
+# The self-test drives the digest through this rather than sourcing the script, which
+# would leak `set -e` into a harness that deliberately runs without it.
+if [ "${1:-}" = "--digest" ]; then
+    [ "$#" -eq 2 ] || die "usage: publish-crate --digest <crate-file>"
+    crate_digest "$2"
+    exit
+fi
+
+# Exposes the registry query the same way --digest exposes crate_digest, so the
+# self-test can drive the skip/publish decision without sourcing the script.
+if [ "${1:-}" = "--published" ]; then
+    [ "$#" -eq 3 ] || die "usage: publish-crate --published <crate> <version>"
+    if already_published "$2" "$3"; then printf 'published\n'; else printf 'unpublished\n'; fi
+    exit
+fi
+
+[ "$#" -eq 3 ] || die "usage: publish-crate <candidate-dir> <rebuilt-dir> <version>"
+
+CANDIDATE_DIR="$1"
+REBUILT_DIR="$2"
+VERSION="$3"
+
+# Before anything reaches the network: a missing credential must stop the promote,
+# never let it report success with nothing published.
+[ -n "${CARGO_REGISTRY_TOKEN:-}${CARGO_REGISTRIES_CRATES_IO_TOKEN:-}" ] ||
+    die "neither CARGO_REGISTRY_TOKEN nor CARGO_REGISTRIES_CRATES_IO_TOKEN is set.
+       Refusing to continue: a publish step that
+       silently does nothing is worse than a failed one."
+
+[ -d "$CANDIDATE_DIR" ] || die "no such directory: $CANDIDATE_DIR"
+[ -d "$REBUILT_DIR" ] || die "no such directory: $REBUILT_DIR"
+
+# The reference artifacts are the whole basis of the gate below, so they get the
+# producer's own integrity check here too, not only in whatever called this.
+"$SCRIPT_DIR/checksums" verify "$CANDIDATE_DIR"
+
+# A cargo configuration without the build image's source replacement; see
+# publish-cargo-home for why publishing cannot use the mirror.
+PUBLISH_HOME="$(mktemp -d)"
+trap 'rm -rf "$PUBLISH_HOME"' EXIT
+"$SCRIPT_DIR/publish-cargo-home" "$PUBLISH_HOME"
+
+printf '\n\n--== Verify against the candidate ==--\n\n'
+
+# Every crate is checked before any crate is published. Gating and publishing in one
+# loop would put the fourth crate's comparison after the first three were already
+# irreversibly on crates.io - the opposite of "everything reversible is proven good
+# first", and the reason this gate exists at all. The checks are local and need no
+# network, so a pre-pass costs nothing.
+for crate in "${SDK_CRATES[@]}"; do
+    reference="${CANDIDATE_DIR}/${crate}-${VERSION}.crate"
+    rebuilt="${REBUILT_DIR}/${crate}-${VERSION}.crate"
+
+    [ -f "$reference" ] ||
+        die "${reference} is missing. The promote must download the candidate half; without
+       the artifact the release candidate was reviewed with there is nothing to compare
+       against, and this gate would pass on nothing."
+    [ -f "$rebuilt" ] ||
+        die "${rebuilt} is missing. The re-packaging step did not produce it."
+
+    ref_digest="$(crate_digest "$reference")" ||
+        die "${reference} could not be read as a package. Refusing to publish against a
+       reference that cannot be verified."
+    new_digest="$(crate_digest "$rebuilt")" ||
+        die "${rebuilt} could not be read as a package."
+
+    [ "$ref_digest" = "$new_digest" ] ||
+        die "${crate} ${VERSION} does not match the package attached to the release
+       candidate. Publishing it would ship something other than what was reviewed."
+
+    printf '%-28s matches the candidate\n' "$crate"
+done
+
+printf '\n\n--== Publish to crates.io ==--\n\n'
+
+for crate in "${SDK_CRATES[@]}"; do
+    if already_published "$crate" "$VERSION"; then
+        printf '%-28s %s already on crates.io, skipping\n' "$crate" "$VERSION"
+        continue
+    fi
+
+    # --no-verify: the verification build already ran when the candidate was packaged.
+    # Repeating it here would compile every build script and proc macro in the process
+    # that holds the token. --locked so the published lockfile is the tested one.
+    # --registry crates-io: the build image replaces crates-io with the internal
+    # registry, and cargo refuses to publish against a replaced source. Naming the
+    # target explicitly also means this can never publish to the internal one.
+    # Same configuration as the packaging: this has to reach the real crates.io,
+    # and the siblings published moments ago are not in the internal mirror.
+    (
+        cd "$REPO_ROOT"
+        export CARGO_HOME="$PUBLISH_HOME"
+        unset "${!CARGO_SOURCE_@}"
+        cargo publish --registry crates-io -p "$crate" --no-verify --locked
+    )
+
+    # crates.io is eventually consistent and the next crate depends on this one.
+    # Bounded, and a timeout stops the promote rather than letting the next publish
+    # fail on a dependency the index has not caught up with.
+    printf '%-28s waiting for the index\n' "$crate"
+    for _ in $(seq 1 60); do
+        if already_published "$crate" "$VERSION"; then break; fi
+        sleep 5
+    done
+    already_published "$crate" "$VERSION" ||
+        die "${crate} ${VERSION} did not appear in the crates.io index within 5 minutes.
+       Stopping before the crates that depend on it. Re-running the promote is safe:
+       the crates already published are skipped."
+
+    printf '%-28s published\n' "$crate"
+done

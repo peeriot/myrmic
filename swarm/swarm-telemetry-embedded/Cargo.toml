@@ -1,0 +1,20 @@
+[package]
+name = "swarm-telemetry-embedded"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+log = { workspace = true, default-features = false }
+serde = { workspace = true, default-features = false, features = ["derive"] }
+heapless = { workspace = true, features = ["serde"] }
+embassy-executor = { workspace = true }
+embassy-sync = { workspace = true }
+zenoh-nano = { workspace = true }
+zenoh-traits = { workspace = true, features = ["zenoh-nano"] }
+postcard = { workspace = true }
+
+[lints]
+workspace = true

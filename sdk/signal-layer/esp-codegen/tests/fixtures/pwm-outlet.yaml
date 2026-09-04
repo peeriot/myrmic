@@ -1,0 +1,13 @@
+# Golden fixture (c): pwm-output outlet pipeline.
+# Exercises the LEDC emission path — the shared LEDC instance, its timer and
+# channel setup, and the trait imports those configure() calls need. Neither of
+# the other fixtures declares a PWM device, so without this one that whole
+# branch of emit_board_peripherals is untested.
+# Used by esp-codegen golden tests; see tests/golden.rs.
+pipeline:
+  id: golden-pwm
+
+outlets:
+  - name: fan1_duty
+    type: PwmDuty
+    device: fan1

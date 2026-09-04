@@ -1,0 +1,17 @@
+[package]
+name = "adapter-switchbot-co2-pro"
+version.workspace = true
+edition.workspace = true
+license = "MIT-0"
+authors.workspace = true
+publish.workspace = true
+
+[package.metadata.myrmic]
+heap_size = 65_536
+
+[dependencies]
+# local
+myrmic-sdk = { workspace = true, features = ["cells", "cell-init", "alloc"] }
+
+[dev-dependencies]
+assert_approx_eq = { workspace = true }

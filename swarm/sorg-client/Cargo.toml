@@ -1,0 +1,28 @@
+[package]
+name = "sorg-client"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cell-protocol = { workspace = true, default-features = true }
+cell-mailbox = { workspace = true }
+sorg-common = { workspace = true }
+
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
+zenoh = { workspace = true }
+myrmic-common = { workspace = true, features = ["cells"] }
+db-client = { workspace = true, features = ["zenoh"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
+zenoh = { workspace = true, features = ["unstable", "default"] }
+claims = { workspace = true }
+db-client = { workspace = true, features = ["zenoh"] }
+sorg-tests = { workspace = true }

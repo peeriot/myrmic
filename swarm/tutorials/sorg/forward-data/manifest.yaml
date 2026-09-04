@@ -1,0 +1,32 @@
+name: forward data
+description: a minimal application forwarding data from one zenoh topic to another
+
+sources:
+  - id: example source
+    description: This task subscribes to the specified zenoh topic, making the data published there available for tasks within this application
+    config:
+      type: zenoh-sub
+      sub-ke: forward_data/source
+    outputs:
+      - id: source_data
+
+operators:
+
+sinks:
+  - id: example sink
+    description: This task publishes data provided on its input on the specified zenoh topic, making data from this application available withing zenoh
+    config:
+      type: zenoh-pub
+      pub-ke: forward_data/sink
+    inputs:
+      - id: source_data
+
+links:
+  - from:
+      task: example source
+      output: source_data
+    to:
+      task: example sink
+      input: source_data
+
+mappings: # When no mappings are provided, the application will be deployed on the minimal number of nodes (no super relevant for this example, where we have only one exec runtime)

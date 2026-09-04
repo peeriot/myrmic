@@ -1,0 +1,20 @@
+name: greenhouse
+
+classes:
+  - id: moisture-sensor
+    build: ./moisture-sensor
+  - id: pump
+    build: ./pump
+  - id: grow-bed
+    build: ./grow-bed
+  - id: dashboard
+    build: ./dashboard
+  - id: irrigation-agent
+    build: ./irrigation-agent
+
+instances:
+  - class: moisture-sensor
+  - class: pump
+  - class: grow-bed
+  - class: dashboard
+  - class: irrigation-agent

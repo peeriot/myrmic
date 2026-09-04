@@ -1,0 +1,54 @@
+# Board manifest for the signal-layer hardware-in-the-loop (HIL) test rig.
+#
+# Hardware: ESP32-C6 (built-in USB-Serial-JTAG) with a breadboard on the I2C0
+# bus. Wiring matches the dev-kit (GPIO10 = SCL, GPIO11 = SDA).
+#
+# Populated on the breadboard:  BME280 (0x76), VEML7700 (0x10).
+# Declared but NOT populated:    CCS811 (0x5A) — intentionally absent so its
+#   source stays in the health `Down` state; this gives the HIL suite a
+#   deterministic driver-health assertion without needing to physically
+#   disconnect a sensor. (A future relay on the rig will let us drop SDA/SCL to
+#   fault a *populated* sensor at runtime.)
+# Synthetic:                     `sim` — the `sim-source` driver, bound to i2c0
+#   for codegen symmetry but never touching the bus. Emits a deterministic ramp
+#   so value / step / event-tap assertions are exact and hardware-independent.
+
+id: esp32c6-hil
+chip: esp32c6
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 10
+      sda: 11
+    freq_khz: 400
+
+gpios:
+  general_purpose: [0, 1, 2, 3, 14, 18, 19, 20, 21, 22, 23]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76   # SDO pulled to GND
+
+  - id: veml7700
+    driver: veml7700
+    bus: i2c0
+    # VEML7700 has a fixed address (0x10); no hardware config needed.
+
+  - id: ccs811
+    driver: ccs811
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x5A   # ADDR pin tied to GND
+    pins:
+      nint: 23
+    # NOTE: intentionally NOT populated on the rig — used for the health test.
+
+  - id: sim
+    driver: sim-source
+    bus: i2c0
+    # Synthetic source: bound to i2c0 for codegen symmetry, bus never touched.

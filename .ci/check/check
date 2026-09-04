@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+set -xeuo pipefail
+
+export SCRIPT_DIR="$(dirname "$0")"
+
+ALL_TARGETS=${ALL_TARGETS:-true}
+ONLY_TEST_PACKAGES=${ONLY_TEST_PACKAGES:-}
+SKIP_TESTS=${SKIP_TESTS:-false}
+CARGO_CHANNEL=${CARGO_CHANNEL:-}
+COMMAND_SUFFIX=${COMMAND_SUFFIX:-}
+
+ALL_TARGETS_FLAG=""
+if [[ "$ALL_TARGETS" != "false" ]]; then
+    ALL_TARGETS_FLAG="--all-targets"
+fi
+
+OLD_PWD="$PWD"
+
+finish() {
+    cd "$OLD_PWD"
+}
+
+trap finish EXIT
+
+# Install the requested toolchain if it is not already in the (persistent) rustup
+# volume. Without this a job depends on some *other* job having seeded the volume
+# first, which is how the toolchain silently drifted in the first place.
+if [ -n "$CARGO_CHANNEL" ]; then
+    printf "\n\n--== Ensure Toolchain ==--\n\n"
+    # Install only when absent: re-running `toolchain install` over an existing
+    # toolchain can fail on component conflicts. `component`/`target add` are
+    # idempotent, so they run unconditionally.
+    rustup toolchain list | grep -q "^${CARGO_CHANNEL}" \
+        || rustup toolchain install "$CARGO_CHANNEL" --profile minimal
+    rustup component add clippy rustfmt rust-src --toolchain "$CARGO_CHANNEL"
+    rustup target add riscv32imac-unknown-none-elf --toolchain "$CARGO_CHANNEL"
+fi
+
+printf "\n\n--== Build Environment ==--\n\n"
+rustc \
+    --version
+cargo \
+    --version
+
+
+# Run cargo fmt
+printf "\n\n--== Check Code Formatting ==--\n\n"
+cargo fmt --all \
+    -- \
+        --check
+
+
+# Run cargo clippy
+printf "\n\n--== Run Linter ==--\n\n"
+cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+    clippy"$COMMAND_SUFFIX" \
+    ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
+    -- \
+        --deny "warnings"
+
+
+# Run cargo doc
+printf "\n\n--== Check Doc ==--\n\n"
+
+RUSTDOCFLAGS="-D warnings" \
+cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+    doc"$COMMAND_SUFFIX" \
+    --no-deps \
+    --document-private-items
+
+
+# Check the SDK crates
+#
+# They are not in `default-members`, so the runs above skip them, and `citest`
+# (nextest) runs no doctests at all. Without this a public SDK item can lose its
+# docs and a doc example can stop compiling unnoticed. Host target only: the
+# embedded jobs bring their own package lists through `COMMAND_SUFFIX` aliases.
+if [ -z "$COMMAND_SUFFIX" ]; then
+    printf "\n\n--== Check SDK Crates ==--\n\n"
+
+    SDK_PACKAGES=(-p myrmic-common -p myrmic-sdk -p myrmic-sdk-macros -p myrmic-signal-layer-types)
+
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+        clippy \
+        "${SDK_PACKAGES[@]}" \
+        ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
+        -- \
+            --deny "warnings"
+
+    RUSTDOCFLAGS="-D warnings" \
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+        doc \
+        "${SDK_PACKAGES[@]}" \
+        --no-deps \
+        --document-private-items
+
+    if [[ "$SKIP_TESTS" != "true" ]]; then
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            test \
+            --doc \
+            "${SDK_PACKAGES[@]}"
+    fi
+fi
+
+
+# Run cargo test / nextest
+if [[ "$SKIP_TESTS" != "true" ]]; then
+    PACKAGE_ARGS=()
+    if [ -n "$ONLY_TEST_PACKAGES" ]; then
+        for PACKAGE in $ONLY_TEST_PACKAGES; do
+            PACKAGE_ARGS+=('-p' "$PACKAGE")
+        done
+    fi
+
+    # The tests in `sorg-tests` are integration tests that require the `swarm`
+    # binary to be built, so we build it first before running the tests.
+    printf "\n\n--== Build Swarm ==--\n\n"
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX" --bin swarm --bin myrmic
+
+    printf "\n\n--== Run Unit Tests ==--\n\n"
+    HOST_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
+    HOST_RUSTFLAGS_VAR="CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
+    export "$HOST_RUSTFLAGS_VAR=-D warnings"
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
+        "${PACKAGE_ARGS[@]}"
+
+    # S4: verify the linux-codegen chain produces a compilable, working crate
+    # with self-hosted tap-contract tests (SR-2, SR-7, SR-9 second leg, D7).
+    printf "\n\n--== Generated Pipeline Verification (SR-9 / D7) ==--\n\n"
+    bash "$(dirname "$(dirname "$SCRIPT_DIR")")/ci/check-generated-pipeline.sh"
+fi

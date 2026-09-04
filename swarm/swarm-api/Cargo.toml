@@ -1,0 +1,22 @@
+[package]
+name = "swarm-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+
+flume = { workspace = true }
+
+tokio = { workspace = true }
+
+serde = { workspace = true }
+postcard = { workspace = true }
+
+anyhow = { workspace = true }
+zenoh = { workspace = true }

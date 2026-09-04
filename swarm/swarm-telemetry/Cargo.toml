@@ -1,0 +1,52 @@
+[package]
+name = "swarm-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+
+export-db = ["dep:db-client", "dep:opentelemetry-proto", "dep:base32"]
+export-file = ["dep:opentelemetry-proto"]
+export-otlp = ["dep:opentelemetry-otlp"]
+
+[dependencies]
+anyhow = { workspace = true }
+base32 = { workspace = true, optional = true }
+db-client = { workspace = true, features = [ "zenoh" ], optional = true }
+humantime = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry-proto = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true, features = [ "experimental_metadata_attributes" ] }
+rand = { workspace = true }
+serde = { workspace = true, features = [ "alloc" ] }
+serde_json = { workspace = true, features = [ "alloc" ] }
+tracing = { workspace = true }
+tracing-core = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json", "tracing-log"] }
+tracing-appender = { workspace = true }
+uuid = { workspace = true, features = ["v5"] }
+zenoh = { workspace = true }
+
+[dev-dependencies]
+itertools = { workspace = true }
+tempfile = { workspace = true }
+opentelemetry-proto = { workspace = true, features = ["gen-tonic", "trace"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio-stream = { workspace = true, features = ["net"] }
+tonic = { workspace = true, features = ["transport"] }
+zenoh = { workspace = true, default-features = true, features = ["unstable", "internal"] }
+swarm = { workspace = true, features = ["plugin-embedded-log"] }
+swarm-telemetry-embedded = { workspace = true }
+heapless = { workspace = true }
+postcard = { workspace = true }
+
+[lints]
+workspace = true

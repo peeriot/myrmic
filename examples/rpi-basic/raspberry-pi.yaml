@@ -1,0 +1,27 @@
+# Reference Linux device manifest — Raspberry Pi with BME280 + VEML7700 on /dev/i2c-1.
+# Used by ci/check-generated-pipeline.sh (Task 11, SR-4, SR-7).
+id: rpi-basic
+chip: linux
+
+buses:
+  i2c0:
+    transport: i2c
+    pins: {}
+    freq_khz: 400
+    dev_path: /dev/i2c-1
+
+gpios:
+  general_purpose: []
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76
+
+  - id: veml7700
+    driver: veml7700
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x10

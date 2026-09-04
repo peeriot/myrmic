@@ -1,0 +1,65 @@
+
+# Ignored for now, but should be fixed in the future!
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2023-0071"
+reason = "No solution yet, but should be definitely fixed before we have an official release!"
+
+
+# Uncritical
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0388"
+reason = "The derivative crate is unmaintained, but needed by jrsonnet and zenoh-plugin-mqtt. Should be uncritical, because it only adds compile time helpers."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "The paste crate is unmaintained, but needed by zenoh. Should be uncritical, because it only adds compile time helpers."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0320"
+reason = "The yaml-rust crate is unmaintained, but needed by rumqtt and jrsonnet. Should be uncritical, because we do not use the yaml feature of the crate."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0134"
+reason = "This is because the pemfile parser we use is unmaintained, and while this should be migrated away from, it's used within rustls. There's no easy way forward, however pemfiles haven't changed for many years, so no critical issue here."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+reason = "The team considers version 1.3.3 a complete version of bincode that is not in need of any updates."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+reason = "The proc-macro-erro2 is unmaintained, but needed by defmt. Transitive dependency which we can't control."
+
+# https://github.com/apache/arrow-rs-object-store/issues/786
+# https://github.com/oxigraph/oxigraph/issues/1793
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0194"
+reason = "Requires update of spareval and object_store."
+
+# https://github.com/apache/arrow-rs-object-store/issues/786
+# https://github.com/oxigraph/oxigraph/issues/1793
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0195"
+reason = "Requires update of spareval and object_store."
+
+# lru is transitive: sorg-orchestration -> genetic_algorithm 0.27.2 -> lru 0.16.4.
+# genetic_algorithm declares lru = "0.16.3", so cargo cannot reach the patched 0.18.2, there is
+# no patched 0.16.x, and 0.27.2 is the latest genetic_algorithm release.
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0253"
+reason = "Unsoundness in lru::LruCache::pop(), reachable only if a stored key's Drop implementation panics. genetic_algorithm keys the cache on GenesHash (= u64), which has no Drop, and never calls pop() — so the reported case cannot occur here. Revisit when genetic_algorithm bumps lru past 0.18.2."
+
+# Both pulled in transitively via typst/typst-pdf/krilla/usvg/fontdb, used only by the warehouse
+# benchmark's PDF report rendering (benchmarks/report). No safe upgrade is available for either —
+# typst itself would need to migrate to harfrust/skrifa upstream.
+# https://rustsec.org/advisories/RUSTSEC-2026-0206
+# https://rustsec.org/advisories/RUSTSEC-2026-0192
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0206"
+reason = "rustybuzz is unmaintained; transitive dep of typst, no safe upgrade available."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+reason = "ttf-parser is unmaintained; transitive dep of typst, no safe upgrade available."

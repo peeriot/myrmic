@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+set -e
+
+SCRIPT_DIR="$(dirname $0)"
+REPO_ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
+MANIFEST_PATH="$REPO_ROOT/Cargo.toml"
+
+OLD_PWD="$PWD"
+
+finish() {
+    cd "$OLD_PWD"
+}
+
+trap finish EXIT
+
+printf "\n\n--== Verify ==--\n\n"
+rustc \
+    --version
+cargo deny \
+    --version
+
+printf "\n\n--== Verify Advisories ==--\n\n"
+cargo deny --manifest-path "$MANIFEST_PATH" check advisories --hide-inclusion-graph
+
+printf "\n\n--== Verify Bans ==--\n\n"
+cargo deny --manifest-path "$MANIFEST_PATH" check bans --hide-inclusion-graph
+
+
+printf "\n\n--== Verify Licenses ==--\n\n"
+cargo deny --manifest-path "$MANIFEST_PATH" check licenses --hide-inclusion-graph
+
+git apply deny.patch
+
+printf "\n\n--== Verify Licenses (with Dev Dependencies) ==--\n\n"
+cargo deny --manifest-path "$MANIFEST_PATH" check licenses --hide-inclusion-graph
+
+
+printf "\n\n--== Verify Sources ==--\n\n"
+cargo deny --manifest-path "$MANIFEST_PATH" check sources --hide-inclusion-graph
+
+
+printf "\n\n--== Verify Advisories using osv-scanner ==--\n\n"
+osv-scanner --config "$REPO_ROOT/osv-scanner.toml" --lockfile "$REPO_ROOT/Cargo.lock"
+
+
+# NOTICE is a markdown table; the last column of each data row holds one or more
+# repo-relative paths, individually backtick-quoted and comma-separated. A path that
+# no longer exists means NOTICE attributes files that are not actually there.
+printf "\n\n--== Verify NOTICE Path Integrity ==--\n\n"
+
+NOTICE_FILE="$REPO_ROOT/NOTICE"
+
+if [ ! -f "$NOTICE_FILE" ]; then
+    printf "NOTICE file not found at %s.\n" "$NOTICE_FILE"
+    exit 1
+fi
+
+notice_paths_missing=0
+
+while IFS= read -r line; do
+    case "$line" in
+        '|'*'|') ;;
+        *) continue ;;
+    esac
+
+    # Skip the markdown header-separator row (only '-', ':', '|' and spaces).
+    if [[ "$line" =~ ^\|[[:space:]:-]+\|$ ]]; then
+        continue
+    fi
+
+    last_column="$(awk -F'|' '{print $(NF-1)}' <<<"$line")"
+    quoted_paths="$(grep -oE '`[^`]+`' <<<"$last_column" || true)"
+
+    while IFS= read -r quoted_path; do
+        [ -z "$quoted_path" ] && continue
+        path="${quoted_path//\`/}"
+        if [ ! -e "$REPO_ROOT/$path" ]; then
+            printf "NOTICE references a path that does not exist: %s\n" "$path"
+            notice_paths_missing=1
+        fi
+    done <<<"$quoted_paths"
+done < "$NOTICE_FILE"
+
+if [ "$notice_paths_missing" -ne 0 ]; then
+    printf "\nNOTICE path integrity check FAILED (see missing paths above).\n"
+    exit 1
+fi
+
+printf "\nAll NOTICE paths verified present.\n"
+
+
+printf "\n\n--== Verify Packaged Attribution ==--\n\n"
+
+# The repo-root NOTICE ships in no .crate. myrmic-common vendors MIT-derived code
+# under src/types/web, so its own package has to carry the attribution, and an
+# include list that stops matching would drop it silently and irreversibly.
+#
+# Not --offline: this resolves the whole workspace, including the private git
+# dependencies, and would die on a cold cargo cache for a reason that has nothing to
+# do with licences. The job has both the token and the network.
+packaged="$(cargo package --list --registry crates-io --allow-dirty -p myrmic-common)"
+for required in NOTICE LICENSES/MIT-nourl.txt LICENSES/MIT-http.txt LICENSE-MIT LICENSE-APACHE; do
+    if ! printf '%s\n' "$packaged" | grep -qx "$required"; then
+        printf "myrmic-common package is missing %s\n" "$required"
+        printf "publishing it would distribute third-party MIT code with the required\n"
+        printf "attribution stripped, and that cannot be undone.\n"
+        exit 1
+    fi
+done
+printf "myrmic-common ships its attribution\n"
+

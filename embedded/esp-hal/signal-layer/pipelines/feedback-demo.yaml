@@ -1,0 +1,30 @@
+# Demonstrates outlet feedback (#1018): a cell drives a hybrid relay and reads
+# its REAL state back — status comes from a feedback pin, not the command.
+#
+#   WASM cell ──▶ [relay_fb.out]           (command write)
+#                 [relay_fb.feedback] ──▶ relay_contact tap   (real read-back)
+#                                    └───▶ relay_fault tap     (OutletFault event)
+#
+# Bench: jumper GPIO14 (out) → GPIO18 (feedback); the contact tap mirrors what
+# the cell commands, proving read-back (not inference).
+pipeline:
+  id: feedback-demo
+
+outlets:
+  # Cell-driven hybrid outlet.
+  - name: relay_cmd
+    type: DigitalState
+    device: relay_fb
+
+taps:
+  # Intrinsic status: the driver's real read-back of the feedback pin.
+  - name: relay_contact
+    kind: retained
+    type: bool
+    source: relay_cmd.contact
+
+  # Reserved error event: emitted on a write or read-back failure.
+  - name: relay_fault
+    kind: event
+    type: OutletFault
+    source: relay_cmd.error

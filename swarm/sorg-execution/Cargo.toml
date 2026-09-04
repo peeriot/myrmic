@@ -1,0 +1,94 @@
+[package]
+name = "sorg-execution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+# When activated, cells get a real BlueZ-backed BLE host; without it the BLE host functions will fail to link
+ble-linux = ["dep:bluer"]
+
+[dependencies]
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["std", "serde", "v4"] }
+signal-layer-ipc = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+wasmtime = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+dashmap = { workspace = true }
+
+zenoh = { workspace = true, features = ["unstable"] }
+
+sorg-common = { path = "../sorg-common" }
+myrmic-tags = { workspace = true }
+filestore-client = { workspace = true }
+tryhard = { workspace = true }
+
+bincode = { workspace = true }
+sorg-client = { workspace = true }
+
+cell-protocol = { workspace = true, default-features = true }
+cell-mailbox = { workspace = true }
+db-client = { workspace = true, features = ["zenoh"] }
+
+reqwest = { version = "0.13.3", features = ["query", "json"] }
+
+postcard = { workspace = true, features = ["experimental-derive"] }
+
+claims = { workspace = true }
+rumqttc = { workspace = true }
+
+flume = { workspace = true }
+
+axum = { workspace = true, features = ["macros", "ws"] }
+axum-server = { version = "0.7.3", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23.35", default-features = false, features = [
+    "logging",
+    "std",
+    "ring",
+    "tls12",
+] }
+
+tower-http = { workspace = true, features = ["trace", "fs", "cors"] }
+futures-util = { workspace = true }
+mime_guess = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+
+myrmic-common = { workspace = true, features = ["types-web", "cells", "alloc"] }
+
+bluer = { workspace = true, features = ["bluetoothd"], optional = true }
+heapless = { workspace = true }
+
+futures = { workspace = true }
+tokio-stream = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+swarm-telemetry = { workspace = true, features = ["export-db"] }
+tempfile = "3"
+tokio = { workspace = true, features = ["macros"] }
+zenoh = { workspace = true, features = ["unstable", "default"] }
+zenoh-protocol = { workspace = true }
+
+sorg-tests = { workspace = true }
+sorg-client = { workspace = true }
+module-examples-common = { path = "../../tests/fixtures/module-examples-common" }
+myrmic-common = { workspace = true, features = [
+    "cells",
+    "alloc",
+] }
+
+serde_json = { workspace = true }
+http = { workspace = true }
+myrmic-sdk = { workspace = true }
+myrmic-sdk-macros = { workspace = true }
+
+
+[lints]
+workspace = true

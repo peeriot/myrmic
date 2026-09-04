@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+#
+# Verifies, or regenerates, the generated regions of the WASM host interface
+# definition from the SDK's import declarations.
+#
+# Usage:
+#   .ci/verify/wasm-host-interface            verify; non-zero if the file is stale
+#   .ci/verify/wasm-host-interface --write    regenerate the file in place
+#
+# legal/interfaces/wasm-host-interface.md is the authoritative interface
+# definition for Interface 1 of the Exception Scope (EXCEPTION-SCOPE.md). The
+# additional permission under Section 2 of the Myrmic Exception depends on an
+# Application importing only the functions listed there, so a drift between that
+# file and the SDK means a legal instrument describes an interface that does not
+# exist. Nothing else checks it, and it cannot be checked by reading the file.
+#
+# What counts as a host function: a declaration inside an `extern "C"` block that
+# carries a `#[link(wasm_import_module = "...")]` attribute. The whole SDK source
+# tree is scanned, not just host_functions/, so a block added elsewhere cannot
+# slip past this check.
+#
+# The name a Cell actually imports is the `link_name` where one is set, not the
+# Rust name. They differ today (gpio's `read_pin` is imported as `read`), which is
+# exactly the kind of divergence a hand-maintained list gets wrong.
+
+set -eu
+
+SCRIPT_DIR="$(dirname "$0")"
+REPO_ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
+
+# Relative to REPO_ROOT, which the script cd's into: the extractor reports the paths
+# it read, and those go into the document verbatim.
+SDK_SRC="sdk/myrmic-sdk/src"
+DOC="legal/interfaces/wasm-host-interface.md"
+
+MODE="${1:-verify}"
+
+case "$MODE" in
+    verify | --write) ;;
+    *) printf 'usage: %s [--write]\n' "$0" >&2; exit 2 ;;
+esac
+
+WORK="$(mktemp -d -t wasm-host-interface-XXXXXX)"
+OLD_PWD="$PWD"
+
+finish() {
+    rm -rf "$WORK"
+    cd "$OLD_PWD"
+}
+
+trap finish EXIT
+
+cd "$REPO_ROOT"
+
+[ -d "$SDK_SRC" ] || { printf 'error: SDK sources not found at %s\n' "$SDK_SRC" >&2; exit 1; }
+[ -f "$DOC" ] || { printf 'error: interface definition not found at %s\n' "$DOC" >&2; exit 1; }
+
+printf '\n\n--== Extract Declarations ==--\n\n'
+
+# Emits one "namespace<TAB>imported name<TAB>source path" record per declaration.
+cat >"$WORK/extract.awk" <<'AWK'
+# Comment-only lines are dropped first: doc comments carry prose and rustdoc code
+# examples, whose braces and `fn` mentions would otherwise read as declarations.
+/^[[:space:]]*\/\// { next }
+
+# The namespace is the import module of the attribute that precedes the block.
+/wasm_import_module/ {
+    t = $0
+    sub(/.*wasm_import_module[[:space:]]*=[[:space:]]*"/, "", t)
+    sub(/".*/, "", t)
+    pending_ns = t
+}
+
+# `extern "C" fn` is a function pointer or a definition, not an import block; the
+# brace is what tells the two apart.
+depth == 0 && /extern[[:space:]]*"C"[[:space:]]*\{/ {
+    if (pending_ns == "") {
+        printf("%s:%d: extern \"C\" block without wasm_import_module\n", FILENAME, FNR) > "/dev/stderr"
+        rc = 1
+        next
+    }
+    ns = pending_ns
+    pending_ns = ""
+    depth = 1
+    link = ""
+    next
+}
+
+depth > 0 {
+    if (/link_name[[:space:]]*=[[:space:]]*"/) {
+        t = $0
+        sub(/.*link_name[[:space:]]*=[[:space:]]*"/, "", t)
+        sub(/".*/, "", t)
+        link = t
+    }
+
+    if (match($0, /fn[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(/)) {
+        name = substr($0, RSTART, RLENGTH)
+        sub(/^fn[[:space:]]+/, "", name)
+        sub(/[[:space:]]*\($/, "", name)
+        printf("%s\t%s\t%s\n", ns, (link == "" ? name : link), FILENAME)
+        link = ""
+    }
+
+    n = gsub(/\{/, "{") - gsub(/\}/, "}")
+    depth += n
+    if (depth <= 0) { depth = 0; ns = "" }
+}
+
+END { exit rc }
+AWK
+
+find "$SDK_SRC" -name '*.rs' -print0 |
+    sort -z |
+    xargs -0 awk -f "$WORK/extract.awk" |
+    sort -u >"$WORK/decls"
+
+[ -s "$WORK/decls" ] || { printf 'error: no import declarations found; the extractor is broken.\n' >&2; exit 1; }
+
+namespaces="$(cut -f1 "$WORK/decls" | sort -u | wc -l | tr -d ' ')"
+functions="$(wc -l <"$WORK/decls" | tr -d ' ')"
+
+printf 'namespaces %s\n' "$namespaces"
+printf 'functions  %s\n' "$functions"
+
+# A function name must be unique within its namespace: two declarations of the same
+# import would make the list ambiguous about what a Cell may import.
+duplicates="$(cut -f1,2 "$WORK/decls" | sort | uniq -d)"
+if [ -n "$duplicates" ]; then
+    printf 'error: the same import is declared twice:\n%s\n' "$duplicates" >&2
+    exit 1
+fi
+
+printf '\n\n--== Render ==--\n\n'
+
+# One row per namespace: name, count, and the imported names in sorted order.
+{
+    printf '| Namespace | Functions | Imported functions |\n'
+    printf '|---|---|---|\n'
+    cut -f1,2 "$WORK/decls" | sort | awk -F'\t' '
+        $1 != ns {
+            if (ns != "") printf("| `%s` | %d | %s |\n", ns, n, list)
+            ns = $1; n = 0; list = ""
+        }
+        {
+            n++
+            list = list (list == "" ? "" : ", ") "`" $2 "`"
+        }
+        END { if (ns != "") printf("| `%s` | %d | %s |\n", ns, n, list) }
+    '
+    printf '\n'
+    printf '**Total:** %s namespaces, %s functions.\n' "$namespaces" "$functions"
+} >"$WORK/region-namespaces"
+
+# The files the declarations actually live in, so a rename cannot leave a stale path.
+cut -f3 "$WORK/decls" | sort -u | sed 's|^|- `|; s|$|`|' >"$WORK/region-sources"
+
+printf 'rendered %s rows and %s source paths\n' "$namespaces" "$(wc -l <"$WORK/region-sources" | tr -d ' ')"
+
+printf '\n\n--== Check: Generated Regions ==--\n\n'
+
+# Fail closed: a missing or duplicated marker pair means the check silently stops
+# covering part of the file, which is worse than a stale file.
+for region in namespaces sources; do
+    for marker in BEGIN END; do
+        count="$(grep -cFx "<!-- $marker GENERATED: $region -->" "$DOC" || true)"
+        if [ "$count" != "1" ]; then
+            printf 'error: %s has %s "<!-- %s GENERATED: %s -->" markers, expected exactly one.\n' \
+                "$DOC" "$count" "$marker" "$region" >&2
+            exit 1
+        fi
+    done
+done
+
+printf 'markers ok\n'
+
+# Replaces everything between a marker pair with the rendered body.
+replace_region() {
+    awk -v region="$2" -v body="$3" '
+        $0 == "<!-- BEGIN GENERATED: " region " -->" {
+            print
+            while ((getline line < body) > 0) print line
+            close(body)
+            skip = 1
+            next
+        }
+        $0 == "<!-- END GENERATED: " region " -->" { skip = 0 }
+        !skip { print }
+    ' "$1"
+}
+
+replace_region "$DOC" namespaces "$WORK/region-namespaces" >"$WORK/step1"
+replace_region "$WORK/step1" sources "$WORK/region-sources" >"$WORK/expected"
+
+if [ "$MODE" = "--write" ]; then
+    if cmp -s "$DOC" "$WORK/expected"; then
+        printf 'already up to date\n'
+    else
+        cat "$WORK/expected" >"$DOC"
+        printf 'regenerated %s\n' "$DOC"
+    fi
+    exit 0
+fi
+
+if ! diff -u "$DOC" "$WORK/expected"; then
+    printf '\n'
+    printf 'error: %s does not match the SDK declarations.\n' "$DOC" >&2
+    printf '       Regenerate it with `.ci/verify/wasm-host-interface --write` and commit the\n' >&2
+    printf '       result. If the interface really changed, that is a change to the Exception\n' >&2
+    printf '       Scope of the next release, not a formatting fix.\n' >&2
+    exit 1
+fi
+
+printf 'up to date\n'

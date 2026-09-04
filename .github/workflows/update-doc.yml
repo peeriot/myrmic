@@ -1,0 +1,136 @@
+name: Update Documentation
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "myrmic/v*"
+  merge_group:
+  pull_request:
+    types: ["opened", "reopened", "synchronize", "ready_for_review"]
+  workflow_dispatch:
+    inputs:
+      upload_book:
+        description: "Upload Book"
+        required: false
+        type: boolean
+      upload_docs:
+        description: "Upload Docs"
+        required: false
+        type: boolean
+
+jobs:
+  # Build Book
+
+  build-book:
+    name: Build Book
+    runs-on: general
+    if: |
+      ( github.event_name == 'push' ) ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.upload_book == true )
+    container:
+      image: node:24
+      options: --user 1003:1003
+      volumes:
+        - myrmic-html:/myrmic
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+          submodules: true
+
+      - name: Build Book
+        uses: peeriot/myrmic-docs-site/actions/build-docs@51d5756a767cadadc184a20052d89f2b80d83820
+        with:
+          input_dir: ./doc/chapters
+          output_dir: ./book
+
+      - name: Upload Book
+        if: |
+          ( github.event_name == 'push') ||
+          ( github.event_name == 'workflow_dispatch' && inputs.upload_book == true )
+        run: |
+          mkdir -p /myrmic/book
+          rm -rf /myrmic/book/*
+          cp -r ./book/* /myrmic/book/
+
+  # Build Docs
+
+  build-docs:
+    name: Build Docs
+    runs-on: general
+    if: |
+      ( github.event_name == 'push' ) ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.upload_docs == true )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+          submodules: true
+
+      - name: Build Docs
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+        with:
+          image: ghcr.io/peeriot/rust:1.95.0-1
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            myrmic-html:/myrmic,rw,external
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=Cargo.lock
+          run: |
+            set -euo pipefail
+            mkdir -p /myrmic/docs
+            [ -e /myrmic/docs/cargo-static-doc-metadata.json ] \
+              || printf '{"crates":{}}' > /myrmic/docs/cargo-static-doc-metadata.json
+            rm -rf ./target/static-doc
+            cargo static-doc \
+              --workspace \
+              --exclude ./swarm/tutorials \
+              --exclude ./embedded \
+              --exclude ./tests/fixtures \
+              --exclude ./benchmarks \
+              --exclude ./wasm/module-examples \
+              --exclude ./ble-async-api/ble-api-esp \
+              --exclude ./swarm/e2e-tests \
+              --exclude ./swarm/test-framework \
+              --exclude ./swarm/test-control \
+              --exclude ./swarm/test-control-client \
+              --exclude ./swarm/test-control-common \
+              --output-version git \
+              --metadata-path /myrmic/docs/cargo-static-doc-metadata.json
+
+      - name: Upload Docs
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        if: |
+          ( github.event_name == 'push') ||
+          ( github.event_name == 'workflow_dispatch' && inputs.upload_docs == true )
+        with:
+          image: bash
+          volumes: |
+            myrmic-html:/myrmic,rw,external
+            target:${{ github.workspace }}/target,lockfiles=Cargo.lock
+          run: |
+            set -eu
+            cp -r $GITHUB_WORKSPACE/target/static-doc/* /myrmic/docs/
+            # The rustdoc output includes the `src/` view, i.e. the verbatim text of
+            # third-party-derived files. Ship the attribution with it.
+            cp $GITHUB_WORKSPACE/NOTICE /myrmic/docs/NOTICE
+            rm -rf /myrmic/docs/LICENSES
+            cp -r $GITHUB_WORKSPACE/LICENSES /myrmic/docs/LICENSES

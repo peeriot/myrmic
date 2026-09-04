@@ -1,0 +1,17 @@
+[package]
+name = "cell-cb-receiver-logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk = { workspace = true }
+
+serde = { workspace = true }

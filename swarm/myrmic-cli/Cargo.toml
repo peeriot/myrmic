@@ -1,0 +1,98 @@
+[package]
+name = "myrmic-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# `cargo deb -p myrmic-cli` is what the release pipeline packages, so the Debian
+# metadata belongs here. It used to sit in swarm-cli, which is packaged nowhere.
+#
+# An explicit `assets` list replaces cargo-deb's defaults entirely, so the binary
+# itself has to be listed alongside NOTICE and LICENSES/. Source paths resolve
+# relative to this crate's directory, hence the `../../` for repo-root files.
+[package.metadata.deb]
+section = "network"
+assets = [
+    ["target/release/myrmic", "usr/bin/", "755"],
+    ["../../NOTICE", "usr/share/doc/myrmic-cli/NOTICE", "644"],
+    ["../../LICENSES/*", "usr/share/doc/myrmic-cli/LICENSES/", "644"],
+]
+
+[[bin]]
+name = "myrmic"
+path = "src/main.rs"
+
+[features]
+default = ["telemetry"]
+ble = ["swarm/ble-linux"]
+telemetry = [
+    "dep:swarm-telemetry",
+    "dep:chrono",
+    "dep:base32",
+    "swarm/telemetry-export-db"
+]
+open-telemetry = [
+    "swarm/telemetry-export-otlp"
+]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+dialoguer = { workspace = true }
+
+sha2 = { workspace = true }
+myrmic-build = { workspace = true }
+myrmic-tags = { workspace = true }
+
+cell-protocol = { workspace = true, default-features = true }
+filestore-client = { workspace = true }
+zenoh = { workspace = true, features = ["unstable"] }
+introspection-client = { workspace = true }
+sorg-client = { workspace = true }
+sorg-common = { workspace = true }
+db-client = { workspace = true }
+swarm-gateway = { workspace = true }
+db-commons = { workspace = true }
+swarm-telemetry = { workspace = true, optional = true, features = ["export-db", "export-file"] }
+chrono = { workspace = true, optional = true }
+base32 = { workspace = true, optional = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+
+myrmic-common = { workspace = true, features = ["codegen"] }
+
+textus = "0.1.1"
+tar = "0.4"
+flate2 = "1"
+toml = "0.8"
+uuid = { workspace = true, features = ["v4"] }
+humantime = { workspace = true }
+uhlc = { workspace = true }
+
+postcard = { workspace = true }
+swarm = { workspace = true }
+
+object_store = { workspace = true }
+
+fork = "0.7.0"
+libc = "0.2"
+
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+tokio = { workspace = true, default-features = false, features = ["rt-multi-thread", "macros", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+unicode-ident = "1.0.24"
+human_bytes = "0.4.3"
+
+[dev-dependencies]
+claims = { workspace = true }
+tempfile = { workspace = true }

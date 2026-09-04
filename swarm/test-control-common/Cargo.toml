@@ -1,0 +1,19 @@
+[package]
+name = "test-control-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+sorg-common = {  workspace = true }
+introspection-common = {  workspace = true }
+introspection-client = {  workspace = true }
+
+
+[lints]
+workspace = true

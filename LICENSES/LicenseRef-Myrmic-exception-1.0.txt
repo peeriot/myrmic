@@ -1,0 +1,114 @@
+Myrmic Exception
+Version 1.0
+
+This Myrmic Exception (the "Exception") grants additional permissions in connection with Covered Code otherwise licensed under GPLv2. It does not modify the text of GPLv2. GPLv2 continues to apply in full to Covered Code, subject only to the additional permissions expressly granted by this Exception.
+
+The additional permissions granted under Sections 2, 3 and 4 of this Exception are independent of one another and may be exercised cumulatively with respect to the same work, combination, or distribution, provided that the conditions applicable to each such permission are satisfied.
+
+1. Definitions
+
+For purposes of this Exception, the following capitalized terms have the meanings set out below:
+
+1.1 "Application" means independently developed software that implements user-defined or other application-specific logic or functionality for use with an Official Release or a modified version based on it. Software does not qualify as an Application if, considered separately from any combination permitted under Section 2, it is derived from or based on Covered Code, is itself a modification of Covered Code, or contains or incorporates any portion of Covered Code. However, software is not prevented from qualifying as an Application merely because it incorporates or uses an Official SDK Library or Generator Output, including Generated Material made available under Section 4.
+
+1.2 "Approved Component" means any software component licensed under an Approved License, other than Covered Code or an Application.
+
+1.3 "Approved License" means a software license, in the version specified, that Peeriot has designated as an Approved License in the applicable Exception Scope.
+
+1.4 "Covered Code" means Myrmic code and components that are licensed by Peeriot under GPLv2 and to which Peeriot has applied this Myrmic Exception, together with any modification to which all relevant copyright holders have extended this Myrmic Exception. For the avoidance of doubt, Myrmic code and other components included in or provided as part of Myrmic that are licensed by Peeriot under license terms other than GPLv2 are not considered Covered Code for the purpose of this Exception.
+
+1.5 "Designated Generator" means one of the deterministic Myrmic code generators and procedural macros identified by name and version as a Designated Generator in the applicable Exception Scope.
+
+1.6 "Exception Scope" means the file named EXCEPTION-SCOPE.md published by Peeriot as part of an Official Release and identifying that Official Release by version number. The Exception Scope identifies:
+
+a) each Official Interface by name and version, together with its authoritative interface definition, and each corresponding Official SDK Library by name, version, and license;
+
+b) each Approved License by name and version; and
+
+c) each Designated Generator by name and version.
+
+Only the EXCEPTION-SCOPE.md file included by Peeriot in the applicable Official Release or a later expanded version of that file published by Peeriot for the same Official Release in accordance with this Section determines the scope of the permissions granted by Peeriot under this Exception. No repository, website, other revision of that file, or other external source forms part of this Exception.
+
+An Exception Scope applies to the Official Release with which it was published by Peeriot and to any modified version based on that Official Release to which this Exception has been extended. Peeriot may subsequently expand an Exception Scope by publishing an amended version of the EXCEPTION-SCOPE.md file that identifies the relevant Official Release and adds one or more Official Interfaces, Official SDK Libraries, Approved Licenses, or Designated Generators. Any such expansion is effective retroactively from the date on which the relevant Official Release was first published. It also applies to any modified version based on that Official Release to which this Exception has been extended.
+
+An amendment may not remove, restrict, make conditional, or otherwise adversely affect any permission previously granted for that Official Release. Any removal, restriction, or other reduction of the Exception Scope may apply only to a later Official Release with which a new Exception Scope is published.
+
+A change to an Exception Scope made by any person other than Peeriot does not expand or otherwise modify the permissions granted by Peeriot. As a condition solely of exercising an additional permission under Section 2 or Section 3, you must provide each recipient of a distribution made in reliance on that permission with an unmodified copy of the applicable Exception Scope in the version on which you rely on together with the Covered Code. This condition does not restrict any right granted under GPLv2.
+
+1.7 "Generated Material" means copyrightable scaffolding, boilerplate, template material, or other material inserted into Generator Output and in respect of which Peeriot is authorized to grant the permissions set out in Section 4.2.
+
+1.8 "Generator Output" means the source code, project structures, configuration files, build files, and other material produced by a Designated Generator from user-supplied input.
+
+1.9 "GPLv2" means the GNU General Public License, Version 2, as published by the Free Software Foundation in June 1991, without any option to apply a later version (GPL-2.0-only).
+
+1.10 "Myrmic" means every version of the software and firmware platform published by Peeriot under the name "Myrmic", including the platform code, SDK libraries, the signal layer, standard modules, code generators, documentation, code examples and project templates published or distributed by Peeriot as part of that version. The components and materials comprising Myrmic may be licensed under different licenses. A component or other item does not constitute Covered Code merely because it forms part of Myrmic or an Official Release; it constitutes Covered Code only if it meets the definition of Covered Code under this Exception.
+
+1.11 "Official Interface" means an interface identified by name and version in the applicable Exception Scope, together with its authoritative interface definition.
+
+1.12 "Official Release" means a numbered release of Myrmic published by Peeriot.
+
+1.13 "Official SDK Library" means a Myrmic SDK library identified by name and version in the applicable Exception Scope as corresponding to an Official Interface and separately licensed under the license specified for that library in the Exception Scope.
+
+1.14 "Peeriot" means Peeriot GmbH, Peterssteinweg 14, 04107 Leipzig, Germany.
+
+1.15 "Support Component" means a software component, other than Covered Code, an Application, or an Approved Component, that:
+
+a) is part of, or normally distributed with, the operating system or runtime environment on which the relevant combination is executed, or serves to access or operate hardware, sensors, actuators, buses, radio functions, or system services through its documented interface;
+
+b) is not derived from or based on Covered Code and contains no Covered Code; and
+
+c) is distributed under a license that permits its combination and distribution with Covered Code and neither applies to Covered Code nor restricts the exercise of rights granted under GPLv2 with respect to Covered Code.
+
+For the avoidance of any doubt, a component is not regarded as being part of, or normally distributed with, an operating system or runtime environment merely because the distributor of the combination, or any of its affiliates, also distributes that component with the combination.
+
+2. Additional Permissions for Applications using Official Interfaces
+
+2.1 As a special exception, the copyright holders of the Covered Code hereby give you permission, under their copyright in the Covered Code, to distribute the Covered Code and an Application together, whether as separate works or as parts of a combination, without requiring the Application to be licensed under GPLv2. This permission applies only where the Application, in interacting or integrating with the Covered Code, uses exclusively the unmodified Official Interfaces applicable to the relevant Official Release and falls within one or more of the following cases:
+
+a) the Application is compiled, with or without one or more Official SDK Libraries corresponding to the applicable Official Interface, to produce a WebAssembly module that is executed in a sandbox by the platform code contained in the relevant Official Release or in a modified version based on it, whether the module is dynamically distributed and loaded or is AOT-compiled and statically embedded in a firmware image;
+
+b) the Application, including independently developed customer modules and any Generator Output incorporated into the Application, and the Covered Code are compiled, linked, or both, to form a single firmware image;
+
+c) a Designated Generator produces Generator Output from user-supplied pipeline or module descriptions and SDK annotations, and that Generator Output constitutes, or is used to build, a stand-alone Application; the resulting Application operates as a separate process and communicates with the Covered Code exclusively through an Official Interface; or
+
+d) the Application is dynamically loaded into a process containing Covered Code and communicates with the Covered Code exclusively through an Official Interface.
+
+This permission includes the right to make copies of any resulting combination to the extent necessary for its distribution.
+
+2.2 Where Section 2.1 applies, you may license the Application under terms of your choice, including proprietary terms, provided that you comply with GPLv2 for the Covered Code and its modifications and with the applicable license terms for all other components. Terms applicable to the Application or any other component may not be imposed on Covered Code.
+
+2.3 For the avoidance of doubt, the source code of the Application is not required to be disclosed under GPLv2 solely because of a distribution permitted by Section 2.1.
+
+3. Additional Permissions for Combinations with Approved Components and Support Components
+
+3.1 As a further special exception, the copyright holders of the Covered Code hereby give you permission to distribute a combination of the Covered Code and one or more Approved Components under different licenses for the respective portions, even if the combination constitutes a work based on the Covered Code within the meaning of GPLv2.
+
+3.2 Within the scope of Section 3.1, GPLv2 applies to the Covered Code and its modifications, and the applicable Approved License applies to each Approved Component. No Approved Component is required solely because it forms part of a combination permitted by this Section, to be licensed under GPLv2 or to have its source code disclosed under GPLv2. No term of an Approved License applies to Covered Code solely because it forms part of a combination permitted under this Section.
+
+3.3 Sections 3.1 and 3.2 also apply to a Support Component and the license under which it is distributed as if they were an Approved Component and an Approved License, respectively.
+
+4. Additional Permissions for Generator Output and Generated Material
+
+4.1 Generator Output is not required to be licensed under GPLv2 solely because it was produced by a Designated Generator.
+
+4.2 To the extent that Generator Output contains Generated Material, Peeriot grants every recipient of Generator Output a worldwide, perpetual, irrevocable, royalty-free permission to use, reproduce, modify, sublicense, and distribute that Generated Material for any purpose and under terms of the recipient's choice. No attribution to Peeriot and no copyright notice, license notice, or copy of this Exception is required for the Generated Material. This permission applies regardless of the subsequent use of the Generator Output, including its incorporation into a firmware image.
+
+4.3 This Section 4 applies only to Generator Output and does not affect the licensing of a Designated Generator or any modification of it, any user-supplied or third-party material contained in Generator Output, code created using artificial-intelligence tools, or output of artificial-intelligence-assisted Myrmic functions.
+
+5. Modified Versions of Covered Code
+
+5.1 If you modify Covered Code, you may extend this Exception to those modifications for which you are authorized to do so, but you are not obligated to do so. If you do not extend this Exception to your modifications, you must remove or appropriately qualify, when distributing those modifications, any notice stating or implying that this Exception applies to them.
+
+5.2 A decision not to extend this Exception does not revoke or restrict any permission granted directly by Peeriot for portions of the Covered Code in which Peeriot owns the copyright. That permission does not grant any rights in modifications to which their respective copyright holders have not extended this Exception.
+
+5.3 If you extend this Exception to your modifications, it applies without enlarging its scope and on the basis of the Exception Scope applicable to the Official Release on which your modified version is based. You may not, on behalf of Peeriot, add or modify an Official Interface, Approved License, Official SDK Library, or Designated Generator. You may grant separate permissions under any copyright or patent rights that you own or are entitled to license.
+
+6. Patent License, No Trademark Rights
+
+6.1 Subject to compliance with GPLv2 and, to the extent that a recipient exercises an additional permission granted by this Exception, with the applicable terms and conditions of this Exception, Peeriot grants every recipient of Covered Code a worldwide, perpetual, irrevocable (except as provided in Section 6.3), non-exclusive, royalty-free license under any patent claim, and under any corresponding right arising from a published patent application, that Peeriot now or in the future owns or is entitled to license and that would, in the absence of this license, necessarily be infringed or give rise to a claim for compensation as a result of making, having made, using, offering for sale, selling, importing, or distributing the unmodified Covered Code as published by Peeriot as part of the applicable Official Release, whether alone or as part of a combination permitted under Section 2 or Section 3. This license also applies when exercising rights under GPLv2 in relation to a modified version of that Covered Code, but only with respect to patent claims that would necessarily have been infringed by the corresponding unmodified Covered Code, alone or as part of such a permitted combination. No patent claim is licensed solely because its infringement or the relevant claim for compensation results from a modification, addition, replacement, or other change made to Covered Code after its publication by Peeriot.
+
+6.2 This license does not extend to any implementation that neither contains Covered Code nor constitutes a modified version of Covered Code, including any independent reimplementation of Myrmic functionality, protocols, or interfaces. It also does not extend to any infringement or claim for compensation caused by an Application, an Approved Component, or other software independently of a combination permitted under Section 2 or Section 3.
+
+6.3 If a recipient institutes patent litigation against any entity alleging that Covered Code or a combination permitted under Section 2 or Section 3 infringes a patent, the patent license granted to that recipient under Section 6.1 shall terminate, as of the date such litigation is filed, only to the extent that it covers the exercise of an additional permission under Section 2 or Section 3. It shall not terminate to the extent necessary to exercise any right granted under GPLv2 with respect to Covered Code.
+
+6.4 This Exception grants no rights to use any trademark, service mark, trade name, or product name of Peeriot.

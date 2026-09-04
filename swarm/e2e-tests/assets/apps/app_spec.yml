@@ -1,0 +1,15 @@
+classes:
+  - id: bridge_http
+    spec: "bridge_http.yml"
+  - id: bridge_mqtt
+    spec: "bridge_mqtt.yml"
+  - id: bridge_test
+    build: "bridge_cell/Cargo.toml"
+
+instances:
+  - bridge: bridge_http
+    sri: "bridge.http"
+  - bridge: bridge_mqtt
+    sri: "bridge.mqtt"
+  - class: bridge_test
+    sri: "bridge.test"

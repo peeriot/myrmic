@@ -1,0 +1,3 @@
+[workspace]
+members = ["my-cell"]
+resolver = "3"

@@ -1,0 +1,19 @@
+// Driver health states for one source, as the generated source task implements them.
+// Render: dot -Tsvg signal-layer-health.dot -o signal-layer-health.svg
+digraph G {
+  graph [rankdir=TB, bgcolor="transparent", nodesep=0.55, ranksep=0.60];
+  node  [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10.5,
+         margin="0.16,0.10", penwidth=1.1];
+  edge  [color="#6b7785", penwidth=1.2, arrowsize=0.7,
+         fontname="DejaVu Sans", fontsize=9, fontcolor="#6b7785"];
+
+  up   [label="Up\ninitialised, last sample succeeded", fillcolor="#e2f0d9", color="#70ad47"];
+  deg  [label="Degraded\nworked, then a sample failed", fillcolor="#fff2cc", color="#d6a100"];
+  down [label="Down\nbring-up has not succeeded", fillcolor="#fde9e7", color="#c55a11"];
+
+  up   -> deg  [label="sample fails\nretained taps cleared"];
+  deg  -> up   [label="sample succeeds"];
+  deg  -> down [label="bring-up fails\non the retry"];
+  down -> up   [label="bring-up and\nsample succeed"];
+  up   -> down [label="bring-up fails\nat boot", constraint=false];
+}

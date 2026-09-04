@@ -1,0 +1,142 @@
+name: secure-swarm
+
+networks:
+  routers:
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.1.0/24
+  mesh_a:
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.2.0/24
+  mesh_b:
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.3.0/24
+
+x-service-template: &service-template
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    - RUST_LOG=trace
+  expose:
+    - 80
+  restart: no
+  stop_signal: SIGINT
+  healthcheck:
+    test: [ "CMD", "curl", "-f", "http://localhost/@" ]
+    interval: 3s
+    timeout: 10s
+    retries: 5
+
+services:
+
+  # Network A ##################################################################
+
+  router_a:
+    <<: *service-template
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks:
+      routers:
+      mesh_a:
+    command: [
+      "swarm.peeriot.intra", "root-ca", "spawn", "/etc/swarm/router.jsonnet"
+    ]
+
+  peer_a_with_router:
+    <<: *service-template
+    networks:
+      mesh_a:
+    depends_on:
+      - router_a
+    command: [
+      "mesh-a.swarm.peeriot.intra", "mesh-a-ca", "spawn", "/etc/swarm/peer-with-router.jsonnet",
+    ]
+    deploy:
+      mode: replicated
+      replicas: 2
+
+  peer_a_without_router:
+    <<: *service-template
+    networks:
+      mesh_a:
+    depends_on:
+      - peer_a_with_router
+    command: [
+      "mesh-a.swarm.peeriot.intra", "mesh-a-ca", "spawn", "/etc/swarm/peer-without-router.jsonnet"
+    ]
+    deploy:
+      mode: replicated
+      replicas: 10
+
+  client_a:
+    <<: *service-template
+    networks:
+      mesh_a:
+    depends_on:
+      - peer_a_without_router
+    command: [
+      "mesh-a.swarm.peeriot.intra", "mesh-a-ca", "spawn", "/etc/swarm/client.jsonnet"
+    ]
+    deploy:
+      mode: replicated
+      replicas: 2
+
+  # Network B ##################################################################
+
+  router_b:
+    <<: *service-template
+    networks:
+      routers:
+      mesh_b:
+    command: [
+      "swarm.peeriot.intra", "root-ca", "spawn", "/etc/swarm/router.jsonnet"
+    ]
+
+  peer_b_with_router:
+    <<: *service-template
+    networks:
+      mesh_b:
+    depends_on:
+      - router_b
+    command: [
+      "mesh-b.swarm.peeriot.intra", "mesh-b-ca", "spawn", "/etc/swarm/peer-with-router.jsonnet",
+    ]
+    deploy:
+      mode: replicated
+      replicas: 2
+
+  peer_b_without_router:
+    <<: *service-template
+    networks:
+      mesh_b:
+    depends_on:
+      - peer_b_with_router
+    command: [
+      "mesh-b.swarm.peeriot.intra", "mesh-b-ca", "spawn", "/etc/swarm/peer-without-router.jsonnet"
+    ]
+    deploy:
+      mode: replicated
+      replicas: 8
+
+  client_b:
+    <<: *service-template
+    networks:
+      mesh_b:
+    depends_on:
+      - peer_b_without_router
+    command: [
+      "mesh-b.swarm.peeriot.intra", "mesh-b-ca", "spawn", "/etc/swarm/client.jsonnet"
+    ]
+    deploy:
+      mode: replicated
+      replicas: 2

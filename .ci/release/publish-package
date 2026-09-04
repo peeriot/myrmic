@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# Uploads packages to the internal package repository.
+#
+# Usage:
+#   DEPLOY_USER=... DEPLOY_TOKEN=... .ci/release/publish-package <file>...
+#
+# Routes by extension: .deb to the Debian pool, .rpm to the RPM registry.
+#
+# The HTTP status is inspected rather than left to curl's exit code. Plain curl exits
+# 0 on a 4xx or 5xx, which is how an authentication failure, a quota rejection or a
+# rejected package used to produce a green job with nothing published.
+#
+# A 409 is treated as success so a re-run after a partial failure completes instead
+# of dying on the packages it already uploaded. It proves a package exists at that
+# name and version, not that it is byte-identical; what makes that safe is the
+# artifact prefix guard, which prevents a second build of the same tag.
+
+set -euo pipefail
+
+DEB_ENDPOINT=https://packages.peeriot.intra/api/packages/peeriot/debian/pool/trixie/main/upload
+RPM_ENDPOINT=https://packages.peeriot.intra/api/packages/peeriot/rpm/upload
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$#" -ge 1 ] || die "usage: DEPLOY_USER=... DEPLOY_TOKEN=... $0 <file>..."
+[ -n "${DEPLOY_USER:-}" ] && [ -n "${DEPLOY_TOKEN:-}" ] ||
+    die "DEPLOY_USER and DEPLOY_TOKEN must be set"
+
+# Credentials go in a file rather than on the command line, so they do not appear in
+# the process list of a shared runner.
+CURL_CONFIG="$(mktemp)"
+chmod 600 "$CURL_CONFIG"
+trap 'rm -f "$CURL_CONFIG"' EXIT
+printf 'user = "%s:%s"\n' "$DEPLOY_USER" "$DEPLOY_TOKEN" >"$CURL_CONFIG"
+
+for file in "$@"; do
+    [ -f "$file" ] || die "no such file: $file"
+
+    case "$file" in
+        *.deb) endpoint="$DEB_ENDPOINT" ;;
+        *.rpm) endpoint="$RPM_ENDPOINT" ;;
+        *) die "$file is neither a .deb nor an .rpm" ;;
+    esac
+
+    printf '\n\n--== Upload %s ==--\n\n' "$(basename "$file")"
+
+    body="$(mktemp)"
+    # Assigned in an if, so a curl that cannot connect at all reports that rather
+    # than being killed by set -e before the diagnostic below runs.
+    if ! status="$(curl --config "$CURL_CONFIG" -sS -o "$body" -w '%{http_code}' \
+        --upload-file "$file" "$endpoint")"; then
+        cat "$body" >&2
+        rm -f "$body"
+        die "could not reach the package repository for $(basename "$file")."
+    fi
+
+    case "$status" in
+        2*)
+            printf 'accepted (HTTP %s)\n' "$status"
+            ;;
+        409)
+            printf 'already present (HTTP 409), continuing\n'
+            ;;
+        *)
+            printf 'HTTP %s\n' "$status" >&2
+            cat "$body" >&2
+            rm -f "$body"
+            die "the package repository rejected $(basename "$file")."
+            ;;
+    esac
+    rm -f "$body"
+done

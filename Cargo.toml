@@ -1,0 +1,643 @@
+[workspace]
+resolver = "3"
+members = [
+    "swarm/swarm",
+    "swarm/swarm-cli",
+    "swarm/db",
+    "swarm/db-client",
+    "swarm/db-commons",
+    "swarm/db-cli",
+    "swarm/myrmic-cli",
+    "swarm/myrmic-build",
+    "swarm/myrmic-tags",
+    "swarm/swarm-gateway",
+    "swarm/skey",
+    "swarm/skey-macros",
+    "swarm/swarm-telemetry",
+    "swarm/swarm-telemetry-embedded",
+    "swarm/swarm-api",
+    "swarm/sorg-ctl",
+    "swarm/cell-protocol",
+    "swarm/cell-mailbox",
+    "swarm/sorg-orchestration",
+    "swarm/sorg-common",
+    "swarm/sorg-execution",
+    "swarm/sorg-tests",
+    "swarm/filestore-client",
+    "swarm/sorg-client",
+    "swarm/introspection-client",
+    "swarm/introspection-common",
+    "swarm/swarm-onboarding",
+    "swarm/swarm-onboarding-request",
+    "swarm/zenoh-nano",
+    "swarm/zenoh-traits",
+    # Tests/Examples/etc
+    "swarm/test-control",
+    "swarm/test-control-client",
+    "swarm/test-control-common",
+    "swarm/tutorials/sorg/code/common",
+    "swarm/tutorials/sorg/code/publisher",
+    "swarm/tutorials/sorg/code/subscriber",
+    "sdk/myrmic-common",
+    "sdk/myrmic-sdk",
+    "sdk/myrmic-sdk-macros",
+    "tests/fixtures/*",
+    "embedded/examples/esp",
+    "embedded/esp-hal/crates/wasm-runtime",
+    "embedded/esp-hal/crates/wasm-runtime-macros",
+    "embedded/esp-hal/crates/wasm-storage",
+    "embedded/esp-hal/crates/esp-mmu",
+    "embedded/esp-hal/crates/cell-db-service",
+    "embedded/esp-hal/crates/esp-common",
+    "embedded/esp-hal/crates/esp-network",
+    "embedded/esp-hal/crates/esp-watchdog",
+    "embedded/esp-hal/crates/esp-heap",
+    "embedded/esp-hal/crates/esp-mmu-consts",
+    "embedded/hil-tests",
+    "embedded/esp-hal/modem-esp32",
+    "sdk/signal-layer/esp-codegen",
+    "sdk/signal-layer/signal-layer-types",
+    "sdk/signal-layer/signal-layer-core",
+    "sdk/signal-layer/pipeline-codegen",
+    "sdk/signal-layer/pipeline-backend-api",
+    "signal-modules/drivers/*",
+    "signal-modules/steps/*",
+    # Linux Signal Layer
+    "sdk/signal-layer/signal-layer-ipc",
+    "swarm/signal-layer/signal-layer-linux-rt",
+    "swarm/signal-layer/linux-i2c-shim",
+    "swarm/signal-layer/linux-gpio-shim",
+    "swarm/signal-layer/linux-spi-shim",
+    "sdk/signal-layer/linux-codegen",
+    "swarm/e2e-tests",
+    "swarm/test-framework",
+    "benchmarks/harness",
+    "benchmarks/report",
+    "benchmarks/warehouse",
+    "benchmarks/warehouse/cells/*",
+    "sdk/tools/aot-compiler"
+]
+exclude = [
+    "swarm/tutorials"
+]
+
+default-members = [
+    "swarm/swarm",
+    "swarm/swarm-cli",
+    "swarm/db",
+    "swarm/db-client",
+    "swarm/db-commons",
+    "swarm/db-cli",
+    "swarm/myrmic-cli",
+    "swarm/swarm-gateway",
+    "swarm/skey",
+    "swarm/skey-macros",
+    "swarm/swarm-telemetry",
+    "swarm/swarm-api",
+    "swarm/sorg-ctl",
+    "swarm/cell-protocol",
+    "swarm/cell-mailbox",
+    "swarm/sorg-orchestration",
+    "swarm/sorg-common",
+    "swarm/sorg-execution",
+    "swarm/sorg-tests",
+    "swarm/filestore-client",
+    "swarm/sorg-client",
+    "swarm/introspection-client",
+    "swarm/introspection-common",
+    "swarm/swarm-onboarding",
+    "swarm/swarm-onboarding-request",
+    "swarm/zenoh-nano",
+    "swarm/zenoh-traits",
+    # Tests/Examples/etc
+    "swarm/test-control",
+    "swarm/test-control-client",
+    "swarm/test-control-common",
+    "swarm/e2e-tests",
+    "swarm/test-framework",
+    "benchmarks/harness",
+    "benchmarks/report",
+    "benchmarks/warehouse",
+]
+
+[workspace.package]
+# The release version. A release-prep commit sets this to the version about to be
+# cut, and a release tag that disagrees with it is rejected.
+version = "0.4.0"
+edition = "2024"
+# Zone A (platform). Crates outside this zone declare their own license;
+# see REUSE.toml for the authoritative per-path declarations.
+license = "GPL-2.0-only WITH LicenseRef-Myrmic-exception-1.0"
+authors = ["Peeriot GmbH <info@peeriot.io>"]
+description = "Myrmic - a distributed runtime for cell-based applications"
+publish = false
+
+[profile.release]
+lto = "thin"
+
+[profile.release.package.modem-esp32]
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.esp-watchdog]
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.cell-db-service]
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.esp-network]
+opt-level = "s"
+codegen-units = 1
+
+[profile.dev.package.modem-esp32]
+codegen-units = 1
+
+[profile.dev.package.esp-watchdog]
+codegen-units = 1
+
+[profile.dev.package.cell-db-service]
+codegen-units = 1
+
+[profile.dev.package.esp-network]
+codegen-units = 1
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# For binaries only meant to be shipped/uploaded (e.g. `myrmic` for the warehouse rack
+# benchmark, run_rack.sh), not debugged locally — drops the symbol table & debug info that a
+# normal release build keeps for backtraces. Same optimizations as `release` otherwise, so
+# runtime behavior (incl. wasmtime/cranelift JIT codegen quality) is unaffected.
+[profile.dist]
+inherits = "release"
+strip = true
+
+[workspace.lints.rust]
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+unused = { level = "warn", priority = -1 }
+incomplete_features = "allow"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+similar_names = "allow"
+match_wildcard_for_single_variants = "allow"
+missing_errors_doc = "allow"
+module_name_repetitions = "allow"
+no_effect_underscore_binding = "allow"
+implicit_hasher = "allow"
+
+cast_possible_truncation = "warn"
+uninlined_format_args = "allow"
+needless_continue = "allow"
+
+# Zenoh does this via the dynamic plugins.
+no_mangle_with_rust_abi = "allow"
+wildcard_imports = "allow"
+
+explicit_iter_loop = "allow"
+struct_field_names = "allow"
+default_trait_access = "allow"
+match_same_arms = "allow"
+missing_panics_doc = "allow"
+single_match_else = "allow"
+
+large_enum_variant = "allow"
+result_large_err = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+
+undocumented_unsafe_blocks = "deny"
+
+[workspace.dependencies]
+# `no_std` dependencies
+defmt = "1.0.1"
+defmt-or-log = { version = "0.2.3", default-features = false }
+log = { version = "0.4", default-features = false }
+embedded-io = { version = "0.6.1", default-features = false }
+embedded-io-async = "0.7"
+embedded-tls = { version = "0.18", default-features = false }
+embedded-alloc = { version = "0.6.0", default-features = false, features = [
+    "llff",
+] }
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+embassy-futures = "0.1"
+embassy-sync = "0.8"
+embassy-time = "0.5"
+embassy-embedded-hal = "0.6"
+portable-atomic = "1"
+portable-atomic-util = { version = "0.2", features = ["alloc"] }
+critical-section = "1"
+bitflags = { version = "2.5", default-features = false }
+rand_core = { version = "0.9", default-features = false }
+edge-nal = "0.7"
+heapless = "0.9.2"
+hashbrown = { version = "0.16.0", default-features = false }
+static_assertions = "1.1"
+serde-json-core = "0.6"
+qrcodegen-no-heap = "1.8"
+elliptic-curve = { version = "0.13", default-features = false }
+p256 = { version = "0.13", default-features = false }
+der = { version = "0.8", default-features = false }
+signature = { version = "2", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+aes-gcm = { version = "0.10", default-features = false }
+bt-hci = "0.9"
+trouble-host = { version = "0.7", default-features = false }
+cfg-match = "0.2.1"
+config = "0.15.8"
+crc = "3.4.0"
+embedded-storage = "0.3.1"
+edge-nal-embassy = { version = "0.9", features = ["all"] }
+embassy-net = "0.9"
+riscv = "0.15.0"
+embuild = "0.33.1"
+esp32c5 = "0.2.2"
+esp32c61 = "0.3.2"
+esp-idf-sys = { version = "0.37" }
+esp-idf-hal = { version = "0.46" }
+esp-idf-svc = { version = "0.52" }
+esp-alloc = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-backtrace = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-bootloader-esp-idf = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-metadata-generated = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-hal = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-nimble-host = { git = "https://github.com/peeriot/esp-nimble-host.git", branch = "main" }
+esp-println = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream", default-features = false }
+esp-radio = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-radio-rtos-driver = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-rtos = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+esp-storage = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
+
+# `no_std` Dev dependencies
+embassy-executor = "0.10"
+static_cell = "2"
+env_logger = "0.11.8"
+edge-nal-std = "0.7"
+rand-08 = { package = "rand", version = "0.8" }              # For RustCrypto
+x509-cert = { version = "0.2.5", default-features = false }
+getrandom = { version = "0.2.16", default-features = false } # Because of `zenoh-protocol`
+
+anyhow = { version = "1.0.97" }
+async-trait = { version = "0.1.87" }
+uhlc = { version = "0.8.0", default-features = false }
+tracing = { version = "0.1.41", default-features = false }
+tracing-core = { version = "0.1.36" }
+tracing-subscriber = { version = "0.3.20" }
+tracing-appender = { version = "0.2.3" }
+chrono = { version = "0.4.40" }
+
+base32 = { version = "0.5.1" }
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
+
+darling = "0.21.0"
+
+rust-embed = { version = "8.5.0" }
+espflash = { version = "4.4.0" }
+serialport = { version = "4.9", default-features = false }
+
+flume = { version = "0.11.1", default-features = false }
+
+thiserror = { version = "2.0.12", default-features = false }
+
+bollard = "0.21"
+tar = "0.4"
+
+futures = { version = "0.3.31", default-features = false }
+futures-util = { version = "0.3.31", default-features = false }
+
+tokio = { version = "1.44.2", default-features = false, features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync"] }
+tokio-util = "0.7"
+tokio-stream = { version = "0.1.17", features = ["sync"] }
+
+serde = { version = "1.0.216", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.133", default-features = false }
+json5 = "0.4"
+serde_yaml = { package = "serde_norway", version = "0.9.42" }
+serde_with = { version = "3.14.1", features = ["json"] }
+toml = "0.8"
+bincode = "1.3.3"
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+paste = { package = "pastey", version = "0.1.1" }
+spin = "0.10.0"                                                                  # TODO: Check why we need this
+
+eui48 = { version = "1.1.0", default-features = false }
+heck = "0.5.0"
+http = "1"
+
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = { version = "2.0.100", features = ["full"] }
+
+uuid = { version = "1.18.1", default-features = false }
+humantime = { version = "2.2.0" }
+
+topo_sort = "0.4.0"
+mime_guess = "2.0.5"
+
+claims = "0.8.0"
+wiremock = "0.6.5"
+assert_approx_eq = "1.1.0"
+argh = "0.1.13"
+nom = { version = "8.0.0", default-features = false }
+rustc-hash = { version = "2.1.1", default-features = false }
+
+clap = { version = "4.5.23", features = ["derive"] }
+comfy-table = { version = "7.1.3", features = ["custom_styling"] }
+dialoguer = { version = "0.12", default-features = false }
+rand = "0.9.0"
+itertools = "0.14.0"
+owo-colors = "4.3.0"
+which = "8.0.2"
+libc = "0.2.186"
+
+git-version = "0.3.9"
+
+tryhard = "0.5.2"
+wasmtime = "47.0.3"
+
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+sha1_smol = "1.0.1"
+
+rustls = { version = "0.23", default-features = false }
+rumqttc = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07", default-features = false, features = [
+    "use-rustls-no-provider",
+] }
+rumqttd = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07" }
+
+oxttl = { version = "0.2.2", default-features = false }
+oxiri = { version = "0.2.11", default-features = false }
+oxrdf = { version = "0.3.2", default-features = false }
+oxrdfio = { version = "0.2.2", default-features = false }
+oxigraph = { version = "0.5.4", default-features = false }
+sparopt = { version = "0.3.4", default-features = false }
+spareval = { version = "0.2.4", default-features = false }
+spargebra = { version = "0.4.4", default-features = false }
+sparesults = { version = "0.3.2", default-features = false }
+oxsdatatypes = { version = "0.2.2", default-features = false }
+
+vecmap-rs = "0.2.4"
+
+byteorder = "1.5.0"
+memchr = "2.7.5"
+fjall = { git = "https://github.com/peeriot/fjall.git", rev = "04e2ad70" }
+#fjall = { path = "../fjall" }
+#fjall = { version = "3.1.5" }
+tempfile = { version = "3.17.1", default-features = false }
+
+object_store = { version = "0.14.0", features = ["aws"] }
+
+# if you need to work on oxigraph locally, then these can be used to redirect to the local copy.
+#sparesults = { path = "../oxigraph/lib/sparesults" }
+#oxttl = { path = "../oxigraph/lib/oxttl" }
+#oxrdf = { path = "../oxigraph/lib/oxrdf" }
+#oxrdfio = { path = "../oxigraph/lib/oxrdfio" }
+#oxigraph = { path = "../oxigraph/lib/oxigraph", default-features = false }
+#spareval = { path = "../oxigraph/lib/spareval", default-features = false }
+#spargebra = { path = "../oxigraph/lib/spargebra", default-features = false }
+
+siphasher = { version = "1.0.1", default-features = false }
+adler32 = "1.2.0"
+
+criterion = { version = "0.5", features = ["async_tokio"] }
+dashmap = "6.1.0"
+
+revision = { version = "0.17.0" }
+
+axum = "0.8"
+tower-http = "0.6"
+tower-service = "0.3"
+tower = "0.5"
+
+openidconnect = { version = "4.0.1" }
+tower-sessions = { version = "0.14", default-features = false, features = ["axum-core", "memory-store"] }
+reqwest = { version = "0.12.24", default-features = false }
+
+bytes = "1.11.0"
+
+jrsonnet-evaluator = { version = "=0.5.0-pre95", features = [
+    "exp-preserve-order",
+] }
+jrsonnet-stdlib = { version = "=0.5.0-pre95", features = [
+    "exp-preserve-order",
+] }
+jrsonnet-importers = { version = "=0.2.0", features = ["rust-embed"] }
+jrsonnet-gcmodule = { version = "=0.4.1" }
+jrsonnet-gcmodule-derive = { version = "=0.4.1" }
+jrsonnet-macros = { version = "=0.5.0-pre95" }
+jrsonnet-types = { version = "=0.5.0-pre95" }
+
+opentelemetry = { version = "0.32", features = ["trace", "metrics", "logs"] }
+opentelemetry-proto = { version = "0.32" }
+opentelemetry_sdk = { version = "0.32", features = [
+    "trace",
+    "metrics",
+    "logs",
+    "rt-tokio",
+] }
+opentelemetry-otlp = { version = "0.32", features = [
+    "trace",
+    "metrics",
+    "logs",
+    "grpc-tonic",
+] }
+opentelemetry-appender-tracing = "0.32"
+tracing-opentelemetry = "0.33"
+tonic = "0.14"
+sysinfo = "0.38.4"
+
+db = { path = "swarm/db" }
+db-client = { path = "swarm/db-client", default-features = false }
+db-commons = { path = "swarm/db-commons", default-features = false }
+
+skey = { path = "swarm/skey" }
+skey-macros = { path = "swarm/skey-macros" }
+
+influxdb-line-protocol = { version = "2.0.0" }
+
+swarm = { path = "swarm/swarm" }
+swarm-gateway = { path = "swarm/swarm-gateway" }
+
+# `no_std` crates
+swarm-onboarding = { path = "swarm/swarm-onboarding", default-features = false }
+cell-protocol = { path = "swarm/cell-protocol", default-features = false }
+cell-mailbox = { path = "swarm/cell-mailbox" }
+myrmic-tags = { path = "swarm/myrmic-tags" }
+zenoh-nano = { path = "swarm/zenoh-nano", default-features = false }
+zenoh-traits = { path = "swarm/zenoh-traits", default-features = false }
+
+sorg-common = { path = "swarm/sorg-common" }
+sorg-client = { path = "swarm/sorg-client" }
+sorg-execution = { path = "swarm/sorg-execution" }
+sorg-orchestration = { path = "swarm/sorg-orchestration" }
+sorg-tests = { path = "swarm/sorg-tests" }
+swarm-onboarding-request = { path = "swarm/swarm-onboarding-request" }
+filestore-client = { path = "swarm/filestore-client" }
+
+introspection-client = { path = "swarm/introspection-client" }
+introspection-common = { path = "swarm/introspection-common" }
+
+test-control = { path = "swarm/test-control" }
+test-control-client = { path = "swarm/test-control-client" }
+test-control-common = { path = "swarm/test-control-common" }
+
+test-framework = { path = "swarm/test-framework" }
+
+swarm-telemetry = { path = "swarm/swarm-telemetry" }
+swarm-telemetry-embedded = { path = "swarm/swarm-telemetry-embedded", default-features = false }
+
+swarm-api = { path = "swarm/swarm-api", default-features = false }
+
+bluer = "0.17.4"
+
+aot-compiler = { path = "sdk/tools/aot-compiler" }
+myrmic-common = { path = "sdk/myrmic-common", version = "0.4.0" }
+myrmic-sdk = { path = "sdk/myrmic-sdk" }
+myrmic-sdk-macros = { path = "sdk/myrmic-sdk-macros", version = "0.4.0" }
+wasm-runtime-macros = { path = "embedded/esp-hal/crates/wasm-runtime-macros" }
+wasm-runtime = { path = "embedded/esp-hal/crates/wasm-runtime" }
+wasm-storage = { path = "embedded/esp-hal/crates/wasm-storage", default-features = false }
+module-examples-common = { path = "tests/fixtures/module-examples-common" }
+
+esp-mmu = { path = "embedded/esp-hal/crates/esp-mmu" }
+esp-watchdog = { path = "embedded/esp-hal/crates/esp-watchdog" }
+esp-heap = { path = "embedded/esp-hal/crates/esp-heap" }
+cell-db-service = { path = "embedded/esp-hal/crates/cell-db-service" }
+esp-common = { path = "embedded/esp-hal/crates/esp-common" }
+esp-network = { path = "embedded/esp-hal/crates/esp-network" }
+esp-mmu-consts = { path = "embedded/esp-hal/crates/esp-mmu-consts" }
+
+# Signal Layer core
+signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.4.0", default-features = false }
+signal-layer-core = { path = "sdk/signal-layer/signal-layer-core" }
+pipeline-codegen = { path = "sdk/signal-layer/pipeline-codegen" }
+pipeline-backend-api = { path = "sdk/signal-layer/pipeline-backend-api" }
+
+# Linux Signal Layer (FEAT-2026-SIG-002)
+i2cdev = "0.6"
+spidev = "0.7"
+linux-embedded-hal = { version = "0.5", default-features = false }
+signal-layer-ipc = { path = "sdk/signal-layer/signal-layer-ipc" }
+signal-layer-linux-rt = { path = "swarm/signal-layer/signal-layer-linux-rt" }
+linux-i2c-shim = { path = "swarm/signal-layer/linux-i2c-shim" }
+linux-gpio-shim = { path = "swarm/signal-layer/linux-gpio-shim" }
+linux-spi-shim = { path = "swarm/signal-layer/linux-spi-shim" }
+linux-codegen = { path = "sdk/signal-layer/linux-codegen" }
+
+# Signal Layer sensor drivers
+bme280-driver = { path = "signal-modules/drivers/bme280" }
+bmp180-driver = { path = "signal-modules/drivers/bmp180" }
+ads1115-driver = { path = "signal-modules/drivers/ads1115" }
+ccs811-driver = { path = "signal-modules/drivers/ccs811" }
+veml7700-driver = { path = "signal-modules/drivers/veml7700" }
+wsen-itds-driver = { path = "signal-modules/drivers/wsen-itds" }
+# Synthetic deterministic source for HIL tests (ignores the bus).
+sim-source-driver = { path = "signal-modules/drivers/sim-source" }
+
+# Signal Layer output (actuator) drivers
+gpio-output-driver = { path = "signal-modules/drivers/gpio-output" }
+pwm-output-driver = { path = "signal-modules/drivers/pwm-output" }
+gpio-output-feedback-driver = { path = "signal-modules/drivers/gpio-output-feedback" }
+
+# Signal Layer processing steps
+moving-average = { path = "signal-modules/steps/moving-average" }
+threshold-trigger = { path = "signal-modules/steps/threshold-trigger" }
+max-value = { path = "signal-modules/steps/max-value" }
+min-value = { path = "signal-modules/steps/min-value" }
+hysteresis = { path = "signal-modules/steps/hysteresis" }
+cadence = { path = "signal-modules/steps/cadence" }
+fan-curve = { path = "signal-modules/steps/fan-curve" }
+
+common = { path = "swarm/tutorials/sorg/code/common" }
+myrmic-build = { path = "swarm/myrmic-build" }
+
+# Zenoh
+zenoh = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false, features = [
+    "tracing-instrument",
+] }
+zenoh-result = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-config = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-protocol = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-keyexpr = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-core = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-buffers = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-util = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-crypto = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-codec = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-sync = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-collections = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-macros = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-plugin-trait = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh_backend_traits = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-transport = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
+zenoh-link-tls = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link-tcp = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link-unixsock_stream = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link-quic = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link-udp = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link-ws = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-link-commons = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-runtime = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-task = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-plugin-storage-manager = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+
+wamr-rust-sdk = { git = "https://github.com/peeriot/wamr-rust-sdk.git", branch = "fvs-no-std-support", default-features = false }
+
+[patch.'https://github.com/peeriot/zenoh.git']
+# == For Zenoh local development only ===
+# When developing with a local checkout of Zenoh, uncomment ALL of these below.
+# The assumption is that the `zenoh` GIT repo is checked out next to the `swarm` one.
+#
+# NOTE:
+# The crates listed as patched below CAN be a **superset** of the Zenoh crates we
+# **directly** depend on above (i.e. the patches CAN patch Zenoh crates that are transitive deps),
+# but the patches CANNOT be a **subset** (i.e. one cannot patch only "a" zenoh crate she is working on ATM).
+# =======================================
+#zenoh = { path = "../../zenoh/zenoh" }
+#zenoh-result = { path = "../../zenoh/commons/zenoh-result" }
+#zenoh-config = { path = "../../zenoh/commons/zenoh-config" }
+#zenoh-protocol = { path = "../../zenoh/commons/zenoh-protocol" }
+#zenoh-keyexpr = { path = "../../zenoh/commons/zenoh-keyexpr" }
+#zenoh-core = { path = "../../zenoh/commons/zenoh-core" }
+#zenoh-buffers = { path = "../../zenoh/commons/zenoh-buffers" }
+#zenoh-util = { path = "../../zenoh/commons/zenoh-util" }
+#zenoh-crypto = { path = "../../zenoh/commons/zenoh-crypto" }
+#zenoh-codec = { path = "../../zenoh/commons/zenoh-codec" }
+#zenoh-sync = { path = "../../zenoh/commons/zenoh-sync" }
+#zenoh-collections = { path = "../../zenoh/commons/zenoh-collections" }
+#zenoh-macros = { path = "../../zenoh/commons/zenoh-macros" }
+#zenoh-plugin-trait = { path = "../../zenoh/plugins/zenoh-plugin-trait" }
+#zenoh_backend_traits = { path = "../../zenoh/plugins/zenoh-backend-traits" }
+#zenoh-transport = { path = "../../zenoh/io/zenoh-transport" }
+#zenoh-link-tls = { path = "../../zenoh/io/zenoh-links/zenoh-link-tls" }
+#zenoh-link-tcp = { path = "../../zenoh/io/zenoh-links/zenoh-link-tcp" }
+#zenoh-link-unixsock_stream = { path = "../../zenoh/io/zenoh-links/zenoh-link-unixsock_stream" }
+#zenoh-link-quic = { path = "../../zenoh/io/zenoh-links/zenoh-link-quic" }
+#zenoh-link-udp = { path = "../../zenoh/io/zenoh-links/zenoh-link-udp" }
+#zenoh-link-ws = { path = "../../zenoh/io/zenoh-links/zenoh-link-ws" }
+#zenoh-link = { path = "../../zenoh/io/zenoh-link" }
+#zenoh-link-commons = { path = "../../zenoh/io/zenoh-link-commons" }
+#zenoh-link-bt-gatt = { path = "../../zenoh/io/zenoh-links/zenoh-link-bt-gatt" }
+#zenoh-runtime = { path = "../../zenoh/commons/zenoh-runtime" }
+#zenoh-task = { path = "../../zenoh/commons/zenoh-task" }
+#zenoh-plugin-storage-manager = { path = "../../zenoh/plugins/zenoh-plugin-storage-manager" }
+# =======================================
+
+[workspace.metadata.cross.build]
+pre-build = [
+    "apt-get update",
+    "apt-get install --assume-yes libdbus-1-dev pkg-config",
+]

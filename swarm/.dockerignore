@@ -1,0 +1,15 @@
+?
+.DS_Store
+.idea/
+.vscode/
+book/
+mdbook-plantuml-img/
+**/target/
+local/
+data/
+coverage/
+!/target/release
+/target/release/*
+!/target/release/swarm
+!/target/release/sorg-ctl
+!/target/release/libzenoh_plugin_*.so

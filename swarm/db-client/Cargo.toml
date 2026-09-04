@@ -1,0 +1,48 @@
+[package]
+name = "db-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["zenoh"]
+replica = ["zenoh", "db-commons/replica", "dep:flume", "dep:tokio", "db-commons/query"]
+zenoh = ["dep:zenoh", "dep:log", "dep:tracing", "dep:swarm-api", "db-commons/query"]
+polled = ["zenoh", "dep:tokio"]
+nano = ["dep:zenoh-nano", "dep:log"]
+
+[dependencies]
+tracing = { workspace = true, default-features = false, optional = true }
+log = { workspace = true, default-features = false, optional = true }
+uhlc = { workspace = true, default-features = false }
+
+db-commons = { workspace = true, default-features = false, features = ["topics", "models"] }
+
+postcard = { workspace = true, default-features = false }
+futures = { workspace = true, default-features = false }
+flume = { workspace = true, default-features = false, optional = true }
+
+serde = { workspace = true, default-features = false }
+
+tokio = { workspace = true, default-features = false, features = ["macros", "sync", "time"], optional = true }
+
+zenoh-nano = { workspace = true, default-features = false, optional = true }
+zenoh = { workspace = true, default-features = false, optional = true }
+swarm-api = { workspace = true, default-features = false, optional = true }
+zenoh-result = { workspace = true, default-features = false }
+
+# For the nano-feature integration tests (in-process pipe-linked sessions).
+[dev-dependencies]
+zenoh-nano = { workspace = true, default-features = false }
+zenoh-protocol = { workspace = true }
+embassy-futures = { workspace = true }
+# generic-queue: self-contained timer queue, no embassy executor needed.
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+critical-section = { workspace = true, features = ["std"] }
+env_logger = { workspace = true }
+rand = { workspace = true }
+uhlc = { workspace = true }

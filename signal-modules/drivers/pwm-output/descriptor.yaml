@@ -1,0 +1,28 @@
+id: pwm-output
+category: actuators
+description: >
+  PWM duty-cycle output (fan, pump, dimmable LED, …). Consumes a PwmDuty Outlet
+  (a 0.0–1.0 duty fraction) and drives a PWM channel. The driver clamps to its
+  configured range as a non-negotiable floor.
+writes:
+  type: PwmDuty
+  mode: pwm
+requires:
+  # The PWM output pin is wired via the manifest device's `pins.out`.
+  optional_pins: [out]
+config_schema:
+  min_duty:
+    scope: hardware
+    rust_type: f32
+    default: 0.0
+    description: "Lower duty-cycle clamp (fraction of full scale)."
+  max_duty:
+    scope: hardware
+    rust_type: f32
+    default: 1.0
+    description: "Upper duty-cycle clamp (fraction of full scale)."
+  min_update_interval_ms:
+    scope: hardware
+    rust_type: u64
+    default: 0
+    description: "Protective floor: minimum ms between duty updates (0 = off)."

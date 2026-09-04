@@ -1,0 +1,31 @@
+# Minimal board manifest used exclusively by esp-codegen golden tests.
+# Keeps the fixture output small and stable — only the pins / devices required
+# by the two golden pipelines are declared.
+id: golden-board
+chip: esp32c6
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 10
+      sda: 11
+    freq_khz: 400
+
+gpios:
+  general_purpose: [0, 1, 2]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76
+
+  # Used by the outlet-bearing fixture only.
+  - id: relay1
+    driver: gpio-output
+    pins:
+      out: 2
+    hardware:
+      active_low: false

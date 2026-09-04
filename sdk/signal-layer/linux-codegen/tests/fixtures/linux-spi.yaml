@@ -1,0 +1,23 @@
+# Linux SPI loopback pipeline: samples the spi-loopback source and exposes the
+# echo result and liveness counter as retained taps.
+pipeline:
+  id: linux-spi
+
+sources:
+  - id: loop1
+    device: loop1
+    config:
+      sample_interval_ms: 1000
+
+steps: []
+
+taps:
+  - name: echo_ok
+    kind: retained
+    type: f32
+    source: loop1.echo_ok
+
+  - name: counter
+    kind: retained
+    type: f32
+    source: loop1.counter

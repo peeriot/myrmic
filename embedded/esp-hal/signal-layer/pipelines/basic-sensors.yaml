@@ -1,0 +1,68 @@
+pipeline:
+  id: basic-sensors
+
+sources:
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+      # Override defaults: higher T/H oversampling + IIR filter for less noise.
+      osrs_t: X4   # ×4 temperature oversampling
+      osrs_h: X4   # ×4 humidity oversampling
+      filter: X4   # IIR filter coefficient ×4
+
+  - id: light
+    device: veml7700
+    config:
+      sample_interval_ms: 2000
+      gain: X2              # ×2 gain — better low-light resolution
+      integration_time: Ms400  # 400 ms — lower noise floor
+
+  - id: air_quality
+    device: ccs811
+    config:
+      sample_interval_ms: 10000
+      meas_mode: Every10s   # one reading every 10 s (matches sample interval)
+
+steps:
+  - id: avg_temp
+    op: moving-average
+    input: bme280.temperature
+    config:
+      window: 8
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+  - name: humidity
+    kind: retained
+    type: f32
+    source: bme280.humidity
+
+  - name: pressure
+    kind: retained
+    type: f32
+    source: bme280.pressure
+
+  - name: avg_temperature
+    kind: retained
+    type: f32
+    source: avg_temp
+
+  - name: lux
+    kind: retained
+    type: f32
+    source: light.lux
+
+  - name: eco2
+    kind: retained
+    type: f32
+    source: air_quality.eco2
+
+  - name: tvoc
+    kind: retained
+    type: f32
+    source: air_quality.tvoc

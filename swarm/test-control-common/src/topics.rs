@@ -1,0 +1,12 @@
+pub const TOPIC_CREATE_PUBLISHER: &str = "@test/@ctl/@publisher/@create";
+pub const TOPIC_DELETE_PUBLISHER: &str = "@test/@ctl/@publisher/@delete";
+pub const TOPIC_CREATE_SUBSCRIBER: &str = "@test/@ctl/@subscriber/@create";
+pub const TOPIC_DELETE_SUBSCRIBER: &str = "@test/@ctl/@publisher/@delete";
+pub const TOPIC_CREATE_QUERYABLE: &str = "@test/@ctl/@queryable/@create";
+pub const TOPIC_DELETE_QUERYABLE: &str = "@test/@ctl/@queryable/@delete";
+pub const TOPIC_PUT: &str = "@test/@ctl/@put";
+pub const TOPIC_GET: &str = "@test/@ctl/@get";
+pub const TOPIC_DELETE: &str = "@test/@ctl/@delete";
+pub const TOPIC_STATS: &str = "@test/@ctl/@stats";
+pub const TOPIC_HEALTH: &str = "@test/@ctl/@health";
+pub const TOPIC_INTROSPECTION: &str = "@test/@ctl/@introspection";

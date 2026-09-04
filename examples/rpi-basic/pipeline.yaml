@@ -1,0 +1,44 @@
+# Reference pipeline for a Raspberry Pi with BME280 + VEML7700 sensors.
+# BME280 source + moving-average on temperature + VEML7700 source + retained/event taps.
+# Used by ci/check-generated-pipeline.sh (Task 11, SR-7, SR-9 second leg).
+pipeline:
+  id: rpi-basic
+
+sources:
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+
+  - id: veml7700
+    device: veml7700
+    config:
+      sample_interval_ms: 2000
+
+steps:
+  - id: avg_temp
+    op: moving-average
+    input: bme280.temperature
+    config:
+      window: 4
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+  - name: humidity
+    kind: retained
+    type: f32
+    source: bme280.humidity
+
+  - name: lux
+    kind: retained
+    type: f32
+    source: veml7700.lux
+
+  - name: avg_temperature
+    kind: retained
+    type: f32
+    source: avg_temp

@@ -1,0 +1,15 @@
+# Linux manifest with an SPI bus but no dev_path — used to test the
+# missing-dev_path rejection (SPI buses have no naming convention fallback).
+id: rpi-spi
+chip: linux
+
+buses:
+  spi0:
+    transport: spi
+    pins: {}
+    freq_khz: 1000
+
+gpios:
+  general_purpose: []
+
+devices: []

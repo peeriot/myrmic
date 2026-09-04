@@ -1,0 +1,50 @@
+# Demonstrates in-layer feed-forward control for both actuator kinds.
+#
+#   env.temperature ─▶ cadence (decimate) ─┬▶ hysteresis ─▶ [relay1]  (digital)
+#                                           └▶ fan-curve  ─▶ [fan1]    (PWM)
+pipeline:
+  id: feed-forward-demo
+
+sources:
+  - id: env
+    device: bme280
+    config:
+      sample_interval_ms: 500
+
+steps:
+  # Recompute the controllers on every 4th sample (~2 s at 500 ms sampling).
+  - id: temp_cadence
+    op: cadence
+    input: env.temperature
+    config:
+      every: 4
+      mode: SampleHold
+  # Digital: two-threshold controller — on at 30 °C, off at 27 °C.
+  - id: heat_control
+    op: hysteresis
+    input: temp_cadence
+    config:
+      on_threshold: 30.0
+      off_threshold: 27.0
+  # PWM: linear fan curve — 25 °C → 0 % ramping to 40 °C → 100 %.
+  - id: fan_control
+    op: fan-curve
+    input: temp_cadence
+    config:
+      in_min: 25.0
+      in_max: 40.0
+      out_min: 0.0
+      out_max: 1.0
+
+outlets:
+  # Feed-forward digital: the hysteresis controller drives the relay in-layer.
+  - name: heat_relay
+    type: DigitalState
+    device: relay1
+    input: heat_control
+
+  # Feed-forward PWM: the fan curve drives the fan in-layer.
+  - name: fan_speed
+    type: PwmDuty
+    device: fan1
+    input: fan_control

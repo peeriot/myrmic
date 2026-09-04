@@ -1,0 +1,82 @@
+[package]
+name              = "modem-esp32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default  = ["esp32c6"]
+esp32c5  = ["esp-common/esp32c5", "esp-rtos/esp32c5", "esp-hal/esp32c5", "wasm-runtime/esp32c5", "ble", "hang-record"]
+esp32c6  = ["esp-common/esp32c6", "esp-rtos/esp32c6", "esp-hal/esp32c6", "wasm-runtime/esp32c6", "hang-record"]
+esp32c61 = ["esp-common/esp32c61", "esp-rtos/esp32c61", "esp-hal/esp32c61", "wasm-runtime/esp32c61", "ble", "hang-record"]
+# BLE host stack (NimBLE). Enabled automatically on esp32c5 and esp32c61
+ble = ["esp-common/ble", "wasm-runtime/ble"]
+
+# The D1 watchdog hang record (SDS-FEAT-2026-HWD-001): retain the hang evidence and the cumulative reset count across a
+# watchdog reset. Which storage in the always-on domain backs it is picked per chip in `watchdog::record_storage`
+# (`rtc_fast` persistent RAM, or LP_AON scratch registers where there is none).
+# Enabled by the chip features above, never set directly. Without it the watchdog still detects hangs and resets, but
+# reports no evidence afterwards.
+hang-record = ["esp-common/hang-record"]
+
+# Marker feature: gates all pipeline-dependent firmware code. Use
+# `#[cfg(feature = "pipeline")]` without hard-coding a specific pipeline name.
+# The pipeline-{name} feature and driver/node optional deps are managed by
+# esp-codegen (pipeline_regen.sh) and must not be committed.
+pipeline = ["dep:signal-layer-core", "dep:signal-layer-types", "dep:embassy-embedded-hal", "wasm-runtime/signal-layer"]
+
+# Expose I2C bus directly to the WASM module (ESP32-C6 only).
+# Mutually exclusive with `pipeline` — only one owner of I2C0 at a time.
+
+# Emit structured heap-stats snapshots at key milestones over the log channel
+report = ["esp-common/report"]
+
+# Measure peak main-stack usage: paint the unused stack at boot and log the
+# high-water mark from the stats task. For local profiling only — never ship.
+stack-hwm = ["dep:critical-section"]
+
+# Watchdog timeout characterization (#1014): the liveness supervisor logs
+# worst-case round-scheduling lateness and per-required-task staleness as
+# high-water marks, to size the watchdog timeouts under real radio load. For
+# bench measurement only — never ship.
+wdt-characterize = ["esp-common/wdt-characterize"]
+
+# Test-only fault injection for HIL watchdog tests: exposes the `selftest` host
+# import so a guest cell can trigger a deliberate liveness stall (executor spin
+# or required-task stall), driving the watchdog to reset. Never ship.
+wdt-selftest = ["wasm-runtime/wdt-selftest", "esp-common/wdt-selftest"]
+
+[dependencies]
+# crates.io
+critical-section       = { workspace = true, optional = true }
+embassy-executor       = { workspace = true }
+embassy-sync           = { workspace = true }
+embassy-time           = { workspace = true }
+esp-hal                = { workspace = true, features = ["log-04", "unstable", "rt"] }
+esp-rtos               = { workspace = true, features = ["embassy", "esp-alloc", "esp-radio"] }
+log                  = { workspace = true }
+static_cell          = { workspace = true }
+# Peeriot org
+
+# Infrastructure optional deps for the `pipeline` feature (committed).
+# Driver/node optional deps are managed by esp-codegen and must not be committed.
+signal-layer-core    = { workspace = true, optional = true }
+signal-layer-types   = { workspace = true, optional = true }
+embassy-embedded-hal = { workspace = true, optional = true }
+
+# local
+esp-common   = { workspace = true }
+# Direct (not via esp-common): build.rs emits an absolute `::wasm_storage` path
+# into the generated partition layout.
+wasm-storage = { workspace = true }
+wasm-runtime  = { workspace = true }
+
+[build-dependencies]
+serde          = { workspace = true, features = ["derive"] }
+toml           = { workspace = true }
+esp-mmu-consts = { workspace = true }

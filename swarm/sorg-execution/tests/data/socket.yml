@@ -1,0 +1,42 @@
+name: ui_socket_test
+description: This demo showcases getting a websocket based UI up and working within the swarm
+
+sources:
+sinks:
+operators:
+  - id: my-fancy-websocket
+    description: b
+    config:
+      type: socket
+      port: 8090
+      index_file: index.html
+    outputs:
+      - id: socket-incoming
+    inputs:
+      - id: socket-outgoing
+
+  - id: my-fancy-operator
+    description: wasm operator
+    config:
+      type: wasm
+      binary: socket.wasm
+    inputs:
+      - id: socket-incoming
+    outputs:
+      - id: socket-outgoing
+
+links:
+  - from:
+      task: my-fancy-websocket
+      output: socket-incoming
+    to:
+      task: my-fancy-operator
+      input: socket-incoming
+  - from:
+      task: my-fancy-operator
+      output: socket-outgoing
+    to:
+      task: my-fancy-websocket
+      input: socket-outgoing
+
+mappings:

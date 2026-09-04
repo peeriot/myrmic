@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Greenhouse</title>
+  <style>
+    body { font-family: sans-serif; max-width: 28rem; margin: 3rem auto; }
+    h1 { font-size: 1.4rem; }
+    .value { font-size: 3rem; font-variant-numeric: tabular-nums; }
+    meter { width: 100%; height: 1.5rem; }
+    .row { margin: 0.75rem 0; }
+    #pump.on { color: #1a7f37; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Smart Greenhouse - Grow Bed 1</h1>
+  <div class="row">Soil moisture: <span class="value" id="moisture">--</span>%</div>
+  <div class="row"><meter id="bar" min="0" max="100" value="0"></meter></div>
+  <div class="row">Pump: <span id="pump">--</span></div>
+  <div class="row">Target range: <span id="target">--</span></div>
+
+  <script>
+    async function refresh() {
+      const res = await fetch('/greenhouse/latest.json', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById('moisture').textContent = data.moisture.toFixed(1);
+      document.getElementById('bar').value = data.moisture;
+      const pump = document.getElementById('pump');
+      pump.textContent = data.pump_on ? 'RUNNING' : 'off';
+      pump.className = data.pump_on ? 'on' : '';
+      document.getElementById('target').textContent =
+        data.target_low + '% - ' + data.target_high + '%';
+    }
+
+    async function main() {
+      // Poll the gateway forever: one HTTP call every 2 seconds.
+      for (;;) {
+        try { await refresh(); } catch (e) { /* gateway restarting */ }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    main();
+  </script>
+</body>
+</html>

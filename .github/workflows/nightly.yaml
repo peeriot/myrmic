@@ -1,0 +1,54 @@
+name: Nightly
+on:
+  schedule:
+    - cron: '37 2 * * 1-5'
+      timezone: "Europe/Berlin"
+
+permissions:
+  packages: read
+  contents: read
+
+jobs:
+  build:
+    runs-on: general
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-3"
+      volumes:
+        - cache-cargo-user:/usr/local/cargo
+        - cache-rustup-user:/usr/local/rustup
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      - name: Generate coverage
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: "8"
+        run: |
+          .ci/coverage/collect
+      - name: package
+        run: |
+          # Package coverage
+          cd target
+          tar --zstd -cf "coverage_$(date --iso-8601).tar.zst" coverage
+      - name: Upload artifacts
+        env:
+          RCLONE_CONFIG_S3_TYPE: s3
+          RCLONE_CONFIG_S3_PROVIDER: Minio
+          RCLONE_CONFIG_S3_REGION: us-east-2
+          RCLONE_CONFIG_S3_ENDPOINT: https://minio.peeriot.intra
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+        run: |
+          # Upload coverage
+          rclone copy "target/coverage_$(date --iso-8601).tar.zst" \
+              "s3:${{ vars.S3_BUCKET_NAME }}/swarm/coverage/"

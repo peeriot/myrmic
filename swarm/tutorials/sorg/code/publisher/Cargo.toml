@@ -1,0 +1,13 @@
+[package]
+name = "publisher"
+version = "0.1.0"
+edition = "2024"
+license = "MIT-0"
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+zenoh = { workspace = true, features = ["transport_tcp"] }
+anyhow = { workspace = true }
+
+common = { workspace = true }

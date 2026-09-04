@@ -1,0 +1,42 @@
+# Linux mixed-outlet pipeline fixture: one cell-driven outlet (relay1_cmd, no
+# `input:` — served to WASM cells over the IPC outlet path, applied by a sink
+# task) and one feed-forward outlet (fan1_cmd, applied inline in the source
+# task). Exercises both outlet emission paths in a single golden.
+# Used by linux-codegen snapshot test (SR-7) and the CI generated-crate check.
+pipeline:
+  id: linux-outlets
+
+sources:
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+
+steps:
+  - id: fan_ctl
+    op: fan-curve
+    input: bme280.temperature
+    config:
+      in_min: 20.0
+      in_max: 60.0
+      out_min: 0.0
+      out_max: 1.0
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+outlets:
+  # Cell-driven: no `input:` — registered in the outlet registry, written by
+  # cells via outlet_resolve/outlet_write, applied by the generated sink task.
+  - name: relay1_cmd
+    type: DigitalState
+    device: relay1
+
+  # Feed-forward: applied inline where fan_ctl produces its output.
+  - name: fan1_cmd
+    type: PwmDuty
+    device: fan1
+    input: fan_ctl

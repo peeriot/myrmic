@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+set -e
+
+DOMAIN="$1"
+shift
+
+CA_CERT="$1"
+shift
+
+cd /etc/swarm/certs
+
+# Get all non-loopback IPv4 addresses
+IPS=$(ip -4 addr show | awk '/inet / && $2 !~ /^127/ {print $2}' | cut -d/ -f1)
+
+echo "Issue new certificate for $HOSTNAME.$DOMAIN with IPs: $IPS"
+
+# Generate the SAN list
+ALT_NAMES=""
+IP_INDEX=1
+for IP in $IPS; do
+    ALT_NAMES+="IP.$IP_INDEX = $IP"$'\n'
+    ((IP_INDEX++))
+done
+
+# Create dynamic OpenSSL config with all IP SANs
+cat > /tmp/openssl-san.cnf <<EOF
+[ req ]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+
+[ req_distinguished_name ]
+CN = $HOSTNAME.$DOMAIN
+O = Peeriot
+OU = $DOMAIN
+
+[ v3_req ]
+subjectAltName = @alt_names
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+
+[ alt_names ]
+DNS.1 = $HOSTNAME
+DNS.2 = $HOSTNAME.$DOMAIN
+$ALT_NAMES
+EOF
+
+# Generate key
+openssl genrsa \
+    -out client-key.pem 4096
+
+# Generate CSR with SANs
+openssl req \
+    -new \
+    -key client-key.pem \
+    -out client-req.pem \
+    -config /tmp/openssl-san.cnf
+
+# Sign the certificate with SANs
+# HINT:
+#   Normally this is done by a CA service, but for simplicity we
+#   just created the certificate locally in this example
+openssl x509 \
+    -req \
+    -in client-req.pem \
+    -CA "$CA_CERT-cert.pem" \
+    -CAkey "$CA_CERT-key.pem" \
+    -CAcreateserial \
+    -out client-cert.pem \
+    -days 36500 \
+    -sha256 \
+    -extfile /tmp/openssl-san.cnf \
+    -extensions v3_req
+
+# Create cert chains
+cat "$CA_CERT-cert.pem" "root-ca-cert.pem" > ca-cert-chain.pem
+cat "client-cert.pem" "$CA_CERT-cert.pem" "root-ca-cert.pem" > client-cert-chain.pem
+rm -rf /tmp/openssl-san.cnf
+
+# Prepare Config Templates
+cat /etc/swarm/client.jsonnet.tpl | envsubst '$HOSTNAME' > /etc/swarm/client.jsonnet
+cat /etc/swarm/router.jsonnet.tpl | envsubst '$HOSTNAME' > /etc/swarm/router.jsonnet
+cat /etc/swarm/peer-with-router.jsonnet.tpl | envsubst '$HOSTNAME' > /etc/swarm/peer-with-router.jsonnet
+cat /etc/swarm/peer-without-router.jsonnet.tpl | envsubst '$HOSTNAME' > /etc/swarm/peer-without-router.jsonnet
+
+# Start Swarm
+swarm "$@"

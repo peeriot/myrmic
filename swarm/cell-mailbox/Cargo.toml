@@ -1,0 +1,23 @@
+[package]
+name      = "cell-mailbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+cell-protocol = { workspace = true, default-features = true }
+db-client = { workspace = true, features = ["zenoh", "polled"] }
+myrmic-common = { workspace = true }
+
+opentelemetry = { workspace = true }
+postcard = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

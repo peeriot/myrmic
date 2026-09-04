@@ -1,0 +1,24 @@
+id: spi-loopback
+category: sensor-drivers
+description: >
+  SPI loopback test source. Each sample full-duplex-transfers an incrementing
+  byte pattern and reports whether the echo matched: with MOSI wired to MISO it
+  proves the whole SPI path (bus, mode, clock, chip-select) on real hardware;
+  without the jumper it reads 0. Not a sensor — the SPI counterpart of
+  sim-source for bring-up and HIL tests.
+requires:
+  buses:
+    - transport: spi
+outputs:
+  - name: echo_ok
+    type: f32
+    unit: ""
+  - name: counter
+    type: f32
+    unit: ""
+config_schema:
+  transfer_len:
+    scope: application
+    rust_type: u8
+    default: 8
+    description: "Bytes per loopback transfer (1..=32)."

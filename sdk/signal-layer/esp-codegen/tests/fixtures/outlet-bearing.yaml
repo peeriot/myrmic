@@ -1,0 +1,11 @@
+# Golden fixture (b): outlet-bearing pipeline.
+# gpio-output sink outlet (relay1) — exercises the sink_task and
+# init_outlet_registry emission paths that Task 8/9 will refactor.
+# Used by esp-codegen golden tests; see tests/golden.rs.
+pipeline:
+  id: golden-outlets
+
+outlets:
+  - name: relay1_cmd
+    type: DigitalState
+    device: relay1

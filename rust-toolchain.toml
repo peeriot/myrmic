@@ -1,0 +1,7 @@
+[toolchain]
+components = ["rustfmt", "cargo", "clippy", "llvm-tools-preview"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+]

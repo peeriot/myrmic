@@ -1,0 +1,89 @@
+name: Rack Benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      loads:
+        description: "Space-separated loads to sweep (e.g. '200 400 600'). Leave empty for the standard sweep."
+        required: false
+        type: string
+
+jobs:
+  sweep:
+    name: Run Sweep
+    runs-on: testnet
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-3"
+      options: "--user root"
+      volumes:
+        - cache-cargo-user:/usr/local/cargo
+        - cache-rustup-user:/usr/local/rustup
+        - rack-nodes-auth:/rack-nodes-auth
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      - name: Set github URLs
+        run: |
+          git config --global url."https://x-access-token:${{ steps.setup.outputs.token }}@github.com/".insteadOf "ssh://git@github.com/"
+      - name: Install nightly rust-src
+        run: |
+          rustup toolchain install nightly --component rust-src
+      # run_rack.sh cross-compiles myrmic for aarch64; the archiver image ships
+      # binutils-aarch64-linux-gnu but not the gcc frontend that rustc's linker driver needs, nor
+      # the aarch64 glibc headers native deps like aws-lc-sys/ring need to compile their C code —
+      # without libc6-dev-arm64-cross, aarch64-linux-gnu-gcc falls back to the host's x86_64
+      # /usr/include and fails on missing arch-specific headers (bits/libc-header-start.h etc).
+      - name: Install aarch64 cross gcc
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+      # rack-ctl/run_rack.sh shell out to plain `ssh`, which refuses unknown hosts by default;
+      # this container starts with no known_hosts, so every rack host would otherwise fail with
+      # "Host key verification failed." Trust every host named in the rack config up front.
+      #
+      # Written to a fixed, absolute path (not the default `~/.ssh/known_hosts`) and passed
+      # explicitly via `SSH_KNOWN_HOSTS_FILE` below (`-o UserKnownHostsFile=...` on every ssh/scp
+      # call test-framework makes) — relying on ssh's own default resolution here previously
+      # caused every host to fail "Host key verification failed" despite this step succeeding:
+      # the `ssh`/`scp` processes the Rust binary spawns weren't consulting the same
+      # `~/.ssh/known_hosts` this step populated (likely a `$HOME`/`ssh_config` difference
+      # between this shell step and that subprocess in the `archiver` image). Pinning the exact
+      # file on both ends removes the ambiguity.
+      - name: Trust rack host keys
+        run: |
+          mkdir -p /root/.ssh
+          grep -oP '(?<=@)[a-zA-Z0-9.-]+(?=")' benchmarks/warehouse/warehouse-rack.toml \
+            | sort -u \
+            | xargs ssh-keyscan -H >> /root/.ssh/known_hosts
+      # The `rack-nodes-auth` volume carries the private key the rack hosts trust
+      # (`id_ed25519`); `ssh`/`scp` refuse a key that's group/world-readable, and the volume
+      # mount doesn't guarantee the file lands with the right permissions, so fix them up here.
+      - name: Prepare rack SSH identity file
+        run: |
+          chmod 600 /rack-nodes-auth/id_ed25519
+      - name: Run sweep
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+          SSH_IDENTITY_FILE: /rack-nodes-auth/id_ed25519
+          SSH_KNOWN_HOSTS_FILE: /root/.ssh/known_hosts
+        run: |
+          benchmarks/warehouse/run_rack.sh benchmarks/warehouse/warehouse-rack.toml ${{ inputs.loads || '100 200 300 400 500 600 750 1000' }}
+      - name: Upload report PDF
+        uses: actions/upload-artifact@v7
+        with:
+          name: rack-report-pdf
+          path: benchmarks/warehouse/warehouse-rack-report/report.pdf
+          archive: false
+      - name: Upload raw JSON
+        uses: actions/upload-artifact@v7
+        with:
+          name: rack-report-json
+          path: benchmarks/warehouse/warehouse-rack-report/*.json

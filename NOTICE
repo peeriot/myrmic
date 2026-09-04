@@ -1,0 +1,66 @@
+# NOTICE
+
+Myrmic
+Copyright © Peeriot GmbH
+contact@myrmic.dev
+
+This non-binding summary provides a general overview of the licensing of this product. Further information is available in LICENSING.md, which is also provided for information and convenience only.
+
+Platform components are licensed under GPL-2.0-only together with the Myrmic Exception; SDK and interface components are licensed under MIT OR Apache-2.0; examples and templates are licensed under MIT-0; documentation is licensed under CC-BY-4.0.
+
+Neither the above summary nor LICENSING.md grants, restricts, modifies, or otherwise affects any rights or obligations. Only the applicable license and exception texts contained in LICENSES/ are legally authoritative. Their applicability is determined by the relevant license notices and, where applicable, the applicable Exception Scope.
+
+"Myrmic", "EdgeVance", and "Peeriot" are trademarks of Peeriot GmbH. The Myrmic logo and other brand assets in this repository are not covered by the licenses applicable to software code, data or documentation. Their use is subject to Peeriot's trademark policy.
+
+## Third-party code
+
+This product includes third-party source code. The table below lists every upstream work from which code in this repository is derived, the copyright holder, the licence under which we use it, and the files concerned.
+
+The full licence texts are in the `LICENSES/` directory.
+
+Where an upstream is dual-licensed `MIT OR Apache-2.0`, we elect **MIT**. That election is recorded in the "Used under" column and is what the MIT notice discharges.
+
+## Third-party works
+
+| Upstream | Version | Copyright holder | Used under | Files |
+|---|---|---|---|---|
+| rs-matter | 0.1.0 | Copyright (c) 2020-2022 Project CHIP Authors | Apache-2.0 | `swarm/swarm-onboarding/src/utils/base38.rs` |
+| libertas-matter | 0.1.1 | Copyright (c) 2020-2022 Project CHIP Authors | Apache-2.0 | `swarm/swarm-onboarding/src/utils/future.rs` |
+| storekey | 0.6.0 | Tobie Morgan Hitchcock, Michal Hornicky, Dan Burkert | Apache-2.0 | `swarm/skey/src/decode.rs`, `swarm/skey/src/decode/read.rs`, `swarm/skey/src/encode.rs` |
+| oxigraph | 0.4.0-alpha.7 | Copyright (c) 2018 Oxigraph developers | MIT | `swarm/db/src/utils/str_small.rs` |
+| oxigraph | 0.5.0-beta.2 | Copyright (c) 2018 Oxigraph developers | MIT | `swarm/db/src/semantic/unify.rs` |
+| nourl | 0.1.4 | Copyright (c) Rasmus Melchior Jacobsen | MIT | `sdk/myrmic-common/src/types/web/url.rs` |
+| http | 1.x | Copyright (c) 2017 http-rs authors | MIT | `sdk/myrmic-common/src/types/web/status_code.rs` |
+
+## Where each copyright line came from
+
+Every line above was read from the upstream's own files rather than inferred. This section records which, so the claims can be re-checked instead of taken on trust.
+
+**rs-matter 0.1.0 and libertas-matter 0.1.1.** The copyright line is carried by the upstream source files themselves, `src/codec/base38.rs` and `src/utils/select.rs`. Both crates declare `license = "Apache-2.0"` and ship no separate licence file, so `LICENSES/Apache-2.0.txt` holds the canonical Apache License 2.0 text.
+
+**storekey 0.6.0.** All three files come from this one version: `src/decode.rs`, `src/decode/read.rs` and `src/encode.rs` respectively. The crate ships a verbatim Apache License 2.0 text with the copyright appendix left unfilled, and none of its source files carries a copyright header, so the holders are taken from the crate's own `authors` field.
+
+An automated scan attributed two of these files differently - `encode.rs` to `bytekey-fix` 0.5.0 `src/ser.rs` and `decode/read.rs` to storekey 0.5.0. Both were the scanner following an ancestor rather than our actual source: storekey is itself a fork of bytekey, and storekey 0.5.0 and 0.6.0 differ only slightly here. Our files match 0.6.0 - decisively for `read.rs`, which carries 0.6.0's elided `impl Read for SliceReader<'_>` rather than 0.5.0's `impl<'a> ... <'a>`. Dan Burkert's copyright from the bytekey lineage is carried by storekey's own authors list.
+
+**oxigraph 0.4.0-alpha.7 and 0.5.0-beta.2.** The published `.crate` archives ship no licence file. The copyright line is taken from `LICENSE-MIT` in the upstream repository.
+
+**nourl 0.1.4.** Neither the published `.crate` nor the upstream repository contains any licence file; the crate declares only `license = "MIT / Apache-2.0"`. The holder is taken from the crate's `authors` field, and `LICENSES/MIT-nourl.txt` reproduces the canonical MIT text with that copyright line.
+
+**http 1.x.** The copyright line is taken verbatim from the crate's own `LICENSE-MIT`.
+
+## Licence texts
+
+| File | Copyright line |
+|---|---|
+| `LICENSES/Apache-2.0.txt` | Apache License 2.0, applying to the four Apache-2.0 entries above |
+| `LICENSES/MIT-oxigraph.txt` | Copyright (c) 2018 Oxigraph developers |
+| `LICENSES/MIT-nourl.txt` | Copyright (c) Rasmus Melchior Jacobsen |
+| `LICENSES/MIT-http.txt` | Copyright (c) 2017 http-rs authors |
+
+The three MIT texts differ only in their copyright line; the permission notice is the canonical MIT wording in each.
+
+## Maintaining this file
+
+The paths in the table are checked by `.ci/verify/licenses` on every push. If a file listed here is moved or renamed, update the table in the same change, otherwise the only record of the licence election is silently invalidated.
+
+Files derived from the Apache-2.0 entries additionally carry an in-file notice, as Apache-2.0 section 4(b) requires for modified files.

@@ -1,0 +1,63 @@
+[target.'cfg(target_arch = "riscv32")']
+# Wrapper resolves modem-esp32's build-script-generated app partition table (from $OUT_DIR) and passes it to espflash;
+# falls back to a plain `espflash flash --monitor` for any other riscv binary.
+runner = "embedded/esp-hal/espflash-runner.sh"
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers", "-C", "linker=rust-lld"]
+
+[target.'cfg(target_arch = "xtensa")']
+runner = "espflash flash --monitor"
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "linker=rust-lld"]
+
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C",
+    "link-arg=-zstack-size=32768",
+    "-C",
+    "link-arg=--stack-first",
+    "-C",
+    "link-arg=--initial-memory=131072",
+    "-C",
+    "link-arg=--max-memory=131072",
+    "-C",
+    "target-cpu=mvp",
+]
+
+[env]
+ESP_LOG = "info"
+NIMBLE_CONFIG_DIR = { value = "embedded/esp-hal/modem-esp32", relative = true }
+# esp-hal v1.2.0-rc.0 added its own link-time floor on the main stack,
+# defaulting to 8192. esp-hal sizes the stack as whatever RWDATA is left after
+# `.data`/`.bss`, and the `ble` feature's ~39 KiB of `.bss` leaves 8136 bytes —
+# 56 short of that generic default, but comfortably above what this firmware
+# measurably uses.
+#
+# `MIN_MAIN_STACK` in modem-esp32's build.rs is this project's own floor, set
+# from its measured peak and reported with a diagnostic that says what to do.
+# Keeping esp-hal's below it leaves that the binding check, so the useful error
+# is the one a breach produces, and retuning it needs no edit here.
+ESP_HAL_CONFIG_ENSURE_MAIN_STACK_MINIMUM = "4096"
+ALLURE_RESULTS_DIR = { value = "target/allure-results", relative = true }
+
+[alias]
+citest = "nextest run"
+
+check-c5 = "check  -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c5 -Zbuild-std=core,alloc"
+build-c5 = "build  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c5 -Zbuild-std=core,alloc"
+run-c5 = "run    -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c5 -Zbuild-std=core,alloc"
+clippy-c5 = "clippy -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c5 -Zbuild-std=core,alloc"
+doc-c5 = "doc    -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c5 -Zbuild-std=core,alloc"
+citest-c5 = "test   -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c5 -Zbuild-std=core,alloc"
+
+check-c6 = "check  -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 -Zbuild-std=core,alloc"
+build-c6 = "build  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 -Zbuild-std=core,alloc"
+run-c6 = "run    -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 -Zbuild-std=core,alloc"
+clippy-c6 = "clippy -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 -Zbuild-std=core,alloc"
+doc-c6 = "doc    -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 -Zbuild-std=core,alloc"
+citest-c6 = "test   -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 -Zbuild-std=core,alloc"
+
+check-c61 = "check  -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
+build-c61 = "build  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
+run-c61 = "run    -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
+clippy-c61 = "clippy -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
+doc-c61 = "doc    -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
+citest-c61 = "test   -p modem-esp32 -p esp-common -p esp-watchdog -p cell-db-service -p esp-network --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"

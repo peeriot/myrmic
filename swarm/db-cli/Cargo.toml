@@ -1,0 +1,21 @@
+[package]
+name = "db-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+
+uuid = { workspace = true, features = ["std", "v4"] }
+hex = { workspace = true }
+argh = { workspace = true }
+uhlc = { workspace = true }
+swarm = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+zenoh = { workspace = true }
+db-client = { workspace = true, features = ["zenoh"] }

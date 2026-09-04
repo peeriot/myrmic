@@ -1,0 +1,32 @@
+[package]
+name              = "esp-network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+esp32c5  = ["esp-hal/esp32c5", "esp-radio/esp32c5", "wasm-runtime/esp32c5"]
+esp32c6  = ["esp-hal/esp32c6", "esp-radio/esp32c6", "wasm-runtime/esp32c6"]
+esp32c61 = ["esp-hal/esp32c61", "esp-radio/esp32c61", "wasm-runtime/esp32c61"]
+
+[dependencies]
+edge-nal         = { workspace = true }
+edge-nal-embassy = { workspace = true }
+embassy-futures  = { workspace = true }
+embassy-net      = { workspace = true, features = ["dhcpv4"] }
+embassy-sync     = { workspace = true }
+embassy-time     = { workspace = true }
+esp-hal          = { workspace = true, features = ["unstable"] }
+esp-radio        = { workspace = true, features = ["wifi", "unstable"] }
+log              = { workspace = true }
+static_cell      = { workspace = true }
+# Peeriot org
+uhlc = { workspace = true }
+# local
+wasm-runtime = { workspace = true }
+zenoh-nano   = { workspace = true, features = ["getrandom-custom"] }

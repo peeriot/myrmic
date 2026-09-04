@@ -1,0 +1,47 @@
+# Linux feed-forward actuator pipeline fixture.
+# BME280 temperature drives a hysteresis-controlled relay (digital) and a
+# fan-curve-controlled fan (PWM). Both outlets are pipeline-driven (`input:`),
+# the only outlet kind supported on Linux until the outlet IPC path exists.
+# Used by linux-codegen snapshot test (SR-7).
+pipeline:
+  id: linux-actuators
+
+sources:
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+
+steps:
+  - id: heater_ctl
+    op: hysteresis
+    input: bme280.temperature
+    config:
+      on_threshold: 28.0
+      off_threshold: 24.0
+
+  - id: fan_ctl
+    op: fan-curve
+    input: bme280.temperature
+    config:
+      in_min: 20.0
+      in_max: 60.0
+      out_min: 0.0
+      out_max: 1.0
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+outlets:
+  - name: relay1_cmd
+    type: DigitalState
+    device: relay1
+    input: heater_ctl
+
+  - name: fan1_cmd
+    type: PwmDuty
+    device: fan1
+    input: fan_ctl

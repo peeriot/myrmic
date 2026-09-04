@@ -1,0 +1,20 @@
+[package]
+name = "cell-timer-cmd-logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Kv::get allocates an 8 KiB response buffer; the 8 KB default heap would OOM
+# on cancel_timer, so give the arena room to breathe.
+[package.metadata.myrmic]
+heap_size = 65_536
+
+[lib]
+crate-type = ["rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk = { workspace = true }

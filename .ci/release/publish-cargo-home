@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# Prepares a CARGO_HOME for packaging and publishing to crates.io.
+#
+# Usage:
+#   .ci/release/publish-cargo-home <dest-dir>
+#
+# The build image's cargo configuration replaces crates-io with an internal mirror
+# so builds are served from its cache. Packaging cannot live with that: cargo
+# resolves the sibling crates of a multi-package run through the registry the
+# packages are destined for, and the mirror carries no crate that was never
+# published - the first crate packages, the second cannot find the first.
+#
+# There is no way to switch a replacement off for one command. `--config` can only
+# point it elsewhere, crates-io may not be aliased to itself, `--index` does not
+# bypass it and there is no environment variable for the config file. A CARGO_HOME
+# without that configuration is the only lever cargo offers, so that is what this
+# builds.
+#
+# The caches are linked in, but they only help so far: cargo partitions them by
+# source URL, so the copies fetched through the mirror do not serve a crates.io
+# resolve. The first release after this lands re-downloads the dependency closure
+# from crates.io; it is then cached in the same directory under the other source
+# and later releases reuse it.
+
+set -euo pipefail
+
+[ "$#" -eq 1 ] && [ -d "$1" ] || {
+    printf 'usage: %s <existing-dest-dir>\n' "$0" >&2
+    exit 1
+}
+
+src="${CARGO_HOME:-$HOME/.cargo}"
+for cache in registry git; do
+    [ -e "$src/$cache" ] && ln -sfn "$src/$cache" "$1/$cache"
+done
+
+# Deliberately no config.toml: its absence is the whole point.
+printf 'prepared %s (caches from %s, no source replacement)\n' "$1" "$src"

@@ -1,0 +1,18 @@
+layout {
+    pane split_direction="Vertical" {
+        pane {
+            name "Laptop zenoh BLE mTLS Pong"
+            cwd "."
+            command "bash"
+            args "zenoh-nano/scripts/zellij/ble_laptop_pane.sh"
+        }
+
+        pane {
+            name "ESP Build+Flash+Monitor"
+            cwd "."
+            command "bash"
+            args "zenoh-nano/scripts/zellij/ble_esp_pane.sh"
+            focus true
+        }
+    }
+}

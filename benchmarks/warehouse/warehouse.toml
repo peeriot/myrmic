@@ -1,0 +1,54 @@
+# Base config for the warehouse benchmark. Drives one load pass per process — a full sweep
+# across loads runs this binary once per load, each against a fresh swarm, then merges the
+# resulting JSON files; see run_sweep.sh.
+#
+# Run a single load with:
+#   cargo r --release -p warehouse-benchmark -- --config benchmarks/warehouse/warehouse.toml --load 100
+#
+# Run the whole sweep with:
+#   benchmarks/warehouse/run_sweep.sh
+
+# keep the pass's load for this amount of seconds.
+timeout = 3
+
+# upper bound on how long to wait for cell processing to actually finish after the pass, before
+# giving up and reporting metrics/hop-coverage as they stand. Only bounds a backlog that's still
+# genuinely draining (just slowly) — a pass whose progress has permanently stalled (see
+# completeness_stable_rounds) gives up within ~1s of that, not this. Measured drain time even at
+# the top of this sweep (1400/sec for 3s, 4200 commands) is a few seconds, and full end-to-end
+# latency stays in the tens-to-low-hundreds of milliseconds even under that load — so this only
+# needs enough headroom over that to not be a nuisance, not tens of seconds.
+drain_timeout = 20
+
+# write this pass's raw report to this directory as `{load}.json` (uncomment to enable). No PDF
+# from this binary — merge multiple loads' JSON files with `bench-report`'s `merge` binary to get
+# a combined report with a rendered PDF.
+output_dir = "warehouse-report"
+
+[specialized]
+# number of object twins to deploy.
+num_objects = 10
+# number of zone twins to deploy.
+num_zones = 10
+# how load is spread across the object cells, and independently, how each dispatched update's
+# zone is spread across the zone cells: "round_robin" or "random".
+fan_out_strategy = "random"
+
+# where load comes from. Defaults to "external": the benchmark harness dispatches every command
+# itself, from outside the swarm. Uncomment below for "internal": `input_fixed_camera` cells,
+# deployed into the swarm, generate load on a timer instead — useful for measuring performance
+# without an external load producer in the loop.
+[specialized.producer]
+# kind = "internal"
+# each replica's tick handler awaits a real registry-lookup + dispatch round trip one at a time
+# (one message loop per cell instance), which in practice sustains only a few hundred ticks/sec
+# per replica — far below the 1ms timer's nominal 1000/sec. Split load across enough replicas to
+# keep each one comfortably under that, or its pass's ingestion percentage will fall short. The
+# default sweep (run_sweep.sh) goes up to 1400/sec; 4 replicas keeps every pass at or below
+# 350/replica.
+# replicas = 5
+# if true, a replica's next tick only starts counting down produce_every_ms once the previous
+# tick's send has actually finished — self-throttling to the real round-trip time instead of
+# firing on a strict schedule and letting ticks queue up (and eventually block) once send takes
+# longer than produce_every_ms. Defaults to false (matches the behavior above).
+# fixed_delay = true

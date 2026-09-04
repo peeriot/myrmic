@@ -1,0 +1,15 @@
+id: min-value
+category: processing-steps
+description: >
+  Running minimum: keeps the smallest value seen so far and emits it on every sample, so
+  the output is monotonically non-increasing. Seeded at positive infinity, so the very
+  first sample is always its own minimum: there is no warm-up, and the step always emits,
+  never nothing. Unconfigurable and time-independent, with no window, decay or reset, so a
+  single outlier pins the output low for the lifetime of the pipeline.
+inputs:
+  - name: value
+    type: f32
+outputs:
+  - name: min
+    type: f32
+config_schema: {}

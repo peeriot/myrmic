@@ -1,0 +1,36 @@
+id: sim-source
+category: sensor-drivers
+description: >
+  Synthetic deterministic source for hardware-in-the-loop tests. Satisfies the
+  driver contract but ignores the bus and emits a bounded sawtooth ramp, so the
+  dataplane HIL suite can assert on exact tap values, moving-average output, and
+  threshold-trigger alarms without any physical sensor.
+requires:
+  buses:
+    # Bound to an I2C bus for codegen symmetry; the bus is never touched.
+    - transport: i2c
+outputs:
+  - name: value
+    type: f32
+    unit: ""
+config_schema:
+  start:
+    scope: application
+    rust_type: f32
+    default: 0.0
+    description: Value emitted first and wrapped back to.
+  step:
+    scope: application
+    rust_type: f32
+    default: 1.0
+    description: Amount added to the value after each sample.
+  max:
+    scope: application
+    rust_type: f32
+    default: 100.0
+    description: Upper bound; the ramp wraps back to `start` after exceeding this.
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 500
+    description: Polling interval in milliseconds.

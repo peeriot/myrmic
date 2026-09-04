@@ -1,0 +1,52 @@
+name: Warehouse Benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      loads:
+        description: "Space-separated loads to sweep (e.g. '200 400 600'). Leave empty for the standard sweep."
+        required: false
+        type: string
+
+jobs:
+  sweep:
+    name: Run Sweep
+    runs-on: general
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-3"
+      volumes:
+        - cache-cargo-user:/usr/local/cargo
+        - cache-rustup-user:/usr/local/rustup
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      - name: Set github URLs
+        run: |
+          git config --global url."https://x-access-token:${{ steps.setup.outputs.token }}@github.com/".insteadOf "ssh://git@github.com/"
+      - name: Install nightly rust-src
+        run: |
+          rustup toolchain install nightly --component rust-src
+      - name: Run sweep
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+        run: |
+          benchmarks/warehouse/run_sweep.sh ${{ inputs.loads }}
+      - name: Upload report PDF
+        uses: actions/upload-artifact@v7
+        with:
+          name: warehouse-report-pdf
+          path: benchmarks/warehouse/warehouse-report/report.pdf
+          archive: false
+      - name: Upload raw JSON
+        uses: actions/upload-artifact@v7
+        with:
+          name: warehouse-report-json
+          path: benchmarks/warehouse/warehouse-report/*.json

@@ -1,0 +1,21 @@
+[package]
+name = "test-control-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+thiserror = { workspace = true }
+
+test-control-common = { workspace = true }
+zenoh = { workspace = true }
+
+[dev-dependencies] # in this case, these deps are for the example
+tokio = { workspace = true }
+sorg-tests = { workspace = true }
+
+[lints]
+workspace = true

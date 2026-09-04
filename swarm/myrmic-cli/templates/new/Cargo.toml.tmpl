@@ -1,0 +1,13 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.myrmic]
+heap_size = 32_768
+
+[dependencies]
+myrmic-sdk = {{myrmic_sdk}}
+
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }

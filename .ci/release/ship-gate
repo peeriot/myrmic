@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# Everything that must hold before an approved candidate is promoted to a release.
+#
+# Usage:
+#   .ci/release/ship-gate <tag> <software-version> <release-artifact-dir>
+#
+# Does not re-check whether a release already exists for this version. That is the
+# build's check, and after a successful promote it would be true - so re-checking it
+# here would make every retry of a partially failed promote fail immediately.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$#" -eq 3 ] || die "usage: $0 <tag> <software-version> <release-artifact-dir>"
+TAG="$1"
+SOFTWARE_VERSION="$2"
+ARTIFACT_DIR="$3"
+[ -d "$ARTIFACT_DIR" ] || die "no such directory: $ARTIFACT_DIR"
+
+printf '\n\n--== Check: Newest Candidate ==--\n\n'
+
+# Every gated tag push opens its own draft release, so a rejected candidate and a
+# tested one sit next to each other in the release list, one click each. Promoting
+# the wrong one would ship the build that was rejected.
+#
+# Local tags: the promote checks out with full history and tags.
+newest_in_version="$(git -C "$REPO_ROOT" tag -l "myrmic/v${SOFTWARE_VERSION}-rc*" | sort -V | tail -1)"
+newest_overall="$(git -C "$REPO_ROOT" tag -l 'myrmic/v*-rc*' | sort -V | tail -1)"
+
+printf 'publishing        %s\n' "$TAG"
+printf 'newest candidate  %s\n' "${newest_overall:-<none>}"
+
+[ -n "$newest_in_version" ] ||
+    die "found no candidate tags for ${SOFTWARE_VERSION}, not even ${TAG}. Is the checkout
+       missing tags?"
+
+# Within the version: a rejected candidate and a tested one sit side by side in the
+# release list, one click each, and promoting the wrong one ships the rejected build.
+[ "$newest_in_version" = "$TAG" ] ||
+    die "${TAG} is superseded by ${newest_in_version}. Publishing it would ship a build that
+       was rejected. Publish the newest candidate's draft instead, or delete the
+       superseding tag if it never produced a build."
+
+# Across versions: a crates.io publish cannot be withdrawn, so promoting an older
+# version after a newer candidate exists would permanently publish the older one.
+#
+# Unlike the check above, this one can also block the retry of a promote that failed
+# half way, if a newer candidate was cut in between. The escape hatch is named in the
+# message because there is no in-pipeline way out of that state.
+[ "$newest_overall" = "$TAG" ] ||
+    die "${TAG} is behind ${newest_overall}. Promoting it would publish an older version to
+       crates.io after a newer candidate was already cut, and a crates.io release cannot
+       be withdrawn. If this is the retry of a partially completed promote, delete
+       ${newest_overall} first, finish this one, then re-cut it."
+
+printf '\n\n--== Check: Artifact Integrity ==--\n\n'
+"$SCRIPT_DIR/checksums" verify "$ARTIFACT_DIR"

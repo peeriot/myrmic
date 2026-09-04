@@ -1,0 +1,21 @@
+#!/bin/bash
+
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-secure-swarm}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yaml}"
+
+echo -e "Use compose file: $COMPOSE_FILE\n"
+
+OUTPUT="ID\tName\tRouter\tMeshA\tMeshB\n"
+
+for cntr in $(docker ps -aq --filter name=${COMPOSE_PROJECT_NAME}-\*); do
+    name=$(docker inspect "$cntr" | jq -r '.[0].Name')
+    name="${name#/}"
+
+    addr_router=$(docker inspect "$cntr" | jq -r ".[0].NetworkSettings.Networks.[\"${COMPOSE_PROJECT_NAME}_routers\"].IPAddress")
+    addr_mesh_a=$(docker inspect "$cntr" | jq -r ".[0].NetworkSettings.Networks.[\"${COMPOSE_PROJECT_NAME}_mesh_a\"].IPAddress")
+    addr_mesh_b=$(docker inspect "$cntr" | jq -r ".[0].NetworkSettings.Networks.[\"${COMPOSE_PROJECT_NAME}_mesh_b\"].IPAddress")
+
+    OUTPUT="${OUTPUT}${cntr}\t${name}\t${addr_router}\t${addr_mesh_a}\t${addr_mesh_b}\n"
+done
+
+echo -e "${OUTPUT//null/-}" | column -t -s $'\t'

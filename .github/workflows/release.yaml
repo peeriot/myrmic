@@ -1,0 +1,298 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  packages: read
+  contents: read
+
+concurrency:
+  group: myrmic-promote
+  cancel-in-progress: false
+
+env:
+  # The repository a release is handed over to. Overridable by a repository variable
+  # so an end-to-end run can be pointed at a throwaway target instead of the one
+  # customers see.
+  TARGET_REPO: ${{ vars.RELEASE_TARGET_REPO || 'peeriot/myrmic' }}
+
+  RCLONE_CONFIG_S3_TYPE: s3
+  RCLONE_CONFIG_S3_PROVIDER: Minio
+  RCLONE_CONFIG_S3_REGION: us-east-2
+  RCLONE_CONFIG_S3_ENDPOINT: https://minio.peeriot.intra
+
+jobs:
+  # Promotes an approved candidate. Its release packages were built alongside it from
+  # the same compile, so a promote copies packages and never rewrites one.
+  #
+  # Everything reversible runs first; the steps whose effects reach outside this
+  # repository run last and are marked below.
+  release:
+    if: github.repository != 'peeriot/myrmic' &&
+        !github.event.release.draft &&
+        startsWith(github.event.release.tag_name, 'myrmic/v')
+    runs-on: general
+    container:
+      image: "ghcr.io/peeriot/archiver:1.95.0-4"
+
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Checkout source repository
+        uses: actions/checkout@v6
+        with:
+          path: source
+          # Full history for the hand-over below, and all tags so the ship gate can
+          # tell whether this candidate is the newest one for its version.
+          fetch-depth: 0
+          persist-credentials: false # The push below authenticates with the app token instead
+
+      - name: Derive versions
+        id: version
+        shell: bash
+        run: |
+          ./source/.ci/release/version "${GITHUB_REF_NAME}" --parse-only
+
+      - name: Check the commit is on master
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Runs before anything is published, including to the internal package
+          # repository: a tag on an unreviewed branch must not reach the channel
+          # internal machines install from either.
+          #
+          # Git's push rules only require a descendant of the target's branch tip,
+          # which every feature branch cut from master satisfies, so being merged is
+          # checked here. It needs no credential and no network.
+          commit="$(git -C source rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          if ! git -C source merge-base --is-ancestor "$commit" origin/master; then
+              printf 'error: %s is not contained in master.\n' "$commit" >&2
+              printf '       A release is cut from a commit that has been merged;\n' >&2
+              printf '       anything else would publish unreviewed history.\n' >&2
+              exit 1
+          fi
+          printf '%s is contained in master\n' "$commit"
+
+      - name: Download release artifacts
+        shell: bash
+        env:
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          S3_PREFIX: ${{ steps.version.outputs.S3_PREFIX }}
+        run: |
+          set -euo pipefail
+          rclone copy "s3:${BUCKET}/${S3_PREFIX}/release/" release
+          rclone copy "s3:${BUCKET}/${S3_PREFIX}/candidate/" candidate
+          ls -l release candidate
+
+      - name: Ship gate
+        shell: bash
+        run: |
+          ./source/.ci/release/ship-gate "${GITHUB_REF_NAME}" \
+              "${{ steps.version.outputs.SOFTWARE_VERSION }}" release
+
+      - name: Verify candidate artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail fast. `publish-crates` verifies this half again before it publishes, but
+          # doing it here too catches a corrupt candidate before the irreversible mirror
+          # push, rather than after.
+          ./source/.ci/release/checksums verify candidate
+
+      - name: Publish release packages
+        shell: bash
+        env:
+          DEPLOY_USER: ${{ secrets.PACKAGE_DEPLOY_USER }}
+          DEPLOY_TOKEN: ${{ secrets.PACKAGE_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          ./source/.ci/release/publish-package release/*.deb release/*.rpm
+
+      - name: Verify release is indexed
+        shell: bash
+        run: |
+          ./source/.ci/release/verify-indexed "${{ steps.version.outputs.FINAL_VERSION }}"
+
+      # Deliberately the last thing before the irreversible block: it asks cargo whether
+      # the SDK crates can be published at all, so a promote that could never finish
+      # stops here rather than after the mirror has already been handed the release.
+      # The candidate build ran the same check, but the tree it ran on is not the tree
+      # this job holds, and a re-run can happen days later. Uploads nothing, needs no
+      # registry credential.
+      - name: Check the SDK crates can be published
+        shell: bash
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          set -euo pipefail
+          # The build image replaces crates-io with its internal mirror; packaging
+          # and publishing cannot use it, because it carries no crate that was never
+          # published. See .ci/release/publish-cargo-home.
+          CARGO_HOME="$(mktemp -d)"
+          export CARGO_HOME
+          ./source/.ci/release/publish-cargo-home "$CARGO_HOME"
+          cd source
+          cargo publish --dry-run --registry crates-io --locked \
+              -p myrmic-signal-layer-types -p myrmic-common \
+              -p myrmic-sdk-macros -p myrmic-sdk
+
+      # ---- from here on the effects reach outside this repository ----
+
+      # The target repository mirrors this one, so the release is handed over by pushing
+      # the tagged commit onto its default branch. Pushing instead of checking the target
+      # out and merging locally also covers a target repository that is still empty, where
+      # there would be no branch to check out and no HEAD to merge into.
+      - name: Fast-forward target repository
+        env:
+          GH_TOKEN: ${{ steps.setup.outputs.token }}
+        run: |
+          set -eu
+          git -C source push \
+              "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" \
+              "refs/tags/${GITHUB_REF_NAME}^{commit}:refs/heads/master"
+
+      - name: Create draft release in target repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.setup.outputs.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          # A draft until its assets are attached, so a release never exists without
+          # the packages it promises. An existing draft is reused so a re-run after a
+          # partial failure continues.
+          if gh release view --repo "${TARGET_REPO}" "${RELEASE_TAG}" >/dev/null 2>&1; then
+              printf 'release %s already exists, reusing it\n' "${RELEASE_TAG}"
+          else
+              sha="$(git -C source rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+              gh release create --repo "${TARGET_REPO}" --target "$sha" \
+                  --draft --generate-notes --title "${RELEASE_TAG}" "${RELEASE_TAG}"
+          fi
+
+      - name: Assert no crate package is a mirror artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The crate packages go to crates.io, never to the public release. Cheap, and
+          # before the irreversible upload.
+          [ -d release ] || { printf 'release/ is missing\n' >&2; exit 1; }
+          [ -n "$(ls -A release)" ] || { printf 'release/ is empty\n' >&2; exit 1; }
+          if find release -name '*.crate' -print -quit | grep -q .; then
+              printf 'a .crate reached the release half and would be published to the mirror\n' >&2
+              exit 1
+          fi
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.setup.outputs.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          # --clobber so a re-run replaces a partially uploaded set instead of failing.
+          gh release upload --repo "${TARGET_REPO}" --clobber "${RELEASE_TAG}" release/*
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.setup.outputs.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          gh release edit --repo "${TARGET_REPO}" --draft=false "${RELEASE_TAG}"
+
+  # Publishes the SDK crates from the candidate half that rode the RC. A separate job,
+  # approval-gated, and run after `release` has succeeded: GitHub evaluates
+  # `environment:` protection before a job starts, so putting the approval here means
+  # the reviewer sees the ship gate, the checksums and the mirror push already done -
+  # the last, irreversible step is the only one still ahead of them.
+  publish-crates:
+    needs: release
+    runs-on: general
+    environment: crates-io-release
+    # No cargo cache volume, deliberately (SR-05): a cache mounted into the job that
+    # holds the registry credential is writable by anything that runs in it. The cost
+    # is a cold resolve of the whole workspace on every promote. Do not "fix" it.
+    container:
+      # Tag-pinned, and that is a known gap: the job holds the registry credential, so
+      # a mutable tag means the image it runs in can change under it between releases.
+      # Pinning needs the digest, which needs registry-read access. Same tag the
+      # release job uses, so nothing regresses in the meantime.
+      image: "ghcr.io/peeriot/archiver:1.95.0-4"
+    steps:
+      - name: Setup
+        id: setup
+        uses: peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Derive versions
+        id: version
+        shell: bash
+        run: |
+          ./source/.ci/release/version "${GITHUB_REF_NAME}" --parse-only
+
+      - name: Download candidate artifacts
+        shell: bash
+        env:
+          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          BUCKET: ${{ vars.S3_BUCKET_NAME }}
+          S3_PREFIX: ${{ steps.version.outputs.S3_PREFIX }}
+        run: |
+          set -euo pipefail
+          rclone copy "s3:${BUCKET}/${S3_PREFIX}/candidate/" candidate
+
+      - name: Re-package the SDK crates
+        shell: bash
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          set -euo pipefail
+          # Rebuilt from the tagged source because `cargo publish` cannot upload a
+          # prepared .crate. Deliberately its own step: `cargo package` compiles, and
+          # nothing that compiles may run beside the registry credential.
+          # Same reason as the candidate build: packaging resolves the sibling
+          # crates through the registry they are destined for, and the internal
+          # mirror does not carry them.
+          CARGO_HOME="$(mktemp -d)"
+          export CARGO_HOME
+          ./source/.ci/release/publish-cargo-home "$CARGO_HOME"
+          cd source
+          cargo package --registry crates-io --locked --target-dir "${RUNNER_TEMP}/rebuild" \
+              -p myrmic-signal-layer-types -p myrmic-common \
+              -p myrmic-sdk-macros -p myrmic-sdk
+
+      - name: Publish crates to crates.io
+        shell: bash
+        env:
+          # Both spellings, from one secret. cargo takes the crates.io token from
+          # CARGO_REGISTRY_TOKEN, and the registry-specific form when a registry is
+          # named explicitly; which one it consults here could not be established
+          # without attempting a real upload, and finding out at the promote would
+          # mean finding out after the mirror hand-over.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRIES_CRATES_IO_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          set -euo pipefail
+          ./source/.ci/release/publish-crate candidate \
+              "${RUNNER_TEMP}/rebuild/package" \
+              "${{ steps.version.outputs.SOFTWARE_VERSION }}"

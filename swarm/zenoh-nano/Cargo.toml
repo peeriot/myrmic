@@ -1,0 +1,72 @@
+[package]
+name = "zenoh-nano"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["trouble-accept", "trouble-connect"]
+defmt = [
+    "defmt-or-log/defmt",
+    "dep:defmt",
+    "zenoh-protocol/defmt",
+    "embassy-sync/defmt",
+    "trouble-host?/defmt",
+    "heapless/defmt",
+]
+log = [
+    "defmt-or-log/log",
+    "dep:log",
+    "embassy-sync/log",
+    "trouble-host?/log",
+] # TODO: "zenoh-protocol/log"?
+getrandom-custom = ["getrandom/custom"]
+trouble-accept = ["trouble-host/peripheral"]
+trouble-connect = ["trouble-host/central", "trouble-host/scan"]
+tls = ["dep:embedded-tls"]
+
+[dependencies]
+defmt = { workspace = true, optional = true, features = ["alloc"] }
+defmt-or-log = { workspace = true }
+log = { workspace = true, optional = true }
+thiserror = { workspace = true, default-features = false }
+embassy-futures = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true }
+futures = { workspace = true }
+embedded-io-async = { workspace = true }
+embedded-tls = { workspace = true, optional = true }
+heapless = { workspace = true }
+portable-atomic = { workspace = true }
+rand_core = { workspace = true }
+getrandom = { workspace = true }
+bt-hci = { workspace = true }
+trouble-host = { workspace = true, optional = true, default-features = false, features = [
+    "gatt",
+    "derive",
+    "default-packet-pool",
+] }
+static_cell = { workspace = true }
+zenoh-buffers = { workspace = true }
+zenoh-codec = { workspace = true }
+zenoh-protocol = { workspace = true }
+
+[dev-dependencies]
+zenoh-nano = { workspace = true, features = ["log", "tls"] }
+embassy-executor = { workspace = true, features = [
+    "platform-std",
+    "executor-thread",
+    "log",
+] }
+embassy-time = { workspace = true, features = ["log", "std", "generic-queue-8"] }
+static_cell = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+edge-nal = { workspace = true }
+edge-nal-std = { workspace = true }
+critical-section = { workspace = true, features = ["std"] }
+bt-hci-linux = { version = "0.1", git = "https://github.com/embassy-rs/trouble", rev = "e1aff18291e466474752a3beea75004325e6e0ad" }
+async-compat = "0.2.5"
+embedded-tls = { workspace = true, features = ["std"] }

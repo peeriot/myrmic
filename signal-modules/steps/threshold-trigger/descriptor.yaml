@@ -1,0 +1,28 @@
+id: threshold-trigger
+category: processing-steps
+description: >
+  Edge-triggered threshold alarm. Emits one ThresholdAlarm on each transition into the
+  trigger region and nothing otherwise, neither while the input stays there nor when it
+  leaves, so there is no cleared event and a consumer cannot learn from this step when the
+  condition ends. Re-entering fires again, and with no hysteresis band or dwell time an
+  input dithering across the threshold re-fires on every crossing (use `hysteresis` where
+  that matters). `fire_below` picks the side: `false` (the default) makes the region
+  `value > threshold`, `true` makes it `value < threshold`. Both comparisons are strict, so
+  a sample equal to `threshold` never fires. The step starts inactive, so a first sample
+  already inside the region counts as a transition. The alarm carries the sample that fired
+  it and the configured threshold.
+inputs:
+  - name: value
+    type: f32
+outputs:
+  - name: alarm
+    type: ThresholdAlarm
+config_schema:
+  threshold:
+    scope: application
+    rust_type: f32
+    default: 0.0
+  fire_below:
+    scope: application
+    rust_type: bool
+    default: false

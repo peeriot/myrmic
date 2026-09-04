@@ -1,0 +1,44 @@
+id: ads1115
+category: sensor-drivers
+description: >
+  Texas Instruments ADS1115 16-bit 4-channel ADC over I2C.
+  Reads all four single-ended channels (AIN0-AIN3) and reports voltages.
+requires:
+  buses:
+    - transport: i2c
+outputs:
+  - name: ain0
+    type: f32
+    unit: V
+  - name: ain1
+    type: f32
+    unit: V
+  - name: ain2
+    type: f32
+    unit: V
+  - name: ain3
+    type: f32
+    unit: V
+config_schema:
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x48
+    description: "I2C address (ADDR: GND=0x48, VCC=0x49, SDA=0x4A, SCL=0x4B)"
+  fs_mv:
+    scope: application
+    rust_type: FullScale
+    default: Mv2048
+    # Variants: Mv256 | Mv512 | Mv1024 | Mv2048 | Mv4096 | Mv6144
+    description: "PGA full-scale range — lower range gives higher resolution at the cost of a smaller measurable input."
+  data_rate:
+    scope: application
+    rust_type: DataRate
+    default: Sps128
+    # Variants: Sps8 | Sps16 | Sps32 | Sps64 | Sps128 | Sps250 | Sps475 | Sps860
+    description: "Conversion data rate — higher rates are faster but noisier."
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 1000
+    description: Polling interval in milliseconds

@@ -1,0 +1,87 @@
+[package]
+name = "db"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+revision = ["dep:revision"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+uhlc = {workspace = true, features = ["std"]}
+postcard = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "time",
+    "sync",
+] }
+
+[dependencies]
+skey-macros = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+tempfile = { workspace = true }
+flume = { workspace = true, features = ["async"] }
+
+fjall = { workspace = true }
+
+postcard = { workspace = true }
+revision = { workspace = true, optional = true }
+
+sha2 = "0.10.9"
+thiserror = { workspace = true }
+skey = { workspace = true }
+
+db-commons = { workspace = true, features = ["models", "replica"] }
+
+dashmap = { workspace = true }
+rand = { workspace = true }
+
+uhlc = { workspace = true }
+uuid = { workspace = true, features = ["std", "v4", "v7"] }
+serde = { workspace = true, features = ["derive", "rc"] }
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
+tracing = { workspace = true }
+
+oxsdatatypes = { workspace = true }
+oxiri = { workspace = true }
+oxrdf = { workspace = true, features = [] }
+spareval = { workspace = true, features = ["sep-0002", "calendar-ext", "sparql-12"] }
+spargebra = { workspace = true, features = [] }
+
+siphasher = { version = "1.0.1" }
+rustc-hash = "2.1.1"
+
+educe = "0.6.0"
+tokio-util.workspace = true
+
+# Process-kill durability harness. `harness = false` because the orchestrator
+# re-execs this binary as cluster node workers; gated behind DB_DURABILITY=1.
+[[test]]
+name = "durability"
+harness = false
+
+[[bench]]
+name = "domain"
+harness = false
+
+[[bench]]
+name = "semantic"
+harness = false
+
+[[bench]]
+name = "replication"
+harness = false
+
+[[bench]]
+name = "tx"
+harness = false

@@ -1,0 +1,15 @@
+[package]
+name              = "cell-thermometer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish           = false
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk        = { workspace = true }
+myrmic-sdk-macros = { workspace = true, features = ["alloc"] }
+
+serde = { workspace = true }

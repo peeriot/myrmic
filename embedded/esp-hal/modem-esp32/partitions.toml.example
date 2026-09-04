@@ -1,0 +1,33 @@
+# Flash Partition Configuration (optional) Example
+#
+# Controls the split between the firmware (app) and the AOT XIP WASM module storage. This can be used to tune the
+# flash partitions to give more memory to either the firmware or the WASM storage.
+#
+# `modem-esp32`'s build.rs reads this file and generates:
+#   * the PartitionLayout injected into wasm-storage (where the AOT metadata + XIP regions live in flash)
+#   * an app-only ESP-IDF partition table (CSV) that is handed to espflash when using the cargo aliases (e.g. cargo
+#     run-c6)
+#
+# This file is OPTIONAL. If this file is missing, the firmware will fall back to per-chip defaults.
+# The values below reproduce that default.
+#
+# Sizes accept a K/M suffix ("2M", "1984K"), 0x-hex ("0x1F0000"), or a plain decimal byte count. All sizes must be
+# 64 KiB-aligned (a multiple of 0x10000, the flash/MMU page size), or the build fails.
+
+
+[partitions]
+
+# Firmware partition size (contains also bootloader partitions). If the linked firmware image grows
+# larger than this, espflash will refuse to flash it rather than silently
+# overwriting the AOT region.
+firmware_size = "6M"
+
+# AOT XIP module storage size — the largest AOT module that can be stored.
+# NOTE: AOT modules have and rely on stored metadata that is present as part of `aot_size`. This region is 64 KiB, which
+#       effectively means: biggest AOT module size = `aot_size` - 64K
+aot_size = "1M"
+
+# Total usable flash on the target device. Optional; defaults to 4 MB per chip.
+# Raise this (e.g. "8M") to use the full flash of a larger device — then you can grow firmware_size and/or aot_size
+# accordingly.
+flash_size = "8M"

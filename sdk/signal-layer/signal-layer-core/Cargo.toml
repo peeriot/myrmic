@@ -1,0 +1,25 @@
+[package]
+name              = "signal-layer-core"
+version.workspace = true
+edition.workspace = true
+license           = "MIT OR Apache-2.0"
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+signal-layer-types   = { workspace = true }
+heapless             = { workspace = true }
+critical-section     = { workspace = true }
+portable-atomic-util = { workspace = true }
+serde                = { workspace = true, default-features = false, features = ["derive"] }
+postcard             = { workspace = true }
+
+[dev-dependencies]
+# Host unit tests need a critical-section implementation for the crate's
+# `critical_section::with` calls. Use the std impl the rest of the workspace
+# already uses, so there is exactly one implementation in the link.
+critical-section = { workspace = true, features = ["std"] }
+postcard         = { workspace = true, features = ["use-std"] }
+
+[lints]
+workspace = true

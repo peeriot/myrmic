@@ -1,0 +1,72 @@
+PREFIX ex: <http://example.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?s
+    ?title
+    ?titulo
+    ?titre
+    ?age
+    ?height
+    ?salary
+    ?tau
+    ?pi
+    ?isActive
+    ?isManager
+    ?startDate
+    ?lastLogin
+    ?workHours
+    ?experience
+    ?birthYear
+    ?graduationMonth
+    ?favoriteMonth
+    ?birthday
+    ?anniversary
+    ?hexColor
+    ?avatar
+    ?portfolio
+    ?employeeId
+    ?performanceScore
+    ?debtBalance
+    ?vacationDays
+    ?overtimeHours
+    ?department
+    ?phoneNumber
+    ?bio
+WHERE {
+    ?s ex:name "Jane Smith" ;
+        ex:title ?title;
+        ex:titulo ?titulo;
+        ex:titre ?titre;
+        ex:age ?age;
+        ex:height ?height;
+        ex:salary ?salary;
+        ex:tau ?tau;
+        ex:pi ?pi;
+        ex:isActive ?isActive;
+        ex:isManager ?isManager;
+        ex:startDate ?startDate;
+        ex:lastLogin ?lastLogin;
+        ex:workHours ?workHours;
+        ex:experience ?experience;
+        ex:birthYear ?birthYear;
+        ex:graduationMonth ?graduationMonth;
+        ex:favoriteMonth ?favoriteMonth;
+        ex:birthday ?birthday;
+        ex:anniversary ?anniversary;
+        ex:hexColor ?hexColor;
+        ex:avatar ?avatar;
+        ex:portfolio ?portfolio;
+        ex:employeeId ?employeeId;
+        ex:performanceScore ?performanceScore;
+        ex:debtBalance ?debtBalance;
+        ex:vacationDays ?vacationDays;
+        ex:overtimeHours ?overtimeHours;
+        ex:department ?department;
+        ex:phoneNumber ?phoneNumber;
+        ex:bio ?bio;
+
+    FILTER (LANG(?title) = "en")
+    FILTER (DATATYPE(?salary) = xsd:decimal)
+    FILTER (?title = "Data Scientist"@en)
+    FILTER (?salary > "75000.50"^^xsd:decimal)
+}

@@ -1,0 +1,33 @@
+layout {
+    pane split_direction="Vertical" {
+        pane split_direction="Horizontal" {
+            pane {
+                name "Runtime"
+                cwd "."
+                command "../../target/debug/swarm"
+                args "./forward-data/swarm-config.jsonnet"
+            }
+        }
+
+        pane split_direction="Horizontal" {
+            pane {
+                name "SORG CTL"
+                cwd "./forward-data"
+                focus true
+            }
+            pane split_direction="Horizontal" {
+                pane {
+                    name "Publisher"
+                    cwd "."
+                    command "../../target/debug/publisher"
+                }
+                pane {
+                    name "Subscriber"
+                    cwd "."
+                    command "../../target/debug/subscriber"
+                }
+            }
+        }    
+
+    }
+}

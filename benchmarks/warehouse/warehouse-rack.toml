@@ -1,0 +1,86 @@
+# Full-scale config for the SSH-distributed rack deployment: 1 central + 5 zone + 10 object
+# hosts, driven from this workstation through an SSH tunnel to rack-node-1's zenoh port
+# (`test_framework::rack::provision` opens this tunnel itself; nothing to set up by hand).
+#
+# Run with:
+#   cargo run --release -p warehouse-benchmark -- --config benchmarks/warehouse/warehouse-rack-full.toml --load 5
+
+timeout = 3
+
+# The default completeness check (completeness_poll_interval_ms=500,
+# completeness_stable_rounds=2) declares a pass permanently "stalled" after
+# just ~1s without visible progress — calibrated for the local, single-process
+# benchmark where replication is effectively instant. On the rack, a scope's
+# offload drain can legitimately take several seconds to converge across real
+# hosts (see the jitter ranges up to 6s in swarm/plugins/db.rs's
+# drive_offload/notify path), so that ~1s window reads ordinary replication
+# lag as genuine loss and gives up before the mailbox has actually drained.
+# Widen both: a 2s poll times 8 stable rounds gives ~16s of true no-progress
+# before calling it stalled, comfortably past the worst-case offload jitter.
+drain_timeout = 40
+completeness_poll_interval_ms = 2000
+completeness_stable_rounds = 8
+output_dir = "warehouse-rack-full-report"
+
+[specialized]
+num_objects = 10
+num_zones = 5
+fan_out_strategy = "random"
+
+[specialized.rack]
+zenoh_connect = "tcp/127.0.0.1:17447"
+myrmic_path = "/home/peeriot/myrmic"
+# Pin a replica per cell scope before deploy, so a write finds a real holder
+# instead of falling back to `any_node` — which sorts node ids and pops the max,
+# putting every scope in the mesh on one host. Without this the funnel also
+# *hides* stale cross-scope reads, because the node every transaction lands on
+# is the node deploy wrote to, so its `sorg` view is always fresh.
+preallocate_replicas = true
+
+[specialized.rack.central]
+host = "peeriot@rack-node-1.peeriot.intra"
+
+[[specialized.rack.zones]]
+host = "peeriot@rack-node-2.peeriot.intra"
+
+[[specialized.rack.zones]]
+host = "peeriot@rack-node-3.peeriot.intra"
+
+[[specialized.rack.zones]]
+host = "peeriot@rack-node-4.peeriot.intra"
+
+[[specialized.rack.zones]]
+host = "peeriot@rack-node-5.peeriot.intra"
+
+[[specialized.rack.zones]]
+host = "peeriot@rack-node-6.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-7.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-8.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-9.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-10.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-11.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-12.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-13.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-14.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-15.peeriot.intra"
+
+[[specialized.rack.objects]]
+host = "peeriot@rack-node-16.peeriot.intra"

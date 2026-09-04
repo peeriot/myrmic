@@ -1,0 +1,24 @@
+# The crate-root example of `myrmic-sdk`: `src/lib.rs` is included verbatim
+# into the SDK's front-page docs via `include_str!`, and compiled for wasm32
+# by `.ci/check/wasm` like every fixture — so the example cannot rot.
+# Keep it minimal; edits here change the rendered crate documentation.
+[package]
+name = "cell-docs-counter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.myrmic]
+heap_size = 65_536
+
+[lib]
+crate-type = ["rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk = { workspace = true }
+
+serde = { workspace = true }

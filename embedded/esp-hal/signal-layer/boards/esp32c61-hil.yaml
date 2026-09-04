@@ -1,0 +1,46 @@
+# Board manifest for the ESP32-C61 signal-layer HIL rig.
+#
+# ESP32-C61-DevKitC-1 wiring (GPIO23 = SCL, GPIO24 = SDA on J3), the same
+# breadboard the C5 devkit uses. Mirrors the C6 `esp32c6-hil` device set so the
+# `hil-tests` pipeline builds identically across chips:
+#   Populated:      BME280 (0x76), VEML7700 (0x10).
+#   NOT populated:  CCS811 (0x5A) — stays health `Down` for the health assertion.
+#   Synthetic:      `sim` — sim-source, bound to i2c0 for codegen symmetry,
+#                   never touches the bus; emits a deterministic ramp.
+
+id: esp32c61-hil
+chip: esp32c61
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 23
+      sda: 24
+    freq_khz: 400
+
+gpios:
+  general_purpose: [0, 1, 2, 25, 26, 27, 28, 29]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76
+
+  - id: veml7700
+    driver: veml7700
+    bus: i2c0
+
+  - id: ccs811
+    driver: ccs811
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x5A
+    # Intentionally NOT populated — drives the driver-health `Down` assertion.
+
+  - id: sim
+    driver: sim-source
+    bus: i2c0
+    # Synthetic source: bound to i2c0 for codegen symmetry, bus never touched.

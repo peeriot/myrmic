@@ -1,0 +1,27 @@
+[package]
+name              = "esp-heap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+esp32c5  = ["esp-hal/esp32c5"]
+esp32c6  = ["esp-hal/esp32c6"]
+esp32c61 = ["esp-hal/esp32c61"]
+# Emit a boot-time heap-size log line (paired with the firmware `report` feature).
+report = []
+
+[dependencies]
+log = { workspace = true }
+
+# esp-alloc / esp-hal only build for the embedded target; the pure budget
+# arithmetic (and its host tests) needs neither, so gate them to `target_os =
+# "none"` and the crate stays host-testable.
+[target.'cfg(target_os = "none")'.dependencies]
+esp-alloc = { workspace = true }
+esp-hal   = { workspace = true, features = ["unstable"] }

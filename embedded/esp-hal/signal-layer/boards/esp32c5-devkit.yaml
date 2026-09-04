@@ -1,0 +1,48 @@
+# Board manifest for the ESP32-C5-DevKitC-1.
+#
+# Wiring: GPIO23 = SCL, GPIO24 = SDA, both on the J3 header. The C61 devkit
+# manifest uses the same pair, so one breadboard serves both boards.
+#
+# Populated on the breadboard: BME280 (0x76), VEML7700 (0x10).
+# Declared but NOT populated:  CCS811 (0x5A) — intentionally absent so its
+#   source stays in the health `Down` state, which makes driver-health
+#   reporting observable without unplugging a working sensor.
+
+id: esp32c5-devkit
+chip: esp32c5
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 23
+      sda: 24
+    freq_khz: 400
+
+gpios:
+  # Pins available for non-bus use. The C5 runtime layout exposes GPIO0, 1, 6,
+  # 8, 9, 10, 23 and 24; GPIO23/24 carry the bus above, leaving the six here.
+  # The devkit breaks out more pins than the layout exposes, but pins outside
+  # the layout cannot be reached whatever this list says. Notably absent:
+  # GPIO11/12 (U0TXD/U0RXD), GPIO13/14 (USB), GPIO16-22 (SPI flash and PSRAM),
+  # and GPIO27 (RGB LED).
+  general_purpose: [0, 1, 6, 8, 9, 10]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76   # SDO pulled to GND
+
+  - id: veml7700
+    driver: veml7700
+    bus: i2c0
+    # VEML7700 has a fixed address (0x10); no hardware config needed.
+
+  - id: ccs811
+    driver: ccs811
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x5A   # ADDR tied to GND
+    # `nint` is optional; this device is unpopulated, so no pin is claimed.

@@ -1,0 +1,46 @@
+id: wsen-itds
+category: sensor-drivers
+description: >
+  Würth Elektronik WSEN-ITDS 3-axis MEMS accelerometer over I2C.
+requires:
+  buses:
+    - transport: i2c
+outputs:
+  - name: accel_x
+    type: f32
+    unit: g
+  - name: accel_y
+    type: f32
+    unit: g
+  - name: accel_z
+    type: f32
+    unit: g
+config_schema:
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x18
+    description: "I2C address (SA0 to GND=0x18, SA0 to VDD=0x19)"
+  full_scale_g:
+    scope: application
+    rust_type: FullScale
+    default: G2
+    # Variants: G2 | G4 | G8 | G16
+    description: "Full-scale measurement range — lower range gives higher resolution per count."
+  odr:
+    scope: application
+    rust_type: Odr
+    default: Hz100
+    # Variants: PowerDown | Hz1_6 | Hz12_5 | Hz25 | Hz50 | Hz100 | Hz200 | Hz400 | Hz800 | Hz1600
+    description: "Output data rate — how often the sensor produces a new sample."
+  power_mode:
+    scope: application
+    rust_type: PowerMode
+    default: Normal
+    # Variants: Low | Normal | High
+    description: "Power/resolution mode — trades noise and resolution for current consumption."
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 100
+    description: Polling interval in milliseconds

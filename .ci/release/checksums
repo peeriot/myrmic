@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# Writes and verifies the checksum manifest for an artifact directory.
+#
+# Usage:
+#   .ci/release/checksums write  <dir>
+#   .ci/release/checksums verify <dir>
+#
+# `verify` compares the file set as well as the contents. `sha256sum -c` confirms
+# only the files it was told about, so an unlisted file would ride along with
+# whatever ships the directory.
+#
+# What it defends against is narrow: a partial upload, and a stray file dropped into
+# the artifact prefix. The manifest lives in the same prefix as the artifacts it
+# describes, so anyone who can replace an artifact can rewrite the manifest too.
+
+set -euo pipefail
+
+MANIFEST=SHA256SUMS
+
+# Artifact names are built from a package version, so anything outside this set was
+# not produced by the pipeline. Rejecting it up front also keeps the plain
+# newline-separated lists below unambiguous.
+NAME_RE='^[A-Za-z0-9._~+-]+$'
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$#" -eq 2 ] || die "usage: $0 write|verify <dir>"
+ACTION="$1"
+DIR="$2"
+[ -d "$DIR" ] || die "no such directory: $DIR"
+
+cd "$DIR"
+
+# Every entry has to be a regular file with a plausible name, or the manifest cannot
+# describe the directory truthfully - a subdirectory, for instance, is invisible to
+# sha256sum but is still uploaded and still shipped.
+check_entries() {
+    local entry name
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        name="${entry#./}"
+        [ "$name" = "$MANIFEST" ] && continue
+        [ -f "$entry" ] || die "$DIR contains '$name', which is not a regular file."
+        [[ "$name" =~ $NAME_RE ]] || die "$DIR contains '$name', which the pipeline did not produce."
+    done <<<"$(find . -mindepth 1 -maxdepth 1)"
+}
+
+# The artifact names, one per line, manifest excluded.
+list_files() {
+    find . -mindepth 1 -maxdepth 1 -type f ! -name "$MANIFEST" -printf '%P\n' | sort
+}
+
+case "$ACTION" in
+    write)
+        check_entries
+        files="$(list_files)"
+        [ -n "$files" ] || die "$DIR holds no artifacts; refusing to write an empty manifest."
+        printf '%s\n' "$files" | xargs sha256sum >"$MANIFEST"
+        printf 'wrote %s\n\n' "$MANIFEST"
+        cat "$MANIFEST"
+        ;;
+
+    verify)
+        [ -s "$MANIFEST" ] ||
+            die "no usable $MANIFEST in $DIR; refusing to use artifacts whose integrity
+       cannot be checked."
+        check_entries
+
+        printf '\n\n--== Verify Contents ==--\n\n'
+        sha256sum -c --strict "$MANIFEST" || die "artifact contents do not match $MANIFEST."
+
+        printf '\n\n--== Verify File Set ==--\n\n'
+        recorded="$(cut -d' ' -f3- "$MANIFEST" | sort)"
+        present="$(list_files)"
+        if [ "$recorded" != "$present" ]; then
+            printf 'recorded:\n%s\n\npresent:\n%s\n' "$recorded" "$present" >&2
+            die "$DIR does not hold exactly the files $MANIFEST records."
+        fi
+        printf 'exactly the recorded set\n'
+        ;;
+
+    *)
+        die "usage: $0 write|verify <dir>"
+        ;;
+esac

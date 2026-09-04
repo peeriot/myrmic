@@ -1,0 +1,23 @@
+id: gpio-output
+category: actuators
+description: >
+  Digital on/off GPIO output (relay, LED, valve, …). Consumes a DigitalState
+  Outlet and drives a single GPIO high/low, honouring active-low wiring.
+writes:
+  type: DigitalState
+  mode: digital
+requires:
+  # The output pin is wired via the manifest device's `pins.out`. It reuses the
+  # optional_pins mechanism; codegen requires it to be present for this driver.
+  optional_pins: [out]
+config_schema:
+  active_low:
+    scope: hardware
+    rust_type: bool
+    default: false
+    description: "When true, the pin is driven low to assert (active-low wiring)."
+  min_switch_interval_ms:
+    scope: hardware
+    rust_type: u64
+    default: 0
+    description: "Protective floor: minimum ms between physical switches (0 = off)."

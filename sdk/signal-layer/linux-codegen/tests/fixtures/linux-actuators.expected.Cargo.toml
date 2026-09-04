@@ -1,0 +1,32 @@
+[workspace]
+
+[package]
+name    = "linux_actuators_pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "linux_actuators_pipeline"
+path = "src/main.rs"
+
+[dependencies]
+signal-layer-ipc      = { path = "../signal-layer-ipc" }
+signal-layer-linux-rt = { path = "../../../swarm/signal-layer/signal-layer-linux-rt" }
+linux-i2c-shim        = { path = "../../../swarm/signal-layer/linux-i2c-shim" }
+linux-gpio-shim       = { path = "../../../swarm/signal-layer/linux-gpio-shim" }
+signal-layer-core     = { path = "../signal-layer-core" }
+signal-layer-types    = { package = "myrmic-signal-layer-types", path = "../signal-layer-types" }
+tokio                 = { version = "1", features = ["full"] }
+tokio-stream          = { version = "0.1", features = ["time"] }
+critical-section      = { version = "1", features = ["std"] }
+log                   = { version = "0.4", default-features = false }
+env_logger            = "0.11"
+bme280_driver = { path = "../../../signal-modules/drivers/bme280", package = "bme280-driver" }
+gpio_output_driver = { path = "../../../signal-modules/drivers/gpio-output", package = "gpio-output-driver" }
+pwm_output_driver = { path = "../../../signal-modules/drivers/pwm-output", package = "pwm-output-driver" }
+hysteresis = { path = "../../../signal-modules/steps/hysteresis", package = "hysteresis" }
+fan_curve = { path = "../../../signal-modules/steps/fan-curve", package = "fan-curve" }
+
+[dev-dependencies]
+tokio    = { version = "1", features = ["full"] }
+tempfile = "3"

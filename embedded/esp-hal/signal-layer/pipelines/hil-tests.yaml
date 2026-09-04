@@ -1,0 +1,117 @@
+# Pipeline for the signal-layer hardware-in-the-loop (HIL) test suite.
+#
+# Combines three test surfaces in one firmware image:
+#   * real sensors  (bme280, light)   → range / liveness assertions
+#   * absent sensor (air_quality)     → deterministic health `Down` assertion
+#   * synthetic src (sim)             → deterministic value / step / alarm
+#
+# Read from the host via the `tap-bridge` cell (retained taps by command,
+# event taps republished over Zenoh). See embedded/hil-tests.
+
+pipeline:
+  id: hil-tests
+
+sources:
+  # Real — physically wired on the breadboard.
+  - id: bme280
+    device: bme280
+    config:
+      sample_interval_ms: 1000
+      osrs_t: X4
+      osrs_h: X4
+      filter: X4
+
+  - id: light
+    device: veml7700
+    config:
+      sample_interval_ms: 2000
+      gain: X2
+      integration_time: Ms400
+
+  # Declared but NOT populated → stays in health `Down`; its retained taps read
+  # empty. Drives the deterministic health test. Fast 1 s cadence so the `Down`
+  # event appears quickly (the sensor is absent, so `meas_mode` never matters —
+  # init fails before the sensor is ever reached).
+  - id: air_quality
+    device: ccs811
+    config:
+      sample_interval_ms: 1000
+      meas_mode: Every10s
+
+  # Synthetic deterministic ramp: 0, 10, 20, …, 100, 0, … every 500 ms. The
+  # threshold-trigger below fires on the first sample above 50 — i.e. 60, since
+  # the trigger is strict `>` — deterministically each cycle.
+  - id: sim
+    device: sim
+    config:
+      sample_interval_ms: 500
+      start: 0.0
+      step: 10.0
+      max: 100.0
+
+steps:
+  # Value-producing step over a REAL source — liveness/range assertion.
+  - id: avg_temp
+    op: moving-average
+    input: bme280.temperature
+    config:
+      window: 8
+
+  # Event-emitting step over the SYNTHETIC source — deterministic alarm.
+  # Rising-edge fires once per ramp cycle at value 60 (first sample above the
+  # strict `>` threshold of 50).
+  - id: sim_alarm
+    op: threshold-trigger
+    input: sim.value
+    config:
+      threshold: 50.0
+      fire_below: false
+
+taps:
+  # --- Real sensor retained taps ---
+  - name: temperature
+    kind: retained
+    type: f32
+    source: bme280.temperature
+
+  - name: humidity
+    kind: retained
+    type: f32
+    source: bme280.humidity
+
+  - name: pressure
+    kind: retained
+    type: f32
+    source: bme280.pressure
+
+  - name: avg_temperature
+    kind: retained
+    type: f32
+    source: avg_temp
+
+  - name: lux
+    kind: retained
+    type: f32
+    source: light.lux
+
+  # --- Absent sensor retained taps (read empty → health test) ---
+  - name: eco2
+    kind: retained
+    type: f32
+    source: air_quality.eco2
+
+  - name: tvoc
+    kind: retained
+    type: f32
+    source: air_quality.tvoc
+
+  # --- Synthetic deterministic taps ---
+  - name: sim_value
+    kind: retained
+    type: f32
+    source: sim.value
+
+  - name: sim_alarm
+    kind: event
+    type: ThresholdAlarm
+    source: sim_alarm

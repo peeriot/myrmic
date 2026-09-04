@@ -1,0 +1,9 @@
+Peeriot Legal Texts
+
+This identifier applies to legal instruments published in this repository,
+such as the Contributor License Agreement, the Exception Scope and the
+authoritative interface definitions referenced by the Myrmic Exception.
+
+Everyone is permitted to copy and distribute verbatim copies of these
+documents. Changing them is not allowed, except where the respective
+document itself expressly provides otherwise.

@@ -1,0 +1,15 @@
+id: max-value
+category: processing-steps
+description: >
+  Running maximum: keeps the largest value seen so far and emits it on every sample, so
+  the output is monotonically non-decreasing. Seeded at negative infinity, so the very
+  first sample is always its own maximum: there is no warm-up, and the step always emits,
+  never nothing. Unconfigurable and time-independent, with no window, decay or reset, so a
+  single outlier pins the output high for the lifetime of the pipeline.
+inputs:
+  - name: value
+    type: f32
+outputs:
+  - name: max
+    type: f32
+config_schema: {}

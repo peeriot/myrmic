@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+#
+# Parses a release tag, derives every version string the release pipeline needs,
+# and checks the tag against the repository state.
+#
+# Usage:
+#   .ci/release/version <tag> [--parse-only]
+#
+#   (no flag)      full check: grammar, workspace version, no existing release
+#   --parse-only   grammar and derivation only; no cargo, no network
+#
+# Emits KEY=VALUE on stdout, and appends the same lines to $GITHUB_OUTPUT when set.
+#
+# The check that the artifact store has no objects for this tag yet is not here: it
+# needs the object-store credentials, which the workflow scopes to the steps that
+# own them.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+MIRROR_REPO="peeriot/myrmic"
+
+# Exactly one tag form is a valid release trigger. Leading zeros in the candidate
+# number are rejected because dpkg considers 0.2.1~rc007 and 0.2.1~rc7 EQUAL, so a
+# typo would produce two builds that apt treats as one version.
+TAG_RE='^myrmic/v([0-9]+\.[0-9]+\.[0-9]+)-rc([1-9][0-9]*)$'
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    die "usage: $0 <tag> [--parse-only]"
+}
+
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
+
+TAG="$1"
+MODE="${2:-full}"
+
+case "$MODE" in
+    --parse-only) ;;
+    full) [ "$#" -eq 1 ] || usage ;;
+    *) usage ;;
+esac
+
+printf '\n\n--== Parse Tag ==--\n\n'
+
+if [[ ! "$TAG" =~ $TAG_RE ]]; then
+    printf 'tag: %s\n' "$TAG" >&2
+    die "not a release tag. The only valid form is myrmic/v<X.Y.Z>-rc<N>, with N a
+       positive integer without leading zeros, e.g. myrmic/v0.2.1-rc1. A release
+       is created by promoting an approved candidate, never by pushing a tag."
+fi
+
+SOFTWARE_VERSION="${BASH_REMATCH[1]}"
+RC_NUMBER="${BASH_REMATCH[2]}"
+
+# The tilde sorts before everything, including the empty string, so a candidate
+# sorts below its own release. A hyphen would sort it above.
+RC_VERSION="${SOFTWARE_VERSION}~rc${RC_NUMBER}"
+
+# No Debian revision on a release: a packaging-only fix means a new patch version.
+FINAL_VERSION="${SOFTWARE_VERSION}"
+
+RELEASE_TAG="myrmic/v${SOFTWARE_VERSION}"
+
+# Keyed by tag, and split into the two halves that are distributed separately so
+# nothing downstream reads a package's half out of its name.
+S3_PREFIX="myrmic/packages/${SOFTWARE_VERSION}-rc${RC_NUMBER}"
+
+printf 'tag              %s\n' "$TAG"
+printf 'software version %s\n' "$SOFTWARE_VERSION"
+printf 'candidate        %s\n' "$RC_VERSION"
+printf 'release          %s\n' "$FINAL_VERSION"
+printf 'release tag      %s\n' "$RELEASE_TAG"
+printf 'artifact prefix  %s\n' "$S3_PREFIX"
+
+if [ "$MODE" != "--parse-only" ]; then
+    printf '\n\n--== Check: Workspace Version ==--\n\n'
+
+    # The same value cargo deb and cargo sbom will use. cargo omits the "name@" part
+    # whenever the package name equals its directory name, which holds for every
+    # crate here, so the class must accept both '@' and '#'.
+    #
+    # --locked because this is the first cargo invocation of a release: re-resolving
+    # dependencies here would rewrite the lock file the build then builds from.
+    workspace_version="$(cargo pkgid --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+        -p myrmic-cli | sed -E 's/.*[@#]//')"
+    printf 'workspace version %s\n' "$workspace_version"
+
+    if [ "$workspace_version" != "$SOFTWARE_VERSION" ]; then
+        die "tag says ${SOFTWARE_VERSION}, [workspace.package] version says ${workspace_version}.
+       A release needs a release-prep commit that sets the workspace version to the
+       version being cut."
+    fi
+    printf 'match\n'
+
+    printf '\n\n--== Check: Exception Scope Version ==--\n\n'
+
+    # EXCEPTION-SCOPE.md must identify the Official Release by version number (Myrmic
+    # Exception, Section 1.6), and its header is the only place in that file that states
+    # one. Nothing else verifies it, so without this check a release could ship a legal
+    # instrument naming a different release than the one being cut.
+    #
+    # Fail closed: a missing, duplicated or unparseable anchor is never a pass.
+    SCOPE_FILE="$REPO_ROOT/EXCEPTION-SCOPE.md"
+    SCOPE_RE='^\*\*Official Release:\*\* Myrmic [0-9]+\.[0-9]+\.[0-9]+$'
+
+    [ -f "$SCOPE_FILE" ] || die "EXCEPTION-SCOPE.md not found at ${SCOPE_FILE}."
+
+    scope_anchors="$(grep -cE "$SCOPE_RE" "$SCOPE_FILE" || true)"
+    if [ "$scope_anchors" != "1" ]; then
+        die "EXCEPTION-SCOPE.md has ${scope_anchors} release anchors, expected exactly one line
+       reading '**Official Release:** Myrmic <X.Y.Z>'. That line is what makes the file a
+       valid Exception Scope for a release."
+    fi
+
+    scope_version="$(grep -E "$SCOPE_RE" "$SCOPE_FILE" | sed -E 's/.* Myrmic //')"
+    printf 'exception scope version %s\n' "$scope_version"
+
+    if [ "$scope_version" != "$SOFTWARE_VERSION" ]; then
+        die "tag says ${SOFTWARE_VERSION}, EXCEPTION-SCOPE.md says ${scope_version}.
+       The release-prep commit must bump the Official Release line in EXCEPTION-SCOPE.md
+       along with the workspace version."
+    fi
+    printf 'match\n'
+fi
+
+if [ "$MODE" = "full" ]; then
+    printf '\n\n--== Check: Existing Release ==--\n\n'
+
+    # Fail closed. Prove the mirror is actually reachable BEFORE interpreting a 404
+    # as "this version has not shipped": a token without access to the mirror also
+    # answers 404, which would silently turn this check into a no-op.
+    if ! gh api "repos/${MIRROR_REPO}" --silent >/dev/null 2>&1; then
+        die "cannot reach ${MIRROR_REPO}. This check is fail-closed: it needs a token
+       with read access to the mirror, which is a private repository, so the
+       per-repository default token is not enough."
+    fi
+
+    # The tag contains a slash; encoding it keeps the route unambiguous. Both forms
+    # answer alike today, so this is for clarity rather than correctness.
+    encoded_tag="myrmic%2Fv${SOFTWARE_VERSION}"
+    status="$(gh api --include "repos/${MIRROR_REPO}/releases/tags/${encoded_tag}" 2>/dev/null |
+        head -1 | awk '{print $2}')" || true
+
+    case "$status" in
+        404)
+            printf 'no release for %s in %s\n' "$RELEASE_TAG" "$MIRROR_REPO"
+            ;;
+        200)
+            die "${MIRROR_REPO} already has a release for ${RELEASE_TAG}. A defect in a
+       shipped release becomes the next patch version, not another candidate for
+       the same one."
+            ;;
+        "")
+            die "could not query ${MIRROR_REPO} for ${RELEASE_TAG}; refusing to guess. An
+       unreachable mirror is never treated as a pass."
+            ;;
+        *)
+            die "unexpected HTTP ${status} querying ${MIRROR_REPO} for ${RELEASE_TAG}. Only a
+       genuine 404 means this version has not shipped."
+            ;;
+    esac
+fi
+
+printf '\n\n--== Output ==--\n\n'
+
+emit() {
+    printf 'SOFTWARE_VERSION=%s\n' "$SOFTWARE_VERSION"
+    printf 'RC_VERSION=%s\n' "$RC_VERSION"
+    printf 'FINAL_VERSION=%s\n' "$FINAL_VERSION"
+    printf 'RELEASE_TAG=%s\n' "$RELEASE_TAG"
+    printf 'S3_PREFIX=%s\n' "$S3_PREFIX"
+}
+
+emit
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    emit >>"$GITHUB_OUTPUT"
+fi

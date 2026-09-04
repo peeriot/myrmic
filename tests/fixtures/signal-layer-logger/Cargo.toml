@@ -1,0 +1,17 @@
+[package]
+name = "signal-layer-logger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.myrmic]
+heap_size = 8_192
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk        = { workspace = true }
+myrmic-sdk-macros = { workspace = true }
+serde           = { workspace = true }

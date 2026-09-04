@@ -1,0 +1,15 @@
+layout {
+    pane split_direction="Vertical" {
+        pane {
+            name "Runtime"
+            command "../../target/debug/swarm"
+            args "./swarm-config.jsonnet"
+        }
+
+        pane {
+            name "cell-ctl"
+            cwd "./workspace"
+            focus true
+        }
+    }
+}

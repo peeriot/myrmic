@@ -1,0 +1,7 @@
+# Named so the nest lands at a fixed path; without it the app name — and the
+# nest with it — is the tempdir the test builds in.
+name: my-app
+
+classes:
+  - id: my-cell
+    build: my-cell/Cargo.toml

@@ -1,0 +1,37 @@
+id: gpio-output-feedback
+category: actuators
+description: >
+  Hybrid digital output with intrinsic feedback: drives a relay/output on the
+  `out` pin (consuming a DigitalState Outlet) AND reads the device's real state
+  from a separate `feedback` input pin (e.g. a relay's auxiliary contact). The
+  status comes only from the real pin read — never inferred from the command
+  write (SDS A1 / OUT-09).
+writes:
+  type: DigitalState
+  mode: digital
+# The "produces" side: status fields read back from the device, published as
+# taps via `taps: { source: <outlet>.contact }`. The reserved `<outlet>.error`
+# tap (OutletFault) is available on any output driver.
+outputs:
+  - name: contact
+    type: bool
+    unit: ""
+requires:
+  # `out` is the driven output; every other pin is a feedback input.
+  optional_pins: [out, feedback]
+config_schema:
+  active_low:
+    scope: hardware
+    rust_type: bool
+    default: false
+    description: "When true, the pin is driven low to assert (active-low wiring)."
+  min_switch_interval_ms:
+    scope: hardware
+    rust_type: u64
+    default: 0
+    description: "Protective floor: minimum ms between physical switches (0 = off)."
+  feedback_active_low:
+    scope: hardware
+    rust_type: bool
+    default: false
+    description: "When true, the feedback line is active-low (low = asserted); contact is inverted."

@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+#
+# Builds the candidate and release packages for myrmic-cli from one compile.
+#
+# Usage:
+#   .ci/release/package <candidate-version> <release-version> <out-dir>
+#
+# Produces <out-dir>/candidate/ and <out-dir>/release/, each holding a deb, a debug
+# deb, two RPMs, two SBOM documents and a checksum manifest.
+#
+# Both halves wrap the same program because both packaging runs use the artifacts of
+# a single compile. Every assertion below is there to keep that true, so that
+# approving a candidate can copy the release packages rather than rewrite the
+# candidate's.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+BIN_PATH=./usr/bin/myrmic
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$#" -eq 3 ] || die "usage: $0 <candidate-version> <release-version> <out-dir>"
+RC_VERSION="$1"
+FINAL_VERSION="$2"
+OUT="$3"
+
+cd "$REPO_ROOT"
+mkdir -p "$OUT/candidate" "$OUT/release"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+printf '\n\n--== Package ==--\n\n'
+
+collect() { # collect <version> <dir>
+    mv "target/debian/myrmic-cli_${1}_amd64.deb" "$2/"
+    # cargo deb emits .ddeb; the package repository and alien both want .deb.
+    mv "target/debian/myrmic-cli-dbgsym_${1}_amd64.ddeb" \
+        "$2/myrmic-cli-dbgsym_${1}_amd64.deb"
+}
+
+# Each packaging run empties target/debian before it writes, so its output has to be
+# collected before the next one starts. --no-build reuses the compile, which lives in
+# target/release and is untouched by that.
+cargo deb -p myrmic-cli --maintainer "Peeriot GmbH" --dbgsym \
+    --deb-version "$RC_VERSION"
+collect "$RC_VERSION" "$OUT/candidate"
+
+cargo deb -p myrmic-cli --maintainer "Peeriot GmbH" --dbgsym --no-build \
+    --deb-version "$FINAL_VERSION"
+collect "$FINAL_VERSION" "$OUT/release"
+
+printf '\n\n--== Assert Payload Identity ==--\n\n'
+
+member_sha() { # member_sha <deb> <member>
+    dpkg-deb --fsys-tarfile "$1" | tar -xO -f - "$2" | sha256sum | cut -d' ' -f1
+}
+
+rc_program="$(member_sha "$OUT/candidate/myrmic-cli_${RC_VERSION}_amd64.deb" "$BIN_PATH")"
+release_program="$(member_sha "$OUT/release/myrmic-cli_${FINAL_VERSION}_amd64.deb" "$BIN_PATH")"
+printf 'program  %s\n         %s\n' "$rc_program" "$release_program"
+[ "$rc_program" = "$release_program" ] ||
+    die "the candidate and release packages wrap different programs. They must come
+       from one compile, so approving a candidate ships what was tested."
+
+# Additive over the program hash: if a packaging run ever stripped its input in
+# place, the second run's program would still match while its symbols came out
+# empty, which the program comparison cannot see.
+rc_symbols="$(dpkg-deb --fsys-tarfile \
+    "$OUT/candidate/myrmic-cli-dbgsym_${RC_VERSION}_amd64.deb" | sha256sum | cut -d' ' -f1)"
+release_symbols="$(dpkg-deb --fsys-tarfile \
+    "$OUT/release/myrmic-cli-dbgsym_${FINAL_VERSION}_amd64.deb" | sha256sum | cut -d' ' -f1)"
+printf 'symbols  %s\n         %s\n' "$rc_symbols" "$release_symbols"
+[ "$rc_symbols" = "$release_symbols" ] ||
+    die "the candidate and release debug packages carry different symbols."
+
+printf '\n\n--== Assert Control Fields ==--\n\n'
+
+# Two independent packaging runs could in principle resolve dependencies
+# differently, so every control field has to match once the version is taken out.
+#
+# Both version strings are masked in both files rather than whole fields being
+# blanked: the version turns up in more fields than it is obvious from
+# (myrmic-cli-dbgsym carries it in Recommends and in Description), and masking it
+# symmetrically means a field that happens to contain either version cannot produce
+# a difference in one file that the other does not have.
+escape_re() { printf '%s' "$1" | sed 's/[.[\*^$()+?{}|]/\\&/g'; }
+RC_RE="$(escape_re "$RC_VERSION")"
+FINAL_RE="$(escape_re "$FINAL_VERSION")"
+
+# The candidate version is substituted first because the release version is a prefix
+# of it.
+control() {
+    dpkg-deb -f "$1" |
+        sed -E -e "s/${RC_RE}/@VERSION@/g" -e "s/${FINAL_RE}/@VERSION@/g"
+}
+for name in myrmic-cli myrmic-cli-dbgsym; do
+    if ! diff <(control "$OUT/candidate/${name}_${RC_VERSION}_amd64.deb") \
+        <(control "$OUT/release/${name}_${FINAL_VERSION}_amd64.deb"); then
+        die "${name} control fields differ beyond the version."
+    fi
+    printf '%s ok\n' "$name"
+done
+
+printf '\n\n--== Assert Reported Version ==--\n\n'
+
+# Catches a compiled-in version that disagrees with the package it ships in, and a
+# build that detected no source revision - build.rs only warns about that, and a
+# program without one cannot scaffold a project.
+dpkg-deb --fsys-tarfile "$OUT/release/myrmic-cli_${FINAL_VERSION}_amd64.deb" |
+    tar -xO -f - "$BIN_PATH" >"$WORK/myrmic"
+chmod +x "$WORK/myrmic"
+reported="$("$WORK/myrmic" --version)"
+printf 'myrmic --version -> %s\n' "$reported"
+case "$reported" in
+    *"(unknown)"*) die "the program reports an unknown revision, so no source revision
+       was detected at build time." ;;
+    *"$FINAL_VERSION"*) printf 'ok\n' ;;
+    *) die "the program does not report ${FINAL_VERSION}." ;;
+esac
+
+printf '\n\n--== SBOM ==--\n\n'
+
+# The SBOM describes the software, and the candidate and the release are the same
+# software, so one pair is generated and copied into both halves under the software
+# version. Naming it after a package version would make the file name disagree with
+# its own contents.
+cargo sbom --cargo-package myrmic-cli --output-format spdx_json_2_3 >"$WORK/sbom.spdx.json"
+cargo sbom --cargo-package myrmic-cli --output-format cyclone_dx_json_1_6 >"$WORK/sbom.cdx.json"
+for half in candidate release; do
+    cp "$WORK/sbom.spdx.json" "$OUT/$half/myrmic-cli_${FINAL_VERSION}_sbom.spdx.json"
+    cp "$WORK/sbom.cdx.json" "$OUT/$half/myrmic-cli_${FINAL_VERSION}_sbom.cdx.json"
+done
+
+printf '\n\n--== RPM ==--\n\n'
+
+# alien derives the RPM from the deb, so both formats carry the same payload. It
+# writes into the working directory and picks the RPM name itself, so each half is
+# converted separately and nothing downstream has to read a package's half out of
+# its file name.
+convert() { # convert <dir> <version>
+    ( cd "$1" && fakeroot alien --to-rpm --keep-version \
+        "myrmic-cli_${2}_amd64.deb" "myrmic-cli-dbgsym_${2}_amd64.deb" )
+    # Two packages in, two RPMs out. A collision or a silent skip would otherwise
+    # only surface as a short release.
+    local count
+    count="$(find "$1" -maxdepth 1 -name '*.rpm' | wc -l)"
+    [ "$count" -eq 2 ] || die "expected 2 RPMs in $1, found ${count}."
+    find "$1" -maxdepth 1 -name '*.rpm' -printf '%P\n'
+}
+convert "$OUT/candidate" "$RC_VERSION"
+convert "$OUT/release" "$FINAL_VERSION"
+
+printf '\n\n--== Crate Packages ==--\n\n'
+
+# The SDK crates the release publishes to crates.io. Dependency order, repeated in
+# `publish-crate`; both have to agree.
+SDK_CRATES=(myrmic-signal-layer-types myrmic-common myrmic-sdk-macros myrmic-sdk)
+
+# One invocation for all four. Packaged separately, cargo cannot resolve a sibling
+# path dependency whose version is not on crates.io yet.
+#
+# This is the build job, which holds no registry credential, so the verification
+# build runs here. `publish-crate` never repeats it.
+pkg_args=()
+for crate in "${SDK_CRATES[@]}"; do pkg_args+=(-p "$crate"); done
+# Packaging and the publish check must see the real crates.io, so the build
+# image's source replacement is dropped for them. It exists to serve builds from
+# the internal cache, but cargo resolves the sibling crates of a multi-package
+# run through the registry the packages are destined for, and the mirror does not
+# carry them - the first crate packages, the second cannot find the first.
+#
+# Only for these two commands: unset in a subshell, so everything else in this
+# script keeps the cache. --registry stays as well, because it also covers a
+# replacement configured in a file rather than the environment.
+# The build image replaces crates-io with its internal mirror, which packaging
+# cannot live with: cargo resolves each sibling of a multi-package run through the
+# registry the packages are destined for, and the mirror carries no crate that was
+# never published. `publish-cargo-home` gives these two commands a configuration
+# without that replacement, with the caches linked through.
+PUBLISH_HOME="$WORK/cargo-home"
+mkdir -p "$PUBLISH_HOME"
+"$SCRIPT_DIR/publish-cargo-home" "$PUBLISH_HOME"
+
+(
+    export CARGO_HOME="$PUBLISH_HOME"
+    unset "${!CARGO_SOURCE_@}"
+
+    cargo package --registry crates-io "${pkg_args[@]}" --locked
+
+    # Ask cargo itself whether these are publishable, rather than trusting our own
+    # reading of what it requires. `cargo package` happily packages a crate that
+    # `cargo publish` then refuses - a crate with `publish = false` packages cleanly -
+    # and cargo's publish rules can grow without this repo noticing.
+    #
+    # It needs no credential and uploads nothing. The .crate files come from the
+    # packaging above: --dry-run leaves its archives in internal temp directories,
+    # not the documented target/package path.
+    cargo publish --dry-run --registry crates-io "${pkg_args[@]}" --locked
+)
+
+# Named after the software version, like the SBOMs: a `.crate` is the software, and
+# crates.io has no notion of a candidate version.
+for crate in "${SDK_CRATES[@]}"; do
+    src="target/package/${crate}-${FINAL_VERSION}.crate"
+    [ -f "$src" ] || die "cargo package did not produce ${src}."
+    cp "$src" "$OUT/candidate/"
+done
+
+# Only the candidate half. The release half is what `release.yaml` uploads to the
+# public mirror, and the crate packages are deliberately not a delivery artifact
+# there - they go to crates.io instead.
+if find "$OUT/release" -name '*.crate' -print -quit | grep -q .; then
+    die "a .crate reached the release half; it would be published to the mirror."
+fi
+
+printf 'packaged %s crates into %s\n' "${#SDK_CRATES[@]}" "$OUT/candidate"
+
+printf '\n\n--== Checksums ==--\n\n'
+
+# Written by the job that produced every file, over the complete set, so that
+# everything downstream verifies against the producer's own record.
+"$SCRIPT_DIR/checksums" write "$OUT/candidate"
+"$SCRIPT_DIR/checksums" write "$OUT/release"

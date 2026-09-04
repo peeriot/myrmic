@@ -1,0 +1,34 @@
+#!/bin/bash
+
+set -e
+
+export SCRIPT_DIR="$(dirname $0)"
+export DOCKER_DIR="$(readlink -f "$SCRIPT_DIR/../")"
+export CERTS_DIR="$DOCKER_DIR/extracted/certs"
+
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yaml}"
+echo "Use compose file: $COMPOSE_FILE"
+
+finish() {
+    cd "$OLD_PWD"
+}
+
+trap finish EXIT
+
+cd "$DOCKER_DIR"
+rm -rf "$CERTS_DIR"
+mkdir -p "$CERTS_DIR"
+
+for CONTAINER in $(docker compose -f "$COMPOSE_FILE" ps -aq); do
+    NAME=$(docker inspect -f '{{.Name}}' $CONTAINER)
+    NAME="${NAME#/}"
+
+    echo "- Container"
+    echo "  - ID: $CONTAINER"
+    echo "  - Name: $NAME"
+
+    docker cp $CONTAINER:/etc/swarm/certs/client-key.pem $CERTS_DIR/$NAME-$CONTAINER-client-key.pem
+    docker cp $CONTAINER:/etc/swarm/certs/client-req.pem $CERTS_DIR/$NAME-$CONTAINER-client-req.pem
+    docker cp $CONTAINER:/etc/swarm/certs/client-cert.pem $CERTS_DIR/$NAME-$CONTAINER-client-cert.pem
+    docker cp $CONTAINER:/etc/swarm/certs/client-cert-chain.pem $CERTS_DIR/$NAME-$CONTAINER-client-cert-chain.pem
+done

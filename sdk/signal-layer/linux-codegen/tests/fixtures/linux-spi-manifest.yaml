@@ -1,0 +1,22 @@
+# Linux SPI manifest — spidev0.0 at 1 MHz mode 0, kernel CS disabled; the
+# loopback device's chip-select is GPIO line 25 (software CS, like on ESP).
+id: rpi-spi-loopback
+chip: linux
+
+buses:
+  spi0:
+    transport: spi
+    pins: {}
+    freq_khz: 1000
+    mode: 0
+    dev_path: /dev/spidev0.0
+
+gpios:
+  general_purpose: [25]
+
+devices:
+  - id: loop1
+    driver: spi-loopback
+    bus: spi0
+    pins:
+      cs: 25

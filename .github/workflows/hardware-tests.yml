@@ -1,0 +1,191 @@
+name: Hardware Tests
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '44 1 * * 1-5'
+
+jobs:
+  hil-esp32c5:
+    runs-on: hardware
+    container:
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      env:
+        HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
+        HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
+        DIALOUT_GID: 20
+        ESPFLASH_PORT: /dev/esp32-c5-1
+      ports:
+        - 7447:7447
+      options: '-v /dev:/dev --device-cgroup-rule="c 166:* rmw"'
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      # The signal-layer suite needs the pipeline compiled into the firmware. Without this the
+      # taps do not exist and those tests cannot pass, whatever the rig is wired to.
+      - name: Generate signal-layer pipeline (esp32c5-hil)
+        run: |
+          sdk/signal-layer/scripts/pipeline_regen.sh hil-tests --board esp32c5-hil --target esp32c5
+      # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
+      # without the test features. Built first and copied aside, so the wdt-selftest build below
+      # leaves the default ELF path holding the image the rest of the suite flashes.
+      - name: Build embedded firmware (C5, production profile)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c5
+          cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
+      - name: Build embedded firmware (C5)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c5 --features wdt-selftest
+      - name: Build swarm (host binary)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
+      # We don't have isolation between boards/execs/tests. So make sure that no other board can be accidentally be
+      # picked up.
+      - name: Silence sibling boards
+        run: |
+          for p in /dev/esp32-*; do
+            [ -e "$p" ] || continue
+            if [ "$p" != "$ESPFLASH_PORT" ]; then
+              echo "Erasing sibling $p"
+              cargo espflash erase-flash --port "$p" || echo "WARN: could not erase $p"
+            fi
+          done
+      # No sensors are wired to the dev-server rig, so the four tests that read one skip
+      # themselves and say so in the log. Add HIL_SENSORS=1 once sensors are installed:
+      #   HIL_SENSORS=1 CARGO_NET_GIT_FETCH_WITH_CLI=true ... cargo nextest run -p hil-tests ...
+      - name: Run tests
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 EMBEDDED_TARGET=ESP32C5 EMBEDDED_ELF_PRODUCTION="$PWD/target/modem-esp32-production" cargo nextest run -p hil-tests --no-fail-fast --no-capture
+
+  hil-esp32c6:
+    runs-on: hardware
+    # The hardware runner cannot execute HIL jobs in parallel, so chain the boards to
+    # run sequentially. `!cancelled()` keeps the next board running even if a prior one
+    # failed, matching the suite's --no-fail-fast intent.
+    needs: hil-esp32c5
+    if: ${{ !cancelled() }}
+    container:
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      env:
+        HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
+        HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
+        DIALOUT_GID: 20
+        ESPFLASH_PORT: /dev/esp32-c6-1
+      ports:
+        - 7447:7447
+      options: '-v /dev:/dev --device-cgroup-rule="c 166:* rmw"'
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      # The signal-layer suite needs the pipeline compiled into the firmware. Without this the
+      # taps do not exist and those tests cannot pass, whatever the rig is wired to.
+      - name: Generate signal-layer pipeline (esp32c6-hil)
+        run: |
+          sdk/signal-layer/scripts/pipeline_regen.sh hil-tests --board esp32c6-hil --target esp32c6
+      # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
+      # without the test features. Built first and copied aside, so the wdt-selftest build below
+      # leaves the default ELF path holding the image the rest of the suite flashes.
+      - name: Build embedded firmware (C6, production profile)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c6
+          cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
+      - name: Build embedded firmware (C6)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c6 --features wdt-selftest
+      - name: Build swarm (host binary)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
+      # We don't have isolation between boards/execs/tests. So make sure that no other board can be accidentally be
+      # picked up.
+      - name: Silence sibling boards
+        run: |
+          for p in /dev/esp32-*; do
+            [ -e "$p" ] || continue
+            if [ "$p" != "$ESPFLASH_PORT" ]; then
+              echo "Erasing sibling $p"
+              cargo espflash erase-flash --port "$p" || echo "WARN: could not erase $p"
+            fi
+          done
+      # No sensors are wired to the dev-server rig, so the four tests that read one skip
+      # themselves and say so in the log. Add HIL_SENSORS=1 once sensors are installed:
+      #   HIL_SENSORS=1 CARGO_NET_GIT_FETCH_WITH_CLI=true ... cargo nextest run -p hil-tests ...
+      - name: Run tests
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 EMBEDDED_TARGET=ESP32C6 EMBEDDED_ELF_PRODUCTION="$PWD/target/modem-esp32-production" cargo nextest run -p hil-tests --no-fail-fast --no-capture
+
+  hil-esp32c61:
+    runs-on: hardware
+    # Runs after the C6 board so only one HIL job uses the hardware runner at a time.
+    needs: hil-esp32c6
+    if: ${{ !cancelled() }}
+    container:
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      env:
+        HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
+        HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
+        DIALOUT_GID: 20
+        ESPFLASH_PORT: /dev/esp32-c61-1
+      ports:
+        - 7447:7447
+      options: '-v /dev:/dev --device-cgroup-rule="c 166:* rmw"'
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      # The signal-layer suite needs the pipeline compiled into the firmware. Without this the
+      # taps do not exist and those tests cannot pass, whatever the rig is wired to.
+      - name: Generate signal-layer pipeline (esp32c61-hil)
+        run: |
+          sdk/signal-layer/scripts/pipeline_regen.sh hil-tests --board esp32c61-hil --target esp32c61
+      # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
+      # without the test features. Built first and copied aside, so the wdt-selftest build below
+      # leaves the default ELF path holding the image the rest of the suite flashes.
+      - name: Build embedded firmware (C61, production profile)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c61
+          cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
+      - name: Build embedded firmware (C61)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c61 --features wdt-selftest
+      - name: Build swarm (host binary)
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
+      # We don't have isolation between boards/execs/tests. So make sure that no other board can be accidentally be
+      # picked up.
+      - name: Silence sibling boards
+        run: |
+          for p in /dev/esp32-*; do
+            [ -e "$p" ] || continue
+            if [ "$p" != "$ESPFLASH_PORT" ]; then
+              echo "Erasing sibling $p"
+              cargo espflash erase-flash --port "$p" || echo "WARN: could not erase $p"
+            fi
+          done
+      # No sensors are wired to the dev-server rig, so the four tests that read one skip
+      # themselves and say so in the log. Add HIL_SENSORS=1 once sensors are installed:
+      #   HIL_SENSORS=1 CARGO_NET_GIT_FETCH_WITH_CLI=true ... cargo nextest run -p hil-tests ...
+      - name: Run tests
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 EMBEDDED_TARGET=ESP32C61 EMBEDDED_ELF_PRODUCTION="$PWD/target/modem-esp32-production" cargo nextest run -p hil-tests --no-fail-fast --no-capture

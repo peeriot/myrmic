@@ -1,0 +1,33 @@
+# Board manifest for the pwm-outlet golden fixture only.
+#
+# Kept separate from golden-board.yaml because board peripherals are emitted for
+# every device in the manifest, whether or not the pipeline uses it. Putting a
+# PWM device on the shared board would inject LEDC setup into the sensors-only
+# and outlet-bearing fixtures too.
+id: golden-board-pwm
+chip: esp32c6
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 10
+      sda: 11
+    freq_khz: 400
+
+gpios:
+  general_purpose: [0, 1, 2]
+
+devices:
+  - id: bme280
+    driver: bme280
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x76
+
+  - id: fan1
+    driver: pwm-output
+    pins:
+      out: 1
+    hardware:
+      freq_khz: 25

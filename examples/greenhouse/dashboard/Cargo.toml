@@ -1,0 +1,20 @@
+[package]
+name = "dashboard"
+version.workspace = true
+edition.workspace = true
+license = "MIT-0"
+authors.workspace = true
+publish.workspace = true
+
+[package.metadata.myrmic]
+# `include_bytes!` bakes the web page into the binary, so it sits in the data
+# segment on top of the usual stack and heap.
+heap_size = 65_536
+initial_memory = 262_144
+max_memory = 262_144
+
+[dependencies]
+# crates.io
+serde = { workspace = true }
+# local
+myrmic-sdk = { workspace = true, features = ["cells", "cell-init", "db", "alloc"] }

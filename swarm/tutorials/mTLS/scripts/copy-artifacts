@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(dirname $0)"
+MAIN_DIR="$(readlink -f "$SCRIPT_DIR/..")"
+SWARM_DIR="$(readlink -f "$MAIN_DIR/../..")"
+ARTIFACT_DST_DIR="$MAIN_DIR/artifacts/swarm"
+
+if [ -n "${TARGET:-}" ]; then
+    ARTIFACT_SRC_DIR="$SWARM_DIR/artifacts/$TARGET"
+    if [ ! -d "$ARTIFACT_SRC_DIR" ]; then
+        echo "error: TARGET=$TARGET is set but artifacts directory not found: $ARTIFACT_SRC_DIR" >&2
+        exit 1
+    fi
+else
+    ARTIFACT_SRC_DIR="$SWARM_DIR/target/debug"
+fi
+
+rm -rf "$ARTIFACT_DST_DIR"
+mkdir -p "$ARTIFACT_DST_DIR"
+
+cp "$ARTIFACT_SRC_DIR/"* "$ARTIFACT_DST_DIR/"
+cp "$MAIN_DIR/../../swarm/lib/zenoh.libsonnet" "$MAIN_DIR/config"

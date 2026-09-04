@@ -1,0 +1,43 @@
+[package]
+name              = "esp-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+esp32c5  = ["esp-backtrace/esp32c5", "esp-bootloader-esp-idf/esp32c5", "esp-radio/esp32c5", "esp-storage/esp32c5", "wasm-storage/esp32c5", "esp-watchdog/esp32c5", "esp-heap/esp32c5", "cell-db-service/esp32c5", "esp-network/esp32c5", "esp-nimble-host?/esp32c5"]
+esp32c6  = ["esp-backtrace/esp32c6", "esp-bootloader-esp-idf/esp32c6", "esp-radio/esp32c6", "esp-storage/esp32c6", "wasm-storage/esp32c6", "esp-watchdog/esp32c6", "esp-heap/esp32c6", "cell-db-service/esp32c6", "esp-network/esp32c6", "esp-nimble-host?/esp32c6"]
+esp32c61 = ["esp-backtrace/esp32c61", "esp-bootloader-esp-idf/esp32c61", "esp-radio/esp32c61", "esp-storage/esp32c61", "wasm-storage/esp32c61", "esp-watchdog/esp32c61", "esp-heap/esp32c61", "cell-db-service/esp32c61", "esp-network/esp32c61", "esp-nimble-host?/esp32c61"]
+
+# BLE host stack (NimBLE)
+ble = ["dep:esp-nimble-host", "esp-radio/ble", "esp-radio/ble-host-npl", "esp-radio/coex", "cell-db-service/ble"]
+
+# Forwards to esp-watchdog — see its feature docs
+hang-record      = ["esp-watchdog/hang-record"]
+wdt-selftest     = ["esp-watchdog/wdt-selftest"]
+report           = ["esp-watchdog/report", "esp-heap/report"]
+wdt-characterize = ["esp-watchdog/wdt-characterize"]
+
+[dependencies]
+embassy-futures        = { workspace = true }
+embassy-net            = { workspace = true, features = ["dhcpv4"] }
+esp-alloc              = { workspace = true }
+esp-backtrace          = { workspace = true, features = ["panic-handler", "println"] }
+esp-bootloader-esp-idf = { workspace = true }
+esp-nimble-host        = { workspace = true, optional = true }
+esp-radio              = { workspace = true, features = ["wifi", "unstable"] }
+esp-radio-rtos-driver  = { workspace = true }
+esp-println            = { workspace = true, features = ["default", "log-04"] }
+esp-storage            = { workspace = true }
+# local
+cell-db-service = { workspace = true }
+esp-heap        = { workspace = true }
+esp-mmu         = { workspace = true }
+esp-network     = { workspace = true }
+esp-watchdog    = { workspace = true }
+wasm-storage    = { workspace = true }

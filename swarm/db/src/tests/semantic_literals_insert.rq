@@ -1,0 +1,38 @@
+PREFIX ex: <http://example.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+INSERT DATA {
+    ex:employee123
+        ex:name "Jane Smith" ;
+        ex:title "Data Scientist"@en ;
+        ex:titulo "Científica de Datos"@es ;
+        ex:titre "Scientifique des Données"@fr ;
+        ex:age "35"^^xsd:integer ;
+        ex:height "1.68"^^xsd:decimal ;
+        ex:salary "95000.00"^^xsd:decimal ;
+        ex:tau "6.28"^^xsd:float ;
+        ex:pi "3.14159265359"^^xsd:double ;
+        ex:isActive "true"^^xsd:boolean ;
+        ex:isManager "false"^^xsd:boolean ;
+        ex:startDate "2021-03-01"^^xsd:date ;
+        ex:lastLogin "2024-07-21T16:45:30.123Z"^^xsd:dateTime ;
+        ex:workHours "08:30:00"^^xsd:time ;
+        ex:experience "P10Y6M15D"^^xsd:duration ;
+        ex:birthYear "1989"^^xsd:gYear ;
+        ex:graduationMonth "2011-05"^^xsd:gYearMonth ;
+        ex:favoriteMonth "--06"^^xsd:gMonth ;
+        ex:birthday "---22"^^xsd:gDay ;
+        ex:anniversary "--03-01"^^xsd:gMonthDay ;
+        ex:hexColor "2ECC71"^^xsd:hexBinary ;
+        ex:avatar "aW1hZ2VfZGF0YV9oZXJl"^^xsd:base64Binary ;
+        ex:portfolio "https://janesmith.dev"^^xsd:anyURI ;
+        ex:employeeId "EMP-67890"^^xsd:token ;
+        ex:performanceScore "+95"^^xsd:positiveInteger ;
+        ex:debtBalance "-1500"^^xsd:negativeInteger ;
+        ex:vacationDays "15"^^xsd:nonNegativeInteger ;
+        ex:overtimeHours "0"^^xsd:nonPositiveInteger ;
+        ex:department "Engineering"^^xsd:NCName ;
+        ex:phoneNumber "+1-555-0123"^^xsd:normalizedString ;
+        ex:bio """Multi-line biography
+            with special chars & symbols!"""^^xsd:string .
+}

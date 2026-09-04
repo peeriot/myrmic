@@ -1,0 +1,11 @@
+name: "mqtt"
+broker_url: "mqtt://localhost:11000"
+
+ingress:
+  - id: receive_request
+    topic: "e2e/test/ingress"
+    payload: "${json:data}"
+egress:
+  - id: publish_response
+    topic: "${db:e2e/test/data@topic}"
+    payload: "${json:data}"

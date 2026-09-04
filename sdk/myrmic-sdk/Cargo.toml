@@ -1,0 +1,50 @@
+[package]
+name              = "myrmic-sdk"
+version.workspace = true
+edition.workspace = true
+license           = "MIT OR Apache-2.0"
+description       = "SDK for writing Myrmic cells (WASM modules deployed and managed by the sorg infrastructure): host function bindings for db, tap, outlet, gpio, ble, gateway, cell messaging, logging and time, plus the #[cmd]/#[monitor] export macros."
+repository        = "https://github.com/peeriot/myrmic"
+readme            = "README.md"
+keywords          = ["myrmic", "wasm", "sdk", "embedded"]
+categories        = ["embedded", "wasm", "api-bindings"]
+publish           = true
+include           = ["src/**/*.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[features]
+default = ["alloc", "db", "cells", "cell-init"]
+eio = ["myrmic-common/eio"]
+alloc = ["dep:embedded-alloc", "postcard/alloc", "serde_json/alloc"]
+db = ["alloc", "myrmic-common/db"]
+cells = ["alloc", "myrmic-common/cells"]
+cell-init = ["cells"]
+types-web = ["myrmic-common/types-web"]
+
+[dependencies]
+# crates.io
+critical-section = { workspace = true }
+embedded-alloc = { workspace = true, optional = true }
+embedded-hal = { workspace = true }
+spin = { workspace = true }
+paste = { workspace = true }
+postcard = { workspace = true, default-features = false, features = [
+    "experimental-derive",
+] }
+serde = { workspace = true, features = ["derive"] }
+signal-layer-types = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, default-features = false, features = ["serde"] }
+chrono = { version = "0.4.40", default-features = false, features = [
+    "alloc",
+    "serde",
+] }
+# local
+myrmic-common = { workspace = true }
+myrmic-sdk-macros = { workspace = true }
+
+[dev-dependencies]
+# Only so the `Codec` doc-example (a custom MessagePack codec) really compiles.
+rmp-serde = "1.3"
+
+[lints]
+workspace = true

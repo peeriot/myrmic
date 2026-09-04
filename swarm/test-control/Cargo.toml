@@ -1,0 +1,23 @@
+[package]
+name = "test-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = { workspace = true }
+uuid = { workspace = true, features = ["std", "v4"] }
+tokio = { workspace = true, features = ["sync"] }
+tokio-util.workspace = true
+tracing = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
+
+test-control-common = { workspace = true }
+zenoh = { workspace = true }
+
+[lints]
+workspace = true

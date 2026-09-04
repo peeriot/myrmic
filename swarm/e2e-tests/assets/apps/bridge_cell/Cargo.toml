@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "bridge_cell"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-only WITH LicenseRef-Myrmic-exception-1.0"
+publish = false
+
+[package.metadata.myrmic]
+heap_size = 8_000
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+wasm-sdk = { git = "ssh://git@github.com/peeriot/swarm.git", rev = "d43d5772", features = ["alloc", "cells"] }
+
+serde = { version = "1.0", default-features = false, features = ["derive"] }

@@ -1,0 +1,32 @@
+[package]
+name = "swarm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "swarm"
+path = "src/main.rs"
+
+[features]
+default = []
+
+telemetry-export-db = ["swarm/telemetry-export-db"]
+telemetry-export-otlp = ["swarm/telemetry-export-otlp"]
+
+[dependencies]
+
+anyhow = { workspace = true }
+clap = { workspace = true }
+
+serde_json = { workspace = true, features = ["std"] }
+swarm = { workspace = true }
+
+tracing = { workspace = true }
+humantime = { workspace = true }
+
+tokio = { workspace = true, default-features = false, features = ["rt-multi-thread", "signal"] }

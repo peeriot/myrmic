@@ -1,0 +1,42 @@
+[package]
+name              = "esp-watchdog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+esp32c5  = ["esp-hal/esp32c5"]
+esp32c6  = ["esp-hal/esp32c6"]
+esp32c61 = ["esp-hal/esp32c61"]
+
+# Retain the hang evidence and the cumulative reset count across a watchdog
+# reset (SDS-FEAT-2026-HWD-001 Area D). Which always-on storage backs it is
+# picked per chip in `watchdog::record_storage`.
+hang-record = []
+
+# Emit structured heap-stats snapshots at key milestones over the log channel
+report = []
+
+# Test-only fault injection for HIL watchdog tests: compiles the heartbeat's
+# wedge branch (and its guest-visible diagnostics) into the firmware. Never
+# ship — the production-surface check verifies the strings are absent.
+wdt-selftest = []
+
+# Watchdog timeout characterization (#1014): the liveness supervisor logs
+# round-scheduling lateness and per-required-task staleness as high-water
+# marks. For bench measurement only — never ship.
+wdt-characterize = []
+
+[dependencies]
+cell-protocol     = { workspace = true }
+critical-section  = { workspace = true }
+embassy-time      = { workspace = true }
+esp-alloc         = { workspace = true }
+esp-hal           = { workspace = true, features = ["unstable"] }
+log               = { workspace = true }
+static_assertions = { workspace = true }

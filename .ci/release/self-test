@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+#
+# Guards the rules the scripts in this directory implement: a candidate sorts below
+# its own release, and an artifact directory holds exactly the files its manifest
+# records. Neither is visible from the code that depends on them.
+#
+# Needs: bash, dpkg, GNU coreutils and findutils. No cargo, no network.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION="$SCRIPT_DIR/version"
+CHECKSUMS="$SCRIPT_DIR/checksums"
+
+# The parser appends to this when set, which would pollute the caller's step output
+# and, if the path is not writable in this container, fail every case for a reason
+# that has nothing to do with what is being tested.
+unset GITHUB_OUTPUT
+
+failures=0
+checks=0
+
+pass() {
+    checks=$((checks + 1))
+    printf '  ok    %s\n' "$1"
+}
+
+fail() {
+    checks=$((checks + 1))
+    failures=$((failures + 1))
+    printf '  FAIL  %s\n' "$1"
+}
+
+# --- tag grammar ------------------------------------------------------------
+
+accepts() {
+    if "$VERSION" "$1" --parse-only >/dev/null 2>&1; then
+        pass "accepts $1"
+    else
+        fail "accepts $1"
+    fi
+}
+
+rejects() {
+    if "$VERSION" "$1" --parse-only >/dev/null 2>&1; then
+        fail "rejects $1 ($2)"
+    else
+        pass "rejects $1 ($2)"
+    fi
+}
+
+printf '\n\n--== Tag Grammar ==--\n\n'
+
+accepts "myrmic/v0.2.1-rc1"
+accepts "myrmic/v0.2.1-rc2"
+accepts "myrmic/v1.20.300-rc10"
+
+rejects "myrmic/v0.2.1" "a release is promoted, never tagged"
+rejects "myrmic/v0.2.1-rc0" "rc0 is not a candidate"
+rejects "myrmic/v0.2.1-rc007" "leading zeros alias to rc7 under dpkg"
+rejects "myrmic/v0.2.1-rc" "no candidate number"
+rejects "myrmic/v0.2-rc1" "not three components"
+rejects "myrmic/v0.2.1-rc1-extra" "trailing junk"
+rejects "myrmic/0.2.1-rc1" "missing the v"
+rejects "v0.2.1-rc1" "missing the myrmic/ prefix"
+rejects "myrmic/v0.2.1~rc1" "tilde belongs in the package version, not the tag"
+rejects 'myrmic/v0.2.1-rc1;id' "shell metacharacters"
+rejects 'myrmic/v0.2.1-rc1$(id)' "command substitution"
+
+# --- derived version strings ------------------------------------------------
+
+printf '\n\n--== Derived Versions ==--\n\n'
+
+maps() {
+    local got
+    got="$("$VERSION" "$1" --parse-only 2>/dev/null | sed -n -E "s/^$2=//p")"
+    if [ "$got" = "$3" ]; then
+        pass "$1 -> $2=$3"
+    else
+        fail "$1 -> $2: want '$3', got '$got'"
+    fi
+}
+
+maps "myrmic/v0.2.1-rc1" SOFTWARE_VERSION "0.2.1"
+maps "myrmic/v0.2.1-rc1" RC_VERSION "0.2.1~rc1"
+maps "myrmic/v0.2.1-rc1" RELEASE_TAG "myrmic/v0.2.1"
+maps "myrmic/v0.2.1-rc1" S3_PREFIX "myrmic/packages/0.2.1-rc1"
+maps "myrmic/v0.2.1-rc12" RC_VERSION "0.2.1~rc12"
+maps "myrmic/v1.0.0-rc3" RC_VERSION "1.0.0~rc3"
+
+# --- Debian ordering --------------------------------------------------------
+
+printf '\n\n--== Debian Ordering ==--\n\n'
+
+lt() {
+    if dpkg --compare-versions "$1" lt "$2"; then pass "$1 < $2"; else fail "$1 < $2"; fi
+}
+
+gt() {
+    if dpkg --compare-versions "$1" gt "$2"; then pass "$1 > $2"; else fail "$1 > $2"; fi
+}
+
+derived() { # derived <tag> <key>
+    "$VERSION" "$1" --parse-only 2>/dev/null | sed -n -E "s/^$2=//p"
+}
+
+# The versions this script actually produces, run through dpkg. These fail the moment
+# a candidate stops sorting below its own release - if the tilde ever became a hyphen,
+# for instance, which is the regression this guards.
+rc1="$(derived myrmic/v0.2.1-rc1 RC_VERSION)"
+rc2="$(derived myrmic/v0.2.1-rc2 RC_VERSION)"
+rc10="$(derived myrmic/v0.2.1-rc10 RC_VERSION)"
+release="$(derived myrmic/v0.2.1-rc1 FINAL_VERSION)"
+next_rc="$(derived myrmic/v0.2.2-rc1 RC_VERSION)"
+
+lt "$rc1" "$rc2"
+lt "$rc2" "$rc10"
+lt "$rc10" "$release"
+lt "$release" "$next_rc"
+
+# The highest version the package repositories currently hold was published under the
+# old scheme, so the first version under this one has to outrank it.
+lt "0.2.0-1" "$rc1"
+lt "0.2.0-rc1" "$rc1"
+
+# A hyphenated candidate outranks its own release, which is why the tilde is not
+# optional. Kept as an executable statement of the bug being fixed.
+gt "0.2.1-rc1" "0.2.1"
+
+# --- artifact integrity -----------------------------------------------------
+
+printf '\n\n--== Artifact Integrity ==--\n\n'
+
+integrity_case() {
+    local name="$1" want="$2" dir got
+    dir="$(mktemp -d)"
+    shift 2
+    "$@" "$dir"
+    if "$CHECKSUMS" verify "$dir" >/dev/null 2>&1; then got=accepts; else got=rejects; fi
+    if [ "$got" = "$want" ]; then
+        pass "$got $name"
+    else
+        fail "$name: want $want, got $got"
+    fi
+}
+
+setup_good() {
+    printf 'a\n' >"$1/myrmic-cli_0.2.1_amd64.deb"
+    printf 'b\n' >"$1/myrmic-cli-dbgsym_0.2.1_amd64.deb"
+    "$CHECKSUMS" write "$1" >/dev/null
+}
+
+setup_tampered() {
+    setup_good "$1"
+    printf 'tampered\n' >"$1/myrmic-cli_0.2.1_amd64.deb"
+}
+
+setup_extra_file() {
+    setup_good "$1"
+    printf 'payload\n' >"$1/extra-0.2.1-thing.sh"
+}
+
+setup_missing_file() {
+    setup_good "$1"
+    rm "$1/myrmic-cli-dbgsym_0.2.1_amd64.deb"
+}
+
+setup_no_manifest() {
+    printf 'a\n' >"$1/myrmic-cli_0.2.1_amd64.deb"
+}
+
+setup_nested_file() {
+    setup_good "$1"
+    mkdir "$1/nested"
+    printf 'payload\n' >"$1/nested/extra.rpm"
+}
+
+setup_odd_name() {
+    setup_good "$1"
+    printf 'payload\n' >"$1/not a pipeline artifact"
+}
+
+setup_empty_manifest() {
+    printf 'a\n' >"$1/myrmic-cli_0.2.1_amd64.deb"
+    : >"$1/SHA256SUMS"
+}
+
+integrity_case "a recorded, intact set" accepts setup_good
+integrity_case "a modified artifact" rejects setup_tampered
+integrity_case "an unrecorded extra file" rejects setup_extra_file
+integrity_case "a missing artifact" rejects setup_missing_file
+integrity_case "no manifest at all" rejects setup_no_manifest
+integrity_case "an empty manifest" rejects setup_empty_manifest
+integrity_case "a file hidden in a subdirectory" rejects setup_nested_file
+integrity_case "a name the pipeline cannot produce" rejects setup_odd_name
+
+# Writing a manifest for nothing must fail rather than certify an empty directory.
+empty_dir="$(mktemp -d)"
+if "$CHECKSUMS" write "$empty_dir" >/dev/null 2>&1; then
+    fail "refuses to write a manifest for an empty directory"
+else
+    pass "refuses to write a manifest for an empty directory"
+fi
+
+# --- ship-gate version ordering ---------------------------------------------
+
+# ship-gate resolves its repo from its own path, so it is copied into a throwaway
+# one rather than driven with `cd`. checksums comes along because the gate calls it.
+ship_gate_case() { # ship_gate_case <name> <expect:pass|fail> <publishing-tag> <version> <tag>...
+    local name="$1" expect="$2" tag="$3" version="$4"
+    shift 4
+    local repo dir t
+    repo="$(mktemp -d)"
+    mkdir -p "$repo/.ci/release"
+    cp "$SCRIPT_DIR/ship-gate" "$SCRIPT_DIR/checksums" "$repo/.ci/release/"
+    git -C "$repo" init -q
+    git -C "$repo" -c user.email=self-test@example.invalid -c user.name=self-test \
+        commit -q --allow-empty -m x
+    for t in "$@"; do git -C "$repo" tag "$t"; done
+
+    dir="$(mktemp -d)"
+    : >"$dir/myrmic-cli_1.0.0_amd64.deb"
+    "$SCRIPT_DIR/checksums" write "$dir" >/dev/null
+
+    if "$repo/.ci/release/ship-gate" "$tag" "$version" "$dir" >/dev/null 2>&1; then
+        [ "$expect" = pass ] && pass "$name" || fail "$name: gate passed but should have failed"
+    else
+        [ "$expect" = fail ] && pass "$name" || fail "$name: gate failed but should have passed"
+    fi
+}
+
+ship_gate_case "newest rc of the only version promotes" pass \
+    myrmic/v0.2.1-rc2 0.2.1 myrmic/v0.2.1-rc1 myrmic/v0.2.1-rc2
+
+ship_gate_case "superseded rc within a version is rejected" fail \
+    myrmic/v0.2.1-rc1 0.2.1 myrmic/v0.2.1-rc1 myrmic/v0.2.1-rc2
+
+ship_gate_case "rc of an older version is rejected" fail \
+    myrmic/v0.2.1-rc1 0.2.1 myrmic/v0.2.1-rc1 myrmic/v0.2.2-rc1
+
+# --- publish-crate guards ---------------------------------------------------
+
+PUBLISH_CRATE="$SCRIPT_DIR/publish-crate"
+
+publish_crate_rejects() { # publish_crate_rejects <name> <fragment> <env>... -- <arg>...
+    local name="$1" fragment="$2"
+    shift 2
+    local env=() out
+    while [ "$1" != "--" ]; do env+=("$1"); shift; done
+    shift
+    if out="$(env "${env[@]}" "$PUBLISH_CRATE" "$@" 2>&1)"; then
+        fail "$name: exited 0, but it must fail closed"
+        return
+    fi
+    case "$out" in
+        *"$fragment"*) pass "$name" ;;
+        *) fail "$name: message did not mention '$fragment': $out" ;;
+    esac
+}
+
+# Both spellings have to be empty: the script accepts either, so clearing only one
+# would let an inherited value satisfy it and the case would pass without proving
+# anything.
+publish_crate_rejects "missing credential fails closed" CARGO_REGISTRY_TOKEN \
+    CARGO_REGISTRY_TOKEN= CARGO_REGISTRIES_CRATES_IO_TOKEN= -- /nonexistent /nonexistent 0.0.0
+
+publish_crate_rejects "missing candidate dir fails closed" /nonexistent \
+    CARGO_REGISTRY_TOKEN=dummy -- /nonexistent /nonexistent 0.0.0
+
+# A directory that exists but carries no manifest is the case that matters: the
+# equality gate's reference comes from there, so an unverified one must stop the
+# promote.
+UNVERIFIED_DIR="$(mktemp -d)"
+: >"$UNVERIFIED_DIR/myrmic-sdk-0.0.0.crate"
+publish_crate_rejects "an unverified candidate dir fails closed" SHA256SUMS \
+    CARGO_REGISTRY_TOKEN=dummy -- "$UNVERIFIED_DIR" "$UNVERIFIED_DIR" 0.0.0
+
+# --- crate digest -----------------------------------------------------------
+
+make_crate() { # make_crate <out-file> <name>=<content>...
+    local out="$1" dir spec
+    shift
+    dir="$(mktemp -d)"
+    mkdir -p "$dir/pkg-1.0.0"
+    for spec in "$@"; do
+        printf '%s\n' "${spec#*=}" >"$dir/pkg-1.0.0/${spec%%=*}"
+    done
+    ( cd "$dir" && tar czf "$out" pkg-1.0.0 )
+}
+
+digest_of() { # digest_of <crate-file>
+    "$PUBLISH_CRATE" --digest "$1" 2>/dev/null
+}
+
+digest_case() { # digest_case <name> <expect:same|differ> -- <left-spec>... -- <right-spec>...
+    local name="$1" expect="$2" left right l r
+    shift 3   # name, expect, the first --
+    local lspec=()
+    while [ "$1" != "--" ]; do lspec+=("$1"); shift; done
+    shift
+    left="$(mktemp -d)/l.crate"; right="$(mktemp -d)/r.crate"
+    make_crate "$left" "${lspec[@]}"
+    make_crate "$right" "$@"
+    l="$(digest_of "$left")"; r="$(digest_of "$right")"
+    if [ "$l" = "$r" ]; then
+        [ "$expect" = same ] && pass "$name" || fail "$name: digests matched but should differ"
+    else
+        [ "$expect" = differ ] && pass "$name" || fail "$name: digests differ but should match"
+    fi
+}
+
+digest_case "identical packages compare equal" same \
+    -- a.txt=a b.txt=b -- a.txt=a b.txt=b
+
+digest_case "a changed file is caught" differ \
+    -- a.txt=a b.txt=b -- a.txt=a b.txt=B
+
+digest_case "an added file is caught" differ \
+    -- a.txt=a b.txt=b -- a.txt=a b.txt=b c.txt=c
+
+digest_case "a removed file is caught" differ \
+    -- a.txt=a b.txt=b -- a.txt=a
+
+digest_fails() { # digest_fails <name> <crate-file>
+    if "$PUBLISH_CRATE" --digest "$2" >/dev/null 2>&1; then
+        fail "$1: digest succeeded where it must fail closed"
+    else
+        pass "$1"
+    fi
+}
+
+digest_fails "a missing reference artifact fails closed" /nonexistent/x.crate
+
+EMPTY_CRATE="$(mktemp -d)/empty.crate"
+( cd "$(mktemp -d)" && mkdir -p e && tar czf "$EMPTY_CRATE" e )
+digest_fails "an empty package fails closed" "$EMPTY_CRATE"
+
+# --- registry state ---------------------------------------------------------
+
+# A file:// tree standing in for the sparse index, so the skip/publish decision is
+# testable without the network.
+stub_index() { # stub_index <crate> <version-or-empty>
+    local root path
+    root="$(mktemp -d)"
+    path="$root/$(printf '%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1")"
+    if [ -n "$2" ]; then
+        mkdir -p "$(dirname "$path")"
+        printf '{"name":"%s","vers":"%s"}\n' "$1" "$2" >"$path"
+    fi
+    printf '%s' "$root"
+}
+
+# Exact match, never a substring: "published" is a substring of "unpublished" and of
+# the die message, so a substring test would report green on the error path.
+publish_state_case() { # publish_state_case <name> <expected> <index-root> <crate> <version>
+    local out
+    out="$(env CARGO_REGISTRY_TOKEN=dummy "CRATES_IO_INDEX=file://$3" \
+        "$PUBLISH_CRATE" --published "$4" "$5" 2>/dev/null || true)"
+    if [ "$out" = "$2" ]; then pass "$1"; else fail "$1: expected '$2', got '$out'"; fi
+}
+
+publish_state_case "a published version is reported published" published \
+    "$(stub_index myrmic-sdk 0.2.1)" myrmic-sdk 0.2.1
+
+publish_state_case "an absent crate is reported unpublished" unpublished \
+    "$(stub_index myrmic-sdk '')" myrmic-sdk 0.2.1
+
+publish_state_case "a different version is reported unpublished" unpublished \
+    "$(stub_index myrmic-sdk 0.1.0)" myrmic-sdk 0.2.1
+
+# The two flags are the whole of the mitigation against a rogue build script or proc
+# macro running beside the registry credential, and they live in a script that
+# cannot be executed before the names exist on crates.io. Without this, a later edit
+# re-arms the threat silently.
+# Scoped to the two scripts that invoke cargo, not the whole directory: this harness
+# names the flag itself, so a recursive scan would match the file doing the scanning
+# and the case could never pass.
+publish_flags() {
+    # Comments are stripped first. Both scripts name these flags in their own
+    # prose, so grepping the whole file matches the explanation rather than the
+    # command - an assertion that passes however the command is edited.
+    local code
+    code="$(grep -hv '^[[:space:]]*#' "$SCRIPT_DIR/publish-crate" "$SCRIPT_DIR/package")"
+    printf '%s' "$code" | grep -q -- '--no-verify' &&
+        printf '%s' "$code" | grep -q -- '--locked' &&
+        printf '%s' "$code" | grep -q -- 'cargo publish --registry crates-io' &&
+        printf '%s' "$code" | grep -q -- 'cargo publish --dry-run --registry crates-io' &&
+        printf '%s' "$code" | grep -q -- 'cargo package --registry crates-io' &&
+        [ "$(printf '%s' "$code" | grep -c 'unset "\${!CARGO_SOURCE_@}"')" -ge 2 ] &&
+        ! printf '%s' "$code" | grep -q -- '--allow-dirty'
+}
+if publish_flags; then
+    pass "the publish command line stays no-verify, locked, crates-io and never dirty"
+else
+    fail "publish-crate lost --no-verify/--locked/--registry crates-io, or --allow-dirty appeared"
+fi
+
+# --- publish cargo home -----------------------------------------------------
+
+# The build image replaces crates-io with an internal mirror, which packaging
+# cannot use. publish-cargo-home hands those commands a CARGO_HOME without that
+# configuration; if it ever produced one with a config, the mirror would be back
+# and the failure would surface only during a release.
+cargo_home_prepared() {
+    local src dest
+    src="$(mktemp -d)"; dest="$(mktemp -d)"
+    mkdir -p "$src/registry" "$src/git"
+    printf '[source.crates-io]\nreplace-with = "mirror"\n' >"$src/config.toml"
+    CARGO_HOME="$src" "$SCRIPT_DIR/publish-cargo-home" "$dest" >/dev/null
+
+    if [ -e "$dest/config.toml" ]; then
+        fail "publish-cargo-home left a config in place, so the mirror would still apply"
+    elif [ ! -L "$dest/registry" ] || [ ! -L "$dest/git" ]; then
+        fail "publish-cargo-home did not link the caches, so a release would re-download them"
+    else
+        pass "the prepared cargo home has no configuration and keeps the caches"
+    fi
+}
+cargo_home_prepared
+
+# --- summary ----------------------------------------------------------------
+
+printf '\n\n--== Summary ==--\n\n'
+printf '%d checks, %d failures\n' "$checks" "$failures"
+[ "$failures" -eq 0 ] || exit 1

@@ -1,0 +1,29 @@
+# NOTICE
+
+This crate includes third-party source code. The table below lists every
+upstream work from which code in this crate is derived, the copyright holder,
+the licence under which it is used, and the file it applies to.
+
+The full licence texts are in the `LICENSES/` directory next to this file.
+
+This is a package-scoped excerpt of the `NOTICE` maintained at the root of the
+[`peeriot/myrmic`](https://github.com/peeriot/myrmic) repository, which
+attributes third-party code across the whole project. Only the entries that
+apply to files shipped in this crate are reproduced here.
+
+## Third-party works
+
+| Upstream | Version | Copyright holder | Used under | File |
+|---|---|---|---|---|
+| nourl | 0.1.4 | Copyright (c) Rasmus Melchior Jacobsen | MIT | `src/types/web/url.rs` |
+| http | 1.x | Copyright (c) 2017 http-rs authors | MIT | `src/types/web/status_code.rs` |
+
+## Licence texts
+
+| File | Copyright line |
+|---|---|
+| `LICENSES/MIT-nourl.txt` | Copyright (c) Rasmus Melchior Jacobsen |
+| `LICENSES/MIT-http.txt` | Copyright (c) 2017 http-rs authors |
+
+The two texts differ only in their copyright line; the permission notice is
+the canonical MIT wording in each.

@@ -1,0 +1,17 @@
+[package]
+name    = "aot-compiler"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Peeriot GmbH <info@peeriot.io>"]
+publish = false
+
+[dependencies]
+# crates.io
+anyhow  = { workspace = true }
+clap    = { workspace = true, features = ["derive"] }
+owo-colors = { workspace = true }
+which   = { workspace = true }
+sha2 = { workspace = true }
+# Local
+wasm-storage = { workspace = true }

@@ -1,0 +1,55 @@
+name: filter even
+description: this file is deploys the application fixing two of the three tasks on specific runtimes
+
+sources:
+  - id: example source
+    description: This task subscribes to the specified zenoh topic, making the data published there available for tasks within this application
+    config:
+      type: zenoh-sub
+      sub-ke: forward_data/source
+    outputs:
+      - id: source_data
+
+operators:
+  - id: even filter
+    description: This task is used as an example of a processing step. This particular task will forward only the even counter values to its output, filtering out the odd ones.
+    config:
+      type: wasm
+      binary: even_filter.wasm # this is the path relative to the file store root directory
+    inputs:
+      - id: input
+    outputs:
+      - id: filtered
+
+sinks:
+  - id: example sink
+    description: This task publishes data provided on its input on the specified zenoh topic, making data from this application available withing zenoh
+    config:
+      type: zenoh-pub
+      pub-ke: forward_data/sink
+    inputs:
+      - id: source_data
+
+links:
+  - from:
+      task: example source
+      output: source_data
+    to:
+      task: even filter
+      input: input
+  - from:
+      task: even filter
+      output: filtered
+    to:
+      task: example sink
+      input: source_data
+
+mappings:
+  - task: example source
+    config:
+      type: fix
+      runtime: runtime 1
+  - task: even filter
+    config:
+      type: fix
+      runtime: runtime 3

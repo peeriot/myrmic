@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["CELL_NAME"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.lints.rust]
+future_incompatible = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+serde = { version = "1.0.216", default-features = false }
+postcard = { version = "1.1.3", default-features = false }
+
+# Paths to the myrmic SDK in the main repository (set by new-workspace.sh).
+myrmic-sdk = { path = "WASM_ROOT/myrmic-sdk", default-features = false }
+myrmic-sdk-macros = { path = "WASM_ROOT/myrmic-sdk-macros", default-features = false }
