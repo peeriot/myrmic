@@ -1,5 +1,6 @@
 mod bridge;
 mod embedded;
+mod gateway;
 mod lifecycle;
 mod tagged_placement;
 

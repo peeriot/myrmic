@@ -16,8 +16,8 @@ use sorg_common::spawn_gate::{
     is_self_or_descendant,
 };
 use sorg_common::{
-    RequirementTags, SpawnLineage, class_registry, deploy_wasm_cell, instance_registry,
-    undeploy_cell,
+    FenceOutcome, RequirementTags, SpawnLineage, class_registry, deploy_wasm_cell,
+    instance_registry, undeploy_cell,
 };
 use tracing::error;
 use uuid::Uuid;
@@ -165,6 +165,8 @@ async fn gate_existing_instance(
             return Err(SPAWN_ERR_DEPLOY_FAILED);
         }
     };
+    let existing_gen = existing.as_ref().map(|info| info.gen_id);
+    let mut placement_gen = None;
     let decision = match &existing {
         None => GateDecision::Admit,
         Some(info) => {
@@ -173,9 +175,12 @@ async fn gate_existing_instance(
             // AlreadyExists here until hygiene releases its rows (the SDK
             // retries respawns). Stale-parent-edge supersede is exact.
             let placement = match sorg_common::get_placement(session, &child).await {
-                Ok(Some(_)) => Some(ExistingPlacement {
-                    lease: LeaseView::Live,
-                }),
+                Ok(Some(entry)) => {
+                    placement_gen = Some(entry.gen_id);
+                    Some(ExistingPlacement {
+                        lease: LeaseView::Live,
+                    })
+                }
                 Ok(None) => None,
                 Err(err) => {
                     error!("spawn: failed to check placement '{child}': {err}");
@@ -206,17 +211,40 @@ async fn gate_existing_instance(
                 new_parent_instance = %parent_gen_id,
                 "spawn: superseding stale instance"
             );
-            if let Err(err) = sorg_common::remove_placement(session, &child).await {
-                error!("spawn: failed to release stale placement '{child}': {err}");
-                notify_spawn_failed(session, parent, child, local_name, detached).await;
-                return Err(SPAWN_ERR_DEPLOY_FAILED);
+            // Both releases are fenced by the generations the gate just read:
+            // a row that changed underneath is someone else's live cell, and
+            // the spawn fails rather than proceeding over it.
+            if let Some(gen_id) = placement_gen {
+                match sorg_common::remove_placement(session, &child, gen_id).await {
+                    Ok(FenceOutcome::Applied | FenceOutcome::Absent) => {}
+                    Ok(FenceOutcome::Superseded { current }) => {
+                        error!("spawn: placement '{child}' moved to generation {current} mid-gate");
+                        notify_spawn_failed(session, parent, child, local_name, detached).await;
+                        return Err(SPAWN_ERR_DEPLOY_FAILED);
+                    }
+                    Err(err) => {
+                        error!("spawn: failed to release stale placement '{child}': {err}");
+                        notify_spawn_failed(session, parent, child, local_name, detached).await;
+                        return Err(SPAWN_ERR_DEPLOY_FAILED);
+                    }
+                }
             }
             // Aborting on erase failure keeps the corpse row from silently
             // suppressing the fresh cell's #[init].
-            if let Err(err) = instance_registry::erase_instance(session, &child).await {
-                error!("spawn: failed to erase stale instance '{child}': {err}");
-                notify_spawn_failed(session, parent, child, local_name, detached).await;
-                return Err(SPAWN_ERR_DEPLOY_FAILED);
+            if let Some(gen_id) = existing_gen {
+                match instance_registry::erase_instance(session, &child, gen_id).await {
+                    Ok(FenceOutcome::Applied | FenceOutcome::Absent) => {}
+                    Ok(FenceOutcome::Superseded { current }) => {
+                        error!("spawn: instance '{child}' moved to generation {current} mid-gate");
+                        notify_spawn_failed(session, parent, child, local_name, detached).await;
+                        return Err(SPAWN_ERR_DEPLOY_FAILED);
+                    }
+                    Err(err) => {
+                        error!("spawn: failed to erase stale instance '{child}': {err}");
+                        notify_spawn_failed(session, parent, child, local_name, detached).await;
+                        return Err(SPAWN_ERR_DEPLOY_FAILED);
+                    }
+                }
             }
             Ok(())
         }
@@ -292,14 +320,18 @@ pub(crate) async fn terminate_cell(
         error!("terminate: '{sri}' is not a descendant of '{caller_sri}'");
         return TERMINATE_ERR_NOT_PERMITTED;
     }
-    let descendants = sorg_common::spawn_gate::collect_subtree(&instances, &sri);
+    let descendants = with_generations(
+        &instances,
+        sorg_common::spawn_gate::collect_subtree(&instances, &sri),
+    );
 
     if let Err(err) = undeploy_cell(&session, sri, DEPLOY_TIMEOUT).await {
         error!("terminate: failed to undeploy '{sri}': {err}");
         return TERMINATE_ERR_UNDEPLOY_FAILED;
     }
 
-    if let Err(err) = instance_registry::erase_instance(&session, &sri).await {
+    // Undeploy usually erases the row itself; an absent row is that, not a failure.
+    if let Err(err) = instance_registry::erase_instance(&session, &sri, target.gen_id).await {
         error!("terminate: failed to erase instance '{sri}': {err}");
         return TERMINATE_ERR_ERASE_FAILED;
     }
@@ -328,15 +360,29 @@ pub(crate) async fn terminate_cell(
     SUCCESS
 }
 
+/// Pairs each SRI with the generation its instance row carried in `instances`,
+/// so the reap fences on the incarnations it actually saw. Rows gone since the
+/// listing are skipped — nothing of theirs is left to release.
+fn with_generations(instances: &[cell_protocol::CellInstance], sris: Vec<Sri>) -> Vec<(Sri, Gen)> {
+    sris.into_iter()
+        .filter_map(|sri| {
+            instances
+                .iter()
+                .find(|i| i.sri == sri)
+                .map(|i| (sri, i.gen_id))
+        })
+        .collect()
+}
+
 /// Reaps a set of cells: orchestrator-mediated undeploy, then instance-row
 /// erase, each tolerant of already-gone state. Descendants the walk cannot
 /// reach die via fencing (spec §3).
-async fn reap_cells(session: &zenoh::Session, sris: Vec<Sri>) {
-    for sri in sris {
+async fn reap_cells(session: &zenoh::Session, cells: Vec<(Sri, Gen)>) {
+    for (sri, gen_id) in cells {
         if let Err(err) = undeploy_cell(session, sri, DEPLOY_TIMEOUT).await {
             tracing::debug!("reap: undeploy '{sri}' pending fencing: {err}");
         }
-        if let Err(err) = instance_registry::erase_instance(session, &sri).await {
+        if let Err(err) = instance_registry::erase_instance(session, &sri, gen_id).await {
             tracing::debug!("reap: erase '{sri}': {err}");
         }
     }
@@ -355,7 +401,10 @@ pub(crate) async fn stop_self(caller: Caller<'_, CellState>, code_present: u32, 
     let stop_code = (code_present != 0).then_some(code);
 
     let descendants = match instance_registry::list_instances(&session).await {
-        Ok(instances) => sorg_common::spawn_gate::collect_subtree(&instances, &self_sri),
+        Ok(instances) => with_generations(
+            &instances,
+            sorg_common::spawn_gate::collect_subtree(&instances, &self_sri),
+        ),
         Err(err) => {
             error!("stop_self: failed to read instance registry: {err}");
             Vec::new()
@@ -386,7 +435,7 @@ pub(crate) async fn stop_self(caller: Caller<'_, CellState>, code_present: u32, 
     // poison lands; the reaper task outlives the calling cell.
     tokio::spawn(async move {
         reap_cells(&session, descendants).await;
-        reap_cells(&session, vec![self_sri]).await;
+        reap_cells(&session, vec![(self_sri, self_gen)]).await;
     });
 
     SUCCESS

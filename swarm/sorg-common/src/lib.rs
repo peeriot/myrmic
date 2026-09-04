@@ -35,15 +35,17 @@ pub use cells::deployment_error::{
     ArtifactKind, CellFailure, CellFailureKind, CellInfeasibility, DeploymentError,
     RejectionReason, RuntimeRejection,
 };
+pub use cells::fence::FenceOutcome;
 pub use cells::instance_registry;
 pub use cells::lifecycle::{
-    CellUndeployRequest, SpawnLineage, WasmCellDeployRequest, delete_application, deploy_cells,
-    deploy_http_bridge, deploy_mqtt_bridge, deploy_wasm_cell, undeploy_cell,
+    CellUndeployRequest, ExecCellUndeployRequest, SpawnLineage, WasmCellDeployRequest,
+    delete_application, deploy_cells, deploy_http_bridge, deploy_mqtt_bridge, deploy_wasm_cell,
+    undeploy_cell,
 };
 pub use cells::placement::{
     PlacementClaimOutcome, claim_placement, commit_placement, ensure_placement_exists,
-    ensure_placement_exists_in_tx, get_placement, list_placements, list_placements_in_tx,
-    placement_exists, placement_exists_in_tx, remove_placement, remove_placement_with_db,
+    ensure_placement_exists_in_tx, get_placement, get_placement_in_tx, list_placements,
+    list_placements_in_tx, placement_exists, placement_exists_in_tx, remove_placement,
 };
 pub use cells::root_death;
 pub use cells::root_restart;

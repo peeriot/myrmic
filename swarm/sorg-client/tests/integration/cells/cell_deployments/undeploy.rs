@@ -1,6 +1,6 @@
 use cell_protocol::Sri;
 use claims::assert_ok;
-use sorg_common::RequirementTags;
+use sorg_common::{FenceOutcome, RequirementTags};
 
 use super::{CELL_CLASS, CELL_SRI, output_marker_seen, spawn_test_app_with_dummy_cell};
 
@@ -51,17 +51,22 @@ async fn undeploy_erases_instance_row() {
             .await,
         "deploy should succeed"
     );
+    let instance = assert_ok!(
+        sorg.inspect_instance(&sri).await,
+        "deploy should have registered the instance"
+    );
     assert_ok!(sorg.undeploy_cell(sri).await, "undeploy should succeed");
 
     // Act — the follow-up sweep teardown does: finds nothing, tolerates it
-    let erased = assert_ok!(
-        sorg.erase_instance_if_present(&sri).await,
+    let outcome = assert_ok!(
+        sorg.erase_instance(&sri, instance.gen_id).await,
         "redundant erase should be tolerated after undeploy"
     );
 
     // Assert — undeploy itself erased the row, and none remain
-    assert!(
-        !erased,
+    assert_eq!(
+        outcome,
+        FenceOutcome::Absent,
         "undeploy should have already erased the instance row"
     );
     let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");

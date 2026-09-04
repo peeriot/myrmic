@@ -3,6 +3,7 @@ use crate::HTTP_SESSION_GRACE;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use cell_protocol::Gen;
 use myrmic_common::cells::Sri;
 use sorg_common::{Mailbox, remove_placement};
 
@@ -23,6 +24,9 @@ pub struct SessionState {
     pub active_streams: u32,
     /// When to reap the session once no streams remain.
     pub deadline: Instant,
+    /// Generation of the session's placeholder placement, so the reaper
+    /// releases the row it registered and nothing that reused the SRI since.
+    pub gen_id: Gen,
 }
 
 impl SessionState {
@@ -55,24 +59,24 @@ pub fn spawn_session_reaper(session: &Session) -> (Sessions, tokio::task::JoinHa
                 tick.tick().await;
                 let now = Instant::now();
 
-                let expired: Vec<Uuid> = {
+                let expired: Vec<(Uuid, Gen)> = {
                     let Ok(mut map) = sessions.lock() else {
                         continue;
                     };
-                    let ids: Vec<Uuid> = map
+                    let expired: Vec<(Uuid, Gen)> = map
                         .iter()
                         .filter(|(_, state)| state.is_reapable(now))
-                        .map(|(id, _)| *id)
+                        .map(|(id, state)| (*id, state.gen_id))
                         .collect();
-                    for id in &ids {
+                    for (id, _) in &expired {
                         map.remove(id);
                     }
-                    ids
+                    expired
                 };
 
-                for id in expired {
+                for (id, gen_id) in expired {
                     let sri = Sri::from_uuid(id);
-                    let _ = remove_placement(&session, &sri).await;
+                    let _ = remove_placement(&session, &sri, gen_id).await;
                     let _ = Mailbox::new(&session).drain_commands(sri).await;
                     tracing::debug!("http session reaped: {sri}");
                 }
@@ -83,14 +87,16 @@ pub fn spawn_session_reaper(session: &Session) -> (Sessions, tokio::task::JoinHa
     (sessions, handle)
 }
 
-/// Records a brand-new HTTP session with one attached stream.
-pub fn register(sessions: &Sessions, id: Uuid) {
+/// Records a brand-new HTTP session with one attached stream; `gen_id` is the
+/// generation its placeholder placement was claimed with.
+pub fn register(sessions: &Sessions, id: Uuid, gen_id: Gen) {
     if let Ok(mut map) = sessions.lock() {
         map.insert(
             id,
             SessionState {
                 active_streams: 1,
                 deadline: Instant::now() + HTTP_SESSION_GRACE,
+                gen_id,
             },
         );
     }
@@ -132,34 +138,24 @@ pub fn touch(sessions: &Sessions, id: Uuid) -> bool {
 mod tests {
     use super::*;
 
+    fn state(active_streams: u32, deadline: Instant) -> SessionState {
+        SessionState {
+            active_streams,
+            deadline,
+            gen_id: Gen::from_parts(1, 1),
+        }
+    }
+
     #[test]
     fn reapable_predicate() {
         let now = Instant::now();
         let grace = std::time::Duration::from_secs(1);
 
         // No streams and the deadline has passed → reap.
-        assert!(
-            SessionState {
-                active_streams: 0,
-                deadline: now,
-            }
-            .is_reapable(now)
-        );
+        assert!(state(0, now).is_reapable(now));
         // A live stream is never reaped, even past the deadline.
-        assert!(
-            !SessionState {
-                active_streams: 1,
-                deadline: now,
-            }
-            .is_reapable(now)
-        );
+        assert!(!state(1, now).is_reapable(now));
         // No streams but still inside the grace window → keep.
-        assert!(
-            !SessionState {
-                active_streams: 0,
-                deadline: now + grace,
-            }
-            .is_reapable(now)
-        );
+        assert!(!state(0, now + grace).is_reapable(now));
     }
 }

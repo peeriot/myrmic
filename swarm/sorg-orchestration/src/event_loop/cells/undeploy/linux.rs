@@ -1,6 +1,6 @@
-use cell_protocol::{RuntimeId, Sri};
+use cell_protocol::{Gen, RuntimeId, Sri};
 use sorg_common::{
-    CellUndeployRequest, SorgPayload, bail, topic_execution_cell_undeploy, zenoh_err,
+    ExecCellUndeployRequest, SorgPayload, bail, topic_execution_cell_undeploy, zenoh_err,
 };
 use tracing::debug;
 
@@ -11,10 +11,12 @@ impl Runtime {
     pub(super) async fn undeploy_wasm_cell_linux(
         &self,
         cell_sri: &Sri,
+        gen_id: Gen,
         node_id: RuntimeId,
     ) -> Result<()> {
-        let request = CellUndeployRequest {
+        let request = ExecCellUndeployRequest {
             cell_sri: *cell_sri,
+            gen_id,
         };
         let topic = topic_execution_cell_undeploy(node_id);
         let fwd_payload = request.to_payload()?;

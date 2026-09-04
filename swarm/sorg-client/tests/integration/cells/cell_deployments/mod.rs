@@ -1,4 +1,5 @@
 mod deploy;
+mod fencing;
 mod undeploy;
 
 use std::time::Duration;

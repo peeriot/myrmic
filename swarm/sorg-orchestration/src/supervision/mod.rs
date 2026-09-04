@@ -15,8 +15,8 @@ use sorg_common::supervision::{
     ExpiryGate, LeaseTracker, RestartBudget, SupervisionTiming, jittered,
 };
 use sorg_common::{
-    CellDeployment, DeployRequest, LostReason, deploy_cells, instance_registry, list_placements,
-    node_lease, remove_placement, root_death, root_restart, should_restart,
+    CellDeployment, DeployRequest, FenceOutcome, LostReason, deploy_cells, instance_registry,
+    list_placements, node_lease, remove_placement, root_death, root_restart, should_restart,
 };
 use tracing::{debug, info, warn};
 use zenoh::Session;
@@ -36,7 +36,9 @@ pub(crate) struct CellLostNote {
 pub(crate) struct HygienePlan {
     pub notes: Vec<CellLostNote>,
     /// Ordered: placement rows are released before instance rows —
-    /// instance-erase refuses while a placement row exists.
+    /// instance-erase refuses while a placement row of the same incarnation
+    /// exists. Both releases are fenced by the generations of the scan that
+    /// produced this plan, so a cell redeployed since is left alone.
     pub release_cells: Vec<Sri>,
     pub erase_instances: Vec<Sri>,
     /// Nodes whose every placed cell is being released: only then may the
@@ -334,14 +336,25 @@ async fn run_hygiene(
     if emissions_failed {
         return;
     }
+    let placement_gen: HashMap<Sri, Gen> = cells.iter().map(|c| (c.sri, c.gen_id)).collect();
     for sri in &plan.release_cells {
-        if let Err(err) = remove_placement(session, sri).await {
-            warn!("hygiene: releasing placement row '{sri}' failed: {err}");
+        let Some(gen_id) = placement_gen.get(sri) else {
+            continue;
+        };
+        match remove_placement(session, sri, *gen_id).await {
+            Ok(FenceOutcome::Applied) => {}
+            Ok(outcome) => debug!("hygiene: placement row '{sri}' left alone: {outcome:?}"),
+            Err(err) => warn!("hygiene: releasing placement row '{sri}' failed: {err}"),
         }
     }
     for sri in &plan.erase_instances {
-        if let Err(err) = instance_registry::erase_instance(session, sri).await {
-            debug!("hygiene: erasing instance row '{sri}': {err}");
+        let Some(inst) = instance_by_sri.get(sri) else {
+            continue;
+        };
+        match instance_registry::erase_instance(session, sri, inst.gen_id).await {
+            Ok(FenceOutcome::Applied) => {}
+            Ok(outcome) => debug!("hygiene: instance row '{sri}' left alone: {outcome:?}"),
+            Err(err) => debug!("hygiene: erasing instance row '{sri}': {err}"),
         }
     }
     for id in &plan.teardown_nodes {

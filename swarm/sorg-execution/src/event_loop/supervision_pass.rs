@@ -24,10 +24,12 @@ impl Runtime {
         let meta = self.meta.get(&sri).cloned();
         warn!(sri = %sri, instance = ?meta.as_ref().map(|m| m.gen_id), "cell crashed");
         self.kill_local(&sri);
-        self.cleanup.push(CleanupAction::ReleaseCell(sri));
-        self.cleanup.push(CleanupAction::EraseInstance(sri));
 
         let Some(meta) = meta else { return };
+        self.cleanup
+            .push(CleanupAction::ReleaseCell(sri, meta.gen_id));
+        self.cleanup
+            .push(CleanupAction::EraseInstance(sri, meta.gen_id));
         let session = self.session.clone();
         tokio::spawn(async move {
             if let Err(err) = report_cell_death(
@@ -123,8 +125,10 @@ impl Runtime {
                     "fencing: killing cell"
                 );
                 self.kill_local(&cell.sri);
-                self.cleanup.push(CleanupAction::ReleaseCell(cell.sri));
-                self.cleanup.push(CleanupAction::EraseInstance(cell.sri));
+                self.cleanup
+                    .push(CleanupAction::ReleaseCell(cell.sri, cell.gen_id));
+                self.cleanup
+                    .push(CleanupAction::EraseInstance(cell.sri, cell.gen_id));
             }
         }
     }
@@ -156,37 +160,42 @@ impl Runtime {
         );
 
         let mut done = true;
-        for sri in remnants {
-            match sorg_common::instance_registry::get_instance(&self.session, &sri).await {
-                Ok(Some(instance)) => {
-                    // Report precedes cleanup: an unsent report is retried next
-                    // pass while the rows still exist. Roots record a root-death
-                    // signal; parented cells notify the parent; detached: none.
-                    if let Err(err) = report_cell_death(
-                        &self.session,
-                        sri,
-                        instance.gen_id,
-                        instance.lineage.parent,
-                        instance.lineage.detached,
-                        instance.lineage.local_name.clone(),
-                        LostReason::Crashed,
-                    )
-                    .await
-                    {
-                        warn!("startup sweep: death report for '{sri}' failed: {err}");
+        for (sri, gen_id) in remnants {
+            let instance_gen =
+                match sorg_common::instance_registry::get_instance(&self.session, &sri).await {
+                    Ok(Some(instance)) => {
+                        // Report precedes cleanup: an unsent report is retried next
+                        // pass while the rows still exist. Roots record a root-death
+                        // signal; parented cells notify the parent; detached: none.
+                        if let Err(err) = report_cell_death(
+                            &self.session,
+                            sri,
+                            instance.gen_id,
+                            instance.lineage.parent,
+                            instance.lineage.detached,
+                            instance.lineage.local_name.clone(),
+                            LostReason::Crashed,
+                        )
+                        .await
+                        {
+                            warn!("startup sweep: death report for '{sri}' failed: {err}");
+                            done = false;
+                            continue;
+                        }
+                        Some(instance.gen_id)
+                    }
+                    Ok(None) => None,
+                    Err(err) => {
+                        warn!("startup sweep: instance read for '{sri}' failed: {err}");
                         done = false;
                         continue;
                     }
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    warn!("startup sweep: instance read for '{sri}' failed: {err}");
-                    done = false;
-                    continue;
-                }
+                };
+            self.cleanup.push(CleanupAction::ReleaseCell(sri, gen_id));
+            if let Some(instance_gen) = instance_gen {
+                self.cleanup
+                    .push(CleanupAction::EraseInstance(sri, instance_gen));
             }
-            self.cleanup.push(CleanupAction::ReleaseCell(sri));
-            self.cleanup.push(CleanupAction::EraseInstance(sri));
         }
         done
     }
@@ -200,13 +209,16 @@ impl Runtime {
         }
         let pending = std::mem::take(&mut self.cleanup);
         for action in pending {
+            // Every fence outcome counts as done: an absent row was released by
+            // someone else, a superseded one belongs to a successor.
             let result = match &action {
-                CleanupAction::ReleaseCell(sri) => {
-                    sorg_common::remove_placement(&self.session, sri).await
+                CleanupAction::ReleaseCell(sri, gen_id) => {
+                    sorg_common::remove_placement(&self.session, sri, *gen_id)
+                        .await
+                        .map(|_| ())
                 }
-                CleanupAction::EraseInstance(sri) => {
-                    // A row someone else already erased counts as done.
-                    sorg_common::instance_registry::erase_instance_if_present(&self.session, sri)
+                CleanupAction::EraseInstance(sri, gen_id) => {
+                    sorg_common::instance_registry::erase_instance(&self.session, sri, *gen_id)
                         .await
                         .map(|_| ())
                 }

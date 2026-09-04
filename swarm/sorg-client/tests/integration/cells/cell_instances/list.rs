@@ -1,8 +1,9 @@
 use claims::assert_ok;
 
 use cell_protocol::Sri;
+use sorg_common::FenceOutcome;
 
-use super::{CLASS_NAME, INSTANCE_SRI, seed_instance, sorg_client};
+use super::{CLASS_NAME, INSTANCE_SRI, SEEDED_GEN, seed_instance, sorg_client};
 use crate::integration::spawn_db_test_app;
 
 const INSTANCE_SRI_B: &str = "test-instance-b";
@@ -62,9 +63,12 @@ async fn reflects_erasure() {
     // Arrange — seed two instances, erase one
     seed_instance(test_app.session(), &sri_a, CLASS_NAME).await;
     seed_instance(test_app.session(), &sri_b, CLASS_NAME).await;
-    assert_ok!(
-        sorg.erase_instance(&sri_a).await,
-        "erase_instance should succeed"
+    assert_eq!(
+        assert_ok!(
+            sorg.erase_instance(&sri_a, SEEDED_GEN).await,
+            "erase_instance should succeed"
+        ),
+        FenceOutcome::Applied
     );
 
     // Act

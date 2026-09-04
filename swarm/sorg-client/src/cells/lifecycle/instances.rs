@@ -1,5 +1,5 @@
-use cell_protocol::{CellInstance, Sri};
-use sorg_common::instance_registry;
+use cell_protocol::{CellInstance, Gen, Sri};
+use sorg_common::{FenceOutcome, instance_registry};
 
 use sorg_common::bail;
 
@@ -11,15 +11,11 @@ impl Client {
         Ok(instance_registry::list_instances(self.session()).await?)
     }
 
-    /// Erases a cell instance from the datalayer.
-    pub async fn erase_instance(&self, sri: &Sri) -> Result<()> {
-        Ok(instance_registry::erase_instance(self.session(), sri).await?)
-    }
-
-    /// Erases a cell instance if it still exists, returning whether a row
-    /// was deleted. Tolerates rows undeploy has already erased.
-    pub async fn erase_instance_if_present(&self, sri: &Sri) -> Result<bool> {
-        Ok(instance_registry::erase_instance_if_present(self.session(), sri).await?)
+    /// Erases a cell instance's row, provided it still belongs to the
+    /// incarnation `gen_id`. Refused while that incarnation is deployed; an
+    /// absent row is an outcome, not an error.
+    pub async fn erase_instance(&self, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
+        Ok(instance_registry::erase_instance(self.session(), sri, gen_id).await?)
     }
 
     /// Returns the stored info for a single instance.

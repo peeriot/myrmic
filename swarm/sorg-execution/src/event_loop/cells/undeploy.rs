@@ -1,4 +1,4 @@
-use sorg_common::{CellUndeployRequest, SorgPayload, bail, zenoh_err};
+use sorg_common::{ExecCellUndeployRequest, SorgPayload, bail, zenoh_err};
 use tracing::warn;
 use zenoh::query::Query;
 
@@ -31,20 +31,27 @@ impl Runtime {
             bail!("cell undeploy query without payload");
         };
         let request =
-            CellUndeployRequest::from_payload(payload, "exec: deser cell undeploy request")?;
+            ExecCellUndeployRequest::from_payload(payload, "exec: deser cell undeploy request")?;
 
         let sri = request.cell_sri;
+
+        // A teardown names the incarnation it is for; the same SRI hosted
+        // under another generation is a successor the sender does not know.
+        match self.meta.get(&sri).map(|m| m.gen_id) {
+            None => bail!("cell '{sri}' not hosted on the exec"),
+            Some(hosted) if hosted != request.gen_id => bail!(
+                "cell '{sri}' is hosted as generation {hosted}, not {}",
+                request.gen_id
+            ),
+            Some(_) => {}
+        }
 
         // Dropping the entry closes the poison channel, which terminates the
         // cell task. Removing it BEFORE the task ends is what marks this
         // death deliberate for the exit watcher.
-        match self.cells.remove(&sri) {
-            Some(_) => {
-                self.meta.remove(&sri);
-                self.fencing.forget(&sri);
-                Ok(())
-            }
-            None => bail!("cell '{sri}' not hosted on the exec"),
-        }
+        self.cells.remove(&sri);
+        self.meta.remove(&sri);
+        self.fencing.forget(&sri);
+        Ok(())
     }
 }

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use cell_protocol::Gen;
-use cell_protocol::{PlacementEntry, PlacementKind, Sri};
+use cell_protocol::{PlacementEntry, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
-    CellDeployment, CellFailure, DeployRequest, DeploymentError, PlacementClaimOutcome,
-    SorgPayload, bail, claim_placement, commit_placement, get_placement, list_placements,
-    remove_placement, zenoh_err,
+    CellDeployment, CellFailure, CellFailureKind, DeployRequest, DeploymentError, FenceOutcome,
+    PlacementClaimOutcome, SorgPayload, bail, claim_placement, commit_placement, get_placement,
+    list_placements, remove_placement, zenoh_err,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 use zenoh::query::Query;
 
 use crate::Result;
@@ -18,7 +18,9 @@ use super::{cell_failure_kind, reply_deployment_err};
 
 /// Tracks what a deploy has claimed so a failure part-way through can be undone.
 struct DeployTransaction {
-    claimed_sris: Vec<Sri>,
+    /// Every SRI this deploy claimed, with the generation minted for it. The
+    /// generation fences the rollback: only rows of this incarnation go.
+    claimed: Vec<(Sri, Gen)>,
     deployed: Vec<(Sri, PlacementKind)>,
     wrote_specs: Vec<Sri>,
 }
@@ -26,33 +28,64 @@ struct DeployTransaction {
 impl DeployTransaction {
     fn new() -> Self {
         Self {
-            claimed_sris: Vec::new(),
+            claimed: Vec::new(),
             deployed: Vec::new(),
             wrote_specs: Vec::new(),
         }
     }
 
     async fn rollback(&self, rt: &Runtime) {
+        let gens: HashMap<Sri, Gen> = self.claimed.iter().copied().collect();
         for (sri, kind) in &self.deployed {
-            rt.teardown_cell_on_exec(sri, kind).await;
+            rt.teardown_cell_on_exec(sri, gens[sri], kind).await;
         }
-        for sri in &self.claimed_sris {
-            if let Err(err) = remove_placement(&rt.session, sri).await {
-                warn!("rollback: failed to remove placement '{sri}': {err}");
-            }
-        }
-        // Deployed cells may already have instance rows (written by the exec
-        // or, for embedded, by the orchestrator itself).
-        for (sri, _) in &self.deployed {
-            if let Err(err) = sorg_common::instance_registry::erase_instance(&rt.session, sri).await
+        for (sri, gen_id) in &self.claimed {
+            // A concurrent undeploy can have released this SRI and a redeploy
+            // reclaimed it; then every record under it is the successor's.
+            let row = match get_placement(&rt.session, sri).await {
+                Ok(row) => row,
+                Err(err) => {
+                    warn!("rollback: placement read for '{sri}' failed: {err}");
+                    continue;
+                }
+            };
+            if let Some(entry) = &row
+                && entry.gen_id != *gen_id
             {
-                warn!("rollback: failed to erase instance '{sri}': {err}");
+                debug!(
+                    "rollback: '{sri}' is held by generation {}; leaving its records",
+                    entry.gen_id
+                );
+                continue;
             }
-        }
-        // Restart specs written for this batch must not outlive a rollback.
-        for sri in &self.wrote_specs {
-            if let Err(err) = sorg_common::root_restart::erase_spec(&rt.session, sri).await {
+            // Cells run `#[init]` before the batch commits, so a rolled-back
+            // cell may already own gateway routes and assets — also one whose
+            // deploy failed after its init committed (a timeout, say). With
+            // the placement already gone, the undeploy that took it has
+            // released them, and a successor may be declaring its own.
+            if row.is_some() {
+                rt.release_cell_resources(sri).await;
+            }
+            if self.wrote_specs.contains(sri)
+                && let Err(err) = sorg_common::root_restart::erase_spec(&rt.session, sri).await
+            {
                 warn!("rollback: failed to erase restart spec '{sri}': {err}");
+            }
+            // The placement is the claim: while it stands no successor can
+            // start writing rows of its own, so it goes after everything a
+            // successor could otherwise share. The instance row follows — its
+            // erase is refused while a same-generation placement exists.
+            match remove_placement(&rt.session, sri, *gen_id).await {
+                Ok(FenceOutcome::Applied) => {}
+                Ok(outcome) => debug!("rollback: placement '{sri}' not removed: {outcome:?}"),
+                Err(err) => warn!("rollback: failed to remove placement '{sri}': {err}"),
+            }
+            // Written by the exec at init, or by the orchestrator for embedded
+            // cells; absent when the deploy never got that far.
+            match sorg_common::instance_registry::erase_instance(&rt.session, sri, *gen_id).await {
+                Ok(FenceOutcome::Applied | FenceOutcome::Absent) => {}
+                Ok(outcome) => debug!("rollback: instance '{sri}' not erased: {outcome:?}"),
+                Err(err) => warn!("rollback: failed to erase instance '{sri}': {err}"),
             }
         }
     }
@@ -60,6 +93,7 @@ impl DeployTransaction {
 
 struct DeployedCell {
     sri: Sri,
+    runtime: RuntimeId,
     kind: PlacementKind,
 }
 
@@ -127,7 +161,7 @@ impl Runtime {
                 .await
                 .map_err(|err| DeploymentError::Internal(err.to_string()))?
             {
-                PlacementClaimOutcome::Claimed => txn.claimed_sris.push(cell.sri),
+                PlacementClaimOutcome::Claimed => txn.claimed.push((cell.sri, gen_ids[&cell.sri])),
                 PlacementClaimOutcome::AlreadyExists => {
                     return Err(DeploymentError::DuplicateSri { sri: cell.sri });
                 }
@@ -147,6 +181,11 @@ impl Runtime {
 
         let deployed = self.place_and_deploy(txn, cells, &gen_ids).await?;
 
+        // A placeholder that no longer carries this deploy's generation was
+        // overtaken while the cell loaded — undeployed, or undeployed and
+        // redeployed. Failing the batch hands the loaded cell to the rollback,
+        // so a stale deploy can never publish itself over the newer state.
+        let mut superseded = Vec::new();
         for d in &deployed {
             let entry = PlacementEntry {
                 sri: d.sri,
@@ -154,9 +193,26 @@ impl Runtime {
                 app: apps.remove(&d.sri).flatten(),
                 gen_id: gen_ids[&d.sri],
             };
-            commit_placement(&self.session, entry)
+            match commit_placement(&self.session, entry)
                 .await
-                .map_err(|err| DeploymentError::Internal(err.to_string()))?;
+                .map_err(|err| DeploymentError::Internal(err.to_string()))?
+            {
+                FenceOutcome::Applied => {}
+                outcome => {
+                    warn!(
+                        "deploy: placement of '{}' not committed: {outcome:?}",
+                        d.sri
+                    );
+                    superseded.push(CellFailure {
+                        cell: d.sri,
+                        runtime: d.runtime,
+                        kind: CellFailureKind::Superseded,
+                    });
+                }
+            }
+        }
+        if !superseded.is_empty() {
+            return Err(DeploymentError::DeploymentFailed(superseded));
         }
 
         for spec in &root_specs {
@@ -270,7 +326,11 @@ impl Runtime {
                     )
                     .await
                 {
-                    Ok(kind) => Ok(DeployedCell { sri, kind }),
+                    Ok(kind) => Ok(DeployedCell {
+                        sri,
+                        runtime: runtime.id(),
+                        kind,
+                    }),
                     Err(err) => Err(CellFailure {
                         cell: sri,
                         runtime: runtime.id(),

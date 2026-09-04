@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use cell_protocol::Sri;
+use cell_protocol::{Gen, Sri};
 use std::borrow::ToOwned;
 
 use sorg_common::{
@@ -110,10 +110,11 @@ struct Runtime {
     sweep_done: bool,
 }
 
+/// A row release this exec owes, fenced by the generation of the row it saw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CleanupAction {
-    ReleaseCell(Sri),
-    EraseInstance(Sri),
+    ReleaseCell(Sri, Gen),
+    EraseInstance(Sri, Gen),
 }
 
 impl Runtime {

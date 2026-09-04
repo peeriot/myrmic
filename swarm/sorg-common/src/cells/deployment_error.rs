@@ -101,6 +101,10 @@ pub enum CellFailureKind {
     RuntimeReported(String),
     /// The runtime never confirmed the deployment within the deadline.
     Timeout,
+    /// The cell loaded, but a concurrent undeploy or redeploy of the same SRI
+    /// overtook this deployment before its placement could be committed. The
+    /// loaded cell was torn down again; whatever holds the SRI now is untouched.
+    Superseded,
 }
 
 impl std::error::Error for DeploymentError {}
@@ -182,6 +186,10 @@ impl Display for CellFailureKind {
         match self {
             Self::RuntimeReported(msg) => write!(f, "{msg}"),
             Self::Timeout => write!(f, "timed out waiting for deployment confirmation"),
+            Self::Superseded => write!(
+                f,
+                "superseded by a concurrent lifecycle operation on the same cell"
+            ),
         }
     }
 }

@@ -1,33 +1,24 @@
-use cell_protocol::{CellInstance, INSTANCE_REGISTRY_TABLE, Sri, instance_registry_scope};
+use cell_protocol::{CellInstance, Gen, INSTANCE_REGISTRY_TABLE, Sri, instance_registry_scope};
 use db_client::v1::{
     Client as DbClient,
     models::{TxId, tb_delete, tb_get, tb_insert, tb_list},
 };
 use zenoh::Session;
 
+use super::fence::{self, FenceOutcome};
 use super::placement;
 use crate::{Result, bail, custom_err};
 
-pub async fn erase_instance(session: &Session, sri: &Sri) -> Result<()> {
+/// Erases the instance row of one incarnation, provided it still carries
+/// `gen_id`. Refused while that incarnation is deployed: a placement row of the
+/// same generation means the row is a live cell's record. An absent row is
+/// reported, not an error — callers routinely race undeploy's own erase.
+pub async fn erase_instance(session: &Session, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
     let sri = *sri;
     let db = DbClient::new(session);
 
     db.write_tx_in(instance_registry_scope(), async move |client, tx_id| {
-        Ok(do_erase(client, tx_id, &sri).await)
-    })
-    .await
-    .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
-}
-
-/// Erases the instance row if it exists, returning whether one was deleted.
-/// Still refuses while the cell is deployed. For callers that may race with
-/// undeploy's own erase, where an absent row means the work is already done.
-pub async fn erase_instance_if_present(session: &Session, sri: &Sri) -> Result<bool> {
-    let sri = *sri;
-    let db = DbClient::new(session);
-
-    db.write_tx_in(instance_registry_scope(), async move |client, tx_id| {
-        Ok(do_erase_if_present(client, tx_id, &sri).await)
+        Ok(do_erase(client, tx_id, &sri, gen_id).await)
     })
     .await
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
@@ -78,26 +69,22 @@ pub async fn get_instance(session: &Session, sri: &Sri) -> Result<Option<CellIns
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
 }
 
-async fn do_erase(client: &DbClient, tx_id: TxId, sri: &Sri) -> Result<()> {
-    if !do_erase_if_present(client, tx_id, sri).await? {
-        bail!("instance '{}' not found", sri);
-    }
-    Ok(())
-}
-
-async fn do_erase_if_present(client: &DbClient, tx_id: TxId, sri: &Sri) -> Result<bool> {
+async fn do_erase(client: &DbClient, tx_id: TxId, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
     let existing = do_get_record(client, tx_id, sri).await?;
-    if existing.is_none() {
-        return Ok(false);
+    if let Err(outcome) = fence::admit(existing.map(|record| record.gen_id), gen_id) {
+        return Ok(outcome);
     }
-    if placement::placement_exists_in_tx(client, tx_id, sri).await? {
+    if placement::get_placement_in_tx(client, tx_id, sri)
+        .await?
+        .is_some_and(|entry| entry.gen_id == gen_id)
+    {
         bail!(
             "cannot erase instance '{}': cell is currently deployed",
             sri
         );
     }
     do_delete_registry_entry(client, tx_id, sri).await?;
-    Ok(true)
+    Ok(FenceOutcome::Applied)
 }
 
 pub(crate) async fn do_list(client: &DbClient, tx_id: TxId) -> Result<Vec<CellInstance>> {

@@ -66,7 +66,7 @@ A query fails when the SPARQL is invalid, a read is not a select, an IRI is bad,
 
 The query text has to fit in 1000 bytes. A select's rows have to fit in 1000 bytes too. Anything larger fails.
 
-For now an update can only insert triples, delete them, do both at once, or create a graph.
+For now an update can insert triples, delete them, do both at once, and create, clear or drop a graph. `LOAD` is not supported: it fails, and `LOAD SILENT` does nothing.
 
 ## API documentation
 

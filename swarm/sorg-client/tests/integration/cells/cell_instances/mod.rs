@@ -2,12 +2,14 @@ mod erase;
 mod inspect;
 mod list;
 
-use cell_protocol::Sri;
+use cell_protocol::{Gen, Sri};
 use claims::assert_ok;
 use sorg_client::Client as SorgClient;
 
 pub const INSTANCE_SRI: &str = "test-instance";
 pub const CLASS_NAME: &str = "test-class";
+/// The generation [`seed_instance`] stamps on its rows.
+pub const SEEDED_GEN: Gen = Gen::from_parts(1, 1);
 
 pub fn sorg_client(session: &zenoh::Session) -> SorgClient {
     SorgClient::new(session.clone())
@@ -19,7 +21,7 @@ pub async fn seed_instance(session: &zenoh::Session, sri: &Sri, class_name: &str
     let record = cell_protocol::CellInstance {
         sri: *sri,
         class_name: class_name.to_owned(),
-        gen_id: cell_protocol::Gen::from_parts(1, 1),
+        gen_id: SEEDED_GEN,
         lineage: cell_protocol::SpawnLineage::default(),
     };
     assert_ok!(

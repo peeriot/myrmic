@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use cell_protocol::{PlacementEntry, PlacementKind, RuntimeId, Sri};
+use cell_protocol::{Gen, PlacementEntry, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
     CellLost, LostReason, emit_cell_lost, instance_registry, list_placements, remove_placement,
 };
@@ -19,20 +19,21 @@ use tracing::{debug, warn};
 use zenoh::Session;
 
 /// The placement rows that name `my_exec` but are not in `hosted` — cells a
-/// previous incarnation of this exec left behind. A freshly booted exec hosts
-/// nothing, so every row naming it is a remnant.
+/// previous incarnation of this exec left behind, each with the generation
+/// its row carries so the release touches nothing newer. A freshly booted
+/// exec hosts nothing, so every row naming it is a remnant.
 pub(crate) fn select_remnants(
     cells: &[PlacementEntry],
     my_exec: RuntimeId,
     hosted: &HashSet<Sri>,
-) -> Vec<Sri> {
+) -> Vec<(Sri, Gen)> {
     cells
         .iter()
         .filter(|c| {
             matches!(&c.kind, PlacementKind::Wasm { runtime } if runtime.id() == my_exec)
                 && !hosted.contains(&c.sri)
         })
-        .map(|c| c.sri)
+        .map(|c| (c.sri, c.gen_id))
         .collect()
 }
 
@@ -56,11 +57,11 @@ pub(crate) async fn sweep_previous_incarnation(session: &Session, my_exec: Runti
         count = remnants.len(),
         "startup sweep: releasing cells of a previous incarnation"
     );
-    for sri in remnants {
+    for (sri, gen_id) in remnants {
         // Notify the parent (its child died with the old process) before the
         // rows go — once they are gone the note can no longer be re-derived, so
         // a failed emit leaves the rows for the verify-pass sweep to retry.
-        match instance_registry::get_instance(session, &sri).await {
+        let instance_gen = match instance_registry::get_instance(session, &sri).await {
             Ok(Some(instance)) => {
                 if !instance.lineage.detached
                     && let Some(parent) = instance.lineage.parent
@@ -75,20 +76,23 @@ pub(crate) async fn sweep_previous_incarnation(session: &Session, my_exec: Runti
                         continue;
                     }
                 }
+                Some(instance.gen_id)
             }
-            Ok(None) => {}
+            Ok(None) => None,
             Err(err) => {
                 warn!("startup sweep: instance read for '{sri}' failed: {err}");
                 continue;
             }
-        }
-        if let Err(err) = remove_placement(session, &sri).await {
+        };
+        if let Err(err) = remove_placement(session, &sri, gen_id).await {
             warn!("startup sweep: releasing cell row '{sri}' failed: {err}");
             continue;
         }
         // Tolerant erase: undeploy or a concurrent pass may have already
         // removed the instance row, and an absent row means the work is done.
-        if let Err(err) = instance_registry::erase_instance_if_present(session, &sri).await {
+        if let Some(instance_gen) = instance_gen
+            && let Err(err) = instance_registry::erase_instance(session, &sri, instance_gen).await
+        {
             debug!("startup sweep: erasing instance row '{sri}': {err}");
         }
     }

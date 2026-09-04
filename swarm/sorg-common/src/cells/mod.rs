@@ -2,6 +2,7 @@ pub mod cell_lost;
 pub mod class_registry;
 pub(crate) mod commands;
 pub(crate) mod deployment_error;
+pub(crate) mod fence;
 pub mod instance_registry;
 pub(crate) mod lifecycle;
 pub(crate) mod placement;

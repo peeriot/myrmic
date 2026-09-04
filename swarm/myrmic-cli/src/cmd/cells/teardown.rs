@@ -1,6 +1,7 @@
 use crate::args::Ctx;
 use anyhow::Context;
 use myrmic_common::cells::Sri;
+use sorg_common::FenceOutcome;
 
 #[derive(clap::Parser)]
 pub struct Teardown {
@@ -39,11 +40,18 @@ pub async fn handle(ctx: Ctx, cmd: Teardown) -> anyhow::Result<()> {
     let class_name = instance.class_name;
 
     // Undeploy erases the instance row itself; this sweeps the corpse left
-    // behind if that best-effort erase failed.
-    client
-        .erase_instance_if_present(&target)
+    // behind if that best-effort erase failed. Fenced by the generation read
+    // above, so a cell already running again under the SRI keeps its row.
+    match client
+        .erase_instance(&target, instance.gen_id)
         .await
-        .with_context(|| format!("failed to erase instance '{id}'"))?;
+        .with_context(|| format!("failed to erase instance '{id}'"))?
+    {
+        FenceOutcome::Applied | FenceOutcome::Absent => {}
+        FenceOutcome::Superseded { current } => {
+            println!("Instance row kept: '{id}' is already running again as generation {current}");
+        }
+    }
 
     if remove_class {
         let instances = client.list_instances().await?;

@@ -514,13 +514,14 @@ async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket) {
 
     // Register the session as a placeholder cell so cells can deliver replies
     // to its SRI — the host rejects commands addressed to unknown cells.
+    let gen_id = cell_protocol::Gen::from_timestamp(&state.session.new_timestamp());
     if let Err(err) = claim_placement(
         &state.session,
         PlacementEntry {
             sri: session_sri,
             kind: PlacementKind::Placeholder,
             app: None,
-            gen_id: cell_protocol::Gen::from_timestamp(&state.session.new_timestamp()),
+            gen_id,
         },
     )
     .await
@@ -589,7 +590,7 @@ async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket) {
 
     tracing::debug!("ws session down: {session_sri}");
     // Best-effort cleanup: deregister the session and clear its mailbox.
-    let _ = remove_placement(&state.session, &session_sri).await;
+    let _ = remove_placement(&state.session, &session_sri, gen_id).await;
     let _ = Mailbox::new(&state.session)
         .drain_commands(session_sri)
         .await;
@@ -703,20 +704,21 @@ async fn sse_stream(state: AppState, req: Request) -> Response {
         _ => {
             let id = Uuid::new_v4();
             let sri = Sri::from_uuid(id);
+            let gen_id = cell_protocol::Gen::from_timestamp(&state.session.new_timestamp());
             if let Err(err) = claim_placement(
                 &state.session,
                 PlacementEntry {
                     sri,
                     kind: PlacementKind::Placeholder,
                     app: None,
-                    gen_id: cell_protocol::Gen::from_timestamp(&state.session.new_timestamp()),
+                    gen_id,
                 },
             )
             .await
             {
                 tracing::warn!("failed to register http session {id}: {err}");
             }
-            sessions::register(&state.sessions, id);
+            sessions::register(&state.sessions, id, gen_id);
             tracing::debug!("http session up: {id}");
             id
         }

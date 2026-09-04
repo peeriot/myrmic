@@ -178,6 +178,15 @@ pub struct CellUndeployRequest {
     pub cell_sri: Sri,
 }
 
+/// What the orchestrator sends an exec to tear down one hosted cell. Names
+/// the incarnation it is for: an exec hosting the SRI under a later
+/// generation refuses it, so a stale teardown cannot kill a successor.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecCellUndeployRequest {
+    pub cell_sri: Sri,
+    pub gen_id: Gen,
+}
+
 /// Undeploys a cell by sending an undeploy request to the orchestration plugin.
 pub async fn undeploy_cell(
     session: &Session,

@@ -2,10 +2,10 @@ mod bridge;
 mod embedded;
 mod linux;
 
-use cell_protocol::{ExecRuntimeInfo, PlacementKind, RuntimeKind, Sri};
+use cell_protocol::{ExecRuntimeInfo, Gen, PlacementKind, RuntimeKind, Sri};
 use sorg_common::{
-    CellUndeployRequest, SorgPayload, bail, gateway_config, get_placement, remove_placement,
-    zenoh_err,
+    CellUndeployRequest, FenceOutcome, SorgPayload, bail, gateway_config, get_placement,
+    remove_placement, zenoh_err,
 };
 use tracing::warn;
 use zenoh::query::Query;
@@ -52,6 +52,8 @@ impl Runtime {
         let Some(entry) = get_placement(&self.session, cell_sri).await? else {
             bail!("cell '{cell_sri}' is not deployed");
         };
+        // Everything below acts on the incarnation read here and nothing else.
+        let gen_id = entry.gen_id;
 
         match entry.kind {
             PlacementKind::Wasm { ref runtime } => {
@@ -61,7 +63,7 @@ impl Runtime {
                 // unreachable, release the rows anyway — otherwise the corpse
                 // blocks its SRI from ever being redeployed. Fencing reaps any
                 // still-live remnant once its placement row is gone.
-                if let Err(err) = self.undeploy_wasm_cell(cell_sri, runtime).await {
+                if let Err(err) = self.undeploy_wasm_cell(cell_sri, gen_id, runtime).await {
                     warn!(
                         "undeploy '{cell_sri}': exec teardown failed ({err}); releasing rows anyway"
                     );
@@ -78,12 +80,18 @@ impl Runtime {
 
         self.release_cell_resources(cell_sri).await;
 
-        remove_placement(&self.session, &entry.sri).await?;
+        match remove_placement(&self.session, cell_sri, gen_id).await? {
+            FenceOutcome::Applied | FenceOutcome::Absent => {}
+            FenceOutcome::Superseded { current } => bail!(
+                "cell '{cell_sri}' was redeployed concurrently (generation {current}); \
+                 the new incarnation was left untouched"
+            ),
+        }
         // Embedded cells have no exec-side cleanup to erase their instance
-        // row; for Linux cells this is a no-op race with the exec's own
-        // erase. A miss leaves a corpse row the spawn gate supersedes.
+        // row; for Linux cells this races the exec's own erase, so an absent
+        // row is expected. A miss leaves a corpse row the spawn gate supersedes.
         if let Err(err) =
-            sorg_common::instance_registry::erase_instance(&self.session, &entry.sri).await
+            sorg_common::instance_registry::erase_instance(&self.session, cell_sri, gen_id).await
         {
             warn!("undeploy: erasing instance row '{cell_sri}': {err}");
         }
@@ -91,12 +99,13 @@ impl Runtime {
     }
 
     /// Drops the resources a cell declared for itself: its gateway routes and
-    /// the assets it uploaded to serve on them.
+    /// the assets it uploaded to serve on them. Runs on undeploy and on deploy
+    /// rollback alike.
     ///
     /// Best-effort — a cell that is going away must not be kept alive by a
     /// failing cleanup. Gateways also drop routes whose owner has lost its
     /// placement, so a missed route here is corrected within a reconcile.
-    async fn release_cell_resources(&self, cell_sri: &Sri) {
+    pub(super) async fn release_cell_resources(&self, cell_sri: &Sri) {
         match gateway_config::deregister_cell_routes(&self.session, cell_sri).await {
             Ok(mounts) if !mounts.is_empty() => {
                 tracing::debug!(
@@ -120,10 +129,11 @@ impl Runtime {
     pub(super) async fn teardown_cell_on_exec(
         &self,
         sri: &cell_protocol::Sri,
+        gen_id: Gen,
         kind: &PlacementKind,
     ) {
         let result = match kind {
-            PlacementKind::Wasm { runtime } => self.undeploy_wasm_cell(sri, runtime).await,
+            PlacementKind::Wasm { runtime } => self.undeploy_wasm_cell(sri, gen_id, runtime).await,
             PlacementKind::Bridge { sri: bridge_sri } => self.undeploy_bridge_cell(bridge_sri),
             PlacementKind::Placeholder => return,
         };
@@ -132,11 +142,19 @@ impl Runtime {
         }
     }
 
-    async fn undeploy_wasm_cell(&self, cell_sri: &Sri, runtime: &ExecRuntimeInfo) -> Result<()> {
+    async fn undeploy_wasm_cell(
+        &self,
+        cell_sri: &Sri,
+        gen_id: Gen,
+        runtime: &ExecRuntimeInfo,
+    ) -> Result<()> {
         match runtime.runtime_kind() {
             RuntimeKind::Linux | RuntimeKind::Unknown => {
-                self.undeploy_wasm_cell_linux(cell_sri, runtime.id()).await
+                self.undeploy_wasm_cell_linux(cell_sri, gen_id, runtime.id())
+                    .await
             }
+            // The embedded mailbox protocol names cells by SRI alone; a node
+            // hosts one cell, so there is no successor to protect there.
             RuntimeKind::Esp32c5 | RuntimeKind::Esp32c6 | RuntimeKind::Esp32c61 => {
                 self.undeploy_wasm_cell_embedded(cell_sri, runtime).await
             }

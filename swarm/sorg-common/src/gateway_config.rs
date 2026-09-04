@@ -9,9 +9,9 @@
 //!
 //! One entry per mount, keyed (eid) by the mount path, recording the owning
 //! cell. A route is the owner's resource: it is removed when the cell is
-//! undeployed (see [`deregister_cell_routes`], called from orchestration's
-//! undeploy path), and gateways drop routes whose owner has left the cell
-//! registry.
+//! undeployed or its deploy is rolled back (see [`deregister_cell_routes`],
+//! called from orchestration's undeploy and rollback paths), and gateways drop
+//! routes whose owner has left the cell registry.
 //!
 //! A [`GatewayRoute`] is modeled as typed, optional sections (assets / api /
 //! oidc) rather than an ordered rule list; the gateway applies a fixed
@@ -244,16 +244,13 @@ pub fn cell_asset_scope(sri: &Sri) -> Scope {
     )
 }
 
-/// Unlinks every asset a cell uploaded, returning how many paths were removed.
-///
-/// The blobs themselves are content-addressed and shared, so only the paths go.
-pub async fn purge_cell_assets(session: &Session, sri: &Sri) -> Result<usize> {
+/// Every asset path a cell has uploaded to its own asset scope.
+pub async fn list_cell_assets(session: &Session, sri: &Sri) -> Result<Vec<String>> {
     let db = DbClient::new(session);
     let scope = cell_asset_scope(sri);
 
-    let paths = {
-        let scope = scope.clone();
-        db.read_tx_in(scope.clone(), async move |client, tx_id| {
+    let response = db
+        .read_tx_in(scope.clone(), async move |client, tx_id| {
             client
                 .send(paths_list::Request {
                     id: tx_id,
@@ -263,15 +260,24 @@ pub async fn purge_cell_assets(session: &Session, sri: &Sri) -> Result<usize> {
         })
         .await
         .map_err(|err| custom_err!("unable to communicate with db: {err}"))?
-        .map_err(|err| custom_err!("unable to list cell assets: {}", err.message))?
-        .paths
-    };
+        .map_err(|err| custom_err!("unable to list cell assets: {}", err.message))?;
+
+    Ok(response.paths)
+}
+
+/// Unlinks every asset a cell uploaded, returning how many paths were removed.
+///
+/// The blobs themselves are content-addressed and shared, so only the paths go.
+pub async fn purge_cell_assets(session: &Session, sri: &Sri) -> Result<usize> {
+    let paths = list_cell_assets(session, sri).await?;
 
     let count = paths.len();
     if count == 0 {
         return Ok(0);
     }
 
+    let db = DbClient::new(session);
+    let scope = cell_asset_scope(sri);
     db.write_tx_in(scope.clone(), async move |client, tx_id| {
         Ok(unlink_paths_in_tx(client, tx_id, scope, paths).await)
     })

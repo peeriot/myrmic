@@ -1,9 +1,9 @@
 use claims::{assert_err, assert_ok};
 
-use cell_protocol::Sri;
-use sorg_common::RequirementTags;
+use cell_protocol::{Gen, Sri};
+use sorg_common::{FenceOutcome, RequirementTags};
 
-use super::{CLASS_NAME, INSTANCE_SRI, seed_instance, sorg_client};
+use super::{CLASS_NAME, INSTANCE_SRI, SEEDED_GEN, seed_instance, sorg_client};
 use crate::integration::spawn_db_test_app;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -16,9 +16,12 @@ async fn happy_path() {
     seed_instance(test_app.session(), &sri, CLASS_NAME).await;
 
     // Act
-    assert_ok!(
-        sorg.erase_instance(&sri).await,
-        "erase_instance should succeed"
+    assert_eq!(
+        assert_ok!(
+            sorg.erase_instance(&sri, SEEDED_GEN).await,
+            "erase_instance should succeed"
+        ),
+        FenceOutcome::Applied
     );
 
     // Assert — instance no longer appears in list
@@ -51,23 +54,48 @@ async fn deployed_is_rejected() {
             .await,
         "deploy should succeed"
     );
+    let instance = assert_ok!(sorg.inspect_instance(&sri).await);
 
-    // Act — try to erase the deployed instance
+    // Act — try to erase the deployed instance under its own generation
     assert_err!(
-        sorg.erase_instance(&sri).await,
+        sorg.erase_instance(&sri, instance.gen_id).await,
         "erase_instance for deployed instance should fail"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn not_found() {
+async fn absent_is_reported() {
     let test_app = spawn_db_test_app().await;
     let sorg = sorg_client(test_app.session());
     let sri = Sri::from_target(INSTANCE_SRI).unwrap();
 
     // Act — erase an SRI that was never created
-    assert_err!(
-        sorg.erase_instance(&sri).await,
-        "erase_instance for missing instance should fail"
+    assert_eq!(
+        assert_ok!(
+            sorg.erase_instance(&sri, SEEDED_GEN).await,
+            "erasing a missing instance is an outcome, not an error"
+        ),
+        FenceOutcome::Absent
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn other_generation_is_refused() {
+    let test_app = spawn_db_test_app().await;
+    let sorg = sorg_client(test_app.session());
+    let sri = Sri::from_target(INSTANCE_SRI).unwrap();
+    seed_instance(test_app.session(), &sri, CLASS_NAME).await;
+
+    // Act — an erase issued for another incarnation of the same SRI
+    let outcome = assert_ok!(sorg.erase_instance(&sri, Gen::from_parts(2, 1)).await);
+
+    // Assert — refused, and the row is untouched
+    assert_eq!(
+        outcome,
+        FenceOutcome::Superseded {
+            current: SEEDED_GEN
+        }
+    );
+    let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
+    assert_eq!(instances.len(), 1, "the row should still be there");
 }
