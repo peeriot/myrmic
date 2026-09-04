@@ -8,6 +8,12 @@
 #![no_std]
 #![no_main]
 
+// Imports required for pipeline codegen output
+#[cfg(feature = "pipeline")]
+use esp_firmware::embassy_executor::Spawner;
+#[cfg(feature = "pipeline")]
+use esp_firmware::esp_hal::peripherals::Peripherals;
+
 #[cfg(feature = "pipeline")]
 #[rustfmt::skip] // generated artifact — never format, never require the file to exist
 mod pipeline_config;

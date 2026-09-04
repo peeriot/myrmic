@@ -16,7 +16,7 @@ pub fn emit_runtime_imports() -> TokenStream {
     quote! {
         use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
         use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-        use embassy_executor::Spawner;
+        use esp_firmware::embassy_executor::Spawner;
         use embassy_sync::blocking_mutex::raw::NoopRawMutex;
         use embassy_sync::mutex::Mutex;
         use embassy_time::{Duration, Ticker};
@@ -29,7 +29,9 @@ pub fn emit_runtime_imports() -> TokenStream {
 /// The `#[embassy_executor::task]` attribute emitted on source/sink task fns
 /// (`source_task.rs` and `sink_task.rs` inline block).
 pub fn emit_task_attribute() -> TokenStream {
-    quote! { #[embassy_executor::task] }
+    quote! {
+        #[esp_firmware::embassy_executor::task(embassy_executor = esp_firmware::embassy_executor)]
+    }
 }
 
 // ── emit_interval ────────────────────────────────────────────────────────────
@@ -56,9 +58,10 @@ pub fn emit_now_millis() -> TokenStream {
 /// (`spawn.rs` inline block).
 ///
 /// The `task` argument is the task-fn-call expression (without `.expect()`);
-/// `label` is the panic message for pool-exhaustion failures. Embassy wraps
-/// it in `spawner.spawn(#task.expect(#label))` to unwrap the `SpawnToken`
-/// returned by `#[embassy_executor::task]` functions.
+/// `label` is the panic message for pool-exhaustion failures. Calling a
+/// `#[embassy_executor::task]` fn returns `Result<SpawnToken, SpawnError>`, so
+/// `.expect(#label)` unwraps it to the `SpawnToken` that `Spawner::spawn`
+/// consumes (which itself returns `()`).
 pub fn emit_spawn(task: &TokenStream, label: &str) -> TokenStream {
     quote! { spawner.spawn(#task.expect(#label)); }
 }
