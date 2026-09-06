@@ -122,9 +122,10 @@ impl Display for DeploymentError {
                 write!(f, "application '{name}' is already deployed")
             }
             Self::DuplicateSri { sri } => write!(f, "cell '{sri}' is already deployed"),
-            Self::UnknownClass { class } => {
-                write!(f, "class '{class}' not found in class registry")
-            }
+            Self::UnknownClass { class } => write!(
+                f,
+                "class '{class}' not found in the class registry (if it was just registered, retry)"
+            ),
             Self::Internal(msg) => write!(f, "{msg}"),
             Self::PlacementConflicts => write!(
                 f,

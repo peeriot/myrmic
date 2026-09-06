@@ -134,8 +134,6 @@ impl Runtime {
         if cells.is_empty() {
             return Err(DeploymentError::EmptyDeployment);
         }
-        // An unregistered class surfaces as an Infeasible placement below (no
-        // exec can host it) rather than being pre-checked here.
         self.reject_duplicate_app_names(&cells).await?;
 
         // Deploy admission mints each instance's generation from the

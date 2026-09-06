@@ -220,6 +220,21 @@ fn decide_cell_placement(
         return Err(DeploymentError::NoRuntimesAvailable);
     }
 
+    // A class the registry read did not return is not a per-runtime property:
+    // no runtime can host it, and reporting it as every runtime lacking an
+    // artifact describes the wrong thing. Name the class instead, before any
+    // runtime is considered. Checked after the empty-registry case, because a
+    // swarm with no runtimes cannot run the deploy whatever the class is.
+    let unknown_class = request.cells().iter().find_map(|cell| match cell.config {
+        CellConfig::Wasm { ref class } if !context.class_info().contains_key(class) => Some(class),
+        _ => None,
+    });
+    if let Some(class) = unknown_class {
+        return Err(DeploymentError::UnknownClass {
+            class: class.clone(),
+        });
+    }
+
     let embedded_nodes: HashSet<RuntimeId> = context
         .execs()
         .iter()

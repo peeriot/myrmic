@@ -570,6 +570,20 @@ impl SwarmTestCtx {
                     );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
+                // An absent class row surfaces as its own error rather than as
+                // a per-runtime artifact rejection. Two things still put an
+                // early reader on a holder that does not carry the row: a
+                // locate that drowns under load and concedes to any node, and
+                // a head tie against a replica whose history has a hole an
+                // earlier chunk apply gave up on. Both heal on the next
+                // anti-entropy round, so this is worth waiting out.
+                Err(DeploymentError::UnknownClass { .. }) if attempt < ATTEMPTS => {
+                    eprintln!(
+                        "deploy hit UnknownClass (attempt {attempt}/{ATTEMPTS}); retrying, \
+                         placement's class read likely landed on a holder without the row"
+                    );
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
                 // Same argument, different symptom: `wait_for_class_visible`
                 // proves *some* holder has the class, while placement's own
                 // read routes independently and may land on one that does not
