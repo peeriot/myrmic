@@ -9,7 +9,7 @@ myrmic telemetry set-db-retention [OPTIONS] [RETENTION]
 ```
 
 ## Description
-Sets how long telemetry data is kept in the swarm, across all connected nodes. Applies only to data inserted after this command runs - the already existing records are not affected. `RETENTION` accepts humantime duration string - e.g. `7d`, `1year 6months`.
+Turns on telemetry storage in the swarm's internal DB and sets how long records are kept, across all connected nodes. Without a retention period (the default) nothing is written to the DB, so this command - or `db_retention` in the runtime configuration - is required before [`myrmic telemetry logs`](./01_logs.md), `traces`, or `metrics` show anything. Applies only to data inserted after this command runs - the already existing records are not affected. The value is not persisted across a runtime restart. `RETENTION` accepts humantime duration string - e.g. `7d`, `1year 6months`.
 
 ## Options
 `-v` / `--verbose`

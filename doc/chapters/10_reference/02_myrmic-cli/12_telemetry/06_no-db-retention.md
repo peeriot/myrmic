@@ -9,7 +9,7 @@ myrmic telemetry no-db-retention [OPTIONS]
 ```
 
 ## Description
-Disables telemetry data expiry across all connected nodes. Applies to data inserted after this command runs - existing records are not affected. Use this when you need the full telemetry history.
+Stops writing telemetry to the swarm's internal DB across all connected nodes - this is the default state of a runtime. Applies to data emitted after this command runs - existing records are not affected. Use this when the swarm should not spend storage on telemetry; to record again, run [`myrmic telemetry set-db-retention`](./05_set-db-retention.md).
 
 ## Options
 `-v` / `--verbose`

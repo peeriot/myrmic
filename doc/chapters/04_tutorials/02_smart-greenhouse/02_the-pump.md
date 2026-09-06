@@ -94,6 +94,8 @@ true
 
 And the pump logged who asked. Look for it in the runtime logs:
 
+> **First time here?** Telemetry is only stored while a DB retention period is set, and a runtime starts without one. Run `myrmic telemetry set-db-retention "1h"` once, then `myrmic send pump start` again - only records emitted afterwards are stored.
+
 ```bash
 myrmic telemetry logs
 ```
