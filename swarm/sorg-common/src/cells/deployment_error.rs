@@ -125,7 +125,9 @@ impl DeploymentError {
     /// not replicated the artifact therefore spends the whole retry budget
     /// before failing. Distinguishing the two would mean recording every failed
     /// check rather than the first, which is a wider change than the retry
-    /// needs. Nothing in the tree produces that shape today.
+    /// needs. Nothing in the repo exercises that shape, but a live fleet
+    /// reaches it whenever an embedded runtime at capacity is asked for a class
+    /// with no AOT build.
     ///
     /// The shape this covers: a class with an AOT target is registered in two
     /// writes, the wasm blob and then the AOT pair, and the deploy query fires

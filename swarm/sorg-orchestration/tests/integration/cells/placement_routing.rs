@@ -56,9 +56,10 @@ const STAND_IN_TX: models::TxId = (1, 1, STAND_IN_HOLDER);
 /// test that read it could not notice the table shrinking to nothing.
 ///
 /// It is the only thing separating a retried outcome from one returned at once,
-/// so the tests below assert both sides of it: an artifact-blocked deploy takes
-/// at least this long, and every other outcome comes back inside it. Nothing on
-/// the deploy path waits anywhere else, which is what the fast side proves.
+/// so the timed tests below assert both sides of it: an artifact-blocked deploy
+/// takes at least this long, while an unheld tag and an unknown class come back
+/// inside it. Nothing on the deploy path waits anywhere else, which is what the
+/// fast side proves.
 const RETRY_BUDGET: Duration = Duration::from_millis(3000);
 
 // Deciding a placement requires the class registry, and reading the class
@@ -320,9 +321,10 @@ async fn placement_retries_while_only_an_artifact_is_missing() {
     let elapsed = started.elapsed();
 
     // Assert - the outcome names the artifact, and getting it took the whole
-    // backoff, which only a placement that tried again can spend. The two tests
-    // above take the same measurement on outcomes that must not be retried, so
-    // this is the difference the retry makes and not the cost of a deploy.
+    // backoff, which only a placement that tried again can spend. The unheld-tag
+    // and unknown-class tests above take the same measurement on outcomes that
+    // must not be retried, so this is the difference the retry makes and not the
+    // cost of a deploy.
     let err = result.expect_err("a class carrying no artifact cannot be placed");
     let DeploymentError::Infeasible(cells) = &err else {
         panic!("expected Infeasible with a missing-artifact rejection, got: {err:?}");
