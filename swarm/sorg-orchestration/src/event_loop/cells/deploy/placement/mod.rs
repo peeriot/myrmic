@@ -15,33 +15,19 @@ use zenoh::Session;
 
 use crate::Result;
 
-/// One entry per gap between placement attempts, so the four attempts spend
-/// 3.0s of patience in total.
+/// Gap between placement attempts, multiplied by the attempt number, so the four
+/// attempts spend 3.0s in total. The budget stays small because the deploy
+/// deadline belongs to the client and this side never sees it: past that
+/// deadline the client answers its own caller with a timeout, and the precise
+/// list of why each cell could not be placed is discarded with the reply.
 ///
-/// The deploy deadline belongs to the client and this side never sees it: the
-/// client puts it on the query and, once it expires, answers its own caller
-/// with a timeout and discards whatever reply was on the way - including the
-/// precise list of why each cell could not be placed. Patience spent here is
-/// therefore spent blind, and past the caller's deadline it buys nothing while
-/// replacing a usable diagnosis with an opaque one. The smallest deadline any
-/// shipped caller sets is 15s, and this budget is a fifth of that floor, which
-/// leaves the deploy's own work four fifths of the smallest budget it could be
-/// facing. A caller that wants real patience has to spend it itself, where the
-/// deadline is known.
-///
-/// One in-repo caller sits far below that floor and is the reason a test author
-/// needs this paragraph: `sorg-tests` pins its client's query timeout to 3s, and
-/// that is the client every `sorg-orchestration` and `sorg-client` integration
-/// test deploys through. It equals this budget exactly, so a test deploying
-/// through that client must not assert an artifact-blocked `Infeasible` - the
-/// retries would eat the whole deadline and the test would be answered with a
-/// query timeout instead. A test that needs that outcome has to bring a client
-/// of its own.
-const PLACEMENT_RETRY_BACKOFF: [Duration; 3] = [
-    Duration::from_millis(500),
-    Duration::from_millis(1000),
-    Duration::from_millis(1500),
-];
+/// `sorg-tests` pins its client's query timeout to 3s, exactly this budget, so a
+/// test deploying through that client cannot assert an artifact-blocked
+/// `Infeasible` and has to bring a client of its own.
+const PLACEMENT_RETRY_STEP: Duration = Duration::from_millis(500);
+
+/// Placement attempts before the outcome is returned whatever it says.
+const PLACEMENT_ATTEMPTS: u32 = 4;
 
 /// The information relevant for the placement of a batch of cells. Focuses on the deployment
 /// intent (how do we want to deploy these specific cells)
@@ -193,15 +179,13 @@ impl Runtime {
         &self,
         request: PlacementRequest,
     ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
-        const ATTEMPTS: usize = PLACEMENT_RETRY_BACKOFF.len() + 1;
-
-        for (attempt, backoff) in PLACEMENT_RETRY_BACKOFF.into_iter().enumerate() {
+        for attempt in 1..PLACEMENT_ATTEMPTS {
             match self.place_cells_once(&request).await {
                 Err(err) if err.blocked_only_by_missing_artifacts() => {
+                    let backoff = PLACEMENT_RETRY_STEP * attempt;
                     debug!(
-                        "placement attempt {}/{ATTEMPTS} blocked by a missing artifact, \
-                         retrying in {backoff:?}: {err}",
-                        attempt + 1
+                        "placement attempt {attempt}/{PLACEMENT_ATTEMPTS} blocked by a missing \
+                         artifact, retrying in {backoff:?}: {err}"
                     );
                     tokio::time::sleep(backoff).await;
                 }
@@ -218,7 +202,8 @@ impl Runtime {
             && err.blocked_only_by_missing_artifacts()
         {
             debug!(
-                "placement still blocked by a missing artifact after {ATTEMPTS} attempts: {err}"
+                "placement still blocked by a missing artifact after \
+                 {PLACEMENT_ATTEMPTS} attempts: {err}"
             );
         }
 

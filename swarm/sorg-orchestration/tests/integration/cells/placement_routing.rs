@@ -51,16 +51,16 @@ const STAND_IN_HOLDER: models::NodeId = [7u8; 16];
 const STAND_IN_TX: models::TxId = (1, 1, STAND_IN_HOLDER);
 
 /// What placement sleeps in total before giving up on an artifact-blocked
-/// outcome, mirroring the backoff table it retries on. Deliberately restated
-/// rather than imported - the constant is private to the orchestrator, and a
-/// test that read it could not notice the table shrinking to nothing.
+/// outcome, mirroring the backoff it retries on. Deliberately restated rather
+/// than imported - the constants are private to the orchestrator, and a test
+/// that read them could not notice the backoff shrinking to nothing.
 ///
 /// It is the only thing separating a retried outcome from one returned at once,
 /// so the timed tests below assert both sides of it: an artifact-blocked deploy
 /// takes at least this long, while an unheld tag and an unknown class come back
 /// inside it. Nothing on the deploy path waits anywhere else, which is what the
 /// fast side proves.
-const RETRY_BUDGET: Duration = Duration::from_millis(3000);
+const RETRY_BUDGET: Duration = Duration::from_secs(3);
 
 // Deciding a placement requires the class registry, and reading the class
 // registry means locating it. Anything else is reading it through another
