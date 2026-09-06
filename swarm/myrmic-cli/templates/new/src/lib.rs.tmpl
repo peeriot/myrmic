@@ -17,7 +17,10 @@ fn count(md: Metadata, callback: Callback<JsonValue>) -> myrmic_sdk::Result {
 
     let value = STATE.load()?.unwrap_or_default();
 
-    callback.invoke(md.sender, &JsonValue::from(value))?;
+    // We can't send a response to a CLI.
+    if !md.sender.is_nil() {
+        callback.invoke(md.sender, &JsonValue::from(value))?;
+    }
 
     Ok(())
 }

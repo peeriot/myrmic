@@ -131,8 +131,8 @@ fn new_pins_sdk_to_the_build_revision() {
         .expect("generated project should contain Cargo.toml");
 
     assert!(
-        manifest.contains("ssh://git@github.com/peeriot/swarm.git"),
-        "generated manifest should depend on the swarm git repo, got:\n{manifest}"
+        manifest.contains("ssh://git@github.com/peeriot/myrmic.git"),
+        "generated manifest should depend on the myrmic git repo, got:\n{manifest}"
     );
     assert!(
         manifest.contains("rev = \""),

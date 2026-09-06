@@ -16,6 +16,13 @@ pub async fn handle(
         super::query_telemetry_data::<LogRecord>(db_client, swarm_telemetry::db::TABLE_LOGS)
             .await?;
 
+    if entities.is_empty() {
+        crate::warn!(
+            ctx,
+            "No log records found within the database; Did you set a retention period? (ie `myrmic telemetry set-db-retention 1h`)"
+        );
+    }
+
     for (_id, scoped_log) in entities {
         let trace_id = scoped_log
             .data
