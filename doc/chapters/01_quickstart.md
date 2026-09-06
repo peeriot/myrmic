@@ -65,7 +65,8 @@ This command creates a minimal cell as a Rust crate, using a built-in template t
 
 ```text
 counter/
-  Cargo.toml   -- crate named "counter"; has the myrmic myrmic-sdk as dependency
+  Cargo.toml   -- crate named "counter"; depends on myrmic-sdk and serde
+    .gitignore
   src/
     lib.rs     -- the Cell code lives here
 ```
@@ -82,14 +83,16 @@ edition = "2024"
 publish = false
 
 [package.metadata.myrmic]
-heap_size = 65_536
+heap_size = 32_768
 
 [dependencies]
 myrmic-sdk = "x.x.x"
+
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 ```
 
 Most of that is self explaining except:
-`heap_size` - which set how much memory this Cell gets: 64 KB, baked into the Wasm binary at build time. See [Cell and application configuration](./10_reference/01_configuration/02_cell-and-application-configuration.md) to understand more.
+`heap_size` - sets how much memory this Cell gets: 32 KB, baked into the Wasm binary at build time. See [Cell and application configuration](./10_reference/01_configuration/02_cell-and-application-configuration.md) to understand more.
 
 Now open `counter/src/lib.rs`. This is the starter Cell code that was generated:
 
@@ -163,12 +166,11 @@ myrmic build counter
 Expected output:
 
 ```text
-INFO  Attempting to build: .../counter/Cargo.toml
    Compiling counter v0.1.0 (.../counter)
     Finished release [optimized] target(s) in Xs
 ```
 
-This compiles the Cell to WebAssembly. The binary `counter.wasm` is placed in `counter/target/`.
+This compiles the Cell to WebAssembly. The binary `counter.wasm` is placed in `counter/target/wasm32-unknown-unknown/release/`.
 
 ### 4. Start a local runtime.
 
@@ -285,7 +287,9 @@ myrmic runtimes default logs
 myrmic delete counter
 ```
 
-Removes the Cell from the runtime.
+Removes the Cell from the runtime. In a terminal this asks which of the cell, its app or its
+descendants to remove; run non-interactively (a script or a pipe) it will not prompt and needs
+the choice as a flag - here, `myrmic delete counter --cell`.
 
 Expected output:
 
@@ -310,6 +314,8 @@ No cells registered
 ```bash
 myrmic runtimes stop
 ```
+
+(`stop` is an alias; `myrmic runtimes --help` lists the command as `delete`.)
 
 Expected output:
 
