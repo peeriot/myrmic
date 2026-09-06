@@ -106,6 +106,13 @@ impl Runtime {
     /// failing cleanup. Gateways also drop routes whose owner has lost its
     /// placement, so a missed route here is corrected within a reconcile.
     pub(super) async fn release_cell_resources(&self, cell_sri: &Sri) {
+        match sorg_common::root_restart::erase_spec(&self.session, cell_sri).await {
+            Ok(true) => {
+                tracing::debug!("removed restart spec owned by '{cell_sri}'",);
+            }
+            Ok(false) => {}
+            Err(err) => warn!("failed to remove restart spec for '{cell_sri}': {err}"),
+        }
         match gateway_config::deregister_cell_routes(&self.session, cell_sri).await {
             Ok(mounts) if !mounts.is_empty() => {
                 tracing::debug!(

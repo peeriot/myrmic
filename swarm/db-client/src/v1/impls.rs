@@ -385,7 +385,7 @@ async fn locate_holder(
     // Reaching here routinely means discovery is failing, not that the scope is
     // genuinely unheld — a locate that timed out looks exactly like one that
     // found nobody, and the fallback then broadcasts to every node.
-    crate::log::warn!(
+    crate::log::debug!(
         "locate found no holder for {:?}; falling back to any node",
         scope
     );

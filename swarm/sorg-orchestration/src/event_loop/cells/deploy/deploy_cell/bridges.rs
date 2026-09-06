@@ -28,7 +28,7 @@ use crate::event_loop::Runtime;
 /// Mirrors the exec plugin's default mailbox poll interval
 /// (`sorg_common::configs::exec::Config::mailbox_poll_interval`). Bridge cells run
 /// natively on the orchestrator, which has no exec config of its own to read this from.
-const MAILBOX_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const MAILBOX_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Signals a running bridge cell's background task to stop: dropping or sending on it
 /// resolves the task's `select!`, which drops the bridge handle and, with it, aborts the
