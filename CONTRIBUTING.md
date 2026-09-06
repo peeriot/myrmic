@@ -41,6 +41,15 @@ For anything non-trivial, please start a [Discussion](https://github.com/peeriot
 
 Myrmic is a Rust workspace (edition 2024). The pinned toolchain is declared in [rust-toolchain.toml](rust-toolchain.toml) and is installed automatically by `rustup` the first time you build - you do not need to install a Rust version by hand.
 
+The build also needs a C toolchain, which `rustup` does not ship, plus `cmake` and `git`:
+
+```bash
+sudo apt install build-essential cmake git    # Debian, Ubuntu
+sudo dnf install gcc cmake git                # RHEL, AlmaLinux, Fedora
+```
+
+See [Installation](doc/chapters/01_quickstart/01_installation.md) for the full list, including what is needed to build cells.
+
 Clone and build the OS-targeted workspace:
 
 ```bash

@@ -54,13 +54,20 @@ Planned / in progress: macOS, Windows, and nRF5340 (Arm Cortex-M33). At the mome
 
 ## Building from Source
 
-Myrmic is built with Rust (edition 2024). The components and targets it needs are declared in [rust-toolchain.toml](rust-toolchain.toml), and `rustup` applies them automatically when you build:
+Myrmic is built with Rust (edition 2024). The components and targets it needs are declared in [rust-toolchain.toml](rust-toolchain.toml), and `rustup` applies them automatically when you build. `rustup` does **not** ship a C linker, and the build needs one, so install a C toolchain first, along with `cmake` and `git`:
+
+```bash
+sudo apt install build-essential cmake git    # Debian, Ubuntu
+sudo dnf install gcc cmake git                # RHEL, AlmaLinux, Fedora
+```
+
+Then:
 
 ```bash
 cargo build --bin myrmic
 ```
 
-Building cells or the embedded firmware requires additional setup (toolchains, target triples, and flashing tools). See the [Quickstart](doc/chapters/01_quickstart.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+Building cells or the embedded firmware requires additional setup (toolchains, target triples, and flashing tools). See [Installation](doc/chapters/01_quickstart/01_installation.md), the [Quickstart](doc/chapters/01_quickstart.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Community & Support
 

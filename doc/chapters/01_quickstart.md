@@ -23,61 +23,9 @@ Myrmic Runtime runs on Linux-based systems and a growing set of embedded targets
 
 To work with Myrmic, you only need to install the Myrmic CLI. The Myrmic SDK is a Rust dependency you add to your cell code. The Myrmic Runtime is managed by the CLI - no separate installation needed.
 
-For the scope of this page, only **Linux** installation and setup is covered. For embedded targets, see *the Embedded tutorial* (TBD).
+See [Installation](./01_quickstart/01_installation.md) for the system packages you need, installing from a release package on x86_64, building from source, and what Myrmic writes to your machine.
 
-### Prerequisites
-
-Cells are written in Rust and the Myrmic CLI relies on Cargo to build them. Building cells requires the Rust nightly toolchain and the WebAssembly target. Make sure the following are installed before proceeding:
-
-- **Rust** - the language cells are written in. Install via [rustup](https://rustup.rs/):
-  ```sh
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- **Nightly toolchain** - required to compile cells to WebAssembly:
-  ```sh
-  rustup toolchain install nightly
-  ```
-
-- **WebAssembly target** (`wasm32-unknown-unknown`) - the compilation target for cells:
-  ```sh
-  rustup target add wasm32-unknown-unknown --toolchain nightly
-  ```
-
-- **rust-src component** - required by the build process to compile the core library for the WebAssembly target:
-  ```sh
-  rustup component add rust-src --toolchain nightly
-  ```
-
-### Build from Source
-
-Clone the repository and build the CLI:
-
-```bash
-git clone https://github.com/peeriot/myrmic.git
-cd myrmic
-cargo build --release --bin myrmic
-```
-
-The binary is at `target/release/myrmic`. Add it to your `PATH` or install it directly to your system:
-
-```bash
-cargo install --path swarm/myrmic-cli/
-```
-
-To export telemetry - logs, traces, and metrics - to external tools such as Grafana or Jaeger via OTLP, add `--features open-telemetry`:
-
-```sh
-cargo build --release --bin myrmic --features open-telemetry
-// or
-cargo install --path swarm/myrmic-cli/ --features open-telemetry
-```
-
-This is covered in the [Observability tutorial](./04_tutorials/06_observability.md).
-
-### Install from a Release Package
-
-`TBD`
+For embedded targets, see *the Embedded tutorial* (TBD).
 
 ### Verify Installation
 
