@@ -47,6 +47,8 @@ Create a working directory and navigate into it:
 mkdir myrmic-quickstart && cd myrmic-quickstart
 ```
 
+If you built the CLI from source, create this outside the cloned repository. A cell created inside the myrmic checkout is captured by its Cargo workspace and fails to build with `current package believes it's in a workspace when it's not`. Cells inside your own app workspace are fine (see [Cells](./05_guides/01_cells.md)).
+
 Then scaffold the cell, run:
 
 ```bash
