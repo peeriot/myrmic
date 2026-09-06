@@ -17,9 +17,21 @@ pub struct Cells {
 
 #[derive(clap::Subcommand)]
 pub enum Cmd {
+    /// Manage cell classes.
+    ///
+    /// Subcommands add, remove, and inspect cell classes. With no subcommand,
+    /// lists registered classes.
     #[clap(alias = "class")]
     Classes(classes::Classes),
+    /// Show the status of deployed cells.
+    ///
+    /// Given one or more SRIs or SRNs, renders each match with its whole spawn
+    /// subtree. With no target, lists all registered cells.
     Status(status::Status),
+    /// Tear down a deployed cell.
+    ///
+    /// Forcibly undeploys the cell addressed by the given SRI or SRN,
+    /// optionally removing its class from the datalayer.
     Teardown(teardown::Teardown),
 }
 

@@ -63,6 +63,10 @@ pub enum Command {
     Build(build::Build),
 
     // Management
+    /// Import, export, and inspect the distributed database.
+    ///
+    /// Subcommands export and import database snapshots (to a path or S3),
+    /// monitor replication, and show scope status.
     #[clap(alias = "db")]
     Database(database::Database),
     /// Configure which nodes replicate which data.

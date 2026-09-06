@@ -156,6 +156,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
+    let ready_name = String::from(name);
     let swarm = swarm::Swarm::new(config);
 
     if detached {
@@ -172,6 +173,8 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         pid.write_self().await?;
 
         let _guard = swarm.spawn_in_place().unwrap();
+
+        crate::info!(ctx, "runtime {ready_name:?} ready ({zid})");
 
         let result = wait_for_shutdown(detached).await;
 
