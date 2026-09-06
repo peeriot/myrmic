@@ -40,7 +40,9 @@ fn decode_hex(payload: &str) -> anyhow::Result<Vec<u8>> {
             hex.len()
         );
     }
-    hex.chunks_exact(2)
+    hex.as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| match (hex_digit(pair[0]), hex_digit(pair[1])) {
             (Some(hi), Some(lo)) => Ok((hi << 4) | lo),
             _ => Err(anyhow::anyhow!("invalid hex in --raw payload: {payload:?}")),

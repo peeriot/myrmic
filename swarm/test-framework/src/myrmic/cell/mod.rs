@@ -112,6 +112,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::future::ready;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -128,15 +129,15 @@ mod tests {
     impl MyrmicBackend for FakeBackend {
         async fn start_runtime(&self, _: &str, _: &[&str]) {}
         async fn delete_runtime(&self, _: &str) {}
-        async fn list_runtimes(&self) -> Vec<String> {
-            vec![]
+        fn list_runtimes(&self) -> impl Future<Output = Vec<String>> {
+            ready(vec![])
         }
         async fn new_cell(&self, _: &std::path::Path, _: &str, _: Option<&str>) {}
-        async fn status(&self) -> Vec<String> {
-            vec![]
+        fn status(&self) -> impl Future<Output = Vec<String>> {
+            ready(vec![])
         }
-        async fn send(&self, _: &str, _: &str) -> Option<String> {
-            None
+        fn send(&self, _: &str, _: &str) -> impl Future<Output = Option<String>> {
+            ready(None)
         }
         async fn deploy(&self, _: CellSpec, _: &str, _: &[&str]) {}
         async fn deploy_app(&self, _: &std::path::Path) {}

@@ -1,3 +1,5 @@
+use std::future::ready;
+
 use opentelemetry_proto::transform::{
     common::tonic::ResourceAttributesWithSchema, trace::tonic::group_spans_by_resource_and_scope,
 };
@@ -7,7 +9,7 @@ use opentelemetry_sdk::{
 };
 
 impl SpanExporter for super::FileExporter {
-    async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+    fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
         let entries =
             group_spans_by_resource_and_scope(batch, &ResourceAttributesWithSchema::default())
                 .into_iter()
@@ -25,6 +27,6 @@ impl SpanExporter for super::FileExporter {
                 })
                 .collect();
 
-        self.append_lines(super::FILE_TRACES, entries)
+        ready(self.append_lines(super::FILE_TRACES, entries))
     }
 }

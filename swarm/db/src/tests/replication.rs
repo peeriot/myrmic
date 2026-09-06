@@ -6,6 +6,7 @@ use crate::domain;
 use crate::domain::{ReplicationStatus, api};
 use crate::store::TransactionOptions;
 use crate::store::fjall::Store;
+use std::future::ready;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -797,22 +798,25 @@ impl crate::replication::ReplicaTransport for PullTransport {
         true
     }
 
-    async fn pull(
+    fn pull(
         &self,
         _target: uhlc::ID,
         req: db_commons::models::replication::sync::PullRequest,
-    ) -> Option<db_commons::models::replication::sync::PullResponse> {
-        let peer = self.peer.lock().expect("peer poisoned").clone()?;
-        peer.serve_pull(&req, usize::MAX).ok()
+    ) -> impl Future<Output = Option<db_commons::models::replication::sync::PullResponse>> + Send
+    {
+        let peer = self.peer.lock().expect("peer poisoned").clone();
+
+        ready(peer.and_then(|peer| peer.serve_pull(&req, usize::MAX).ok()))
     }
 
-    async fn verify(
+    fn verify(
         &self,
         _target: uhlc::ID,
         req: db_commons::models::replication::sync::VerifyRequest,
-    ) -> Option<bool> {
-        let peer = self.peer.lock().expect("peer poisoned").clone()?;
-        peer.verify_coverage(&req).ok()
+    ) -> impl Future<Output = Option<bool>> + Send {
+        let peer = self.peer.lock().expect("peer poisoned").clone();
+
+        ready(peer.and_then(|peer| peer.verify_coverage(&req).ok()))
     }
 }
 

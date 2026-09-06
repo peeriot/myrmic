@@ -1,3 +1,5 @@
+use std::future::ready;
+
 use db::store::{TransactionMode, TransactionOptions};
 use zenoh::query::Query;
 
@@ -126,10 +128,13 @@ impl Handler<db_info::Request> for StoreContext {
     type Response = db_info::Response;
     type Error = db_info::Error;
 
-    async fn handle(self, _req: db_info::Request) -> Result<Self::Response, Option<Self::Error>> {
-        Ok(db_info::Response {
+    fn handle(
+        self,
+        _req: db_info::Request,
+    ) -> impl Future<Output = Result<Self::Response, Option<Self::Error>>> {
+        ready(Ok(db_info::Response {
             id: self.id().to_le_bytes(),
-        })
+        }))
     }
 }
 
@@ -137,8 +142,11 @@ impl Handler<ping::Request> for StoreContext {
     type Response = ping::Response;
     type Error = ping::Error;
 
-    async fn handle(self, _req: ping::Request) -> Result<Self::Response, Option<Self::Error>> {
-        Ok(ping::Response {})
+    fn handle(
+        self,
+        _req: ping::Request,
+    ) -> impl Future<Output = Result<Self::Response, Option<Self::Error>>> {
+        ready(Ok(ping::Response {}))
     }
 }
 
@@ -163,22 +171,25 @@ impl Handler<tx_commit::Request> for StoreContext {
     }
 }
 
+/// Removes the transaction from the shared map and rolls it back eagerly at
+/// call time, not at first poll: the returned future is already resolved.
 impl Handler<tx_rollback::Request> for StoreContext {
     type Response = tx_rollback::Response;
     type Error = tx_rollback::Error;
 
-    async fn handle(
+    fn handle(
         self,
         req: tx_rollback::Request,
-    ) -> Result<Self::Response, Option<Self::Error>> {
-        let tx = self.remove_tx(req.id).ok_or_else(|| {
+    ) -> impl Future<Output = Result<Self::Response, Option<Self::Error>>> {
+        let Some(tx) = self.remove_tx(req.id) else {
             tracing::warn!("Unable to find tx");
-            None
-        })?;
+
+            return ready(Err(None));
+        };
 
         tx.rollback();
 
-        Ok(tx_rollback::Response {})
+        ready(Ok(tx_rollback::Response {}))
     }
 }
 
@@ -411,11 +422,13 @@ fn apply_all(
     Ok(last)
 }
 
-impl Handler<tb_peek::Request> for StoreContext {
-    type Response = tb_peek::Response;
-    type Error = tb_peek::Error;
-
-    async fn handle(self, req: tb_peek::Request) -> Result<Self::Response, Option<Self::Error>> {
+impl StoreContext {
+    /// The synchronous body of the [`tb_peek`] handler: nothing here awaits,
+    /// so the handler hands the result back as a ready future.
+    fn peek_table(
+        &self,
+        req: tb_peek::Request,
+    ) -> Result<tb_peek::Response, Option<tb_peek::Error>> {
         let tb_peek::Request {
             scope,
             table,
@@ -467,5 +480,17 @@ impl Handler<tb_peek::Request> for StoreContext {
         );
 
         Ok(tb_peek::Response { entities, count })
+    }
+}
+
+impl Handler<tb_peek::Request> for StoreContext {
+    type Response = tb_peek::Response;
+    type Error = tb_peek::Error;
+
+    fn handle(
+        self,
+        req: tb_peek::Request,
+    ) -> impl Future<Output = Result<Self::Response, Option<Self::Error>>> {
+        ready(self.peek_table(req))
     }
 }

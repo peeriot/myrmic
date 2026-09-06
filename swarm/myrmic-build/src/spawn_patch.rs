@@ -108,7 +108,8 @@ mod tests {
         for name in refs {
             v.extend_from_slice(&SPAWN_REF_MAGIC);
             v.extend_from_slice(&[0xAA; 32]);
-            v.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            let name_len = u32::try_from(name.len()).expect("name length fits u32");
+            v.extend_from_slice(&name_len.to_le_bytes());
             v.extend_from_slice(name.as_bytes());
         }
         v

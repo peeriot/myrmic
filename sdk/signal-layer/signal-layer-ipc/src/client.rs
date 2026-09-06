@@ -1,6 +1,6 @@
 //! IPC tap client: lazy connect, backoff, generation-checked virtual-handle table.
 
-use std::future::Future;
+use std::future::{Future, ready};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -268,9 +268,8 @@ impl TapClient {
     }
 
     /// Drain batch — always `Empty` (D1).
-    #[allow(clippy::unused_async)]
-    pub async fn drain_batch(&self, _vh: u32) -> ClientRead {
-        ClientRead::Empty
+    pub fn drain_batch(&self, _vh: u32) -> impl Future<Output = ClientRead> + Send {
+        ready(ClientRead::Empty)
     }
 
     /// Return the number of taps, or `None` if the call does not finish within

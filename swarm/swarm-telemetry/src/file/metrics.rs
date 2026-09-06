@@ -1,3 +1,5 @@
+use std::future::ready;
+
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_sdk::{
     error::OTelSdkResult,
@@ -13,7 +15,7 @@ impl PushMetricExporter for super::FileExporter {
     /// per-host, and the fetcher attributes rows by which host it read them
     /// from. The db path's full-history `metrics` table has no file
     /// counterpart — nothing reads it.
-    async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
+    fn export(&self, metrics: &ResourceMetrics) -> impl Future<Output = OTelSdkResult> + Send {
         let export = ExportMetricsServiceRequest::from(metrics);
         let entries: Vec<_> = export
             .resource_metrics
@@ -32,7 +34,7 @@ impl PushMetricExporter for super::FileExporter {
             })
             .collect();
 
-        self.rewrite_lines(super::FILE_METRICS_LATEST, entries)
+        ready(self.rewrite_lines(super::FILE_METRICS_LATEST, entries))
     }
 
     fn force_flush(&self) -> OTelSdkResult {

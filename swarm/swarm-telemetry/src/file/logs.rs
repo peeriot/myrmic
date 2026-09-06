@@ -1,3 +1,5 @@
+use std::future::ready;
+
 use opentelemetry_proto::transform::{
     common::tonic::ResourceAttributesWithSchema, logs::tonic::group_logs_by_resource_and_scope,
 };
@@ -7,7 +9,7 @@ use opentelemetry_sdk::{
 };
 
 impl LogExporter for super::FileExporter {
-    async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
+    fn export(&self, batch: LogBatch<'_>) -> impl Future<Output = OTelSdkResult> + Send {
         let entries =
             group_logs_by_resource_and_scope(&batch, &ResourceAttributesWithSchema::default())
                 .into_iter()
@@ -22,6 +24,6 @@ impl LogExporter for super::FileExporter {
                 })
                 .collect();
 
-        self.append_lines(super::FILE_LOGS, entries)
+        ready(self.append_lines(super::FILE_LOGS, entries))
     }
 }
