@@ -190,6 +190,20 @@ default	running	pid=<pid>
 
 This means that we have a local Myrmic runtime running on the machine.
 
+Finally, tell the runtime to keep telemetry. By default a runtime only prints its logs to its own stdout; nothing is stored in the telemetry database that `myrmic telemetry logs` reads until a retention period is set. Run this once - it applies to all connected runtimes immediately and only affects records emitted afterwards:
+
+```bash
+myrmic telemetry set-db-retention "1h"
+```
+
+Expected output:
+
+```text
+INFO  DB retention set to '1h' on all connected nodes
+```
+
+Retention lives in the running process. If you restart the runtime you have to set it again, or put `db_retention: "1h"` under `myrmic.telemetry` in a runtime configuration file - see [Runtime configuration](./10_reference/01_configuration/01_runtime-configuration.md).
+
 ### 5. Deploy to the runtime.
 
 `myrmic deploy` builds and deploys the cell in one step.
@@ -255,6 +269,12 @@ Look for these lines in the output:
 Incremented count to 1 (sender=...)
 Incremented count to 2 (sender=...)
 Incremented count to 3 (sender=...)
+```
+
+If the output is empty, retention was not set before the commands were sent (see step 4). Set it and send a few more `increment` commands. To confirm the cell itself logged, print the runtime's own log instead - it is written regardless of retention:
+
+```bash
+myrmic runtimes default logs
 ```
 
 ### 9. Remove the Cell.

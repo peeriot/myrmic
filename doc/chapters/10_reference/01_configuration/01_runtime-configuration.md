@@ -56,7 +56,7 @@ Configures the self-organization behavior.
 
 Configures where logs go, how they are formatted, and whether telemetry is exported to an OpenTelemetry collector.
 
-- `db_retention` *(optional)* - How long telemetry data is retained in the database. Accepts [humantime](https://docs.rs/humantime/latest/humantime/) duration strings (e.g. `"1h"`, `"7d"`). If omitted, data is kept indefinitely.
+- `db_retention` *(optional)* - How long telemetry data is retained in the database. Accepts [humantime](https://docs.rs/humantime/latest/humantime/) duration strings (e.g. `"1h"`, `"7d"`). Setting it also turns DB storage on: if omitted, no telemetry is written to the database and the `myrmic telemetry` query commands return nothing. Can be changed at runtime with [myrmic telemetry set-db-retention](../02_myrmic-cli/12_telemetry/05_set-db-retention.md).
 - `logs` *(optional)*
   - `format` *(optional)* - Log line format printed to stdout. Accepts `FULL`, `COMPACT`, `PRETTY`, or `JSON`. Defaults to `FULL`. See the [tracing-subscriber format reference](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/format/index.html).
   - `env_filter` *(optional)* - Controls which logs are printed. Can be changed at runtime without a restart - see [myrmic telemetry set-filter](../02_myrmic-cli/12_telemetry/04_set-filter.md). Uses [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) syntax: `target=level` or just `level` (e.g. `"info"`, `"swarm=debug,warn"`). If not set, the `RUST_LOG` environment variable is used instead.

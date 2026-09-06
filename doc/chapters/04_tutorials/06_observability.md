@@ -165,6 +165,7 @@ myrmic:
 ```yaml
 myrmic:
   telemetry:
+    db_retention: "1h"   # required - without it nothing is stored for the CLI to query
     logs:
       filter: "info"
 ```
@@ -174,6 +175,7 @@ myrmic:
 ```yaml
 myrmic:
   telemetry:
+    db_retention: "1h"
     otel_endpoint: "http://localhost:4317"
     logs:
       filter: "swarm=debug,warn"
@@ -295,7 +297,7 @@ Filter syntax follows the `tracing` crate's `EnvFilter` format.
 
 #### Manage DB Retention
 
-By default, telemetry data accumulates in the internal DB indefinitely. Use retention to bound storage:
+Telemetry is only written to the internal DB while a retention period is set; without one (the default) nothing is stored and the `myrmic telemetry` query commands show nothing. Set it in the runtime config with `db_retention` or at runtime:
 
 ```bash
 # Keep only the last 15 minutes of data
@@ -307,7 +309,7 @@ myrmic telemetry set-db-retention "2h"
 # Keep 1 day and 30 minutes
 myrmic telemetry set-db-retention "1day 30min"
 
-# Disable retention - data is never purged (default)
+# Stop storing telemetry in the DB (the default)
 myrmic telemetry no-db-retention
 ```
 
@@ -428,6 +430,7 @@ cd docker/otel-stack && docker compose up -d && cd -
 cat > my-runtime.yml <<EOF
 myrmic:
   telemetry:
+    db_retention: "1h"
     otel_endpoint: "http://localhost:4317"
     logs:
       filter: "swarm=info,warn"
@@ -456,7 +459,7 @@ xdg-open http://localhost:3000
 ## Troubleshooting
 
 **`myrmic telemetry logs` shows nothing**
-: The runtime must be running. Check that it started without errors.
+: The runtime must be running - check that it started without errors. Then make sure a DB retention period is set (`db_retention` in the config, or `myrmic telemetry set-db-retention "1h"`); without one nothing is stored. Only records emitted after it is set are kept.
 
 **No data in Grafana**
 : Check that `otel_endpoint` is set in the runtime config **and** that Myrmic was compiled with `--features open-telemetry`. The binary silently skips OTel export if the feature is not compiled in.
