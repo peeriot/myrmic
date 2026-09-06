@@ -20,7 +20,7 @@ pub(crate) mod topics;
 pub(crate) mod types;
 pub(crate) mod utils;
 
-pub use db_client::v1::{Client as DbClient, models::TxId, models::tx_begin, models::tx_commit};
+pub use db_client::v1::{Client as DbClient, models::TxId};
 
 pub use ble::BleAddress;
 pub use capabilities::{TagRequirement, check_tag_requirements};

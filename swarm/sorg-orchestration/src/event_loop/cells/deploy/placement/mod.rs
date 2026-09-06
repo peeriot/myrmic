@@ -28,6 +28,15 @@ use crate::Result;
 /// leaves the deploy's own work four fifths of the smallest budget it could be
 /// facing. A caller that wants real patience has to spend it itself, where the
 /// deadline is known.
+///
+/// One in-repo caller sits far below that floor and is the reason a test author
+/// needs this paragraph: `sorg-tests` pins its client's query timeout to 3s, and
+/// that is the client every `sorg-orchestration` and `sorg-client` integration
+/// test deploys through. It equals this budget exactly, so a test deploying
+/// through that client must not assert an artifact-blocked `Infeasible` - the
+/// retries would eat the whole deadline and the test would be answered with a
+/// query timeout instead. A test that needs that outcome has to bring a client
+/// of its own.
 const PLACEMENT_RETRY_BACKOFF: [Duration; 3] = [
     Duration::from_millis(500),
     Duration::from_millis(1000),
@@ -165,13 +174,13 @@ use crate::event_loop::Runtime;
 
 impl Runtime {
     /// Placement is decided from a snapshot taken before it, while the mechanical
-    /// loading happens after — a runtime can leave between the two. This is by design:
+    /// loading happens after - a runtime can leave between the two. This is by design:
     /// the load will fail and the caller handles the error (app rollback / standalone error).
     ///
     /// Capacity enforcement assumes a single orchestrator writer. Nothing here excludes
     /// a concurrent deploy, so two of them both observe the same "runtime empty" snapshot
     /// and both place a cell on the same capacity-1 runtime. Additionally,
-    /// `cells_per_runtime` only counts `PlacementKind::Wasm` entries —
+    /// `cells_per_runtime` only counts `PlacementKind::Wasm` entries -
     /// `PlacementKind::Placeholder` (written by `claim_placement` before the load completes)
     /// is invisible to the capacity check, so in-flight concurrent deploys are not counted
     /// toward occupancy. Both limitations are benign with a single orchestrator instance.
@@ -184,17 +193,36 @@ impl Runtime {
         &self,
         request: PlacementRequest,
     ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
-        for backoff in PLACEMENT_RETRY_BACKOFF {
+        const ATTEMPTS: usize = PLACEMENT_RETRY_BACKOFF.len() + 1;
+
+        for (attempt, backoff) in PLACEMENT_RETRY_BACKOFF.into_iter().enumerate() {
             match self.place_cells_once(&request).await {
                 Err(err) if err.blocked_only_by_missing_artifacts() => {
-                    debug!("placement blocked by a missing artifact, retrying in {backoff:?}");
+                    debug!(
+                        "placement attempt {}/{ATTEMPTS} blocked by a missing artifact, \
+                         retrying in {backoff:?}: {err}",
+                        attempt + 1
+                    );
                     tokio::time::sleep(backoff).await;
                 }
                 outcome => return outcome,
             }
         }
 
-        self.place_cells_once(&request).await
+        // The last attempt is returned whatever it says, so the caller sees the
+        // real placement outcome rather than an exhausted-retries error. Its
+        // diagnosis is still worth a line: it is the only one that spent the
+        // whole budget, and nothing downstream says the budget ran out.
+        let outcome = self.place_cells_once(&request).await;
+        if let Err(err) = &outcome
+            && err.blocked_only_by_missing_artifacts()
+        {
+            debug!(
+                "placement still blocked by a missing artifact after {ATTEMPTS} attempts: {err}"
+            );
+        }
+
+        outcome
     }
 
     async fn place_cells_once(

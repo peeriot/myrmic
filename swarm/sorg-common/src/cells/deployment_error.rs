@@ -108,12 +108,24 @@ pub enum CellFailureKind {
 }
 
 impl DeploymentError {
-    /// Whether every unplaceable cell was blocked only by a missing artifact.
-    /// That is the one placement outcome waiting can fix: some runtime was
-    /// otherwise eligible and merely could not see the class's artifacts yet.
-    /// A cell no runtime has the tags for is a real configuration error -
-    /// waiting cannot make a tag appear, so it must fail immediately, which is
-    /// why *every* unplaceable cell has to be artifact-blocked for this to hold.
+    /// Whether every unplaceable cell has at least one runtime that was
+    /// rejected for a missing artifact. That is the one placement outcome
+    /// waiting can fix: such a runtime cleared the checks before it and merely
+    /// could not see the class's artifacts yet. A cell no runtime has the tags
+    /// for is a real configuration error - waiting cannot make a tag appear, so
+    /// it must fail immediately, which is why *every* unplaceable cell has to
+    /// carry an artifact rejection for this to hold.
+    ///
+    /// Per cell it is `any`, not `all`, and that is deliberate: a batch where
+    /// one runtime lacks the tags and another lacks the artifact is still
+    /// waiting on a write. The cost is that a rejection reason records only the
+    /// first check that failed - tags, then artifact, then capacity - so a
+    /// runtime that is both at capacity and short of the artifact is recorded
+    /// as short of the artifact. A deploy onto a fleet that is full *and* has
+    /// not replicated the artifact therefore spends the whole retry budget
+    /// before failing. Distinguishing the two would mean recording every failed
+    /// check rather than the first, which is a wider change than the retry
+    /// needs. Nothing in the tree produces that shape today.
     ///
     /// The shape this covers: a class with an AOT target is registered in two
     /// writes, the wasm blob and then the AOT pair, and the deploy query fires

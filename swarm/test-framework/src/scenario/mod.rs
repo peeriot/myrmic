@@ -565,8 +565,8 @@ impl SwarmTestCtx {
                 Ok(()) => return,
                 Err(DeploymentError::NoRuntimesAvailable) if attempt < ATTEMPTS => {
                     eprintln!(
-                        "deploy hit NoRuntimesAvailable (attempt {attempt}/{ATTEMPTS}); retrying \
-                         — placement's registry read likely landed on a stale replica"
+                        "deploy hit NoRuntimesAvailable (attempt {attempt}/{ATTEMPTS}); retrying, \
+                         placement's exec-registry locate likely drowned and conceded to any node"
                     );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
@@ -596,8 +596,8 @@ impl SwarmTestCtx {
                 // early, not a deployment that cannot work.
                 Err(ref err) if attempt < ATTEMPTS && err.blocked_only_by_missing_artifacts() => {
                     eprintln!(
-                        "deploy hit MissingArtifact (attempt {attempt}/{ATTEMPTS}); retrying \
-                         — placement's class read likely landed on a stale replica"
+                        "deploy hit MissingArtifact (attempt {attempt}/{ATTEMPTS}); retrying, \
+                         the class registry's holder likely has the wasm row but not the AOT one"
                     );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
