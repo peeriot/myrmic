@@ -130,7 +130,7 @@ Expected output (one per sensor tick - and structs arrive as readable JSON):
 Now replant the bed. `myrmic send` accepts a JSON payload, and the cell decodes it straight into the typed `TargetRange`:
 
 ```bash
-myrmic send grow-bed set_target '{"low": 70, "high": 85}'
+myrmic send grow-bed set_target '{"low": 65, "high": 78}'
 ```
 
 Watch Terminal 3: the very next `bed_state` carries the new targets. One thing that changed, one place that knows it, everyone informed.
@@ -142,7 +142,7 @@ Watch Terminal 3: the very next `bed_state` carries the new targets. One thing t
 - The **Asset** pattern: one cell owns the canonical state of one real-world thing. Consumers read the asset, not the device adapters - so devices can be swapped without touching anything downstream.
 - `State<T>` holds structs as easily as scalars; struct state needs `serde` with `default-features = false`, because cells are `no_std`.
 - The `myrmic_sdk::Message` derive gives a struct a wire encoding (JSON by default), so events and commands can carry structured payloads.
-- `myrmic send` takes a JSON payload - `'{"low": 70, "high": 85}'` - and the receiving handler gets it as a typed struct.
+- `myrmic send` takes a JSON payload - `'{"low": 65, "high": 78}'` - and the receiving handler gets it as a typed struct.
 - An asset folds raw device signals into one canonical picture and announces every change as an event of its own.
 
 ## Next Step

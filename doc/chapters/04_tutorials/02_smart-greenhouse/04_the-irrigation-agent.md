@@ -16,15 +16,11 @@ Our policy is deliberately simple, but it is a real controller's policy: **hyste
 
 And note what the agent reads: the grow-bed's `bed_state` - never the raw sensor. The bed's state already carries the target range, so the agent stores almost nothing itself: just a flag remembering whether it is mid-watering.
 
-Scaffold the cell and add the `serde` line to `irrigation-agent/Cargo.toml`, as in Part 3:
 
 ```bash
 myrmic new irrigation-agent
 ```
 
-```toml
-serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
-```
 
 Replace the content of `irrigation-agent/src/lib.rs` with:
 

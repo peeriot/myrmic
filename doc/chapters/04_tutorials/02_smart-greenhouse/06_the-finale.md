@@ -25,7 +25,7 @@ The sensor adds 20 percentage points on the next tick. If the pump was running, 
 **Replant the bed.** Tell the grow-bed its new plants want wetter soil:
 
 ```bash
-myrmic send grow-bed set_target '{"low": 70, "high": 85}'
+myrmic send grow-bed set_target '{"low": 65, "high": 78}'
 ```
 
 The grow-bed stores the new range and announces it on `bed_state`, and both subscribers react at once: the dashboard shows the new targets, and the agent - seeing the bed below its new low - starts the pump within a tick or two. One command, four cells involved, all visible in the browser.
