@@ -3,19 +3,31 @@ mod preprocessing;
 mod triage;
 
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
-use cell_protocol::{ClassInfo, PlacementKind, RuntimeId, Sri, placement_scope};
+use cell_protocol::{ClassInfo, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
-    CellConfig, CellDeployment, DbClient, DeploymentError, ExecRuntimeInfo, TxId, class_registry,
-    exec_registry, list_placements_in_tx, node_lease, supervision::SupervisionTiming, tx_begin,
-    tx_commit,
+    CellConfig, CellDeployment, DeploymentError, ExecRuntimeInfo, class_registry, exec_registry,
+    list_placements, node_lease, supervision::SupervisionTiming,
 };
 use tracing::debug;
+use zenoh::Session;
 
 use crate::Result;
 
-const MAX_COMMIT_RETRIES: u32 = 3;
+/// Gap between placement attempts, multiplied by the attempt number, so the four
+/// attempts spend 3.0s in total. The budget stays small because the deploy
+/// deadline belongs to the client and this side never sees it: past that
+/// deadline the client answers its own caller with a timeout, and the precise
+/// list of why each cell could not be placed is discarded with the reply.
+///
+/// `sorg-tests` pins its client's query timeout to 3s, exactly this budget, so a
+/// test deploying through that client cannot assert an artifact-blocked
+/// `Infeasible` and has to bring a client of its own.
+const PLACEMENT_RETRY_STEP: Duration = Duration::from_millis(500);
+
+/// Placement attempts before the outcome is returned whatever it says.
+const PLACEMENT_ATTEMPTS: u32 = 4;
 
 /// The information relevant for the placement of a batch of cells. Focuses on the deployment
 /// intent (how do we want to deploy these specific cells)
@@ -55,10 +67,8 @@ impl PlacementContext {
         &self.cells_per_runtime
     }
 
-    /// No retry here — transient read failures bubble up to `place_cells`,
-    /// which retries the entire begin→read→commit cycle with a fresh tx.
-    async fn read(db: &DbClient, tx_id: TxId, request: &PlacementRequest) -> Result<Self> {
-        let execs = exec_registry::list_execs(db, tx_id)
+    async fn read(session: &Session, request: &PlacementRequest) -> Result<Self> {
+        let execs = exec_registry::list_registered_execs(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read exec registry: {err}"))?;
 
@@ -67,7 +77,7 @@ impl PlacementContext {
         // back. Drop execs whose liveness lease has gone silent past the same
         // deadline hygiene uses, and execs with no lease row at all — every
         // live node leases, so absence means dead or not yet ready.
-        let leases: HashMap<RuntimeId, (u64, u64)> = node_lease::list_leases_in_tx(db, tx_id)
+        let leases: HashMap<RuntimeId, (u64, u64)> = node_lease::list_leases(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read node leases: {err}"))?
             .into_iter()
@@ -84,17 +94,31 @@ impl PlacementContext {
             u64::try_from(SupervisionTiming::default().margin.as_millis()).unwrap_or(u64::MAX);
         let execs = drop_stale_execs(execs, &leases, now_ms, margin_ms);
 
-        let mut class_info = HashMap::new();
-        for cell in request.cells() {
-            if let CellConfig::Wasm { ref class } = cell.config
-                && !class_info.contains_key(class)
-                && let Some(info) = class_registry::get_class_info_in_tx(db, tx_id, class).await?
-            {
-                class_info.insert(class.clone(), info);
-            }
-        }
+        let class_names: Vec<String> = request
+            .cells()
+            .iter()
+            .filter_map(|cell| match cell.config {
+                CellConfig::Wasm { ref class } => Some(class.clone()),
+                _ => None,
+            })
+            .collect();
 
-        let all_cells = list_placements_in_tx(db, tx_id)
+        // Every read here is routed by its own scope, and the class registry is
+        // why that matters. Routing picks a holder by maximising the located
+        // scope's head and breaking a tie on rendezvous_hash(scope, id), so a
+        // writer and a later reader land on the same node only when both
+        // located the same scope. Registration writes these rows through the
+        // class registry's scope; reading them inside a transaction anchored on
+        // the placement scope drew an unrelated node. Every node replicates
+        // `sorg`, so that read answered instead of failing - with no row at all
+        // for a class registered moments earlier, or with a row whose artifact
+        // set was one write behind. Both come back looking like a problem with
+        // the class or the runtimes, and neither is one.
+        let class_info = class_registry::get_class_infos(session, &class_names)
+            .await
+            .map_err(|err| sorg_common::custom_err!("failed to read class registry: {err}"))?;
+
+        let all_cells = list_placements(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read placements: {err}"))?;
 
@@ -135,58 +159,66 @@ impl CellPlacement {
 use crate::event_loop::Runtime;
 
 impl Runtime {
-    /// Placement is decided inside a committed read-tx, but mechanical loading
-    /// happens after — a runtime can leave between the two. This is by design:
+    /// Placement is decided from a snapshot taken before it, while the mechanical
+    /// loading happens after - a runtime can leave between the two. This is by design:
     /// the load will fail and the caller handles the error (app rollback / standalone error).
     ///
-    /// Capacity enforcement assumes a single orchestrator writer. The placement tx is
-    /// read-only, so two concurrent deploys both observe the same "runtime empty" snapshot,
-    /// both commit without OCC conflict, and both place a cell on the same capacity-1
-    /// runtime. Additionally, `cells_per_runtime` only counts `PlacementKind::Wasm` entries —
+    /// Capacity enforcement assumes a single orchestrator writer. Nothing here excludes
+    /// a concurrent deploy, so two of them both observe the same "runtime empty" snapshot
+    /// and both place a cell on the same capacity-1 runtime. Additionally,
+    /// `cells_per_runtime` only counts `PlacementKind::Wasm` entries -
     /// `PlacementKind::Placeholder` (written by `claim_placement` before the load completes)
     /// is invisible to the capacity check, so in-flight concurrent deploys are not counted
     /// toward occupancy. Both limitations are benign with a single orchestrator instance.
+    ///
+    /// An outcome blocked only by a missing artifact is retried, because it is the one
+    /// outcome a fresh read can change: an attempt re-runs all four routed reads, and a
+    /// retry that reused the first read's answer could never change its own mind. Every
+    /// other outcome, an unknown class included, is returned on the first attempt.
     pub(crate) async fn place_cells(
         &self,
         request: PlacementRequest,
     ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
-        let db = DbClient::new(&self.session);
-
-        for attempt in 1..=MAX_COMMIT_RETRIES {
-            let tx_id = db
-                .send(tx_begin::Request::routed(placement_scope()))
-                .await
-                .map_err(|err| {
-                    DeploymentError::Internal(format!("failed to begin read tx: {err}"))
-                })?
-                .map_err(|err| {
-                    DeploymentError::Internal(format!("failed to begin read tx: {}", err.message))
-                })?
-                .id;
-
-            let context = PlacementContext::read(&db, tx_id, &request)
-                .await
-                .map_err(|err| DeploymentError::Internal(err.to_string()))?;
-            let placements = decide_cell_placement(&request, &context)?;
-
-            let commit_result = db.send(tx_commit::Request { id: tx_id }).await;
-            match commit_result {
-                Ok(Ok(_)) => return Ok(placements),
-                Ok(Err(err)) => {
+        for attempt in 1..PLACEMENT_ATTEMPTS {
+            match self.place_cells_once(&request).await {
+                Err(err) if err.blocked_only_by_missing_artifacts() => {
+                    let backoff = PLACEMENT_RETRY_STEP * attempt;
                     debug!(
-                        "read tx commit rejected (attempt {attempt}/{MAX_COMMIT_RETRIES}): {}",
-                        err.message
+                        "placement attempt {attempt}/{PLACEMENT_ATTEMPTS} blocked by a missing \
+                         artifact, retrying in {backoff:?}: {err}"
                     );
+                    tokio::time::sleep(backoff).await;
                 }
-                Err(err) => {
-                    debug!("read tx commit failed (attempt {attempt}/{MAX_COMMIT_RETRIES}): {err}");
-                }
+                outcome => return outcome,
             }
         }
 
-        Err(DeploymentError::Internal(format!(
-            "cell placement failed: read tx commit failed after {MAX_COMMIT_RETRIES} attempts"
-        )))
+        // The last attempt is returned whatever it says, so the caller sees the
+        // real placement outcome rather than an exhausted-retries error. Its
+        // diagnosis is still worth a line: it is the only one that spent the
+        // whole budget, and nothing downstream says the budget ran out.
+        let outcome = self.place_cells_once(&request).await;
+        if let Err(err) = &outcome
+            && err.blocked_only_by_missing_artifacts()
+        {
+            debug!(
+                "placement still blocked by a missing artifact after \
+                 {PLACEMENT_ATTEMPTS} attempts: {err}"
+            );
+        }
+
+        outcome
+    }
+
+    async fn place_cells_once(
+        &self,
+        request: &PlacementRequest,
+    ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
+        let context = PlacementContext::read(&self.session, request)
+            .await
+            .map_err(|err| DeploymentError::Internal(err.to_string()))?;
+
+        decide_cell_placement(request, &context)
     }
 }
 
@@ -218,6 +250,21 @@ fn decide_cell_placement(
 ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
     if context.execs().is_empty() {
         return Err(DeploymentError::NoRuntimesAvailable);
+    }
+
+    // A class the registry read did not return is not a per-runtime property:
+    // no runtime can host it, and reporting it as every runtime lacking an
+    // artifact describes the wrong thing. Name the class instead, before any
+    // runtime is considered. Checked after the empty-registry case, because a
+    // swarm with no runtimes cannot run the deploy whatever the class is.
+    let unknown_class = request.cells().iter().find_map(|cell| match cell.config {
+        CellConfig::Wasm { ref class } if !context.class_info().contains_key(class) => Some(class),
+        _ => None,
+    });
+    if let Some(class) = unknown_class {
+        return Err(DeploymentError::UnknownClass {
+            class: class.clone(),
+        });
     }
 
     let embedded_nodes: HashSet<RuntimeId> = context

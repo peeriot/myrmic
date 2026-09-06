@@ -11091,6 +11091,7 @@ version = "0.4.0"
 dependencies = [
  "cell-protocol",
  "claims",
+ "db-commons",
  "filestore-client",
  "flume 0.11.1",
  "futures",
@@ -11108,6 +11109,7 @@ dependencies = [
  "topo_sort",
  "tracing",
  "tryhard",
+ "uhlc",
  "uuid",
  "zenoh",
  "zenoh-protocol",

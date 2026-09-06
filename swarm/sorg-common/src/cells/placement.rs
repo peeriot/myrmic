@@ -8,35 +8,6 @@ use zenoh::Session;
 use super::fence::{self, FenceOutcome};
 use crate::{Result, custom_err};
 
-/// Lists all placements within an existing read transaction. Use this inside
-/// the placement OCC loop so the occupancy snapshot is consistent with the
-/// exec list.
-pub async fn list_placements_in_tx(db: &DbClient, tx_id: TxId) -> Result<Vec<PlacementEntry>> {
-    let response = db
-        .send(tb_list::Request {
-            id: tx_id,
-            op: tb_list::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                cursor: None,
-                limit: None,
-                order: None,
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("unable to send list request: {}", err))?
-        .map_err(|err| custom_err!("unable to list placements: {}", err.message))?;
-
-    response
-        .entities
-        .into_iter()
-        .map(|(_id, value)| {
-            postcard::from_bytes::<PlacementEntry>(&value)
-                .map_err(|_| custom_err!("failed to deserialize placement entry"))
-        })
-        .collect()
-}
-
 /// Returns the placements of all currently placed cells.
 pub async fn list_placements(session: &Session) -> Result<Vec<PlacementEntry>> {
     let db = DbClient::new(session);

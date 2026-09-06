@@ -13,10 +13,10 @@ use cell_protocol::{
     ArtifactInfo, ArtifactPlatform, BlobHash, CapabilityTag, ClassInfo, ExecRuntimeInfo,
     ExecutionCapabilities, RuntimeId, Sri,
 };
-use sorg_common::{CellConfig, CellDeployment, RejectionReason};
+use sorg_common::{CellConfig, CellDeployment, DeploymentError, RejectionReason};
 use zenoh::config::ZenohId;
 
-use super::super::PlacementContext;
+use super::super::{PlacementContext, PlacementRequest, decide_cell_placement};
 use super::{CellMappings, preprocess};
 
 fn rt_id(hex: &str) -> RuntimeId {
@@ -108,4 +108,20 @@ fn unknown_runtime_is_rejected() {
         infeasible[0].rejections[0].reason,
         "unknown runtime should be rejected with UnsupportedRuntime"
     );
+}
+
+/// A class the registry read did not return names itself, rather than turning
+/// into one missing-artifact rejection per otherwise-eligible runtime.
+#[test]
+fn class_absent_from_the_read_fails_with_unknown_class() {
+    let id = rt_id("e689604085684e3e8469c5536703ec14");
+    let ctx = context(vec![linux_rt(id)], HashMap::new());
+    let request = PlacementRequest::for_cells(vec![wasm_cell("cls")]);
+
+    let result = decide_cell_placement(&request, &ctx);
+
+    let Err(DeploymentError::UnknownClass { class }) = result else {
+        panic!("expected UnknownClass for a class missing from the registry read");
+    };
+    assert_eq!("cls", class, "the error should name the absent class");
 }

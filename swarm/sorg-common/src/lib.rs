@@ -20,7 +20,7 @@ pub(crate) mod topics;
 pub(crate) mod types;
 pub(crate) mod utils;
 
-pub use db_client::v1::{Client as DbClient, models::TxId, models::tx_begin, models::tx_commit};
+pub use db_client::v1::{Client as DbClient, models::TxId};
 
 pub use ble::BleAddress;
 pub use capabilities::{TagRequirement, check_tag_requirements};
@@ -45,7 +45,7 @@ pub use cells::lifecycle::{
 pub use cells::placement::{
     PlacementClaimOutcome, claim_placement, commit_placement, ensure_placement_exists,
     ensure_placement_exists_in_tx, get_placement, get_placement_in_tx, list_placements,
-    list_placements_in_tx, placement_exists, placement_exists_in_tx, remove_placement,
+    placement_exists, placement_exists_in_tx, remove_placement,
 };
 pub use cells::root_death;
 pub use cells::root_restart;

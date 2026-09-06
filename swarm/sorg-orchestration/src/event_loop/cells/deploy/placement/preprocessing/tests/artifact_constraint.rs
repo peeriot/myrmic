@@ -64,8 +64,12 @@ fn esp32c6_runtime_without_aot_artifact_is_rejected() {
     );
 }
 
+/// Defence in depth: `artifact_rejection` still has a `None` branch, because
+/// the type allows one. `decide_cell_placement` short-circuits an absent class
+/// into `UnknownClass` long before this, so the branch is reachable only by
+/// calling `preprocess` directly, as this test does.
 #[test]
-fn class_not_in_registry_rejects_runtime() {
+fn class_absent_from_the_read_still_rejects_a_runtime_in_preprocess() {
     let id = rt_id("e689604085684e3e8469c5536703ec14");
     let ctx = context(vec![linux_rt(id)], HashMap::new());
     let cell = wasm_cell("cls");
