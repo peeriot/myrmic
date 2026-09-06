@@ -7560,6 +7560,7 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "toml 0.8.23",
+ "which",
 ]
 
 [[package]]

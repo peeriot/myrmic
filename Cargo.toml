@@ -88,6 +88,7 @@ default-members = [
     "swarm/db-client",
     "swarm/db-commons",
     "swarm/db-cli",
+    "swarm/myrmic-build",
     "swarm/myrmic-cli",
     "swarm/swarm-gateway",
     "swarm/skey",

@@ -1,10 +1,13 @@
 //! Compiling a cell logic crate to a `wasm32-unknown-unknown` module.
 
+use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Context as _;
 use serde::Deserialize;
+use which::which;
 
 use crate::CargoTarget;
 use crate::cargo;
@@ -145,6 +148,8 @@ pub(crate) fn compile_cell(
     manifest_path: &Path,
     cargo_target: &CargoTarget,
 ) -> anyhow::Result<Vec<PathBuf>> {
+    ensure_c_linker()?;
+
     let mut memory: MemoryConfig =
         cargo::read_package_metadata(manifest_path)?.with_context(|| {
             format!(
@@ -201,6 +206,70 @@ pub(crate) fn compile_cell(
     })?;
 
     Ok(artifacts)
+}
+
+/// Fail before the cargo build runs when nothing on this machine can link a
+/// host binary: a cell targets wasm32, but cargo still links every dependency's
+/// build script for this machine.
+fn ensure_c_linker() -> anyhow::Result<()> {
+    if which("cc").is_ok() {
+        return Ok(());
+    }
+
+    // The override cargo honours is named after the host triple, which only rustc knows.
+    let hatch = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|version| host_linker_var(&version));
+
+    if hatch
+        .as_deref()
+        .is_some_and(|name| linker_configured_by_env(env::vars_os(), name))
+    {
+        return Ok(());
+    }
+
+    let (hatch, hint) = match hatch.as_deref() {
+        Some(name) => (name, ""),
+        None => (
+            "CARGO_TARGET_<HOST_TRIPLE>_LINKER",
+            " (resolve <HOST_TRIPLE> with `rustc -vV | sed -n 's/^host: //p'`, uppercased with \
+             `-` replaced by `_`)",
+        ),
+    };
+
+    anyhow::bail!(
+        "no C linker found: `cc` is not on PATH, and building a cell links build scripts for \
+         this machine - install a C toolchain (`sudo apt install build-essential` on \
+         Debian/Ubuntu, `sudo dnf install gcc` on RHEL/Fedora), or set {hatch} to your \
+         compiler driver{hint}"
+    )
+}
+
+/// The `CARGO_TARGET_<HOST_TRIPLE>_LINKER` variable cargo honours for this
+/// machine's build scripts.
+fn host_linker_var(rustc_version: &str) -> Option<String> {
+    let host = rustc_version
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))?
+        .trim();
+
+    Some(format!(
+        "CARGO_TARGET_{}_LINKER",
+        host.to_ascii_uppercase().replace('-', "_")
+    ))
+}
+
+/// Whether `vars` sets `name` to a non-empty value.
+fn linker_configured_by_env<TVars>(vars: TVars, name: &str) -> bool
+where
+    TVars: IntoIterator<Item = (OsString, OsString)>,
+{
+    vars.into_iter()
+        .any(|(var, value)| var == name && !value.is_empty())
 }
 
 fn rustflags(memory: &MemoryConfig) -> String {
@@ -290,6 +359,60 @@ mod tests {
             Selector::Lib
         ));
         assert!(select(&["a"], &[], &CargoTarget::Lib).is_err());
+    }
+
+    #[test]
+    fn only_the_host_targets_linker_var_counts_as_configured() {
+        const HOST_LINKER_VAR: &str = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER";
+
+        let cases: &[(&[(&str, &str)], bool)] = &[
+            (
+                &[("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER", "clang")],
+                true,
+            ),
+            (
+                &[("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER", "")],
+                false,
+            ),
+            (
+                &[("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER", "cc")],
+                false,
+            ),
+            (
+                &[("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER", "rust-lld")],
+                false,
+            ),
+            // Would pass if matching became suffix-based instead of an exact name match.
+            (&[("MY_LINKER", "clang")], false),
+            // Neither of these reaches the host build-script link.
+            (&[("CC", "clang")], false),
+            (&[("RUSTFLAGS", "-Clinker=clang")], false),
+            (&[], false),
+            (&[("PATH", "/usr/bin"), ("HOME", "/root")], false),
+        ];
+
+        for (vars, expected) in cases {
+            let owned: Vec<(OsString, OsString)> = vars
+                .iter()
+                .map(|(name, value)| (OsString::from(*name), OsString::from(*value)))
+                .collect();
+            assert_eq!(
+                linker_configured_by_env(owned, HOST_LINKER_VAR),
+                *expected,
+                "{vars:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_linker_var_uppercases_the_triple_and_underscores_its_dashes() {
+        let version = "rustc 1.98.1 (abcdef 2026-01-01)\nbinary: rustc\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\n";
+
+        assert_eq!(
+            host_linker_var(version).as_deref(),
+            Some("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER")
+        );
+        assert_eq!(host_linker_var("rustc 1.98.1\n"), None);
     }
 
     fn memory_config_from(manifest: &str) -> MemoryConfig {
