@@ -57,13 +57,6 @@ pub async fn delete_lease(session: &Session, id: RuntimeId) -> Result<()> {
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
 }
 
-pub async fn list_leases_in_tx(
-    client: &DbClient,
-    tx_id: TxId,
-) -> Result<Vec<(RuntimeId, NodeLease)>> {
-    do_list(client, tx_id).await
-}
-
 async fn do_renew(client: &DbClient, tx_id: TxId, id: RuntimeId, lease: &NodeLease) -> Result<()> {
     let value =
         postcard::to_allocvec(lease).map_err(|_| custom_err!("failed to serialize node lease"))?;

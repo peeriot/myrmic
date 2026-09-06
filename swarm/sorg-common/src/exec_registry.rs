@@ -103,10 +103,6 @@ pub async fn deregister_exec_by_runtime_id(session: &Session, runtime_id: Runtim
     }
 }
 
-pub async fn list_execs(client: &DbClient, tx_id: TxId) -> Result<Vec<ExecRuntimeInfo>> {
-    do_list(client, tx_id).await
-}
-
 async fn do_list(client: &DbClient, tx_id: TxId) -> Result<Vec<ExecRuntimeInfo>> {
     let response = client
         .send(tb_list::Request {

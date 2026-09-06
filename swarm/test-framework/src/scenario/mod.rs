@@ -552,11 +552,11 @@ impl SwarmTestCtx {
     ///
     /// `NoRuntimesAvailable` specifically is retried with backoff before the panic: the
     /// orchestrator's placement read routes through its *own* client, and under pass-boundary
-    /// churn that read can land on an empty or behind `sys` replica (a drowned locate falls back
-    /// to `any_node`) even while the driver-side registry barrier has just verified every
-    /// runtime registered and leased — an empty view moments after provisioning is far more
-    /// likely a read-placement artifact than truth. [`Self::try_load_cells`] keeps the failed
-    /// cell (and everything after it) queued, so a retry resumes exactly where it stopped.
+    /// churn a locate can drown and fall back to `any_node` even while the driver-side registry
+    /// barrier has just verified every runtime registered and leased - an empty view moments
+    /// after provisioning is far more likely a read-placement artifact than truth.
+    /// [`Self::try_load_cells`] keeps the failed cell (and everything after it) queued, so a
+    /// retry resumes exactly where it stopped.
     pub async fn load_cells(&mut self) {
         const ATTEMPTS: u32 = 8;
 

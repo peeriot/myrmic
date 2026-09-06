@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use cell_protocol::{
     AddMode, ArtifactInfo, ArtifactLocation, ArtifactPlatform, CLASS_REGISTRY_TABLE, ClassArtifact,
     ClassInfo, class_registry_scope,
@@ -61,12 +63,25 @@ pub async fn get_class_info(session: &Session, name: &str) -> Result<Option<Clas
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
 }
 
-pub async fn get_class_info_in_tx(
-    client: &DbClient,
-    tx_id: TxId,
-    name: &str,
-) -> Result<Option<ClassInfo>> {
-    do_get(client, tx_id, name).await
+/// Reads several classes in one transaction routed to the class registry's own
+/// scope, so a batch costs one locate however many names it carries. The names
+/// are sorted and deduplicated first: a batch naming the same class twice pays
+/// a single point read, and the op order is reproducible for the same request.
+/// A class with no row is absent from the result rather than an error.
+pub async fn get_class_infos(
+    session: &Session,
+    names: &[String],
+) -> Result<HashMap<String, ClassInfo>> {
+    let mut names = names.to_vec();
+    names.sort_unstable();
+    names.dedup();
+    let db = DbClient::new(session);
+
+    db.read_tx_in(class_registry_scope(), async move |client, tx_id| {
+        Ok(do_get_many(client, tx_id, &names).await)
+    })
+    .await
+    .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
 }
 
 async fn do_add_artifact(
@@ -354,6 +369,21 @@ pub(crate) async fn do_get(
         }
         None => Ok(None),
     }
+}
+
+async fn do_get_many(
+    client: &DbClient,
+    tx_id: TxId,
+    names: &[String],
+) -> Result<HashMap<String, ClassInfo>> {
+    let mut infos = HashMap::with_capacity(names.len());
+    for name in names {
+        if let Some(info) = do_get(client, tx_id, name).await? {
+            infos.insert(name.clone(), info);
+        }
+    }
+
+    Ok(infos)
 }
 
 async fn do_insert_table_entry(client: &DbClient, tx_id: TxId, info: &ClassInfo) -> Result<()> {

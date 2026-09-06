@@ -5,17 +5,14 @@ mod triage;
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-use cell_protocol::{ClassInfo, PlacementKind, RuntimeId, Sri, placement_scope};
+use cell_protocol::{ClassInfo, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
-    CellConfig, CellDeployment, DbClient, DeploymentError, ExecRuntimeInfo, TxId, class_registry,
-    exec_registry, list_placements_in_tx, node_lease, supervision::SupervisionTiming, tx_begin,
-    tx_commit,
+    CellConfig, CellDeployment, DeploymentError, ExecRuntimeInfo, class_registry, exec_registry,
+    list_placements, node_lease, supervision::SupervisionTiming,
 };
-use tracing::debug;
+use zenoh::Session;
 
 use crate::Result;
-
-const MAX_COMMIT_RETRIES: u32 = 3;
 
 /// The information relevant for the placement of a batch of cells. Focuses on the deployment
 /// intent (how do we want to deploy these specific cells)
@@ -55,10 +52,8 @@ impl PlacementContext {
         &self.cells_per_runtime
     }
 
-    /// No retry here — transient read failures bubble up to `place_cells`,
-    /// which retries the entire begin→read→commit cycle with a fresh tx.
-    async fn read(db: &DbClient, tx_id: TxId, request: &PlacementRequest) -> Result<Self> {
-        let execs = exec_registry::list_execs(db, tx_id)
+    async fn read(session: &Session, request: &PlacementRequest) -> Result<Self> {
+        let execs = exec_registry::list_registered_execs(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read exec registry: {err}"))?;
 
@@ -67,7 +62,7 @@ impl PlacementContext {
         // back. Drop execs whose liveness lease has gone silent past the same
         // deadline hygiene uses, and execs with no lease row at all — every
         // live node leases, so absence means dead or not yet ready.
-        let leases: HashMap<RuntimeId, (u64, u64)> = node_lease::list_leases_in_tx(db, tx_id)
+        let leases: HashMap<RuntimeId, (u64, u64)> = node_lease::list_leases(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read node leases: {err}"))?
             .into_iter()
@@ -84,17 +79,31 @@ impl PlacementContext {
             u64::try_from(SupervisionTiming::default().margin.as_millis()).unwrap_or(u64::MAX);
         let execs = drop_stale_execs(execs, &leases, now_ms, margin_ms);
 
-        let mut class_info = HashMap::new();
-        for cell in request.cells() {
-            if let CellConfig::Wasm { ref class } = cell.config
-                && !class_info.contains_key(class)
-                && let Some(info) = class_registry::get_class_info_in_tx(db, tx_id, class).await?
-            {
-                class_info.insert(class.clone(), info);
-            }
-        }
+        let class_names: Vec<String> = request
+            .cells()
+            .iter()
+            .filter_map(|cell| match cell.config {
+                CellConfig::Wasm { ref class } => Some(class.clone()),
+                _ => None,
+            })
+            .collect();
 
-        let all_cells = list_placements_in_tx(db, tx_id)
+        // Every read here is routed by its own scope, and the class registry is
+        // why that matters. Routing picks a holder by maximising the located
+        // scope's head and breaking a tie on rendezvous_hash(scope, id), so a
+        // writer and a later reader land on the same node only when both
+        // located the same scope. Registration writes these rows through the
+        // class registry's scope; reading them inside a transaction anchored on
+        // the placement scope drew an unrelated node. Every node replicates
+        // `sorg`, so that read answered instead of failing - with no row at all
+        // for a class registered moments earlier, or with a row whose artifact
+        // set was one write behind. Both come back looking like a problem with
+        // the class or the runtimes, and neither is one.
+        let class_info = class_registry::get_class_infos(session, &class_names)
+            .await
+            .map_err(|err| sorg_common::custom_err!("failed to read class registry: {err}"))?;
+
+        let all_cells = list_placements(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read placements: {err}"))?;
 
@@ -135,14 +144,14 @@ impl CellPlacement {
 use crate::event_loop::Runtime;
 
 impl Runtime {
-    /// Placement is decided inside a committed read-tx, but mechanical loading
-    /// happens after — a runtime can leave between the two. This is by design:
+    /// Placement is decided from a snapshot taken before it, while the mechanical
+    /// loading happens after — a runtime can leave between the two. This is by design:
     /// the load will fail and the caller handles the error (app rollback / standalone error).
     ///
-    /// Capacity enforcement assumes a single orchestrator writer. The placement tx is
-    /// read-only, so two concurrent deploys both observe the same "runtime empty" snapshot,
-    /// both commit without OCC conflict, and both place a cell on the same capacity-1
-    /// runtime. Additionally, `cells_per_runtime` only counts `PlacementKind::Wasm` entries —
+    /// Capacity enforcement assumes a single orchestrator writer. Nothing here excludes
+    /// a concurrent deploy, so two of them both observe the same "runtime empty" snapshot
+    /// and both place a cell on the same capacity-1 runtime. Additionally,
+    /// `cells_per_runtime` only counts `PlacementKind::Wasm` entries —
     /// `PlacementKind::Placeholder` (written by `claim_placement` before the load completes)
     /// is invisible to the capacity check, so in-flight concurrent deploys are not counted
     /// toward occupancy. Both limitations are benign with a single orchestrator instance.
@@ -150,43 +159,11 @@ impl Runtime {
         &self,
         request: PlacementRequest,
     ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
-        let db = DbClient::new(&self.session);
+        let context = PlacementContext::read(&self.session, &request)
+            .await
+            .map_err(|err| DeploymentError::Internal(err.to_string()))?;
 
-        for attempt in 1..=MAX_COMMIT_RETRIES {
-            let tx_id = db
-                .send(tx_begin::Request::routed(placement_scope()))
-                .await
-                .map_err(|err| {
-                    DeploymentError::Internal(format!("failed to begin read tx: {err}"))
-                })?
-                .map_err(|err| {
-                    DeploymentError::Internal(format!("failed to begin read tx: {}", err.message))
-                })?
-                .id;
-
-            let context = PlacementContext::read(&db, tx_id, &request)
-                .await
-                .map_err(|err| DeploymentError::Internal(err.to_string()))?;
-            let placements = decide_cell_placement(&request, &context)?;
-
-            let commit_result = db.send(tx_commit::Request { id: tx_id }).await;
-            match commit_result {
-                Ok(Ok(_)) => return Ok(placements),
-                Ok(Err(err)) => {
-                    debug!(
-                        "read tx commit rejected (attempt {attempt}/{MAX_COMMIT_RETRIES}): {}",
-                        err.message
-                    );
-                }
-                Err(err) => {
-                    debug!("read tx commit failed (attempt {attempt}/{MAX_COMMIT_RETRIES}): {err}");
-                }
-            }
-        }
-
-        Err(DeploymentError::Internal(format!(
-            "cell placement failed: read tx commit failed after {MAX_COMMIT_RETRIES} attempts"
-        )))
+        decide_cell_placement(&request, &context)
     }
 }
 
