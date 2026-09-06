@@ -12,14 +12,10 @@ Everything the greenhouse knows still lives inside the swarm - and browsers do n
 
 One thing to be clear about up front: the dashboard cell does not *run* the gateway. The gateway is its own process (it gets Terminal 4 in a moment); the cell registers its routes on it and fills the store the gateway serves from. Tear the cell down and its routes and files disappear with it - the gateway keeps running.
 
-Scaffold the cell and add the `serde` line to `dashboard/Cargo.toml`, as in Part 3:
+
 
 ```bash
 myrmic new dashboard
-```
-
-```toml
-serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 ```
 
 Replace the content of `dashboard/src/lib.rs` with:

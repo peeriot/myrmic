@@ -99,14 +99,14 @@ fn init(_md: Metadata) -> Result<()> {
 }
 
 /// Timer target: the simulation advances one tick, then the reading is
-/// published. The value swings: it dries down to 35%, turns, wets up to 90%.
+/// published. The value swings: it dries down to 50%, turns, wets up to 80%.
 #[myrmic_sdk::cmd]
 fn measure(_md: Metadata) -> Result<()> {
     let mut moisture = MOISTURE.load()?.unwrap_or(65.0);
     let mut rising = RISING.load()?.unwrap_or_default();
-    if moisture <= 35.0 {
+    if moisture <= 50.0 {
         rising = true;
-    } else if moisture >= 90.0 {
+    } else if moisture >= 80.0 {
         rising = false;
     }
     let delta = if rising { 1.2 } else { -0.4 };

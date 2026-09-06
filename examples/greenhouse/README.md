@@ -25,7 +25,7 @@ Poke at it from the CLI:
 ```shell
 myrmic subscribe bed_state,watering_started,watering_stopped
 myrmic publish rain 20
-myrmic send grow-bed set_target '{"low": 70, "high": 85}'
+myrmic send grow-bed set_target '{"low": 65, "high": 78}'
 myrmic delete greenhouse --app
 ```
 
