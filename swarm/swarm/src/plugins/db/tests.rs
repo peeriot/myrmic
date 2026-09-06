@@ -15,6 +15,12 @@ use db_commons::models::{self, Scope, Subject};
 const TABLE: &str = "letters";
 
 async fn open_session() -> zenoh::Session {
+    open_session_with(|_| {}).await
+}
+
+/// Multicast scouting is off, so a node only ever sees the peers a test wires
+/// it to through `configure`.
+async fn open_session_with(configure: impl FnOnce(&mut zenoh::Config)) -> zenoh::Session {
     let mut config = zenoh::Config::default();
     config
         .insert_json5("timestamping/enabled", "{ peer: true }")
@@ -22,8 +28,44 @@ async fn open_session() -> zenoh::Session {
     config
         .insert_json5("scouting/multicast/enabled", "false")
         .unwrap();
+    configure(&mut config);
 
     zenoh::open(config).await.expect("unable to open session")
+}
+
+/// Two nodes connected over loopback — the first listens, the second connects
+/// to it — so a test can watch one node's view of the other.
+async fn start_connected_pair() -> (
+    (zenoh::Session, swarm_api::DropSender),
+    (zenoh::Session, swarm_api::DropSender),
+) {
+    // Bound and released to find a free port; a bind racing another process
+    // for it is accepted for a test.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("unable to bind a loopback port")
+        .local_addr()
+        .expect("no local address")
+        .port();
+    let endpoints = format!(r#"["tcp/127.0.0.1:{port}"]"#);
+
+    let listener = start_node_on(|config| {
+        config.insert_json5("listen/endpoints", &endpoints).unwrap();
+    })
+    .await;
+    let connector = start_node_on(|config| {
+        config
+            .insert_json5("connect/endpoints", &endpoints)
+            .unwrap();
+    })
+    .await;
+
+    (listener, connector)
+}
+
+/// This node's id as the store keys peers.
+fn node_id(session: &zenoh::Session) -> models::NodeId {
+    let id: uhlc::ID = session.zid().into();
+    id.to_le_bytes()
 }
 
 /// A plugin context for one node, tagged the way the host tags it at boot —
@@ -42,7 +84,14 @@ fn ctx(session: &zenoh::Session, drop_rx: swarm_api::DropNotifier) -> MyrmicCtx 
 }
 
 async fn start_node() -> (zenoh::Session, swarm_api::DropSender) {
-    let session = open_session().await;
+    start_node_on(|_| {}).await
+}
+
+/// [`start_node`] on a session configured by `configure`.
+async fn start_node_on(
+    configure: impl FnOnce(&mut zenoh::Config),
+) -> (zenoh::Session, swarm_api::DropSender) {
+    let session = open_session_with(configure).await;
 
     let (drop_tx, drop_rx) = flume::bounded(1);
 
@@ -1297,4 +1346,79 @@ async fn one_shot_deletes_and_tb_peek_read_without_a_client_transaction() {
         eids[1..],
     );
     assert!(read_letter(&client, &eids[0]).await.is_none());
+}
+
+/// `session`'s own locate reply for `scope`: what that node vouches for.
+async fn own_locate_reply(
+    session: &zenoh::Session,
+    scope: &Scope,
+) -> Option<models::locate::Response> {
+    let replica = db_client::replica_v1::Client::new(session, Subject::Scope(scope.clone()))
+        .expect("unable to create replica client");
+    let me = node_id(session);
+
+    replica
+        .locate(scope, None)
+        .await
+        .expect("locate failed")
+        .into_iter()
+        .find(|reply| reply.id == me)
+}
+
+/// Whether `session`'s node currently vouches for `peer` holding `scope`.
+async fn vouches_for(session: &zenoh::Session, scope: &Scope, peer: models::NodeId) -> bool {
+    own_locate_reply(session, scope)
+        .await
+        .is_some_and(|reply| reply.peers.iter().any(|p| p.id == peer))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_departed_peer_stops_being_vouched_for_within_seconds() {
+    let ((session_a, _drop_a), (session_b, drop_b)) = start_connected_pair().await;
+    let b = node_id(&session_b);
+
+    // Every node replicates `sys`, so the pair vouch for each other there
+    // without configuration — once the scope holds data, as a peer is only
+    // vouched for at a head.
+    let scope = replication_scope();
+    let client = Client::new(&session_a);
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+    insert_one(&client, tx.id, &scope).await;
+    client
+        .send(models::tx_commit::Request { id: tx.id })
+        .await
+        .expect("send failed")
+        .expect("commit failed");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while !vouches_for(&session_a, &scope, b).await {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a never vouched for b within 30s"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // `b` leaves the way a stopped runtime does: plugin torn down, session
+    // closed.
+    drop(drop_b);
+    session_b
+        .close()
+        .await
+        .expect("unable to close b's session");
+
+    // Well within PEER_TTL (42 s): until `a` stops vouching, every locate for
+    // a scope whose draw `b` won routes at a node that no longer answers.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while vouches_for(&session_a, &scope, b).await {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a still vouched for the departed b after 5s"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

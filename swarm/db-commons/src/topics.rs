@@ -141,9 +141,55 @@ pub mod events {
     }
 }
 
+pub mod liveliness {
+    use alloc::format;
+    use alloc::string::String;
+    use core::str::FromStr;
+
+    /// One liveliness token per node running a db. Its deletion — a closed
+    /// session or an expired link lease — is how the other stores learn the
+    /// node is gone, instead of ageing its announced state out.
+    pub const LIVE_PREFIX: &str = "@db/@v1/@-live";
+
+    pub fn format(node: impl core::fmt::Display) -> String {
+        format!("{LIVE_PREFIX}/{node}")
+    }
+
+    /// Every node's token.
+    pub fn format_all() -> String {
+        format("*")
+    }
+
+    /// The node whose token a liveliness keyexpr is.
+    pub fn parse_node(ke: &str) -> Result<uhlc::ID, String> {
+        let node = ke
+            .strip_prefix(LIVE_PREFIX)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .ok_or_else(|| String::from("not a liveliness keyexpr"))?;
+
+        uhlc::ID::from_str(node).map_err(|err| format!("unable to parse node id: {}", err.cause))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{events, replica_query};
+    use super::{events, liveliness, replica_query};
+
+    #[test]
+    fn liveliness_keyexpr_roundtrips() {
+        let id = uhlc::ID::try_from([7u8; 16]).unwrap();
+        let ke = liveliness::format(id);
+        assert_eq!(ke, alloc::format!("@db/@v1/@-live/{id}"));
+
+        assert_eq!(liveliness::parse_node(&ke).unwrap(), id);
+        assert_eq!(liveliness::format_all(), "@db/@v1/@-live/*");
+    }
+
+    #[test]
+    fn parse_node_rejects_foreign_keyexprs() {
+        assert!(liveliness::parse_node("@db/@v1/@-query/xyz").is_err());
+        assert!(liveliness::parse_node("@db/@v1/@-live/not-a-node-id").is_err());
+    }
 
     #[test]
     fn locate_keyexpr_roundtrips() {
