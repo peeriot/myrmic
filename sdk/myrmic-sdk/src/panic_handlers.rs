@@ -1,7 +1,9 @@
-/// Default heap size used when `WASM_SDK_HEAP_SIZE` is not set at compile time.
-/// Or provided via the `[package.metadata.myrmic]` section in the user's Cargo.toml.
+/// Default heap size used when `WASM_SDK_HEAP_SIZE` is not set at compile time,
+/// or provided via the `[package.metadata.myrmic]` section in the user's Cargo.toml.
+/// Kept in step with `myrmic-build`'s `DEFAULT_HEAP_SIZE` so a cell gets the same
+/// 32 KB whether or not it was built through `myrmic build`.
 #[doc(hidden)]
-pub const __DEFAULT_HEAP_SIZE: usize = 8 * 1024;
+pub const __DEFAULT_HEAP_SIZE: usize = 32 * 1024;
 
 /// Wires up the global allocator, panic handler, and OOM handler to minimise the amount of
 /// boilerplate required in cell crates.

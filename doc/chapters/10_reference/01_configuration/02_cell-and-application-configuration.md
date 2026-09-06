@@ -11,7 +11,7 @@ A Cell is configured in two stages, each covering different aspects: build time 
 
 The section accepts four fields that define how much memory the Cell gets, and the values of these fields are compiled into the cell's Wasm binaries and can't be changed at runtime, the fields are the following:
 
-- `heap_size` *(optional)* - Sets the amount of heap memory available to the cell during runtime in bytes. Can also be set through the `WASM_SDK_HEAP_SIZE` environment variable. Defaults to `8000`.
+- `heap_size` *(optional)* - Sets the amount of heap memory available to the cell during runtime in bytes. Can also be set through the `WASM_SDK_HEAP_SIZE` environment variable. Defaults to `32768` (32 KB).
 - `stack_size` *(optional)* - Sets the amount of stack memory available to the cell during runtime in bytes. Defaults to `32_768`.
 - `initial_memory` *(optional)* - Sets the amount of initial linear memory allocated to the cell at startup in bytes. Defaults to `131_072`.
 - `max_memory` *(optional)* - Sets the maximum amount of linear memory the Cell can use, in bytes. Defaults to `131_072`.
@@ -19,7 +19,7 @@ The section accepts four fields that define how much memory the Cell gets, and t
 **Example:**
 ```toml
 [package.metadata.myrmic]
-heap_size = 32_000
+heap_size = 32_768
 stack_size = 8_192
 initial_memory = 131_072
 max_memory = 262_144

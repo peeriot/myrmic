@@ -85,7 +85,7 @@ where
     rt.block_on(fut)
 }
 
-fn main() -> Result<(), ()> {
+fn main() -> std::process::ExitCode {
     // Die quietly when a pipe closes (`m rt logs | head`) instead of
     // panicking on the next print. Rust ignores SIGPIPE by default; the
     // runtime restores that before spawning (see `runtimes::start`).
@@ -123,8 +123,13 @@ fn main() -> Result<(), ()> {
         error!(ctx, "{}", format_error(err));
     }
 
-    // We want to return a correct error code, but we don't want to log the error message (we already did that)
-    result.map_err(|_| ())
+    // The error message is already logged above; return only an exit code so the
+    // process does not also print Rust's `Error: ...` Termination trailer.
+    if result.is_ok() {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
 }
 
 fn format_error(err: &anyhow::Error) -> String {

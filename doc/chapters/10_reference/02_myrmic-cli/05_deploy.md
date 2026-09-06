@@ -32,7 +32,7 @@ To learn about the application specification file, see [Cell and Application Con
 `--name SRN` (alias: `--srn`)
 
 Sets the SRN (name) the deployment is registered under; the cell's SRI is derived from it. A UUID is rejected - the SRI cannot be set directly. How it is applied depends on what is being deployed:
-- **Cell** - used as the cell's SRN. Defaults to the crate name when deploying from source, or the file name when deploying a `.wasm` binary.
+- **Cell** - used as the cell's SRN. Defaults to the crate name when deploying from source. For a `.wasm` binary it defaults to the **file name including its extension**, so `./counter.wasm` registers as `counter.wasm` and later commands must use that exact name; pass `--name` to give the cell a clean SRN.
 - **`.nest` bundle** - ignored; names are read from the bundle metadata.
 - **Bridge** - overrides the bridge name from the given configuration file.
 - **Workspace** - used as a prefix for each crate (`<name><crate-name>`). Defaults to each crate's own name.
@@ -102,10 +102,10 @@ myrmic deploy ./my-cell --name my-cell-name
 myrmic deploy ./my-cell --tag my-tag-1 --tag my-tag-2
 ```
 
-3. Deploy a `.wasm` binary:
+3. Deploy a `.wasm` binary (give it a clean SRN with `--name`, or it registers as `my-cell.wasm`):
 
 ```bash
-myrmic deploy ./my-cell.wasm
+myrmic deploy ./my-cell.wasm --name my-cell
 ```
 
 4. Deploy an application suite:
