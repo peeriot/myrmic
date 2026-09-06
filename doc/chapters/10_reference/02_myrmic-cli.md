@@ -51,6 +51,7 @@ Below is the full list of `myrmic` commands, each with a dedicated reference pag
 - [`cells classes info`](02_myrmic-cli/06_cells/03_classes/04_info.md) - Show details of a cell class.
 - [`network status`](02_myrmic-cli/07_network/01_status.md) - Show swarm nodes. Aliases: `nodes`, `info`
 - [`tags`](02_myrmic-cli/14_tags.md) - Add and remove tags on nodes. Aliases: `tag`
+- [`replicate`](02_myrmic-cli/15_replicate.md) - Configure which nodes replicate which data. Aliases: `replicas`, `replica`, `rep`
 - [`gateway`](02_myrmic-cli/10_gateway.md) - Start a swarm gateway node.
 - [`delete`](02_myrmic-cli/11_delete.md) - Remove a deployed cell or application. Aliases: `rm`, `stop`
 

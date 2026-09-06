@@ -17,7 +17,7 @@ One runtime for stateful distributed applications:
 - a generated native Signal Layer for sensors and actuators,
 - failure handling that is conservative and predictable.
 
-When a Node is lost, its deployments are removed and the loss is reported. The preview does not claim that a Cell automatically resumes elsewhere with its State intact. What a Swarm Admin can already do is configure replication of a Cell's data to selected Nodes by hand. This gives a basic form of failover today: the data survives the Node, and the Cell can be redeployed where a replica lives.
+When a Node is lost, its deployments are removed and the loss is reported. The preview does not claim that a Cell automatically resumes elsewhere with its State intact. What a Swarm Admin can already do is configure replication of a Cell's data to selected Nodes [by hand](./10_reference/02_myrmic-cli/15_replicate.md). This gives a basic form of failover today: the data survives the Node, and the Cell can be redeployed where a replica lives.
 
 **Try it:** run the quickstart, place a Cell by capability tags, and compare what happens after Node loss with the guarantee page.
 

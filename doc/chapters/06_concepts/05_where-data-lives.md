@@ -28,7 +28,7 @@ Durability is the roadmap stage that replicates a Cell's State and Mailboxes acr
 
 ## Default does not mean universal
 
-A **Swarm Admin** can configure replication for a data scope. That is an operational choice, not a blanket promise made by the preview.
+A **Swarm Admin** can configure replication for a data scope with [`myrmic replicate`](../10_reference/02_myrmic-cli/15_replicate.md). That is an operational choice, not a blanket promise made by the preview.
 
 Design against the versioned guarantee for the actual deployment.
 
@@ -37,3 +37,4 @@ Design against the versioned guarantee for the actual deployment.
 - [Failure Behaviour](../07_architecture/04_failure-behaviour.md) - what happens when a Node is lost
 - [Recovery Models](./06_recovery-models.md) - what happens to a Cell after a restart or Node loss
 - [Roadmap](../09_roadmap.md) - what future stages are intended to add
+- [`myrmic replicate`](../10_reference/02_myrmic-cli/15_replicate.md) - configure which Nodes replicate which data
