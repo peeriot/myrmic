@@ -107,6 +107,35 @@ pub enum CellFailureKind {
     Superseded,
 }
 
+impl DeploymentError {
+    /// Whether every unplaceable cell was blocked only by a missing artifact.
+    /// That is the one placement outcome waiting can fix: some runtime was
+    /// otherwise eligible and merely could not see the class's artifacts yet.
+    /// A cell no runtime has the tags for is a real configuration error -
+    /// waiting cannot make a tag appear, so it must fail immediately, which is
+    /// why *every* unplaceable cell has to be artifact-blocked for this to hold.
+    ///
+    /// The shape this covers: a class with an AOT target is registered in two
+    /// writes, the wasm blob and then the AOT pair, and the deploy query fires
+    /// after both. The AOT write is therefore the last one before the deploy
+    /// and the largest to replicate - the least slack and the most bytes. A
+    /// holder that has applied the wasm write but not the AOT one answers with
+    /// a class whose artifact list is empty, and a class-visible barrier that
+    /// accepts the wasm row alone does not wait for the AOT write either.
+    pub fn blocked_only_by_missing_artifacts(&self) -> bool {
+        let Self::Infeasible(cells) = self else {
+            return false;
+        };
+
+        !cells.is_empty()
+            && cells.iter().all(|cell| {
+                cell.rejections
+                    .iter()
+                    .any(|r| matches!(r.reason, RejectionReason::MissingArtifact(_)))
+            })
+    }
+}
+
 impl std::error::Error for DeploymentError {}
 
 impl Display for DeploymentError {
@@ -192,5 +221,95 @@ impl Display for CellFailureKind {
                 "superseded by a concurrent lifecycle operation on the same cell"
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cell_protocol::ArtifactPlatform;
+
+    use super::*;
+
+    /// What a partially replicated artifact set looks like: an embedded runtime
+    /// rejected for the AOT artifact, and a linux one rejected on tags before
+    /// the artifact check is ever reached. The replication can still land.
+    #[test]
+    fn every_cell_blocked_by_an_artifact_is_retryable() {
+        let err = infeasible(vec![cell(
+            "aot-pending",
+            vec![
+                (
+                    rt(1),
+                    RejectionReason::MissingArtifact(ArtifactKind::Aot {
+                        target: ArtifactPlatform::Riscv32imac,
+                    }),
+                ),
+                (
+                    rt(2),
+                    RejectionReason::MissingTags(vec!["linux".to_owned()]),
+                ),
+            ],
+        )]);
+
+        assert!(err.blocked_only_by_missing_artifacts());
+    }
+
+    /// A cell no runtime has the tags for is a configuration error, and no
+    /// amount of waiting grows a tag onto a runtime.
+    #[test]
+    fn a_cell_blocked_only_by_tags_is_not_retryable() {
+        let err = infeasible(vec![cell(
+            "wrong-tags",
+            vec![(rt(1), RejectionReason::MissingTags(vec!["fpga".to_owned()]))],
+        )]);
+
+        assert!(!err.blocked_only_by_missing_artifacts());
+    }
+
+    /// A deploy is all-or-nothing, so one cell nothing can fix blocks the whole
+    /// batch: retrying could only ever fail on that cell again.
+    #[test]
+    fn one_unfixable_cell_blocks_the_whole_batch() {
+        let err = infeasible(vec![
+            cell(
+                "aot-pending",
+                vec![(rt(1), RejectionReason::MissingArtifact(ArtifactKind::Wasm))],
+            ),
+            cell(
+                "wrong-tags",
+                vec![(rt(1), RejectionReason::MissingTags(vec!["fpga".to_owned()]))],
+            ),
+        ]);
+
+        assert!(!err.blocked_only_by_missing_artifacts());
+    }
+
+    /// "Every cell is artifact-blocked" is vacuously true of no cells at all,
+    /// which would turn an empty rejection list into an unbounded wait.
+    #[test]
+    fn an_empty_infeasible_list_is_not_retryable() {
+        assert!(!infeasible(vec![]).blocked_only_by_missing_artifacts());
+    }
+
+    /// A zero-filled byte array is not a valid id, so every test id needs a
+    /// non-zero byte: `rt(0)` panics.
+    fn rt(n: u8) -> RuntimeId {
+        zenoh_protocol::core::ZenohIdProto::try_from(&[n; 8][..])
+            .unwrap()
+            .into()
+    }
+
+    fn cell(target: &str, rejections: Vec<(RuntimeId, RejectionReason)>) -> CellInfeasibility {
+        CellInfeasibility {
+            cell: Sri::from_target(target).unwrap(),
+            rejections: rejections
+                .into_iter()
+                .map(|(runtime, reason)| RuntimeRejection { runtime, reason })
+                .collect(),
+        }
+    }
+
+    fn infeasible(cells: Vec<CellInfeasibility>) -> DeploymentError {
+        DeploymentError::Infeasible(cells)
     }
 }

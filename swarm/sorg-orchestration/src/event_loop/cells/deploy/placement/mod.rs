@@ -3,16 +3,36 @@ mod preprocessing;
 mod triage;
 
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use cell_protocol::{ClassInfo, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
     CellConfig, CellDeployment, DeploymentError, ExecRuntimeInfo, class_registry, exec_registry,
     list_placements, node_lease, supervision::SupervisionTiming,
 };
+use tracing::debug;
 use zenoh::Session;
 
 use crate::Result;
+
+/// One entry per gap between placement attempts, so the four attempts spend
+/// 3.0s of patience in total.
+///
+/// The deploy deadline belongs to the client and this side never sees it: the
+/// client puts it on the query and, once it expires, answers its own caller
+/// with a timeout and discards whatever reply was on the way - including the
+/// precise list of why each cell could not be placed. Patience spent here is
+/// therefore spent blind, and past the caller's deadline it buys nothing while
+/// replacing a usable diagnosis with an opaque one. The smallest deadline any
+/// shipped caller sets is 15s, and this budget is a fifth of that floor, which
+/// leaves the deploy's own work four fifths of the smallest budget it could be
+/// facing. A caller that wants real patience has to spend it itself, where the
+/// deadline is known.
+const PLACEMENT_RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_millis(500),
+    Duration::from_millis(1000),
+    Duration::from_millis(1500),
+];
 
 /// The information relevant for the placement of a batch of cells. Focuses on the deployment
 /// intent (how do we want to deploy these specific cells)
@@ -155,15 +175,37 @@ impl Runtime {
     /// `PlacementKind::Placeholder` (written by `claim_placement` before the load completes)
     /// is invisible to the capacity check, so in-flight concurrent deploys are not counted
     /// toward occupancy. Both limitations are benign with a single orchestrator instance.
+    ///
+    /// An outcome blocked only by a missing artifact is retried, because it is the one
+    /// outcome a fresh read can change: an attempt re-runs all four routed reads, and a
+    /// retry that reused the first read's answer could never change its own mind. Every
+    /// other outcome, an unknown class included, is returned on the first attempt.
     pub(crate) async fn place_cells(
         &self,
         request: PlacementRequest,
     ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
-        let context = PlacementContext::read(&self.session, &request)
+        for backoff in PLACEMENT_RETRY_BACKOFF {
+            match self.place_cells_once(&request).await {
+                Err(err) if err.blocked_only_by_missing_artifacts() => {
+                    debug!("placement blocked by a missing artifact, retrying in {backoff:?}");
+                    tokio::time::sleep(backoff).await;
+                }
+                outcome => return outcome,
+            }
+        }
+
+        self.place_cells_once(&request).await
+    }
+
+    async fn place_cells_once(
+        &self,
+        request: &PlacementRequest,
+    ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
+        let context = PlacementContext::read(&self.session, request)
             .await
             .map_err(|err| DeploymentError::Internal(err.to_string()))?;
 
-        decide_cell_placement(&request, &context)
+        decide_cell_placement(request, &context)
     }
 }
 
