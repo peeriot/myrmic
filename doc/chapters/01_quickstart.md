@@ -180,6 +180,15 @@ The runtime must be running before you can deploy. Start it in a separate termin
 myrmic runtimes start
 ```
 
+It logs some startup detail and then a readiness line once it is serving:
+
+```text
+INFO  runtime "default" ready (<id>)
+```
+
+On the first start you may also see one or two `WARN` lines about missing
+prior state - these are normal and can be ignored.
+
 Verify the runtime is running from your original terminal:
 
 ```bash
