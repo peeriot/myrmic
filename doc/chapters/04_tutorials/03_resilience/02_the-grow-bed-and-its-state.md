@@ -92,7 +92,7 @@ myrmic cells | grep grow-bed
 
 Now find that `sri` in the listing above: the row `scope:CELLS/fd02ce9b-.../p`. Its `TAGS` column names exactly one node, by id: `@ca157d28...`. Look that id up in `myrmic network status`: it is `node2`.
 
-So the grow-bed *runs* on `node3` while its state is *kept* on `node2`. That is neither a mistake nor a special case. **Where a cell runs and where its data is stored are decided independently.** Placement tags govern the first; the second, until you say otherwise, is the swarm's own choice - and it is one copy, on one node. In your swarm the copy may sit on any of the three nodes, including the one running the bed. Write down which one it is - you will need it in the next step.
+So the grow-bed *runs* on `node3` while its state is *kept* on `node2`. That is neither a mistake nor a special case. **Where a cell runs and where its state is kept are two separate decisions, and they do not have to agree.** The swarm should place the cell by its tags and place its data where it best serves the application as a whole, so the two can end up on different nodes, as they did here. Until you say otherwise, the data placement is the swarm's own choice - and it is one copy, on one node. In your swarm the copy may sit on any of the three nodes, including the one running the bed. Write down which one it is - you will need it in the next step.
 
 ---
 

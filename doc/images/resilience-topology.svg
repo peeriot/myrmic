@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg width="760" height="300" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="10.5" fill="#6b7785">
+  <rect id="bg" x="0" y="0" width="760" height="300" fill="#ffffff"/>
   <title>Resilience tutorial · three nodes</title>
   <text x="380" y="24" text-anchor="middle" font-size="14">Three machines, one greenhouse</text>
   <!-- node1 -->
