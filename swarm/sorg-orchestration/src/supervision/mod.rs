@@ -413,9 +413,9 @@ struct RestartPlan {
 
 /// Resolves restart actions from persisted specs and pending death signals.
 /// Pure and deterministic given the db snapshot plus the leader-local budget
-/// and sweep state. A death is acted on only once the dead instance's rows are
-/// gone (so the redeploy claims a free SRI); a newer generation on the row
-/// means the root already came back and the signal is stale.
+/// and sweep state. A death is acted on only once the dead incarnation's
+/// placement row is gone, since that row is what a redeploy claims; a newer
+/// generation on it means the root already came back and the signal is stale.
 fn plan_root_restarts(
     specs: &[CellDeployment],
     deaths: &[RootDeath],
@@ -448,11 +448,9 @@ fn plan_root_restarts(
             Some(_) => continue,
             None => {}
         }
-        if has_instance.contains(&sri) {
-            // Placement gone but the instance row lingers; wait for its erase.
-            continue;
-        }
-
+        // A lingering instance row of the dead incarnation is not waited on:
+        // the placement row is the claim a redeploy takes, and the successor's
+        // init overwrites the row it finds under its own greater generation.
         let policy = &spec.restart;
         if should_restart(policy.restart_type, &death.reason) {
             // Hold off until the fixed inter-attempt delay has elapsed.
@@ -1018,19 +1016,26 @@ mod tests {
     }
 
     #[test]
-    fn defers_while_instance_row_lingers() {
+    fn restarts_while_the_corpse_instance_row_lingers() {
         let mut budget = RestartBudget::new();
         let mut sweep = RestartSweep::default();
+        // Placement gone, instance row of the same corpse still there: a node
+        // loss releases the two separately, and only the placement is the claim
+        // a redeploy takes. Restart now - the successor mints a greater
+        // generation and its init overwrites the row it finds - rather than
+        // wait on a row nothing is obliged to remove.
         let plan = plan_root_restarts(
             &[root_spec("r", RestartType::Always, 5)],
-            &[death("r", g(1), LostReason::Crashed)],
+            &[death("r", g(1), LostReason::NodeLost)],
             &[],
             &[instance(sri("r"), None, false)],
             &mut budget,
             &mut sweep,
             Instant::now(),
         );
-        assert_eq!(plan, RestartPlan::default());
+        assert_eq!(plan.restart, vec![sri("r")]);
+        assert!(plan.drop_specs.is_empty());
+        assert!(plan.clear_deaths.is_empty());
     }
 
     #[test]

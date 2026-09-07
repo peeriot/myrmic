@@ -44,8 +44,7 @@ pub use cells::lifecycle::{
 };
 pub use cells::placement::{
     PlacementClaimOutcome, claim_placement, commit_placement, ensure_placement_exists,
-    ensure_placement_exists_in_tx, get_placement, get_placement_in_tx, list_placements,
-    placement_exists, placement_exists_in_tx, remove_placement,
+    get_placement, list_placements, placement_exists, remove_placement,
 };
 pub use cells::root_death;
 pub use cells::root_restart;
