@@ -57,13 +57,13 @@ myrmic cells
 ```
 
 ```text
-  cell              sri                                   kind  runtime     age  class             srn
-──── greenhouse ─────────────────────────────────────────────────────────────────────────────────────────
-  dashboard         884f63a0-83ed-52fe-b67c-2bcfb6df378c  wasm  [4]f741c9b  8s   dashboard         dashboard
-  grow-bed          fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [c]a157d28  8s   grow-bed          grow-bed
-  irrigation-agent  9f2172bd-73ff-5dba-a7a7-33b0e8756faa  wasm  [c]a157d28  8s   irrigation-agent  irrigation-agent
-  moisture-sensor   365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  8s   moisture-sensor   moisture-sensor
-  pump              4e9ba24d-b959-57bf-9b71-73500c8e5495  wasm  [4]f741c9b  8s   pump              pump
+  cell              sri                                   kind  runtime     age  policy  class             srn
+──── greenhouse ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  dashboard         884f63a0-83ed-52fe-b67c-2bcfb6df378c  wasm  [4]f741c9b  8s   always  dashboard         dashboard
+  grow-bed          fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [c]a157d28  8s   always  grow-bed          grow-bed
+  irrigation-agent  9f2172bd-73ff-5dba-a7a7-33b0e8756faa  wasm  [c]a157d28  8s   always  irrigation-agent  irrigation-agent
+  moisture-sensor   365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  8s   always  moisture-sensor   moisture-sensor
+  pump              4e9ba24d-b959-57bf-9b71-73500c8e5495  wasm  [4]f741c9b  8s   always  pump              pump
 ```
 
 The sensor sits on `node1`. The other four are spread over `node2` and `node3` - here grow-bed and agent on one, pump and dashboard on the other. Your split may differ; what cannot differ is that none of the four is on `node1`.

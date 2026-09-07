@@ -24,11 +24,11 @@ myrmic cells
 ```
 
 ```text
-  cell             sri                                   kind  runtime     age  class            srn
-──── grow-bed ────────────────────────────────────────────────────────────────────────────────────────
-  grow-bed         fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [4]f741c9b  6s   grow-bed         grow-bed
-──── moisture-sensor ─────────────────────────────────────────────────────────────────────────────────
-  moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  14s  moisture-sensor  moisture-sensor
+  cell             sri                                   kind  runtime     age  policy  class            srn
+──── grow-bed ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  grow-bed         fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [4]f741c9b  6s   always  grow-bed         grow-bed
+──── moisture-sensor ───────────────────────────────────────────────────────────────────────────────────────────────────
+  moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  14s  always  moisture-sensor  moisture-sensor
 ```
 
 Here the grow-bed landed on `node3`; yours may say `node2`. Either is right - the swarm picks one of the qualifying nodes. What it will never say for the grow-bed is `node1`.
@@ -87,7 +87,7 @@ myrmic cells | grep grow-bed
 ```
 
 ```text
-  grow-bed         fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [4]f741c9b  2m   grow-bed         grow-bed
+  grow-bed         fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [4]f741c9b  2m   always  grow-bed         grow-bed
 ```
 
 Now find that `sri` in the listing above: the row `scope:CELLS/fd02ce9b-.../p`. Its `TAGS` column names exactly one node, by id: `@ca157d28...`. Look that id up in `myrmic network status`: it is `node2`.
@@ -114,11 +114,11 @@ myrmic cells
 ```
 
 ```text
-  cell             sri                                   kind  runtime     age  class            srn
-──── grow-bed ────────────────────────────────────────────────────────────────────────────────────────
-  grow-bed         fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [c]a157d28  9s   grow-bed         grow-bed
-──── moisture-sensor ─────────────────────────────────────────────────────────────────────────────────
-  moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  36m  moisture-sensor  moisture-sensor
+  cell             sri                                   kind  runtime     age  policy  class            srn
+──── grow-bed ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  grow-bed         fd02ce9b-180a-540e-8f18-c8f59eeb4a05  wasm  [c]a157d28  9s   always  grow-bed         grow-bed
+──── moisture-sensor ───────────────────────────────────────────────────────────────────────────────────────────────────
+  moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  36m  always  moisture-sensor  moisture-sensor
 ```
 
 Same `sri`, new runtime: the grow-bed now runs on `node2`. The cell is back. Now look at Terminal 2 for the question that matters - what does it *remember*?

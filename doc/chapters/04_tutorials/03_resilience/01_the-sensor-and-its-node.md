@@ -64,9 +64,9 @@ myrmic cells
 ```
 
 ```text
-  cell             sri                                   kind  runtime     age  class            srn
-──── moisture-sensor ─────────────────────────────────────────────────────────────────────────────────
-  moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  14s  moisture-sensor  moisture-sensor
+  cell             sri                                   kind  runtime     age  policy  class            srn
+──── moisture-sensor ───────────────────────────────────────────────────────────────────────────────────────────────────
+  moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  14s  always  moisture-sensor  moisture-sensor
 ```
 
 The `runtime` column says `[1]12a7f3f` - `node1`, as it must. Open Terminal 2 and listen to it:
