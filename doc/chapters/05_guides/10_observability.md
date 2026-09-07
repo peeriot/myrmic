@@ -18,7 +18,7 @@ To inspect all runtimes connected across the swarm network, `myrmic network stat
 
 ### List running cells
 
-To inspect deployed cells or the status of a specific cell, `myrmic cells status` lists all deployed cells - each showing its identifier, type, and the runtime it runs on. See [`myrmic cells status` reference](../10_reference/02_myrmic-cli/06_cells/01_status.md) for synopsis, options and examples.
+To inspect deployed cells or the status of a specific cell, `myrmic cells status` lists all deployed cells - each with its identity, placement, age and restart policy. See [`myrmic cells status` reference](../10_reference/02_myrmic-cli/06_cells/01_status.md) for synopsis, options and examples.
 
 ## Logs
 

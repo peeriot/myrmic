@@ -130,6 +130,17 @@ pub enum RestartTypeName {
 }
 
 impl RestartTypeName {
+    /// The name `--policy` and an app spec's `restart:` spell this trigger
+    /// with. The one place the CLI renders a trigger, so the deploy warning
+    /// and the `cells` listing cannot drift apart.
+    pub fn spelling(restart_type: RestartType) -> &'static str {
+        match restart_type {
+            RestartType::Never => "never",
+            RestartType::OnError => "on-error",
+            RestartType::Always => "always",
+        }
+    }
+
     /// The named trigger with [`RestartPolicy`]'s default crash-loop bounds.
     pub fn to_policy(self) -> RestartPolicy {
         RestartPolicy {

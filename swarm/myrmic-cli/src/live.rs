@@ -404,6 +404,8 @@ impl<K: Hash + Eq, V: PartialEq> Pops<K, V> {
 
 #[cfg(test)]
 mod tests {
+    use std::future::ready;
+
     use super::*;
 
     const FADE: Duration = Duration::from_secs(1);
@@ -541,8 +543,8 @@ mod tests {
     impl View for Fake {
         type Snapshot = ();
 
-        async fn fetch(&self) -> Result<()> {
-            Ok(())
+        fn fetch(&self) -> impl Future<Output = Result<()>> {
+            ready(Ok(()))
         }
 
         fn apply(&mut self, (): (), _: Instant) {}

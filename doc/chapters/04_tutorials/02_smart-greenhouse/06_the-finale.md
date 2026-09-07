@@ -116,16 +116,16 @@ myrmic cells
 ```
 
 ```text
-  cell              sri       kind  runtime     age  class             srn
-──── greenhouse ────────────────────────────────────────────────────────────────────
-  dashboard         884f...   wasm  [8]30d3436  20s  dashboard         dashboard
-  grow-bed          fd02...   wasm  [8]30d3436  20s  grow-bed          grow-bed
-  irrigation-agent  9f21...   wasm  [8]30d3436  20s  irrigation-agent  irrigation-agent
-  moisture-sensor   365d...   wasm  [8]30d3436  20s  moisture-sensor   moisture-sensor
-  pump              4e9b...   wasm  [8]30d3436  20s  pump              pump
+  cell              sri      kind  runtime     age  policy  class             srn
+──── greenhouse ──────────────────────────────────────────────────────────────────────────────
+  dashboard         884f...  wasm  [8]30d3436  20s  never   dashboard         dashboard
+  grow-bed          fd02...  wasm  [8]30d3436  20s  never   grow-bed          grow-bed
+  irrigation-agent  9f21...  wasm  [8]30d3436  20s  never   irrigation-agent  irrigation-agent
+  moisture-sensor   365d...  wasm  [8]30d3436  20s  never   moisture-sensor   moisture-sensor
+  pump              4e9b...  wasm  [8]30d3436  20s  never   pump              pump
 ```
 
-The five cells are grouped under the application's name now. Refresh the browser: the dashboard is back, the readings tick, and within a couple of minutes the agent waters the bed - the whole machine, from one file.
+The five cells are grouped under one application name now. Refresh the browser: the dashboard is back, the readings tick, and within a couple of minutes the agent waters the bed - the whole machine, from one file.
 
 And because the swarm knows the five belong together, they also leave together:
 

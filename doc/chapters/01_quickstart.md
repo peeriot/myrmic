@@ -259,12 +259,12 @@ myrmic cells
 Expected output:
 
 ```text
-  cell     sri                                   kind  runtime  class    srn
-──────────────────────────────────────────────────────────────────────────────
-  counter  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  wasm  default  counter  counter
+  cell     sri                                   kind  runtime     age  policy  class    srn
+──── counter ───────────────────────────────────────────────────────────────────────────────────
+  counter  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  wasm  [x]xxxxxxx  0s   never   counter  counter
 ```
 
-`counter` is deployed on the `default` runtime and waiting for commands.
+`counter` is deployed on the local runtime, which the `runtime` column shows by id, and waiting for commands.
 
 ### 7. Call `increment`.
 
