@@ -92,6 +92,26 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
         return Err(anyhow::Error::new(err).context("failed to render template"));
     }
 
+    // A firmware crate also gets the partition layout for its chip - the same
+    // per-chip files `modem-esp32` builds with (C5/C6 = 4 MB, C61 = 8 MB).
+    if let Some(chip) = firmware {
+        let partitions = match chip {
+            Chip::Esp32c5 => {
+                include_str!("../../../../embedded/esp-hal/modem-esp32/partitions/esp32c5.toml")
+            }
+            Chip::Esp32c6 => {
+                include_str!("../../../../embedded/esp-hal/modem-esp32/partitions/esp32c6.toml")
+            }
+            Chip::Esp32c61 => {
+                include_str!("../../../../embedded/esp-hal/modem-esp32/partitions/esp32c61.toml")
+            }
+        };
+        let dst = path.join("partitions.toml");
+        if let Err(e) = std::fs::write(&dst, partitions) {
+            return Err(anyhow::Error::new(e).context(format!("failed to write {}", dst.display())));
+        }
+    }
+
     Ok(())
 }
 

@@ -1,33 +1,40 @@
-# Flash Partition Configuration (optional) Example
+# Flash Partition Configuration — format reference
 #
-# Controls the split between the firmware (app) and the AOT XIP WASM module storage. This can be used to tune the
-# flash partitions to give more memory to either the firmware or the WASM storage.
+# Controls the split between the firmware (app) partition and the AOT XIP WASM
+# module storage, so the flash can be tuned to give more room to either.
 #
-# `modem-esp32`'s build.rs reads this file and generates:
-#   * the PartitionLayout injected into wasm-storage (where the AOT metadata + XIP regions live in flash)
-#   * an app-only ESP-IDF partition table (CSV) that is handed to espflash when using the cargo aliases (e.g. cargo
-#     run-c6)
+# A firmware crate's build script hands these knobs to `esp-firmware-build`,
+# which generates:
+#   * the PartitionLayout injected into wasm-storage (where the AOT metadata + XIP
+#     regions live in flash)
+#   * an app-only ESP-IDF partition table (CSV) handed to espflash when flashing
+#     with the cargo aliases (e.g. cargo run-c6) or `myrmic flash`
 #
-# This file is OPTIONAL. If this file is missing, the firmware will fall back to per-chip defaults.
-# The values below reproduce that default.
+# `modem-esp32` is one crate for three chips with different flash, so it does NOT
+# read a single `partitions.toml`; its build.rs selects a per-chip file from
+# `partitions/` (esp32c5.toml, esp32c6.toml, esp32c61.toml). A crate scaffolded
+# with `myrmic new --firmware <chip>` instead gets a single `partitions.toml` (a
+# copy of the matching per-chip file) that you can tune with the knobs below.
 #
-# Sizes accept a K/M suffix ("2M", "1984K"), 0x-hex ("0x1F0000"), or a plain decimal byte count. All sizes must be
-# 64 KiB-aligned (a multiple of 0x10000, the flash/MMU page size), or the build fails.
+# Sizes accept a K/M suffix ("2M", "1984K"), 0x-hex ("0x1F0000"), or a plain
+# decimal byte count. All sizes must be 64 KiB-aligned (a multiple of 0x10000,
+# the flash/MMU page size), or the build fails.
 
 
 [partitions]
 
-# Firmware partition size (contains also bootloader partitions). If the linked firmware image grows
-# larger than this, espflash will refuse to flash it rather than silently
-# overwriting the AOT region.
+# Firmware partition size (contains also bootloader partitions). If the linked
+# firmware image grows larger than this, the build fails (and espflash refuses to
+# flash it) rather than silently overwriting the AOT region.
 firmware_size = "6M"
 
 # AOT XIP module storage size — the largest AOT module that can be stored.
-# NOTE: AOT modules have and rely on stored metadata that is present as part of `aot_size`. This region is 64 KiB, which
-#       effectively means: biggest AOT module size = `aot_size` - 64K
-aot_size = "1M"
+# NOTE: AOT modules carry stored metadata that lives in the first 64 KiB of this
+#       region, so the biggest AOT module = `aot_size` - 64K.
+aot_size = "2M"
 
-# Total usable flash on the target device. Optional; defaults to 4 MB per chip.
-# Raise this (e.g. "8M") to use the full flash of a larger device — then you can grow firmware_size and/or aot_size
-# accordingly.
+# Total usable flash on the target device. Sizes must fit within it. The per-chip
+# defaults are the safe floor for each board: C5 and C6 default to 4 MB, C61 to
+# 8 MB. Raise this (e.g. "8M") to use the full flash of a larger board, then grow
+# firmware_size and/or aot_size accordingly.
 flash_size = "8M"

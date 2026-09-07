@@ -1,0 +1,12 @@
+# Flash partition layout for the ESP32-C5.
+#
+# Based on ESP32-C5-DevKitC-1 (4 MB flash): 3 MB firmware + 1 MB AOT fills the
+# 4 MB. The firmware partition holds the app (the `ble` image is ~2.06 MB); the
+# AOT region holds the 64 KB metadata block and the XIP WASM module.
+#
+# See embedded/esp-hal/modem-esp32/partitions.toml.example for a description of the knobs and how to override them.
+
+[partitions]
+firmware_size = "3M"
+aot_size = "1M"
+flash_size = "4M"

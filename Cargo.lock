@@ -4078,7 +4078,7 @@ dependencies = [
 
 [[package]]
 name = "esp-firmware"
-version = "0.2.1"
+version = "0.4.0"
 dependencies = [
  "cell-protocol",
  "critical-section",
@@ -4101,7 +4101,7 @@ dependencies = [
 
 [[package]]
 name = "esp-firmware-build"
-version = "0.2.1"
+version = "0.4.0"
 dependencies = [
  "esp-mmu-consts",
  "serde",
@@ -4111,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "esp-firmware-macros"
-version = "0.2.1"
+version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4943,7 +4943,7 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "firmware-examples"
-version = "0.2.1"
+version = "0.4.0"
 dependencies = [
  "embassy-executor",
  "embassy-time",

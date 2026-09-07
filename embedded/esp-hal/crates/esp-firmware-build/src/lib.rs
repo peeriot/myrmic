@@ -205,14 +205,21 @@ impl std::fmt::Display for Partitions {
 /// The `[partitions]` knobs of the `partitions.toml` beside a crate's
 /// `Cargo.toml`, or `None` when the crate ships no such file.
 pub fn read_partitions_toml(manifest_dir: &Path) -> Result<Option<Partitions>, String> {
-    let path = manifest_dir.join("partitions.toml");
-    let text = match std::fs::read_to_string(&path) {
+    read_partitions_toml_at(&manifest_dir.join("partitions.toml"))
+}
+
+/// The `[partitions]` knobs of a `partitions.toml`-format file at an explicit
+/// path, or `None` when the file is absent. Used by a firmware crate whose build
+/// script selects a partition file by some rule of its own (e.g. per chip).
+pub fn read_partitions_toml_at(path: &Path) -> Result<Option<Partitions>, String> {
+    let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
     };
     let config: Config =
         toml::from_str(&text).map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+
     Ok(Some(config.partitions))
 }
 
@@ -239,8 +246,6 @@ pub fn spell_size(bytes: u64) -> String {
 /// `partitions.toml` is unreadable or malformed, or if the requested sizes do
 /// not fit the chip's flash or MMU range.
 pub fn configure() {
-    let chip = detect_chip();
-
     let manifest_dir = manifest_dir();
     println!(
         "cargo:rerun-if-changed={}",
@@ -250,7 +255,20 @@ pub fn configure() {
 
     println!("cargo:rerun-if-env-changed={PARTITIONS_ENV}");
     let env = std::env::var(PARTITIONS_ENV).ok();
-    let partitions = Partitions::select(file, env.as_deref());
+
+    configure_with_partitions(&Partitions::select(file, env.as_deref()));
+}
+
+/// Like [`configure`], but with the partition knobs already chosen — for a
+/// firmware crate whose build script selects its partition file itself (for
+/// example, one file per chip, read with [`read_partitions_toml_at`]). Any knob
+/// left unset falls back to the 4 MB default.
+///
+/// # Panics
+///
+/// Panics for the same reasons as [`configure`], less the file/env parsing.
+pub fn configure_with_partitions(partitions: &Partitions) {
+    let chip = detect_chip();
 
     // Defaults to a 4 MB layout (3M `firmware_size` + 1M `aot_size`, see #1347).
     let firmware_size = partitions.firmware_size.unwrap_or(DEFAULT_FIRMWARE_SIZE);
