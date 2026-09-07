@@ -220,7 +220,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "myrmic-common"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "embedded-io 0.6.1",
  "heapless",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-sdk"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "critical-section",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-sdk-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-signal-layer-types"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
 ]
