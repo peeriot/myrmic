@@ -186,15 +186,18 @@ where
         self.backend.deploy_app(&path).await;
     }
 
-    /// run: myrmic deploy --sri `sri` `wasm` [--tag `tag`...]
+    /// run: myrmic deploy --name `srn` `wasm` [--tag `tag`...]
     ///
     /// Returns once the SRI shows up in `myrmic status`.
-    pub async fn deploy(&self, cell: CellSpec, sri: &str, tags: &[&str]) -> DeployedCell<B> {
-        self.backend.deploy(cell, sri, tags).await;
+    pub async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]) -> DeployedCell<B> {
+        self.backend.deploy(cell, srn, tags).await;
+        let sri = cell_protocol::Sri::of_path(srn)
+            .expect("myrmic accepted an SRN that cannot be converted to an SRI");
+        let sri = sri.to_string();
         let deployed = crate::wait_until(
             crate::wait::DEFAULT_TIMEOUT,
             crate::wait::DEFAULT_POLL_INTERVAL,
-            || async { self.is_sri_deployed(sri).await },
+            || async { self.is_sri_deployed(&sri).await },
         )
         .await;
         assert!(
@@ -210,10 +213,10 @@ where
             .await
     }
 
-    /// [`Self::deploy`] with a generated unique SRI (see [`DeployedCell::sri`])
+    /// [`Self::deploy`] with a generated unique SRN (see [`DeployedCell::sri`])
     pub async fn deploy_with_random_sri(&self, cell: CellSpec, tags: &[&str]) -> DeployedCell<B> {
-        let sri = uuid::Uuid::new_v4().to_string();
-        self.deploy(cell, &sri, tags).await
+        let srn = format!("e2e-{}", uuid::Uuid::new_v4().simple());
+        self.deploy(cell, &srn, tags).await
     }
 
     /// check if a specific SRI is deployed by running myrmic status

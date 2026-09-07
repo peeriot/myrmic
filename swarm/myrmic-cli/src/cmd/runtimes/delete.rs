@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::args::Ctx;
 use crate::pid::*;
@@ -69,6 +70,7 @@ pub fn handle(ctx: Ctx, cmd: Delete) -> anyhow::Result<()> {
                     "sent SIGTERM to runtime {:?} (pid {p})",
                     pid.file_stem()
                 );
+                wait_for_exit(&pid, p)?;
             }
             SignalOutcome::Stale(p) => {
                 crate::warn!(
@@ -95,4 +97,32 @@ pub fn handle(ctx: Ctx, cmd: Delete) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Wait for a signalled runtime to exit, then remove its PID file. A SIGTERM
+/// can arrive during daemon startup before the runtime installs its shutdown
+/// handler; in that case the process exits without cleaning up the file.
+fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match pid.status() {
+            PidStatus::Running(_) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            PidStatus::Running(_) => {
+                anyhow::bail!(
+                    "runtime {:?} (pid {process}) did not stop within 10 seconds",
+                    pid.file_stem()
+                );
+            }
+            PidStatus::Stale(_) | PidStatus::Absent => {
+                if let Err(err) = pid.remove()
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(anyhow::Error::new(err));
+                }
+                return Ok(());
+            }
+        }
+    }
 }

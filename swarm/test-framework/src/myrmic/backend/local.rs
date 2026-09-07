@@ -156,9 +156,9 @@ impl MyrmicBackend for LocalBinary {
         }
     }
 
-    async fn deploy(&self, cell: CellSpec, sri: &str, tags: &[&str]) {
+    async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]) {
         let mut cmd = tokio::process::Command::new(&self.binary);
-        cmd.arg("deploy").arg("--sri").arg(sri).arg(cell.as_path());
+        cmd.arg("deploy").arg("--name").arg(srn).arg(cell.as_path());
         for tag in tags.iter().copied() {
             cmd.arg("--tag").arg(tag);
         }
@@ -171,22 +171,38 @@ impl MyrmicBackend for LocalBinary {
     }
 
     async fn deploy_app(&self, app_spec: &std::path::Path) {
-        let output = tokio::process::Command::new(&self.binary)
-            .arg("deploy")
-            .arg(app_spec)
-            .output()
-            .await
-            .unwrap();
+        // A runtime is listed before its scheduler is ready to accept work. This is
+        // normally invisible to users, but an E2E deploy issued immediately after
+        // `runtimes start` can race it. Retry only that transient CLI error.
+        for attempt in 0..20 {
+            let output = tokio::process::Command::new(&self.binary)
+                .arg("deploy")
+                .arg(app_spec)
+                .output()
+                .await
+                .unwrap();
 
-        if !output.status.success() {
-            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+            if output.status.success() {
+                return;
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if attempt < 19 && stderr.contains("no runtimes available") {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+
+            eprintln!("{stderr}");
             panic!("deploy app failed for {}", app_spec.display());
         }
+
+        unreachable!("the retry loop either deploys the app or panics");
     }
 
     async fn delete_cell(&self, sri: &str) {
         let output = tokio::process::Command::new(&self.binary)
             .arg("delete")
+            .arg("--cell")
             .arg(sri)
             .output()
             .await
@@ -219,6 +235,6 @@ impl MyrmicBackend for LocalBinary {
     }
 
     fn delete_cell_blocking(&self, sri: &str) -> Result<(), String> {
-        self.run_blocking(&["delete", sri])
+        self.run_blocking(&["delete", "--cell", sri])
     }
 }

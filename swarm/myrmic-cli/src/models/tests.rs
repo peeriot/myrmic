@@ -357,6 +357,12 @@ fn cargo_dep_git_renders_an_inline_table() {
         dep.to_string(),
         r#"{ git = "ssh://git@github.com/peeriot/swarm.git" }"#
     );
+
+    let dep = CargoDep::from_str("https://github.com/peeriot/swarm.git?rev=abc12345").unwrap();
+    assert_eq!(
+        dep.to_string(),
+        r#"{ git = "https://github.com/peeriot/swarm.git", rev = "abc12345" }"#
+    );
 }
 
 #[test]

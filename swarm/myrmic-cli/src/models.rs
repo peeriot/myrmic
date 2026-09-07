@@ -480,7 +480,7 @@ impl std::str::FromStr for CargoDep {
         // Probably a cleaner way to do it, but it works for now...
         let dep = if looks_like_version_req(value) {
             Self::Version(String::from(value))
-        } else if value.starts_with("ssh://git") {
+        } else if value.starts_with("ssh://") || value.starts_with("https://") {
             let (url, rev) = if let Some((url, rev)) = value.split_once("?rev=") {
                 (url, Some(rev))
             } else {

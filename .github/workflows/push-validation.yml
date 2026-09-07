@@ -32,6 +32,10 @@ on:
         description: "Check WASM"
         required: false
         type: boolean
+      myrmic_e2e:
+        description: "Run Myrmic E2E"
+        required: false
+        type: boolean
 
 env:
   RUST_IMAGE: "ghcr.io/peeriot/rust:1.95.0-2"
@@ -181,6 +185,48 @@ jobs:
             target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
           run: |
             ${{ github.workspace }}/.ci/check/check
+
+  # Myrmic end-to-end regression coverage
+
+  myrmic_e2e:
+    name: Myrmic E2E
+    runs-on: general
+    timeout-minutes: 15
+    if: |
+      ( github.event_name == 'push') ||
+      ( github.event_name == 'merge_group' ) ||
+      ( github.event_name == 'workflow_dispatch' && inputs.myrmic_e2e == true ) ||
+      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Run Myrmic E2E
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          CARGO_BUILD_JOBS: "8"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=${{ github.workspace }}/Cargo.lock
+          run: |
+            # Pull-request validation builds the synthetic merge commit, which
+            # cannot be fetched as a revision from GitHub. Build the scaffolded
+            # test cell against the checked-out SDK instead.
+            export PEERIOT_MYRMIC_SDK="$PWD/sdk/myrmic-sdk"
+            cargo build --bin myrmic
+            cargo test -p e2e-tests --test myrmic myrmic_e2e
 
   # Check C5
 

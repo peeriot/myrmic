@@ -1,7 +1,7 @@
 use utils::*;
 
 /// The git repository hosting `myrmic_sdk`.
-const MYRMIC_SDK_GIT_URL: &str = "ssh://git@github.com/peeriot/myrmic.git";
+const MYRMIC_SDK_GIT_URL: &str = "https://github.com/peeriot/myrmic.git";
 const MYRMIC_SDK_OVERRIDE: &str = "PEERIOT_MYRMIC_SDK";
 
 /// The default `myrmic_sdk` dependency for scaffolded cells, baked in at build
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn default_sdk_falls_back_to_the_build_revision() {
         let sdk = default_sdk_from(None, Some("abc12345")).unwrap();
-        assert_eq!(sdk, "ssh://git@github.com/peeriot/myrmic.git?rev=abc12345");
+        assert_eq!(sdk, "https://github.com/peeriot/myrmic.git?rev=abc12345");
     }
 
     #[test]
