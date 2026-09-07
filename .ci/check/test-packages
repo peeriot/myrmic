@@ -6,7 +6,8 @@
 #
 # The list lives next to the script that consumes it because a GitHub Actions
 # `env:` value cannot be read from a file, so a workflow-side list is invisible
-# to every other check.
+# to every other check. `.ci/check/coverage` also checks these lines against the
+# workspace member set.
 
 db
 filestore-client
@@ -48,11 +49,6 @@ min-value
 cadence
 fan-curve
 hysteresis
-
-# Two workspace members are deliberately absent. `e2e-tests` needs a Docker
-# daemon, container image builds and a release `test-sidecar` binary, so its own
-# workflow job runs it. `hil-tests` opens a serial port and drives a flashed
-# board, so the hardware test workflow runs it.
 bench-harness
 bench-report
 cell-mailbox
@@ -137,3 +133,6 @@ tier_2_zone
 tier_3_central
 trace_example_intermediate
 trace_example_sink
+
+# Two default members are deliberately absent; `.ci/check/coverage-exclusions`
+# names them with their reasons.

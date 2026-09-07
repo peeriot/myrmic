@@ -116,6 +116,27 @@ jobs:
           run: |
             ./.ci/release/self-test
 
+      # Runs even when the step above failed: the two check unrelated things. Needs
+      # cargo for the workspace member set, so it mounts the same caches as the
+      # licenses step.
+      - name: Verify Coverage Rules
+        if: ${{ !cancelled() }}
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          user: user
+          token: ${{ steps.setup.outputs.token }}
+          volumes: |
+            cache-cargo:/usr/local/cargo
+            cache-rustup:/usr/local/rustup
+            target:${{ github.workspace }}/target,lockfiles=./Cargo.lock
+          run: |
+            ./.ci/check/coverage-self-test
+
   # Check Swarm
 
   check_swarm:

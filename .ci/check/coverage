@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+#
+# Whether the package lists still cover the workspace is a derived fact that
+# nothing else in the repo derives: no list is compared against the member set,
+# so a new member is uncovered by default and stays uncovered in silence. This
+# asserts both directions - every member is linted somewhere, every host-testable
+# member is tested - and fails closed on a stale entry, an empty bucket, and an
+# exclusion that carries no reason or stands in for coverage that already exists.
+#
+# Needs: bash, cargo (for the member set), GNU coreutils. No network.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Inputs. Overridable so the self-test can drive this against a synthetic
+# workspace instead of the one it lives in.
+MEMBERS_FILE=${COVERAGE_MEMBERS_FILE:-}
+DEFAULT_MEMBERS_FILE=${COVERAGE_DEFAULT_MEMBERS_FILE:-}
+TEST_PACKAGES_FILE=${COVERAGE_TEST_PACKAGES_FILE:-$SCRIPT_DIR/test-packages}
+EXCLUSIONS_FILE=${COVERAGE_EXCLUSIONS_FILE:-$SCRIPT_DIR/coverage-exclusions}
+CARGO_CONFIG=${COVERAGE_CARGO_CONFIG:-$REPO_ROOT/.cargo/config.toml}
+CHECK_SCRIPT=${COVERAGE_CHECK_SCRIPT:-$SCRIPT_DIR/check}
+WASM_SCRIPT=${COVERAGE_WASM_SCRIPT:-$SCRIPT_DIR/wasm}
+
+WORK="$(mktemp -d)"
+
+failures=0
+
+ok() { printf '  ok    %s\n' "$1"; }
+
+fail() {
+    printf '  FAIL  %s\n' "$1"
+    failures=$((failures + 1))
+}
+
+# A newline-separated set, on one line, for a failure message.
+oneline() { printf '%s' "$1" | tr '\n' ' '; }
+
+require_file() {
+    if [ ! -f "$1" ]; then
+        printf 'missing input file: %s\n' "$1" >&2
+        exit 1
+    fi
+}
+
+# One package name per line; `#` comments and blank lines ignored.
+read_list() {
+    require_file "$1"
+    grep -vE '^[[:space:]]*(#|$)' "$1" | awk '{print $1}' | sort -u
+}
+
+# `cargo tree --depth 0` prints a `[build-dependencies]` header for members that
+# have build dependencies, so the first field is not always a package name.
+#
+# The manifest is named rather than left to the working directory: without it a
+# run from a member directory selects that one member, and the default-member
+# bucket collapses to it while every other member reads as uncovered.
+cargo_members() {
+    cargo tree --manifest-path "$REPO_ROOT/Cargo.toml" "$@" --depth 0 -e no-dev \
+        | awk 'NF && $1 !~ /^\[/ {print $1}' | sort -u
+}
+
+# --- derive the sets --------------------------------------------------------
+
+if [ -n "$MEMBERS_FILE" ]; then
+    read_list "$MEMBERS_FILE" >"$WORK/members"
+else
+    cargo_members --workspace >"$WORK/members" || exit 1
+fi
+
+if [ -n "$DEFAULT_MEMBERS_FILE" ]; then
+    read_list "$DEFAULT_MEMBERS_FILE" >"$WORK/host-lint"
+else
+    cargo_members >"$WORK/host-lint" || exit 1
+fi
+
+require_file "$CARGO_CONFIG"
+grep -E '^clippy-c[0-9]+ = ' "$CARGO_CONFIG" \
+    | grep -oE '\-p [a-zA-Z0-9_-]+' | awk '{print $2}' | sort -u >"$WORK/target-lint"
+
+require_file "$CHECK_SCRIPT"
+grep -E '^[[:space:]]*SDK_PACKAGES=\(' "$CHECK_SCRIPT" \
+    | grep -oE '\-p [a-zA-Z0-9_-]+' | awk '{print $2}' | sort -u >"$WORK/sdk-lint"
+
+if ! "$WASM_SCRIPT" --list | sort -u >"$WORK/wasm-lint"; then
+    fail "vacuous: the cell package list could not be derived from $WASM_SCRIPT"
+    : >"$WORK/wasm-lint"
+fi
+
+read_list "$TEST_PACKAGES_FILE" >"$WORK/host-test"
+
+# --- exclusions -------------------------------------------------------------
+
+: >"$WORK/lint-excluded"
+: >"$WORK/test-excluded"
+: >"$WORK/excluded-names"
+
+require_file "$EXCLUSIONS_FILE"
+while IFS= read -r raw; do
+    line=$(printf '%s\n' "$raw" | awk '{$1 = $1; print}')
+    case "$line" in '' | \#*) continue ;; esac
+
+    kind=${line%% *}
+    rest=${line#* }
+    name=${rest%% *}
+    reason=${rest#* }
+
+    if [ "$rest" = "$line" ] || [ "$name" = "$rest" ] || [ -z "$reason" ]; then
+        fail "malformed-exclusion: no reason given: $line"
+        continue
+    fi
+
+    case "$kind" in
+        lint) printf '%s\n' "$name" >>"$WORK/lint-excluded" ;;
+        test) printf '%s\n' "$name" >>"$WORK/test-excluded" ;;
+        *)
+            fail "malformed-exclusion: unknown kind '$kind': $line"
+            continue
+            ;;
+    esac
+    printf '%s\n' "$name" >>"$WORK/excluded-names"
+done <"$EXCLUSIONS_FILE"
+
+for f in members host-lint target-lint sdk-lint wasm-lint host-test \
+         lint-excluded test-excluded excluded-names; do
+    sort -u -o "$WORK/$f" "$WORK/$f"
+done
+
+# The lint buckets as one set, and the members whose tests can run on the host.
+# The SDK crates are linted off their own package list rather than through the
+# default members. The cells are linted for wasm32, but `cargo test` builds a
+# crate's lib as a test binary against std, so their tests are host tests too.
+# Only the chip crates are genuinely off-host: they need a bare-metal target.
+cat "$WORK/host-lint" "$WORK/target-lint" "$WORK/sdk-lint" "$WORK/wasm-lint" \
+    | sort -u >"$WORK/lint-buckets"
+cat "$WORK/host-lint" "$WORK/sdk-lint" "$WORK/wasm-lint" \
+    | sort -u >"$WORK/host-testable"
+
+printf '\n\n--== Coverage ==--\n\n'
+
+# --- vacuous: every derived set has entries ---------------------------------
+
+for f in members host-lint target-lint sdk-lint wasm-lint host-test; do
+    if [ -s "$WORK/$f" ]; then
+        ok "vacuous: $f has $(wc -l <"$WORK/$f" | tr -d ' ') entries"
+    else
+        fail "vacuous: $f is empty, so every rule over it would pass"
+    fi
+done
+
+# --- uncovered: every member is linted somewhere ----------------------------
+
+cat "$WORK/lint-buckets" "$WORK/lint-excluded" | sort -u >"$WORK/lint-covered"
+
+uncovered=$(comm -23 "$WORK/members" "$WORK/lint-covered")
+if [ -z "$uncovered" ]; then
+    ok "uncovered: every workspace member is in a lint bucket"
+else
+    fail "uncovered: members in no lint bucket: $(oneline "$uncovered")"
+fi
+
+# --- untested: every host-testable member is tested -------------------------
+
+cat "$WORK/host-test" "$WORK/test-excluded" | sort -u >"$WORK/test-covered"
+
+untested=$(comm -23 "$WORK/host-testable" "$WORK/test-covered")
+if [ -z "$untested" ]; then
+    ok "untested: every host-testable member is in the test list or excluded"
+else
+    fail "untested: host-testable members outside the test list: $(oneline "$untested")"
+fi
+
+# --- unknown-package: no list entry outlives its package --------------------
+
+cat "$WORK/lint-buckets" "$WORK/host-test" "$WORK/excluded-names" \
+    | sort -u >"$WORK/named"
+
+stale=$(comm -13 "$WORK/members" "$WORK/named")
+if [ -z "$stale" ]; then
+    ok "unknown-package: every name in every list resolves to a workspace member"
+else
+    fail "unknown-package: names that are not workspace members: $(oneline "$stale")"
+fi
+
+# --- redundant-exclusion: no exclusion stands in for coverage that exists ---
+
+# An exclusion is unioned into the covered set, so one for a member a real bucket
+# already covers passes on that bucket's coverage and keeps passing once the
+# member leaves it. Then the exclusion is all that answers for the member, and it
+# runs nothing.
+redundant=$(
+    comm -12 "$WORK/lint-excluded" "$WORK/lint-buckets"
+    comm -12 "$WORK/test-excluded" "$WORK/host-test"
+)
+if [ -z "$redundant" ]; then
+    ok "redundant-exclusion: no exclusion names a member that is already covered"
+else
+    fail "redundant-exclusion: members that are already covered: $(oneline "$redundant")"
+fi
+
+# --- summary ----------------------------------------------------------------
+
+printf '\n%d failures\n' "$failures"
+[ "$failures" -eq 0 ] || exit 1

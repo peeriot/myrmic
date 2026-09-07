@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+#
+# Guards the rules `.ci/check/coverage` implements, by proving each of them can go
+# RED. A rule that has never been seen to fail is an assumption, not a check, and
+# an unproven assumption is what let most of the workspace out of the lint gate.
+#
+# Every rule case poisons exactly one input of a synthetic four-member workspace
+# and then requires two things of the check: a non-zero exit, and a failure naming
+# the rule the case is aimed at. Requiring the rule name is what stops a case from
+# passing because the check crashed, is missing, or tripped some other rule.
+#
+# Needs: bash and GNU coreutils for the synthetic cases; the real-tree case also
+# needs cargo. No network.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COVERAGE=${COVERAGE:-$SCRIPT_DIR/coverage}
+WASM=${WASM:-$SCRIPT_DIR/wasm}
+
+failures=0
+checks=0
+
+pass() {
+    checks=$((checks + 1))
+    printf '  ok    %s\n' "$1"
+}
+
+fail() {
+    checks=$((checks + 1))
+    failures=$((failures + 1))
+    printf '  FAIL  %s\n' "$1"
+}
+
+# --- synthetic workspace ----------------------------------------------------
+
+# Four members, one per lint bucket, and a test list covering the two buckets a
+# host lint run compiles. `coverage` takes every input through an env override,
+# so a case can poison exactly one of them and nothing else moves.
+setup_fixture() { # setup_fixture <dir>
+    local dir="$1"
+    printf 'fake-host\nfake-target\nfake-sdk\nfake-cell\n' >"$dir/members"
+    printf 'fake-host\n' >"$dir/default-members"
+    printf 'fake-host\nfake-sdk\nfake-cell\n' >"$dir/test-packages"
+    printf '# no exclusions\n' >"$dir/exclusions"
+    printf 'clippy-c6 = "clippy -p fake-target --release"\n' >"$dir/config.toml"
+    printf '    SDK_PACKAGES=(-p fake-sdk)\n' >"$dir/check"
+    printf '#!/usr/bin/env bash\nprintf "fake-cell\\n"\n' >"$dir/wasm"
+    chmod +x "$dir/wasm"
+}
+
+run_fixture() { # run_fixture <dir> [VAR=value...]
+    local dir="$1"
+    shift
+    env "$@" \
+        COVERAGE_MEMBERS_FILE="$dir/members" \
+        COVERAGE_DEFAULT_MEMBERS_FILE="$dir/default-members" \
+        COVERAGE_TEST_PACKAGES_FILE="$dir/test-packages" \
+        COVERAGE_EXCLUSIONS_FILE="$dir/exclusions" \
+        COVERAGE_CARGO_CONFIG="$dir/config.toml" \
+        COVERAGE_CHECK_SCRIPT="$dir/check" \
+        COVERAGE_WASM_SCRIPT="$dir/wasm" \
+        "$COVERAGE"
+}
+
+# The most useful line of a run that went the wrong way, for the summary.
+hint() { # hint <output-file>
+    grep -m1 -E 'FAIL|not found|No such file' "$1" 2>/dev/null \
+        | awk '{$1 = $1; print}'
+}
+
+accepts() { # accepts <name> [VAR=value...]
+    local name="$1" dir out status
+    shift
+    dir="$(mktemp -d)"
+    out="$dir/output"
+    setup_fixture "$dir"
+    run_fixture "$dir" "$@" >"$out" 2>&1
+    status=$?
+
+    if [ "$status" -eq 0 ]; then
+        pass "accepts $name"
+    else
+        fail "accepts $name (exit $status: $(hint "$out"))"
+    fi
+}
+
+rejects() { # rejects <name> <rule> <poison-fn> [VAR=value...]
+    local name="$1" rule="$2" poison="$3" dir out status
+    shift 3
+    dir="$(mktemp -d)"
+    out="$dir/output"
+    setup_fixture "$dir"
+    "$poison" "$dir"
+    run_fixture "$dir" "$@" >"$out" 2>&1
+    status=$?
+
+    if [ "$status" -eq 0 ]; then
+        fail "rejects $name (the check stayed GREEN)"
+    elif ! grep -q "FAIL  $rule: " "$out"; then
+        fail "rejects $name (exit $status, but no $rule failure: $(hint "$out"))"
+    else
+        pass "rejects $name via $rule"
+    fi
+}
+
+poison_uncovered_member() { printf 'orphan-crate\n' >>"$1/members"; }
+poison_stale_entry() { printf 'ghost-crate\n' >>"$1/test-packages"; }
+poison_untested_member() { printf 'fake-target\n' >>"$1/default-members"; }
+# The SDK crates are linted off their own package list rather than through the
+# default members, so a test rule reading only the default members lets one of
+# them leave the test run without a word.
+poison_untested_sdk_member() { printf 'fake-host\nfake-cell\n' >"$1/test-packages"; }
+# The cells are linted off the wasm glob, not the default members either, and
+# their tests are host tests like any other crate's, so a test rule that reads
+# only the two host lint buckets lets a cell leave the test run without a word.
+poison_untested_cell_member() { printf 'fake-host\nfake-sdk\n' >"$1/test-packages"; }
+poison_exclusion_without_reason() { printf 'test fake-host\n' >"$1/exclusions"; }
+poison_empty_member_set() { : >"$1/members"; }
+# The real cell lister, pointed at a tree with no cells in it.
+poison_empty_wasm_glob() { cp "$WASM" "$1/wasm"; }
+
+# `fake-hos` is a prefix of the covered member `fake-host`, once as a member of its
+# own and once as a list entry. Comparing whole names gets both right; matching a
+# name as a substring calls the first covered and the second resolved, and that is
+# the one way this check can be wrong without saying so.
+poison_uncovered_prefix_member() { printf 'fake-hos\n' >>"$1/members"; }
+poison_stale_prefix_entry() { printf 'fake-hos\n' >>"$1/test-packages"; }
+
+# The exclusions are the one input with a hand-written parser, and it is the parser
+# that decides whether a line becomes coverage or an error. A name outliving its
+# package has to reach the stale-name rule from here too, and an unrecognised kind
+# has to be an error rather than a line quietly dropped on the floor.
+poison_stale_exclusion() {
+    printf 'lint ghost-crate a reason that outlived its package\n' >>"$1/exclusions"
+}
+poison_unknown_exclusion_kind() {
+    printf 'doc fake-host doc coverage is not a bucket\n' >>"$1/exclusions"
+}
+
+# An exclusion for a member a bucket already covers is unioned into the covered
+# set, where it passes for free - and keeps passing once the member leaves that
+# bucket and takes the real coverage with it.
+poison_redundant_lint_exclusion() {
+    printf 'lint fake-host a bucket already lints it\n' >>"$1/exclusions"
+}
+poison_redundant_test_exclusion() {
+    printf 'test fake-host the test list already names it\n' >>"$1/exclusions"
+}
+
+# The two buckets read out of another file's syntax. A renamed chip alias or an
+# SDK list that stops being an array literal leaves the bucket empty, and an empty
+# bucket makes every rule over it pass for free. Both files are still perfectly
+# valid here; only the shape the derivation looks for is gone.
+poison_renamed_chip_alias() {
+    printf 'clippy-esp32c6 = "clippy -p fake-target --release"\n' >"$1/config.toml"
+}
+poison_reshaped_sdk_list() { printf '    SDK_PACKAGES="-p fake-sdk"\n' >"$1/check"; }
+
+printf '\n\n--== Coverage Rules ==--\n\n'
+
+accepts "a fully covered workspace"
+
+rejects "a member in no lint bucket" uncovered poison_uncovered_member
+rejects "a member whose name is a prefix of a covered one" uncovered poison_uncovered_prefix_member
+rejects "a host-testable member outside the test list" untested poison_untested_member
+rejects "an SDK member outside the test list" untested poison_untested_sdk_member
+rejects "a cell member outside the test list" untested poison_untested_cell_member
+rejects "a list entry that is not a member" unknown-package poison_stale_entry
+rejects "a list entry that is a prefix of a member" unknown-package poison_stale_prefix_entry
+rejects "an exclusion naming no member" unknown-package poison_stale_exclusion
+rejects "an empty member set" vacuous poison_empty_member_set
+rejects "an empty cell glob" vacuous poison_empty_wasm_glob CELL_ROOTS="$(mktemp -d)"
+rejects "a renamed chip alias" vacuous poison_renamed_chip_alias
+rejects "an SDK list that is no longer an array" vacuous poison_reshaped_sdk_list
+rejects "an exclusion with no reason" malformed-exclusion poison_exclusion_without_reason
+rejects "an exclusion with an unknown kind" malformed-exclusion poison_unknown_exclusion_kind
+rejects "a lint exclusion a bucket already covers" redundant-exclusion poison_redundant_lint_exclusion
+rejects "a test exclusion the test list already covers" redundant-exclusion poison_redundant_test_exclusion
+
+# --- the cell lister --------------------------------------------------------
+
+# The cell bucket is whatever `wasm --list` prints, and the same listing selects
+# what the cell lint job compiles, so a listing that finds nothing has to fail
+# rather than let that job pass having linted nothing. The rule cases above see
+# this only as an empty bucket, which points at the wrong file, so it is asserted
+# against the lister directly.
+cell_lister_fails_closed() {
+    local out status
+    out="$(mktemp -d)/output"
+    CELL_ROOTS="$(mktemp -d)" "$WASM" --list >"$out" 2>&1
+    status=$?
+
+    if [ "$status" -eq 0 ]; then
+        fail "the cell lister found no cells and exited 0 anyway"
+    elif ! grep -q 'no cell packages found' "$out"; then
+        fail "the cell lister failed for another reason: $(hint "$out")"
+    else
+        pass "the cell lister fails closed on a tree with no cells"
+    fi
+}
+cell_lister_fails_closed
+
+# --- the repository itself ---------------------------------------------------
+
+printf '\n\n--== Real Tree ==--\n\n'
+
+real_out="$(mktemp -d)/output"
+if "$COVERAGE" >"$real_out" 2>&1; then
+    pass "accepts the repository as it stands"
+else
+    fail "accepts the repository as it stands ($(hint "$real_out"))"
+fi
+
+# --- summary ----------------------------------------------------------------
+
+printf '\n\n--== Summary ==--\n\n'
+printf '%d checks, %d failures\n' "$checks" "$failures"
+[ "$failures" -eq 0 ] || exit 1
