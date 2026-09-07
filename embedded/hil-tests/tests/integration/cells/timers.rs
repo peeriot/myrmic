@@ -169,9 +169,10 @@ async fn timer_cancellation() {
     let mut last_event = tokio::time::Instant::now();
     let quiet_threshold = Duration::from_secs(3);
     loop {
-        if tokio::time::Instant::now() > test_deadline {
-            panic!("timer did not stop firing within 20s of cancel");
-        }
+        assert!(
+            tokio::time::Instant::now() <= test_deadline,
+            "timer did not stop firing within 20s of cancel"
+        );
         let recv_timeout = quiet_threshold
             .saturating_sub(tokio::time::Instant::now().duration_since(last_event))
             .max(Duration::from_millis(50));

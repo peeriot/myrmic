@@ -100,15 +100,15 @@ pub fn host_function(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `pub enum InnerRequest { ... }` and `pub enum InnerResponse { ... }`
 /// - `pub mod Variant { use super::*; pub struct VariantName; ... }` (one struct per non-delegate entry)
 /// - Per non-delegate entry: `impl From<Variant::Name> for OuterRequest` and
-///   `impl TypedRequest for Variant::Name` ([`TypedRequest`] only when [`OuterResponse`] == `Response`)
+///   `impl TypedRequest for Variant::Name` (`TypedRequest` only when `OuterResponse` == `Response`)
 /// - `impl From<InnerRequest> for OuterRequest`
 ///
-/// # [`TypedRequest`] generation
+/// # `TypedRequest` generation
 ///
 /// `TypedRequest` impls are only generated when the outer response in `unwrap(...)` is the
 /// top-level `Response` type (i.e., the macro is at nesting level 2, directly under the root).
 /// For deeper levels (e.g. `DbClientRequest` inside `DbRequest` inside `Request`), the outer
-/// response is `DbResponse`, so [`TypedRequest`] is skipped - those variants are not individually
+/// response is `DbResponse`, so `TypedRequest` is skipped - those variants are not individually
 /// sendable via `send_request_and_wait`.
 #[proc_macro]
 pub fn requests(input: TokenStream) -> TokenStream {
@@ -140,7 +140,7 @@ pub fn requests(input: TokenStream) -> TokenStream {
 /// - Per non-category entry: `pub struct Name(pub T);` + `impl From<Name> for Request` +
 ///   `impl TypedRequest for Name`
 ///
-/// Category entries add variants to both enums but produce no struct or [`TypedRequest`] - callers
+/// Category entries add variants to both enums but produce no struct or `TypedRequest` - callers
 /// use the structs emitted by the inner `requests!` invocation (e.g. `CellHost::GetSri`).
 #[proc_macro]
 pub fn root_requests(input: TokenStream) -> TokenStream {

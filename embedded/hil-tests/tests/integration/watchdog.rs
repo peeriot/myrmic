@@ -53,6 +53,8 @@ const RECOVERY_TIMEOUT: Duration = Duration::from_secs(210);
 
 /// As above but for the required-task *stall* path, which additionally waits
 /// out `stats`' 90 s staleness allowance before the MWDT window even starts.
+// Seconds, so the budget stays comparable with the device timings it is derived from.
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 const STALL_RECOVERY_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A no-fault soak comfortably past the whole watchdog window (wedge latency +
@@ -73,6 +75,8 @@ const REPORT_OUTAGE: Duration = Duration::from_secs(150);
 /// Budget for the retained report to arrive once a database is back. The retry
 /// rides on the exec re-registration round (5 min), so a full round plus swarm
 /// startup and polling slack has to fit.
+// Seconds, so the budget stays comparable with the outage it has to outlast.
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 const RETAINED_DELIVERY_TIMEOUT: Duration = Duration::from_secs(420);
 
 /// Every watchdog-reset report currently in the swarm DB (the test's swarm

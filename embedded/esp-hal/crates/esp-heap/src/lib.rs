@@ -46,6 +46,8 @@ pub const HEAP_WARN_FLOOR: usize = 96 * 1024;
 /// backstop now that the leftover no longer gates the stack.
 pub const HEAP_MIN_FLOOR: usize = 16 * 1024;
 
+const _: () = assert!(HEAP_WARN_FLOOR > HEAP_MIN_FLOOR);
+
 /// Size of the reclaimed `dram2` segment added as internal heap.
 pub const DRAM2_SIZE: usize = 64 * 1024;
 
@@ -309,10 +311,5 @@ mod tests {
     fn carve_flags_no_room_for_the_reserve() {
         let carve = compute_carve(0, 16 * 1024, 32 * 1024);
         assert_eq!(carve, HeapCarve::NoRoom);
-    }
-
-    #[test]
-    fn warn_floor_is_above_min_floor() {
-        assert!(HEAP_WARN_FLOOR > HEAP_MIN_FLOOR);
     }
 }

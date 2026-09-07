@@ -64,27 +64,44 @@ impl<S: Sink> log::Log for TelemetryLogger<S> {
 mod tests {
     extern crate std;
 
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
     use std::sync::Mutex;
     use std::vec::Vec;
 
     use super::*;
     use crate::record::Level;
 
-    struct CaptureSink(Mutex<Vec<TelemetryRecord>>);
+    struct CaptureSink {
+        records: Mutex<Vec<TelemetryRecord>>,
+        flushes: AtomicUsize,
+    }
 
     impl CaptureSink {
         const fn new() -> Self {
-            Self(Mutex::new(Vec::new()))
+            Self {
+                records: Mutex::new(Vec::new()),
+                flushes: AtomicUsize::new(0),
+            }
         }
 
         fn records(&self) -> std::sync::MutexGuard<'_, Vec<TelemetryRecord>> {
-            self.0.lock().unwrap()
+            self.records.lock().unwrap()
+        }
+
+        fn flushes(&self) -> usize {
+            self.flushes.load(Ordering::Relaxed)
         }
     }
 
     impl Sink for &'static CaptureSink {
         fn send(&self, record: TelemetryRecord) {
-            self.0.lock().unwrap().push(record);
+            self.records().push(record);
+        }
+
+        // Nothing to drain: the sink counts the call so the delegation is observable.
+        fn flush(&self) {
+            self.flushes.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -145,6 +162,16 @@ mod tests {
 
         let records = SINK.records();
         assert_eq!(records[0].target.len(), 64);
+    }
+
+    #[test]
+    fn logger_flush_reaches_the_sink() {
+        static SINK: CaptureSink = CaptureSink::new();
+        let logger = TelemetryLogger::new(&SINK, log::LevelFilter::Trace);
+
+        log::Log::flush(&logger);
+
+        assert_eq!(SINK.flushes(), 1);
     }
 
     #[test]

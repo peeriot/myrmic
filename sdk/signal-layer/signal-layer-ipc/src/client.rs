@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::types::{ClientRead, ClientWrite};
+use crate::{MAX_OUTLET_WRITE_LEN, MAX_RESOLVE_NAME_LEN};
 
 /// Lazy-connecting tap client.
 ///
@@ -145,8 +146,6 @@ impl TapClient {
     }
 
     async fn resolve_family(&self, name: &str, family: HandleFamily) -> Option<u32> {
-        use crate::MAX_RESOLVE_NAME_LEN;
-
         // Refuse before taking the connection: a frame past the protocol bound
         // is rejected by the server's framer, which drops the connection this
         // client shares with every other caller and staleness-invalidates all
@@ -320,7 +319,7 @@ impl TapClient {
     /// frame would cost the shared connection, and a payload that large can
     /// never decode into an outlet command type anyway.
     pub async fn outlet_write(&self, vh: u32, bytes: Vec<u8>) -> ClientWrite {
-        if bytes.len() > crate::MAX_OUTLET_WRITE_LEN {
+        if bytes.len() > MAX_OUTLET_WRITE_LEN {
             return ClientWrite::Rejected;
         }
         bounded(
@@ -645,7 +644,7 @@ impl TapClient {
     /// Connect with exponential backoff.
     ///
     /// Tries to establish a connection, retrying with increasing delay (250 ms
-    /// initial, doubling up to [`BACKOFF_CAP_MS`]).  Tests drive this
+    /// initial, doubling up to `BACKOFF_CAP_MS`).  Tests drive this
     /// deterministically by pausing tokio time and calling
     /// `tokio::time::advance`.
     pub async fn connect_with_backoff(&self) {

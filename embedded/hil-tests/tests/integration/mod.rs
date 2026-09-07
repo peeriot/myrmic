@@ -28,11 +28,18 @@ use crate::integration::aot::aot_target;
 /// needs a couple of attempts), take a DHCP lease and find the router before it can register.
 /// This timeout is a sensible value for the hardware to do all the aforementioned steps before
 /// connecting to swarm.
+// Seconds, so the budget stays comparable with the query timeout below.
+// Only one of the three channels CI lints with knows `duration_suboptimal_units` - the oldest
+// rejects the name outright, the pinned nightly no longer fires it - so `unknown_lints` rides
+// along here and at the other allows for it in this crate.
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 pub(crate) const DEVICE_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Deploys and synchronous commands travel to the device, which fetches the cell blob over the
 /// network before it can answer — far slower than a host round-trip. Matches the orchestrator's
 /// `init_timeout_secs` in `tests/data/swarm.jsonnet`.
+// Seconds, so the value reads the same here as in the configuration it mirrors.
+#[allow(unknown_lints, clippy::duration_suboptimal_units)]
 pub(crate) const QUERY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Capability tag of the swarm process' own in-process exec runtime, used by the mixed

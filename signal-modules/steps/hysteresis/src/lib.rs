@@ -11,6 +11,7 @@
 use signal_layer_core::ProcessingStep;
 use signal_layer_types::DigitalState;
 
+#[derive(Debug, Clone, Copy)]
 pub struct HysteresisConfig {
     /// Assert (ON) when the input reaches or exceeds this value.
     pub on_threshold: f32,

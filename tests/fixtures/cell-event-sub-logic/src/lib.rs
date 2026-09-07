@@ -15,7 +15,7 @@ struct Counter {
 }
 
 /// Received from the publisher cell.
-#[derive(serde::Serialize, serde::Deserialize, myrmic_sdk::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, myrmic_sdk::Message)]
 #[codec(myrmic_sdk::Postcard)]
 struct CountChanged {
     counter: Counter,
