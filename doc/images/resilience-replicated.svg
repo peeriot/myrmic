@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="760" height="330" viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="10.5" fill="#6b7785">
+  <title>Replicated · the node running the bed dies</title>
+  <text x="380" y="24" text-anchor="middle" font-size="14">With replication: the bed's state is on every compute node</text>
+  <!-- node1 -->
+  <rect x="30" y="56" width="200" height="130" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="130" y="78" text-anchor="middle" font-size="12" fill="#3d4650">node1 · soil-probe</text>
+  <rect x="55" y="96" width="150" height="40" rx="4" fill="#eaf2ff" stroke="#4472c4"/>
+  <text x="130" y="120" text-anchor="middle" fill="#3d4650">moisture-sensor</text>
+  <text x="130" y="164" text-anchor="middle" font-size="9.5">holds no copy: not tagged compute</text>
+  <!-- node2 (replica, survives) -->
+  <rect x="290" y="56" width="200" height="130" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="390" y="78" text-anchor="middle" font-size="12" fill="#3d4650">node2 · compute</text>
+  <rect x="315" y="96" width="150" height="40" rx="4" fill="#eaf2ff" stroke="#4472c4"/>
+  <text x="390" y="114" text-anchor="middle" fill="#3d4650">bed state · copy</text>
+  <text x="390" y="128" text-anchor="middle" font-size="9.5">target_high 88</text>
+  <rect x="315" y="142" width="150" height="34" rx="4" fill="#eaf2ff" stroke="#4472c4" stroke-dasharray="4 3"/>
+  <text x="390" y="163" text-anchor="middle" fill="#3d4650">grow-bed comes back here</text>
+  <!-- node3 (runner + replica, dies) -->
+  <rect x="530" y="56" width="200" height="130" rx="6" fill="#fde9e7" stroke="#c55a11"/>
+  <text x="630" y="78" text-anchor="middle" font-size="12" fill="#3d4650">node3 · compute</text>
+  <rect x="555" y="96" width="150" height="34" rx="4" fill="#ffffff" stroke="#c55a11" stroke-dasharray="4 3"/>
+  <text x="630" y="118" text-anchor="middle" fill="#3d4650">grow-bed (was running)</text>
+  <rect x="555" y="138" width="150" height="34" rx="4" fill="#ffffff" stroke="#c55a11" stroke-dasharray="4 3"/>
+  <text x="630" y="159" text-anchor="middle" fill="#3d4650">bed state · copy</text>
+  <line x1="540" y1="66" x2="720" y2="176" stroke="#c55a11" stroke-width="2"/>
+  <line x1="720" y1="66" x2="540" y2="176" stroke="#c55a11" stroke-width="2"/>
+  <!-- replication arrow between node2 and node3 -->
+  <line x1="470" y1="116" x2="550" y2="116" stroke="#4472c4" stroke-width="1.2"/>
+  <text x="510" y="108" text-anchor="middle" font-size="9.5" fill="#4472c4">replicate -t compute</text>
+  <!-- outcome -->
+  <rect x="30" y="214" width="700" height="92" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="380" y="238" text-anchor="middle" font-size="12" fill="#3d4650">After about 70 seconds</text>
+  <text x="380" y="260" text-anchor="middle">The swarm gives node3 up, sees the bed's restart policy, and starts it on the other compute node.</text>
+  <text x="380" y="280" text-anchor="middle" fill="#4472c4">bed_state: target_low 55 · target_high 88 — the bed moved and remembers</text>
+  <text x="380" y="298" text-anchor="middle" font-size="9.5">Same kill as before, same policy; one replicate command made the difference.</text>
+</svg>

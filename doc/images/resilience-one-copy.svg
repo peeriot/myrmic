@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="760" height="330" viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="10.5" fill="#6b7785">
+  <title>One copy · where the cell runs and where its state is kept are decided independently</title>
+  <text x="380" y="24" text-anchor="middle" font-size="14">Without replication: one copy of the bed's state, on a node of the swarm's choosing</text>
+  <!-- node1 -->
+  <rect x="30" y="56" width="200" height="130" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="130" y="78" text-anchor="middle" font-size="12" fill="#3d4650">node1 · soil-probe</text>
+  <rect x="55" y="96" width="150" height="40" rx="4" fill="#eaf2ff" stroke="#4472c4"/>
+  <text x="130" y="120" text-anchor="middle" fill="#3d4650">moisture-sensor</text>
+  <!-- node2 (holds the copy) -->
+  <rect x="290" y="56" width="200" height="130" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="390" y="78" text-anchor="middle" font-size="12" fill="#3d4650">node2 · compute</text>
+  <rect x="315" y="96" width="150" height="40" rx="4" fill="#ffffff" stroke="#4472c4" stroke-dasharray="4 3"/>
+  <text x="390" y="114" text-anchor="middle" fill="#3d4650">bed state · the only copy</text>
+  <text x="390" y="128" text-anchor="middle" font-size="9.5">target_high 88</text>
+  <text x="390" y="168" text-anchor="middle" font-size="9.5">picked by the swarm, not by you</text>
+  <!-- node3 (runs the bed, dies) -->
+  <rect x="530" y="56" width="200" height="130" rx="6" fill="#fde9e7" stroke="#c55a11"/>
+  <text x="630" y="78" text-anchor="middle" font-size="12" fill="#3d4650">node3 · compute</text>
+  <rect x="555" y="96" width="150" height="40" rx="4" fill="#ffffff" stroke="#c55a11" stroke-dasharray="4 3"/>
+  <text x="630" y="120" text-anchor="middle" fill="#3d4650">grow-bed (was running)</text>
+  <line x1="540" y1="66" x2="720" y2="176" stroke="#c55a11" stroke-width="2"/>
+  <line x1="720" y1="66" x2="540" y2="176" stroke="#c55a11" stroke-width="2"/>
+  <text x="630" y="172" text-anchor="middle" font-size="9.5" fill="#c55a11">kill -9</text>
+  <!-- state access arrow -->
+  <line x1="555" y1="116" x2="470" y2="116" stroke="#6b7785" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <polygon points="470,116 478,112 478,120" fill="#6b7785"/>
+  <!-- outcome -->
+  <rect x="30" y="214" width="700" height="92" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="380" y="238" text-anchor="middle" font-size="12" fill="#3d4650">After about 70 seconds the bed comes back on node2 - and what it remembers depends on the draw</text>
+  <text x="380" y="262" text-anchor="middle" fill="#4472c4">copy was on another node (as drawn): target_high 88 · the memory survived, by luck</text>
+  <text x="380" y="282" text-anchor="middle" fill="#c55a11">copy was on the killed node: target_high 75 · the value you set cannot be recovered</text>
+  <text x="380" y="298" text-anchor="middle" font-size="9.5">One copy means survival is a coin toss. Step 7 fixes that with more copies.</text>
+</svg>

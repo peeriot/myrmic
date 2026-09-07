@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="760" height="300" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="10.5" fill="#6b7785">
+  <title>Resilience tutorial · three nodes</title>
+  <text x="380" y="24" text-anchor="middle" font-size="14">Three machines, one greenhouse</text>
+  <!-- node1 -->
+  <rect x="30" y="60" width="200" height="150" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="130" y="82" text-anchor="middle" font-size="12" fill="#3d4650">node1</text>
+  <text x="130" y="98" text-anchor="middle">tags: soil-probe, linux</text>
+  <text x="130" y="112" text-anchor="middle" font-size="9.5">the Raspberry Pi at the bed</text>
+  <rect x="55" y="130" width="150" height="56" rx="4" fill="#eaf2ff" stroke="#4472c4"/>
+  <text x="130" y="152" text-anchor="middle" fill="#3d4650">moisture-sensor</text>
+  <text x="130" y="168" text-anchor="middle" font-size="9.5">requires soil-probe</text>
+  <!-- node2 -->
+  <rect x="290" y="60" width="200" height="150" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="390" y="82" text-anchor="middle" font-size="12" fill="#3d4650">node2</text>
+  <text x="390" y="98" text-anchor="middle">tags: compute, linux</text>
+  <text x="390" y="112" text-anchor="middle" font-size="9.5">spare box</text>
+  <rect x="315" y="130" width="150" height="56" rx="4" fill="#eaf2ff" stroke="#4472c4"/>
+  <text x="390" y="152" text-anchor="middle" fill="#3d4650">grow-bed</text>
+  <text x="390" y="168" text-anchor="middle" font-size="9.5">requires compute</text>
+  <!-- node3 -->
+  <rect x="530" y="60" width="200" height="150" rx="6" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="630" y="82" text-anchor="middle" font-size="12" fill="#3d4650">node3</text>
+  <text x="630" y="98" text-anchor="middle">tags: compute, linux</text>
+  <text x="630" y="112" text-anchor="middle" font-size="9.5">spare box</text>
+  <rect x="555" y="130" width="150" height="56" rx="4" fill="none" stroke="#98a2ad" stroke-dasharray="4 3"/>
+  <text x="630" y="152" text-anchor="middle">(could run grow-bed)</text>
+  <text x="630" y="168" text-anchor="middle" font-size="9.5">carries compute too</text>
+  <!-- moisture arrow node1 -> node2 -->
+  <line x1="205" y1="158" x2="309" y2="158" stroke="#6b7785" stroke-width="1.2"/>
+  <polygon points="309,158 301,154 301,162" fill="#6b7785"/>
+  <text x="257" y="150" text-anchor="middle" font-size="9.5">moisture (event)</text>
+  <!-- bed_state out to observer -->
+  <line x1="390" y1="186" x2="390" y2="240" stroke="#6b7785" stroke-width="1.2"/>
+  <polygon points="390,240 386,232 394,232" fill="#6b7785"/>
+  <text x="402" y="216" font-size="9.5">bed_state (event)</text>
+  <rect x="300" y="242" width="180" height="34" rx="4" fill="#f4f6f8" stroke="#98a2ad"/>
+  <text x="390" y="263" text-anchor="middle">Terminal 2 · myrmic subscribe bed_state</text>
+</svg>
