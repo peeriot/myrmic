@@ -78,7 +78,7 @@ impl Runtime {
             PlacementKind::Placeholder => {}
         }
 
-        self.release_cell_resources(cell_sri).await;
+        self.release_cell_resources(cell_sri, true).await;
 
         match remove_placement(&self.session, cell_sri, gen_id).await? {
             FenceOutcome::Applied | FenceOutcome::Absent => {}
@@ -102,16 +102,24 @@ impl Runtime {
     /// the assets it uploaded to serve on them. Runs on undeploy and on deploy
     /// rollback alike.
     ///
+    /// `erase_spec` says whether the cell's restart spec goes too. An undeploy
+    /// is an operator removal, so it does; a deploy rollback must not, because
+    /// the spec may predate the deploy — a restart replays an existing spec,
+    /// and erasing it on a failed attempt would cancel the restart for good.
+    /// The rollback erases only the specs it wrote itself.
+    ///
     /// Best-effort — a cell that is going away must not be kept alive by a
     /// failing cleanup. Gateways also drop routes whose owner has lost its
     /// placement, so a missed route here is corrected within a reconcile.
-    pub(super) async fn release_cell_resources(&self, cell_sri: &Sri) {
-        match sorg_common::root_restart::erase_spec(&self.session, cell_sri).await {
-            Ok(true) => {
-                tracing::debug!("removed restart spec owned by '{cell_sri}'",);
+    pub(super) async fn release_cell_resources(&self, cell_sri: &Sri, erase_spec: bool) {
+        if erase_spec {
+            match sorg_common::root_restart::erase_spec(&self.session, cell_sri).await {
+                Ok(true) => {
+                    tracing::debug!("removed restart spec owned by '{cell_sri}'",);
+                }
+                Ok(false) => {}
+                Err(err) => warn!("failed to remove restart spec for '{cell_sri}': {err}"),
             }
-            Ok(false) => {}
-            Err(err) => warn!("failed to remove restart spec for '{cell_sri}': {err}"),
         }
         match gateway_config::deregister_cell_routes(&self.session, cell_sri).await {
             Ok(mounts) if !mounts.is_empty() => {
