@@ -63,6 +63,13 @@ You need all of these whether you installed the CLI from a package or built it y
 
 Both package lists above are derived from Myrmic's dependency tree and from installs observed on a handful of images. Nothing in this repository proves them, and they are not a minimal set - if your machine already has a working C compiler, `cmake` and `git`, however they got there, that works too.
 
+### Build resources
+
+These are lab measurements on small cloud instances, not guaranteed minimums - they move with your CPU, disk and how busy the machine is.
+
+- **A cell build takes seconds.** Once the C toolchain is present, `myrmic build` was 9 to 10 seconds on 2 to 4 vCPU, and up to around 30 seconds on a busier host. The first build in a fresh crate also compiles the cell's dependencies, so it is the slow one; later builds are quicker.
+- **Building the CLI from source is the heavy step**, and wants a few GB of both RAM and disk. On 8 vCPU running alone it took about three and a half minutes, roughly 2 GB peak resident memory and 2.6 GB left in `target/`. On a contended host it takes proportionally longer - around 9 to 10 minutes when three builds shared a 16-thread machine.
+
 ## Install from a release package (x86_64)
 
 Packages are published on the [releases page](https://github.com/peeriot/myrmic/releases) under the tag `myrmic/v<version>`. Each release carries:

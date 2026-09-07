@@ -203,6 +203,14 @@ default	running	pid=<pid>
 
 This means that we have a local Myrmic runtime running on the machine.
 
+You can also see the swarm from the network's side:
+
+```bash
+myrmic network status
+```
+
+Runtimes that can reach each other on the network automatically join one swarm, with no explicit join step, and cell names (SRNs) are shared across it, so the same name is the same cell on every node. On a single machine that swarm is just this runtime. See [Operating a swarm](./05_guides/09_operating-a-swarm.md) for what this means once more machines are involved.
+
 Finally, tell the runtime to keep telemetry. By default a runtime only prints its logs to its own stdout; nothing is stored in the telemetry database that `myrmic telemetry logs` reads until a retention period is set. Run this once - it applies to all connected runtimes immediately and only affects records emitted afterwards:
 
 ```bash
