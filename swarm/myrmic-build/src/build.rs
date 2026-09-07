@@ -50,6 +50,12 @@ pub fn build(
     target: Platform,
     cargo_target: &CargoTarget,
 ) -> anyhow::Result<CellBuild> {
+    let aot_target = aot_target(target);
+
+    if aot_target.is_some() {
+        aot_compiler::ensure_wamrc()?;
+    }
+
     let wasm = compile_cell(manifest_path, cargo_target)?
         .into_iter()
         .find(|artifact| {
@@ -59,7 +65,7 @@ pub fn build(
         })
         .context("cell build produced no wasm artifact")?;
 
-    let aot = match aot_target(target) {
+    let aot = match aot_target {
         None => None,
         Some(aot_target) => {
             let out_dir = cargo::crate_info(manifest_path)
