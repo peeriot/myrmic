@@ -4,9 +4,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use cell_protocol::{CellInstance, Gen, PlacementEntry, PlacementKind, Sri};
+use sorg_common::{RestartType, root_restart};
 
 use crate::args::Ctx;
 use crate::live::{self, Phase, Pops};
+use crate::models::RestartTypeName;
 use crate::render::{BOLD, DIMMED, NONE, RESET, styled_id, unique_prefix_lengths, width};
 
 #[cfg(test)]
@@ -47,15 +49,31 @@ struct View {
     listing: Listing,
 }
 
-type Snapshot = (Vec<PlacementEntry>, Vec<CellInstance>);
+type Snapshot = (
+    Vec<PlacementEntry>,
+    Vec<CellInstance>,
+    HashMap<Sri, RestartType>,
+);
 
 impl live::View for View {
     type Snapshot = Snapshot;
 
     async fn fetch(&self) -> Result<Snapshot> {
-        let (cells, instances) =
-            tokio::join!(self.client.list_placements(), self.client.list_instances());
-        Ok((cells?, instances?))
+        let (cells, instances, restarts) = tokio::join!(
+            self.client.list_placements(),
+            self.client.list_instances(),
+            root_restart::list_specs(self.client.session()),
+        );
+        let cells = cells?;
+        let instances = instances?;
+        // Only the trigger is rendered, so the full deployment record does not
+        // travel into the render path.
+        let policies = restarts?
+            .into_iter()
+            .map(|d| (d.sri, d.restart.restart_type))
+            .collect();
+
+        Ok((cells, instances, policies))
     }
 
     fn apply(&mut self, snapshot: Snapshot, now: Instant) {
@@ -77,6 +95,10 @@ impl live::View for View {
 struct Listing {
     targets: Vec<(String, Sri)>,
     rows: HashMap<Sri, (PlacementEntry, Option<CellInstance>)>,
+    /// The live root-restart specs, one entry per restartable root. Held on
+    /// the listing rather than passed straight through so a row held for the
+    /// fade can keep the spec it departed with.
+    policies: HashMap<Sri, RestartType>,
     pops: Pops<Sri, Gen>,
 }
 
@@ -85,11 +107,12 @@ impl Listing {
         Self {
             targets,
             rows: HashMap::new(),
+            policies: HashMap::new(),
             pops: Pops::new(live::FADE),
         }
     }
 
-    fn apply(&mut self, (cells, instances): Snapshot, now: Instant) {
+    fn apply(&mut self, (cells, instances, mut policies): Snapshot, now: Instant) {
         self.pops
             .observe(now, cells.iter().map(|c| (c.sri, c.gen_id)));
 
@@ -106,8 +129,12 @@ impl Listing {
             if let Some(row) = self.rows.remove(sri) {
                 rows.insert(*sri, row);
             }
+            if let Some(&policy) = self.policies.get(sri) {
+                policies.entry(*sri).or_insert(policy);
+            }
         }
         self.rows = rows;
+        self.policies = policies;
     }
 
     fn draw(&self, now: Instant, styled: bool) -> String {
@@ -122,6 +149,7 @@ impl Listing {
         render(
             cells,
             instances,
+            &self.policies,
             &self.targets,
             styled,
             SystemTime::now(),
@@ -141,6 +169,7 @@ struct Node {
     entry: PlacementEntry,
     instance: Option<CellInstance>,
     name: Option<String>,
+    policy: &'static str,
     children: Vec<usize>,
 }
 
@@ -166,8 +195,34 @@ fn name_segment(entry: &PlacementEntry, instance: Option<&CellInstance>) -> Opti
     None
 }
 
+/// The restart policy in force for this cell, as `--policy` spells it.
+///
+/// A live spec wins whatever the placement kind is - only enabled root specs
+/// are stored - so a root back to a placeholder mid-restart still reports its
+/// policy. Absent one a placed wasm root is `never`; anything else has none.
+fn policy_label(
+    entry: &PlacementEntry,
+    instance: Option<&CellInstance>,
+    policies: &HashMap<Sri, RestartType>,
+) -> &'static str {
+    if let Some(&restart_type) = policies.get(&entry.sri) {
+        return RestartTypeName::spelling(restart_type);
+    }
+
+    let is_root = instance.is_some_and(|i| i.lineage.parent.is_none());
+    if is_root && matches!(entry.kind, PlacementKind::Wasm { .. }) {
+        return RestartTypeName::spelling(RestartType::Never);
+    }
+
+    NONE
+}
+
 impl Forest {
-    fn build(cells: Vec<PlacementEntry>, instances: Vec<CellInstance>) -> Self {
+    fn build(
+        cells: Vec<PlacementEntry>,
+        instances: Vec<CellInstance>,
+        policies: &HashMap<Sri, RestartType>,
+    ) -> Self {
         let mut by_sri: HashMap<Sri, CellInstance> =
             instances.into_iter().map(|i| (i.sri, i)).collect();
 
@@ -177,6 +232,7 @@ impl Forest {
                 let instance = by_sri.remove(&entry.sri);
                 Node {
                     name: name_segment(&entry, instance.as_ref()),
+                    policy: policy_label(&entry, instance.as_ref(), policies),
                     entry,
                     instance,
                     children: vec![],
@@ -312,12 +368,13 @@ fn place_tree(forest: &Forest, idx: usize, groups: &mut Vec<Group>, visited: &mu
 fn render(
     cells: Vec<PlacementEntry>,
     instances: Vec<CellInstance>,
+    policies: &HashMap<Sri, RestartType>,
     targets: &[(String, Sri)],
     styled: bool,
     now: SystemTime,
     highlight: &dyn Fn(&Sri) -> Option<&'static str>,
 ) -> String {
-    let forest = Forest::build(cells, instances);
+    let forest = Forest::build(cells, instances, policies);
     let mut out = String::new();
     let mut groups: Vec<Group> = vec![];
 
@@ -373,6 +430,7 @@ struct Row {
     kind: &'static str,
     runtime: Option<String>,
     age: String,
+    policy: &'static str,
     class: String,
     srn: String,
 }
@@ -433,6 +491,7 @@ fn table(
                             PlacementKind::Bridge { .. } | PlacementKind::Placeholder => None,
                         },
                         age: incarnation_age(&node.entry.gen_id, now),
+                        policy: node.policy,
                         class: node
                             .instance
                             .as_ref()
@@ -471,14 +530,15 @@ fn table(
         .unwrap_or(0)
         .max("runtime".len());
     let aw = width(rows().map(|r| r.age.as_str()).chain(["age"]));
+    let pw = width(rows().map(|r| r.policy).chain(["policy"]));
     let clw = width(rows().map(|r| r.class.as_str()).chain(["class"]));
     let srn_w = width(rows().map(|r| r.srn.as_str()).chain(["srn"]));
-    let total = 2 + cw + 2 + sw + 2 + kw + 2 + rw + 2 + aw + 2 + clw + 2 + srn_w;
+    let total = 2 + cw + 2 + sw + 2 + kw + 2 + rw + 2 + aw + 2 + pw + 2 + clw + 2 + srn_w;
 
     let _ = writeln!(
         out,
-        "  {:cw$}  {:sw$}  {:kw$}  {:rw$}  {:aw$}  {:clw$}  srn",
-        "cell", "sri", "kind", "runtime", "age", "class",
+        "  {:cw$}  {:sw$}  {:kw$}  {:rw$}  {:aw$}  {:pw$}  {:clw$}  srn",
+        "cell", "sri", "kind", "runtime", "age", "policy", "class",
     );
 
     for (app, rows) in &sections {
@@ -492,11 +552,12 @@ fn table(
                 .map_or((NONE.to_owned(), 1), |id| rendered[id].clone());
             let pad = " ".repeat(rw - id_width);
             let line = format!(
-                "  {cell:cw$}  {sri:sw$}  {kind:kw$}  {id}{pad}  {age:aw$}  {class:clw$}  {srn}",
+                "  {cell:cw$}  {sri:sw$}  {kind:kw$}  {id}{pad}  {age:aw$}  {policy:pw$}  {class:clw$}  {srn}",
                 cell = row.cell,
                 sri = row.sri,
                 kind = row.kind,
                 age = row.age,
+                policy = row.policy,
                 class = row.class,
                 srn = row.srn,
             );

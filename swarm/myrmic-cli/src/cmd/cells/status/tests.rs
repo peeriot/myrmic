@@ -54,7 +54,7 @@ fn sri(path: &str) -> Sri {
     Sri::of_path(path).unwrap()
 }
 
-/// Renders with no row fading in or out.
+/// Renders with no row fading in or out and no restart policies in force.
 fn show(
     cells: Vec<PlacementEntry>,
     instances: Vec<CellInstance>,
@@ -62,7 +62,19 @@ fn show(
     styled: bool,
     now: SystemTime,
 ) -> String {
-    render(cells, instances, targets, styled, now, &|_| None)
+    show_with_policies(cells, instances, &HashMap::new(), targets, styled, now)
+}
+
+/// Renders with an explicit root-restart snapshot.
+fn show_with_policies(
+    cells: Vec<PlacementEntry>,
+    instances: Vec<CellInstance>,
+    policies: &HashMap<Sri, RestartType>,
+    targets: &[(String, Sri)],
+    styled: bool,
+    now: SystemTime,
+) -> String {
+    render(cells, instances, policies, targets, styled, now, &|_| None)
 }
 
 /// A respawn mints a fresh generation, so the age column resets while the
@@ -152,16 +164,16 @@ fn lists_all_cells_as_a_spawn_tree() {
     let (cells, instances) = tree_fixture();
 
     let expected = format!(
-        "  cell             sri                                   kind    runtime     age  class    srn
+        "  cell             sri                                   kind    runtime     age  policy  class    srn
 {rule}
-  counter          {counter}  wasm    [b]bcc1122  0s   counter  counter
-  my-app           {my_app}  wasm    [a]abb1122  0s   my-app   my-app
-  ├─ gateway       {gateway}  wasm    [a]abb1122  0s   gateway  my-app/gateway
-  │  └─ session-1  {session}  wasm    [b]bcc1122  0s   session  my-app/gateway/session-1
-  └─ worker        {worker}  wasm    [a]abb1122  0s   worker   my-app/worker
-  —                {bridge}  bridge  —           0s   —        —
+  counter          {counter}  wasm    [b]bcc1122  0s   never   counter  counter
+  my-app           {my_app}  wasm    [a]abb1122  0s   never   my-app   my-app
+  ├─ gateway       {gateway}  wasm    [a]abb1122  0s   —       gateway  my-app/gateway
+  │  └─ session-1  {session}  wasm    [b]bcc1122  0s   —       session  my-app/gateway/session-1
+  └─ worker        {worker}  wasm    [a]abb1122  0s   —       worker   my-app/worker
+  —                {bridge}  bridge  —           0s   —       —        —
 ",
-        rule = "─".repeat(115),
+        rule = "─".repeat(123),
         counter = sri("counter"),
         my_app = sri("my-app"),
         gateway = sri("my-app/gateway"),
@@ -201,12 +213,12 @@ fn marks_unreconstructable_srn_prefixes() {
     let (cells, instances, anon) = partial_fixture();
 
     let expected = format!(
-        "  cell    sri                                   kind  runtime     age  class         srn
+        "  cell    sri                                   kind  runtime     age  policy  class         srn
 {rule}
-  orphan  {orphan}  wasm  [a]abb1122  0s   orphan-class  …/orphan
-  —       {anon}  wasm  [a]abb1122  0s   mycell        —
+  orphan  {orphan}  wasm  [a]abb1122  0s   —       orphan-class  …/orphan
+  —       {anon}  wasm  [a]abb1122  0s   never   mycell        —
 ",
-        rule = "─".repeat(93),
+        rule = "─".repeat(101),
         orphan = sri("ghost/orphan"),
     );
 
@@ -225,10 +237,10 @@ fn filters_to_the_targets_subtrees() {
     ];
 
     let expected = format!(
-        "  cell          sri                                   kind  runtime     age  class    srn
-  gateway       {gateway}  wasm  [a]abb1122  0s   gateway  my-app/gateway
-  └─ session-1  {session}  wasm  [b]bcc1122  0s   session  my-app/gateway/session-1
-  worker        {worker}  wasm  [a]abb1122  0s   worker   my-app/worker
+        "  cell          sri                                   kind  runtime     age  policy  class    srn
+  gateway       {gateway}  wasm  [a]abb1122  0s   —       gateway  my-app/gateway
+  └─ session-1  {session}  wasm  [b]bcc1122  0s   —       session  my-app/gateway/session-1
+  worker        {worker}  wasm  [a]abb1122  0s   —       worker   my-app/worker
 ",
         gateway = sri("my-app/gateway"),
         session = sri("my-app/gateway/session-1"),
@@ -252,8 +264,8 @@ fn reports_unregistered_targets() {
     let expected = format!(
         "\
 Cell nope is not registered
-  cell     sri                                   kind  runtime     age  class    srn
-  counter  {counter}  wasm  [b]bcc1122  0s   counter  counter
+  cell     sri                                   kind  runtime     age  policy  class    srn
+  counter  {counter}  wasm  [b]bcc1122  0s   never   counter  counter
 ",
         counter = sri("counter"),
     );
@@ -323,18 +335,18 @@ fn groups_trees_into_app_sections() {
     let (cells, instances) = apped_fixture();
 
     let expected = format!(
-        "  cell       sri                                   kind    runtime     age  class     srn
+        "  cell       sri                                   kind    runtime     age  policy  class     srn
 ──── alpha {rule_alpha}
-  —          {site}  bridge  —           0s   —         —
+  —          {site}  bridge  —           0s   —       —         —
 ──── beta {rule_beta}
-  beta-app   {beta}  wasm    [a]abb1122  0s   beta-app  beta-app
-  └─ worker  {worker}  wasm    [a]abb1122  0s   worker    beta-app/worker
+  beta-app   {beta}  wasm    [a]abb1122  0s   never   beta-app  beta-app
+  └─ worker  {worker}  wasm    [a]abb1122  0s   —       worker    beta-app/worker
 {rule_none}
-  counter    {counter}  wasm    [a]abb1122  0s   counter   counter
+  counter    {counter}  wasm    [a]abb1122  0s   never   counter   counter
 ",
-        rule_alpha = "─".repeat(90),
-        rule_beta = "─".repeat(91),
-        rule_none = "─".repeat(101),
+        rule_alpha = "─".repeat(98),
+        rule_beta = "─".repeat(99),
+        rule_none = "─".repeat(109),
         site = sri("site"),
         beta = sri("beta-app"),
         worker = sri("beta-app/worker"),
@@ -366,11 +378,11 @@ fn shows_placeholders_as_na() {
     }];
 
     let expected = format!(
-        "  cell  sri                                   kind  runtime  age  class  srn
+        "  cell  sri                                   kind  runtime  age  policy  class  srn
 {rule}
-  —     {pending}  N/A   —        0s   —      —
+  —     {pending}  N/A   —        0s   —       —      —
 ",
-        rule = "─".repeat(76),
+        rule = "─".repeat(84),
         pending = sri("pending"),
     );
 
@@ -378,6 +390,118 @@ fn shows_placeholders_as_na() {
         show(cells, vec![], &[], false, SystemTime::UNIX_EPOCH),
         expected
     );
+}
+
+/// One row per resolution branch: a live `always` spec, a live `on-error`
+/// spec, a wasm root with no spec at all, a spawned child, a bridge, a root
+/// mid-auto-restart (its placement is back to a placeholder while its spec is
+/// still there), a root whose first deploy is still in flight (the exec wrote
+/// its instance row at init, the placement commits and the spec lands only
+/// once the batch does), and a wasm placement whose instance row has not
+/// landed yet. The last two are the only rows that reach rule 2's kind guard
+/// and its `instance.is_some()` guard on their own.
+fn policy_fixture() -> (
+    Vec<PlacementEntry>,
+    Vec<CellInstance>,
+    HashMap<Sri, RestartType>,
+) {
+    let rt = exec(runtime_id("aabb112233445566"), "dev");
+
+    let cells = vec![
+        wasm(sri("always-root"), &rt),
+        wasm(sri("on-error-root"), &rt),
+        wasm(sri("plain-root"), &rt),
+        wasm(sri("plain-root/child"), &rt),
+        wasm(sri("claimed"), &rt),
+        PlacementEntry {
+            sri: sri("restarting"),
+            kind: PlacementKind::Placeholder,
+            app: None,
+            gen_id: Gen::from_parts(1, 1),
+        },
+        PlacementEntry {
+            sri: sri("deploying"),
+            kind: PlacementKind::Placeholder,
+            app: None,
+            gen_id: Gen::from_parts(1, 1),
+        },
+        PlacementEntry {
+            sri: sri("bridge"),
+            kind: PlacementKind::Bridge {
+                sri: sri("bridge-mb"),
+            },
+            app: None,
+            gen_id: Gen::from_parts(1, 1),
+        },
+    ];
+    let instances = vec![
+        instance(sri("always-root"), "always-root", None, None),
+        instance(sri("on-error-root"), "on-error-root", None, None),
+        instance(sri("plain-root"), "plain-root", None, None),
+        instance(
+            sri("plain-root/child"),
+            "child",
+            Some(sri("plain-root")),
+            Some("child"),
+        ),
+        instance(sri("restarting"), "restarting", None, None),
+        instance(sri("deploying"), "deploying", None, None),
+        // Deliberately no instance for `claimed`: that is the whole point of
+        // the row.
+    ];
+    let policies = HashMap::from([
+        (sri("always-root"), RestartType::Always),
+        (sri("on-error-root"), RestartType::OnError),
+        (sri("restarting"), RestartType::Always),
+    ]);
+
+    (cells, instances, policies)
+}
+
+fn expected_policy_table() -> String {
+    format!(
+        "  cell           sri                                   kind    runtime     age  policy    class          srn
+{rule}
+  always-root    {always}  wasm    [a]abb1122  0s   always    always-root    always-root
+  deploying      {deploying}  N/A     —           0s   —         deploying      deploying
+  on-error-root  {on_error}  wasm    [a]abb1122  0s   on-error  on-error-root  on-error-root
+  plain-root     {plain}  wasm    [a]abb1122  0s   never     plain-root     plain-root
+  └─ child       {child}  wasm    [a]abb1122  0s   —         child          plain-root/child
+  restarting     {restarting}  N/A     —           0s   always    restarting     restarting
+  —              {bridge}  bridge  —           0s   —         —              —
+  —              {claimed}  wasm    [a]abb1122  0s   —         —              —
+",
+        rule = "─".repeat(121),
+        always = sri("always-root"),
+        deploying = sri("deploying"),
+        on_error = sri("on-error-root"),
+        plain = sri("plain-root"),
+        child = sri("plain-root/child"),
+        restarting = sri("restarting"),
+        bridge = sri("bridge"),
+        claimed = sri("claimed"),
+    )
+}
+
+/// The column reads the effective policy: a live spec wins whatever the
+/// placement kind is, a wasm root without one is `never` by default, and
+/// anything with no readable policy - a spawned child, a bridge, a root whose
+/// first deploy has not committed its placement, a placement whose instance
+/// row has not landed - gets the placeholder.
+#[test]
+fn shows_the_effective_restart_policy() {
+    let (cells, instances, policies) = policy_fixture();
+
+    let out = show_with_policies(
+        cells,
+        instances,
+        &policies,
+        &[],
+        false,
+        SystemTime::UNIX_EPOCH,
+    );
+
+    assert_eq!(out, expected_policy_table());
 }
 
 /// A fading row is coloured end to end: the id column's own reset must not
@@ -392,9 +516,15 @@ fn paints_highlighted_rows_end_to_end() {
     ];
     let fading = sri("sensor");
 
-    let out = render(cells, instances, &[], true, SystemTime::UNIX_EPOCH, &|s| {
-        (*s == fading).then_some("<g>")
-    });
+    let out = render(
+        cells,
+        instances,
+        &HashMap::new(),
+        &[],
+        true,
+        SystemTime::UNIX_EPOCH,
+        &|s| (*s == fading).then_some("<g>"),
+    );
 
     let row = |name: &str| out.lines().find(|l| l.contains(name)).unwrap().to_owned();
     let sensor = row("sensor");
@@ -424,6 +554,7 @@ fn arrivals_and_departures_fade_through_the_listing() {
         (
             vec![wasm(sri("sensor"), &rt)],
             vec![instance(sri("sensor"), "sensor", None, None)],
+            HashMap::new(),
         )
     };
     let both = || {
@@ -433,6 +564,7 @@ fn arrivals_and_departures_fade_through_the_listing() {
                 instance(sri("sensor"), "sensor", None, None),
                 instance(sri("pump"), "pump", None, None),
             ],
+            HashMap::new(),
         )
     };
     let arriving = Phase::Arriving(0).sgr().unwrap();
@@ -472,6 +604,7 @@ fn a_respawn_fades_in_where_it_stands() {
         (
             vec![entry],
             vec![instance(sri("sensor"), "sensor", None, None)],
+            HashMap::new(),
         )
     };
 
@@ -485,6 +618,38 @@ fn a_respawn_fades_in_where_it_stands() {
     let out = listing.draw(t0 + Duration::from_millis(100), true);
     assert_eq!(out.matches("sensor").count(), 3, "{out:?}"); // cell, class, srn of one row
     assert!(painted_row(&out, "sensor").starts_with(Phase::Arriving(0).sgr().unwrap()));
+}
+
+/// Undeploy erases the root's spec before it removes the placement, so by the
+/// time the row departs the spec is already gone and a row held for the fade
+/// would resolve against a map that no longer knows it. It keeps the policy it
+/// departed with instead.
+#[test]
+fn a_departing_row_keeps_its_policy_through_the_fade() {
+    let t0 = Instant::now();
+    let rt = exec(runtime_id("bbcc112233445566"), "edge");
+    let deployed = || {
+        (
+            vec![wasm(sri("web"), &rt)],
+            vec![instance(sri("web"), "web", None, None)],
+            HashMap::from([(sri("web"), RestartType::Always)]),
+        )
+    };
+
+    let mut listing = Listing::new(vec![]);
+    listing.apply(deployed(), t0);
+
+    // Every refresh re-resolves the whole listing, so the second one pins what
+    // the first cannot: a carry-over that survives only the refresh right after
+    // the departure.
+    for ms in [100, 200] {
+        let at = t0 + Duration::from_millis(ms);
+        listing.apply((vec![], vec![], HashMap::new()), at);
+
+        let row = painted_row(&listing.draw(at, true), "web");
+        assert!(row.contains("always"), "{row:?}");
+        assert!(!row.contains("never"), "{row:?}");
+    }
 }
 
 /// `m cells` is `m cells status`, so the status arguments are accepted
