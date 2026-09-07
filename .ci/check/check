@@ -114,10 +114,15 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     fi
 
     PACKAGE_ARGS=()
-    if [ -n "$ONLY_TEST_PACKAGES" ]; then
-        for PACKAGE in $ONLY_TEST_PACKAGES; do
-            PACKAGE_ARGS+=('-p' "$PACKAGE")
-        done
+    for PACKAGE in $ONLY_TEST_PACKAGES; do
+        PACKAGE_ARGS+=('-p' "$PACKAGE")
+    done
+
+    # Fail closed: an empty list would fall back to the default member selection
+    # instead of the selection the repo declares.
+    if [ ${#PACKAGE_ARGS[@]} -eq 0 ]; then
+        printf 'no test packages selected\n' >&2
+        exit 1
     fi
 
     # The tests in `sorg-tests` are integration tests that require the `swarm`

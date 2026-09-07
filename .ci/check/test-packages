@@ -3,6 +3,10 @@
 # both jobs; setting ONLY_TEST_PACKAGES in the environment overrides this file.
 #
 # One package per line. Blank lines and `#` comments are ignored.
+#
+# The list lives next to the script that consumes it because a GitHub Actions
+# `env:` value cannot be read from a file, so a workflow-side list is invisible
+# to every other check.
 
 db
 filestore-client
@@ -44,3 +48,92 @@ min-value
 cadence
 fan-curve
 hysteresis
+
+# Two workspace members are deliberately absent. `e2e-tests` needs a Docker
+# daemon, container image builds and a release `test-sidecar` binary, so its own
+# workflow job runs it. `hil-tests` opens a serial port and drives a flashed
+# board, so the hardware test workflow runs it.
+bench-harness
+bench-report
+cell-mailbox
+cell-protocol
+db-cli
+db-client
+db-commons
+introspection-common
+skey
+skey-macros
+sorg-ctl
+swarm
+swarm-api
+swarm-cli
+swarm-gateway
+swarm-onboarding
+swarm-onboarding-request
+test-control
+test-control-client
+test-control-common
+test-framework
+warehouse-benchmark
+zenoh-nano
+zenoh-traits
+aot-compiler
+cell-counter-caller-logic
+cell-event-sub-logic
+cell-nested-caller-logic
+cell-thermostat-logic
+common
+esp-heap
+esp-mmu-consts
+linux-gpio-shim
+linux-spi-shim
+myrmic-tags
+publisher
+spi-loopback-driver
+subscriber
+swarm-telemetry-embedded
+wasm-runtime-macros
+
+# Cell crates. The wasm lint job compiles them for wasm32, and the `no_std` ones
+# have no host `cdylib` at all, but `cargo test` builds the lib as a test binary
+# against std - so a `#[cfg(test)]` module in any cell runs here.
+cell-blinky-periodic-logic
+cell-cb-receiver-logic
+cell-cb-sender-logic
+cell-counter-delay-logic
+cell-counter-logic
+cell-docs-counter
+cell-event-pub-logic
+cell-failing-init-logic
+cell-ff-receiver-logic
+cell-ff-sender-logic
+cell-gateway-mount-logic
+cell-nested-logic
+cell-no-init-logic
+cell-periodic-fixed-delay-logic
+cell-periodic-macro-logic
+cell-room-logic
+cell-seq-helper-logic
+cell-seq-main-logic
+cell-spawn-child
+cell-spawner
+cell-thermometer
+cell-timer-cmd-logic
+cell-timer-init-logic
+cell-wdt-selftest-logic
+cell-wdt-spin-logic
+dummy_cell
+event_publish
+event_subscribe
+event_subscribe_b
+input_fixed_camera
+module-examples-common
+outlet-bridge
+signal-layer-logger
+slow-init-cell-logic
+tap-bridge
+tier_1_object
+tier_2_zone
+tier_3_central
+trace_example_intermediate
+trace_example_sink
