@@ -15,8 +15,9 @@ use sorg_common::supervision::{
     ExpiryGate, LeaseTracker, RestartBudget, SupervisionTiming, jittered,
 };
 use sorg_common::{
-    CellDeployment, DeployRequest, FenceOutcome, LostReason, deploy_cells, instance_registry,
-    list_placements, node_lease, remove_placement, root_death, root_restart, should_restart,
+    CellDeployment, DeployRequest, DeploymentError, FenceOutcome, LostReason, deploy_cells,
+    instance_registry, list_placements, node_lease, remove_placement, root_death, root_restart,
+    should_restart,
 };
 use tracing::{debug, info, warn};
 use zenoh::Session;
@@ -554,6 +555,14 @@ async fn process_root_restarts(
         let request = DeployRequest::new(vec![(*spec).clone()]);
         match deploy_cells(session, request, RESTART_DEPLOY_TIMEOUT).await {
             Ok(()) => clear_death(session, sri).await,
+            // No runtime can host the root right now (its only qualifying
+            // node is down, say). That is not a crash, so it must not eat the
+            // crash-loop budget: refund the attempt and keep the signal, and
+            // the next pass tries again until a runtime appears.
+            Err(err @ (DeploymentError::Infeasible(_) | DeploymentError::NoRuntimesAvailable)) => {
+                budget.refund(sri);
+                debug!(%sri, "restart: no eligible runtime yet, will retry: {err}");
+            }
             // Keep the signal; the next level-triggered pass retries.
             Err(err) => warn!(%sri, "restart: redeploy failed: {err}"),
         }
