@@ -27,7 +27,7 @@ struct ObjectUpdate {
     payload: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Message)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize, Message)]
 #[codec(myrmic_sdk::Postcard)]
 pub struct StartRequest {
     bench_id: u64,

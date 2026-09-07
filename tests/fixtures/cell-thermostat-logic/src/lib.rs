@@ -8,7 +8,6 @@ use myrmic_sdk::{Metadata, Result, Sri, String, publish, send};
 const ROOM_SRI: &str = "room_cell";
 
 #[myrmic_sdk::cmd]
-#[allow(clippy::needless_pass_by_value)] // the cmd macro hands the deserialized payload over by value
 fn set_room_temperature(_md: Metadata, s: String) -> Result<()> {
     let degrees: i32 = s.trim().parse().map_err(|_| "parse")?;
     let room = Sri::of_path(ROOM_SRI).map_err(|_| "invalid sri")?;

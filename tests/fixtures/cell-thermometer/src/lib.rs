@@ -21,7 +21,9 @@ fn init(_md: Metadata) -> Result<()> {
     if KV.get(KEY)?.is_none() {
         KV.put(KEY, &ThermometerState::default())?;
     }
-    myrmic_sdk::interval(Callback::of::<measure>(), Duration::from_secs(5))
+    // The measure interval runs for the cell's lifetime, so the handle is dropped
+    // rather than stored: `start`/`stop` gate publishing instead of cancelling.
+    let _ = myrmic_sdk::interval(Callback::of::<measure>(), Duration::from_secs(5))
         .build()
         .map_err(|_| "timer failed")?;
     Ok(())

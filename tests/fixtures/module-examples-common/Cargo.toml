@@ -11,3 +11,6 @@ serde = { version = "1.0.216", default-features = false, features = [
     "derive",
     "alloc",
 ] }
+
+[lints]
+workspace = true
