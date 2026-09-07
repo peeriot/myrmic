@@ -47,7 +47,7 @@ SPDX-License-Identifier = "MIT-0"
 
 [[annotations]]
 path = ["doc/**", "README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
-        "LICENSING.md", "NOTICE", "SUMMARY.md"]
+        "LICENSING.md", "NOTICE"]
 precedence = "closest"
 SPDX-FileCopyrightText = "Peeriot GmbH <contact@myrmic.dev>"
 SPDX-License-Identifier = "CC-BY-4.0"
