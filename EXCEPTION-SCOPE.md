@@ -1,7 +1,7 @@
 # Myrmic Exception — Exception Scope
 
 **Exception Version:** Myrmic Exception 1.0
-**Official Release:** Myrmic 0.4.0
+**Official Release:** Myrmic 0.5.0
 
 The release version above is the only version number stated in this file. Below, "the Release Version" means that version: every interface, Official SDK Library and Designated Generator listed here carries it, unless a different version is stated explicitly.
 
