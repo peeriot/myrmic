@@ -54,6 +54,23 @@ impl LocalBinary {
         String::from_utf8_lossy(&output.stderr).into_owned()
     }
 
+    /// Deploy an app and return the CLI's diagnostic output.
+    pub(crate) async fn deploy_app_with_output(&self, app_spec: &std::path::Path) -> String {
+        let output = tokio::process::Command::new(&self.binary)
+            .arg("deploy")
+            .arg(app_spec)
+            .output()
+            .await
+            .unwrap();
+
+        if !output.status.success() {
+            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+            panic!("deploy app failed for {}", app_spec.display());
+        }
+
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
+
     /// Drop-only best-effort helper — used by the blocking delete variants; do not use for happy-path operations.
     fn run_blocking(&self, args: &[&str]) -> Result<(), String> {
         let output = std::process::Command::new(&self.binary)
@@ -178,17 +195,7 @@ impl MyrmicBackend for LocalBinary {
     }
 
     async fn deploy_app(&self, app_spec: &std::path::Path) {
-        let output = tokio::process::Command::new(&self.binary)
-            .arg("deploy")
-            .arg(app_spec)
-            .output()
-            .await
-            .unwrap();
-
-        if !output.status.success() {
-            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-            panic!("deploy app failed for {}", app_spec.display());
-        }
+        self.deploy_app_with_output(app_spec).await;
     }
 
     async fn delete_cell(&self, sri: &str) {

@@ -71,7 +71,8 @@ async fn single_tag_match() {
     let node_id = super::assert_wasm_runtime_id(&entry);
     assert_eq!(response.cells[0].sri, to_sri(CELL_SRI));
     assert_eq!(
-        response.cells[0].runtime, node_id,
+        response.cells[0].runtime,
+        Some(node_id),
         "the deploy response names the runtime that committed the placement"
     );
     let runtimes = assert_ok!(sorg.list_exec_runtimes().await);

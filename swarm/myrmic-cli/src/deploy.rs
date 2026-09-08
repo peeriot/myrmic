@@ -207,12 +207,19 @@ async fn deploy_app_info(
             .await
             .context("application deployment failed")?;
         for cell in response.cells {
-            crate::info!(
-                ctx,
-                "deployed cell (sri = {}, runtime = {})",
-                cell.sri,
-                cell.runtime
-            );
+            match cell.runtime {
+                Some(runtime) => crate::info!(
+                    ctx,
+                    "deployed cell (sri = {}, runtime = {})",
+                    cell.sri,
+                    runtime
+                ),
+                None => crate::info!(
+                    ctx,
+                    "deployed cell (sri = {}, placement = orchestrator)",
+                    cell.sri
+                ),
+            }
         }
     }
 
@@ -365,7 +372,8 @@ pub async fn deploy_cell(
         .cells
         .first()
         .expect("one-cell deployment returns one placement")
-        .runtime;
+        .runtime
+        .expect("standalone WASM deployment returns an execution runtime");
 
     crate::info!(
         ctx,

@@ -32,7 +32,9 @@ impl DeployRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployedCell {
     pub sri: Sri,
-    pub runtime: RuntimeId,
+    /// The execution runtime for a WASM cell. Native bridge cells run on the
+    /// orchestrator, so they have no execution runtime.
+    pub runtime: Option<RuntimeId>,
 }
 
 /// The placements selected and committed for a successful deployment.

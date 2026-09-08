@@ -96,6 +96,14 @@ impl Myrmic<LocalBinary> {
         );
         (DeployedCell::new(self.backend.clone(), sri), output)
     }
+
+    /// Runs `myrmic deploy <app-spec>` and returns its diagnostic output.
+    /// This is intentionally local-only: the output format is a CLI contract,
+    /// while other backends use remote command wrappers.
+    pub async fn deploy_app_with_output(&self, app_spec: impl Into<PathBuf>) -> String {
+        let path = app_spec.into();
+        self.backend.deploy_app_with_output(&path).await
+    }
 }
 
 impl Myrmic<DockerBinary> {
