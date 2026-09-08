@@ -77,7 +77,7 @@ pub async fn deploy_cells(
     session: &Session,
     request: DeployRequest,
     timeout: Duration,
-) -> std::result::Result<(), DeploymentError> {
+) -> std::result::Result<DeployResponse, DeploymentError> {
     let payload = request
         .to_payload()
         .map_err(|err| DeploymentError::Internal(err.to_string()))?;
