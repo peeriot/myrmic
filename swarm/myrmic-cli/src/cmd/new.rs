@@ -365,6 +365,11 @@ fn linux_runtime_deps(repo: &models::Repo) -> String {
         "log                   = { version = \"0.4\", default-features = false }",
     ));
     lines.push(String::from("env_logger            = \"0.11\""));
+    // Real drivers use embassy-time async delays; on the tokio runtime the std
+    // driver plus a timer queue provide the backend embedded gets from esp-rtos.
+    lines.push(String::from(
+        "embassy-time          = { version = \"0.5\", features = [\"std\", \"generic-queue-8\"] }",
+    ));
     lines.join("\n")
 }
 

@@ -345,7 +345,7 @@ fn new_pipeline_scaffolds_a_linux_project() {
     assert!(pipeline.contains("device: sim"), "pipeline uses the sim source:\n{pipeline}");
 
     let manifest_toml = std::fs::read_to_string(dir.join("Cargo.toml")).expect("Cargo.toml");
-    for dep in ["signal-layer-linux-rt", "tokio", "sim-source-driver", "linux-codegen"] {
+    for dep in ["signal-layer-linux-rt", "tokio", "embassy-time", "sim-source-driver", "linux-codegen"] {
         assert!(manifest_toml.contains(dep), "Cargo.toml is missing `{dep}`:\n{manifest_toml}");
     }
 
