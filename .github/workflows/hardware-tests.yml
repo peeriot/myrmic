@@ -8,7 +8,7 @@ jobs:
   hil-esp32c5:
     runs-on: hardware
     container:
-      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
         HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
         HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
@@ -72,7 +72,7 @@ jobs:
     needs: hil-esp32c5
     if: ${{ !cancelled() }}
     container:
-      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
         HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
         HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
@@ -134,7 +134,7 @@ jobs:
     needs: hil-esp32c6
     if: ${{ !cancelled() }}
     container:
-      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
         HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
         HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}

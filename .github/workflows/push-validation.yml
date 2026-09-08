@@ -38,8 +38,8 @@ on:
         type: boolean
 
 env:
-  RUST_IMAGE: "ghcr.io/peeriot/rust:1.95.0-2"
-  RUST_ESP_IMAGE: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+  RUST_IMAGE: "ghcr.io/peeriot/rust:1.97.0"
+  RUST_ESP_IMAGE: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
   # Can be used to pin nightly, used only where nightly is actually required: -Zbuild-std for
   # the ESP firmware, and the wasm cell check. Everything else uses the image's
   # stable channel.
