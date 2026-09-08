@@ -6,6 +6,7 @@
 //! higher-level orchestration (app specs, bridges, archives) lives in the CLI.
 
 pub use build::{AotArtifacts, CargoTarget, CellBuild, build};
+pub use compile::TOOLCHAIN;
 pub(crate) use compile::compile_cell;
 pub use myrmic_tags::Platform;
 
