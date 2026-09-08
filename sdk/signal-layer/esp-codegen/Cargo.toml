@@ -22,6 +22,8 @@ indexmap         = { version = "2" }
 proc-macro2      = { workspace = true }
 quote            = { workspace = true }
 serde_yaml       = { workspace = true }
+include_dir      = { workspace = true }
+tempfile         = { workspace = true }
 
 [dev-dependencies]
 # No extra dev-deps needed: golden.rs only uses the lib's public API.
