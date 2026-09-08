@@ -3,6 +3,7 @@
 use signal_layer_core::ProcessingStep;
 use signal_layer_types::ThresholdAlarm;
 
+#[derive(Debug, Clone, Copy)]
 pub struct ThresholdTriggerConfig {
     pub threshold: f32,
     pub fire_below: bool,
@@ -66,7 +67,7 @@ mod tests {
         assert!(s.step(49.0).is_none());
         assert!(s.step(50.0).is_none()); // equal does not fire
         let alarm = s.step(51.0).unwrap();
-        assert_eq!(alarm.threshold, 50.0);
+        assert_eq!(alarm.threshold.to_bits(), 50.0_f32.to_bits());
         assert!((alarm.value - 51.0).abs() < 1e-5, "value={}", alarm.value);
         // Subsequent samples above threshold must not re-fire.
         assert!(

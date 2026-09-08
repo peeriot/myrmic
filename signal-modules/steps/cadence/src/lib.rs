@@ -24,6 +24,7 @@ pub enum CadenceMode {
     SampleHold,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct CadenceConfig {
     /// Pass 1 of every N samples (`0` or `1` = passthrough).
     pub every: u32,

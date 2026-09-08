@@ -51,6 +51,13 @@ cargo fmt --all \
         --check
 
 
+# Check the package lists still cover the workspace, before the expensive steps.
+if [ -z "$COMMAND_SUFFIX" ]; then
+    printf "\n\n--== Check List Coverage ==--\n\n"
+    "$SCRIPT_DIR/coverage"
+fi
+
+
 # Run cargo clippy
 printf "\n\n--== Run Linter ==--\n\n"
 cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
@@ -107,17 +114,26 @@ fi
 # Run cargo test / nextest
 if [[ "$SKIP_TESTS" != "true" ]]; then
     # The host test-package set lives in a single file (`.ci/check/test-packages`)
-    # so the Check Code and Check MSRV jobs share one list. An explicit
-    # ONLY_TEST_PACKAGES in the environment still overrides it.
-    if [ -z "$ONLY_TEST_PACKAGES" ] && [ -f "$SCRIPT_DIR/test-packages" ]; then
-        ONLY_TEST_PACKAGES="$(sed -e 's/#.*//' "$SCRIPT_DIR/test-packages")"
+    # so the Check Code and Check MSRV jobs share one list. The embedded aliases
+    # carry their own package list, so a suffixed run must not have this one
+    # appended to it. An explicit ONLY_TEST_PACKAGES in the environment still
+    # overrides the file.
+    if [ -z "$ONLY_TEST_PACKAGES" ] && [ -z "$COMMAND_SUFFIX" ] && [ -f "$SCRIPT_DIR/test-packages" ]; then
+        # First field only, so a trailing comment on a package line cannot reach
+        # cargo as part of a package name.
+        ONLY_TEST_PACKAGES="$(awk '{ sub(/#.*/, ""); if ($1 != "") print $1 }' "$SCRIPT_DIR/test-packages")"
     fi
 
     PACKAGE_ARGS=()
-    if [ -n "$ONLY_TEST_PACKAGES" ]; then
-        for PACKAGE in $ONLY_TEST_PACKAGES; do
-            PACKAGE_ARGS+=('-p' "$PACKAGE")
-        done
+    for PACKAGE in $ONLY_TEST_PACKAGES; do
+        PACKAGE_ARGS+=('-p' "$PACKAGE")
+    done
+
+    # Fail closed on the host: an empty list would fall back to the default
+    # member selection instead of the selection the repo declares.
+    if [ -z "$COMMAND_SUFFIX" ] && [ ${#PACKAGE_ARGS[@]} -eq 0 ]; then
+        printf 'no test packages selected\n' >&2
+        exit 1
     fi
 
     # The tests in `sorg-tests` are integration tests that require the `swarm`
@@ -132,8 +148,7 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
         "${PACKAGE_ARGS[@]}"
 
-    # S4: verify the linux-codegen chain produces a compilable, working crate
-    # with self-hosted tap-contract tests (SR-2, SR-7, SR-9 second leg, D7).
-    printf "\n\n--== Generated Pipeline Verification (SR-9 / D7) ==--\n\n"
+    # The generated crates declare their own workspace, so nothing above builds them.
+    printf "\n\n--== Check Generated Pipeline Crates ==--\n\n"
     bash "$(dirname "$(dirname "$SCRIPT_DIR")")/ci/check-generated-pipeline.sh"
 fi

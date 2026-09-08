@@ -84,7 +84,7 @@ fn firmware_elf_path() -> PathBuf {
 }
 
 fn flash_and_monitor(elf_path: &Path) -> anyhow::Result<thread::JoinHandle<anyhow::Result<()>>> {
-    EspFlash::flash_elf(elf_path.to_path_buf())?;
+    EspFlash::flash_elf(elf_path)?;
     let elf_bytes = std::fs::read(elf_path)
         .map_err(|e| anyhow::anyhow!("failed to read ELF {}: {e}", elf_path.display()))?;
     EspFlash::serial_monitor(elf_bytes)
@@ -94,7 +94,7 @@ pub struct EspFlash;
 
 impl EspFlash {
     /// Flashes the ELF binary onto the device
-    pub fn flash_elf(elf_path: PathBuf) -> anyhow::Result<()> {
+    pub fn flash_elf(elf_path: &Path) -> anyhow::Result<()> {
         let port_name =
             std::env::var("ESPFLASH_PORT").unwrap_or_else(|_| "/dev/ttyACM0".to_owned());
 
@@ -102,8 +102,7 @@ impl EspFlash {
         // symlinks like /dev/esp32-hil-2. Resolve the symlink so the port_info lookup below finds
         // the real USB pid.
         let device_name = std::fs::canonicalize(&port_name)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| port_name.clone());
+            .map_or_else(|_| port_name.clone(), |p| p.to_string_lossy().into_owned());
 
         tracing::info!(
             "Started flashing ELF {} to {device_name} (from {port_name})",
@@ -150,7 +149,7 @@ impl EspFlash {
 
         tracing::info!("Read ELF file...");
 
-        let elf_data = std::fs::read(&elf_path)
+        let elf_data = std::fs::read(elf_path)
             .map_err(|e| anyhow::anyhow!("failed to read ELF {}: {e}", elf_path.display()))?;
 
         tracing::info!("Get chip information...");

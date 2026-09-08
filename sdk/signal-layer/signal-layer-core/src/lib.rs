@@ -673,7 +673,7 @@ mod tests {
         assert_eq!(&buf[..4], &2.5_f32.to_le_bytes());
 
         let decoded: f32 = from_bytes(&buf[..n]).unwrap();
-        assert_eq!(decoded, 2.5_f32);
+        assert_eq!(decoded.to_bits(), 2.5_f32.to_bits());
     }
 
     #[test]
@@ -710,8 +710,8 @@ mod tests {
         let n = slot.take_bytes(&mut buf).unwrap();
 
         let decoded: ThresholdAlarm = from_bytes(&buf[..n]).unwrap();
-        assert_eq!(decoded.value, 25.5);
-        assert_eq!(decoded.threshold, 20.0);
+        assert_eq!(decoded.value.to_bits(), 25.5_f32.to_bits());
+        assert_eq!(decoded.threshold.to_bits(), 20.0_f32.to_bits());
     }
 
     #[test]
@@ -910,6 +910,7 @@ mod tests {
             [const { RetainedSlot::new() }; MAX_OUTLETS];
         // Leak stable &'static str names for the registry entries.
         const NAMES: [&str; MAX_OUTLETS] = ["o0", "o1", "o2", "o3", "o4", "o5", "o6", "o7"];
+        static OVERFLOW: RetainedSlot<f32> = RetainedSlot::new();
 
         let mut registry = OutletRegistry::new();
         for i in 0..MAX_OUTLETS {
@@ -919,7 +920,6 @@ mod tests {
         }
         assert_eq!(registry.len(), MAX_OUTLETS);
 
-        static OVERFLOW: RetainedSlot<f32> = RetainedSlot::new();
         assert_eq!(
             registry.register("overflow", OutletEntry::retained(&OVERFLOW)),
             Err(TapError::RegistryFull)

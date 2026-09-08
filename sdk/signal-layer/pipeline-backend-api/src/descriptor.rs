@@ -39,7 +39,7 @@ pub enum OutputMode {
 }
 
 /// Output/actuator capability of a driver — the write-side mirror of `outputs`.
-/// Present iff the driver drives an [`Outlet`]. The outlet bound to this device
+/// Present iff the driver drives an `Outlet`. The outlet bound to this device
 /// (declared in the pipeline) supplies the command; the driver consumes it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DriverWrite {

@@ -25,10 +25,10 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// drops the connection (fail-closed).  This function runs until the
 /// listener is closed or an unrecoverable error occurs.
 ///
-/// At most [`MAX_CONNECTIONS`] concurrent connections are serviced; additional
+/// At most `MAX_CONNECTIONS` concurrent connections are serviced; additional
 /// connection attempts are accepted and immediately dropped when the cap is
 /// reached (S1: no unbounded spawn growth / FD exhaustion).  A per-connection
-/// handshake timeout of [`HANDSHAKE_TIMEOUT_SECS`] seconds defends against
+/// handshake timeout of `HANDSHAKE_TIMEOUT_SECS` seconds defends against
 /// slow-loris attacks.
 pub async fn serve(
     listener: UnixListener,

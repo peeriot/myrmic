@@ -7,11 +7,13 @@ use myrmic_sdk::tap::{Tap, TapKind};
 use myrmic_sdk::{Callback, Metadata, Result};
 
 const MAX_NAME: usize = 64;
-const MAX_TAPS: usize = 32;
+const MAX_TAPS: u32 = 32;
 
 #[myrmic_sdk::init]
 fn init(_md: Metadata) -> Result<()> {
-    myrmic_sdk::interval(Callback::of::<log_taps>(), Duration::from_millis(1000))
+    // The log interval runs for the cell's lifetime, so the handle is dropped
+    // rather than stored: nothing ever cancels this timer.
+    let _ = myrmic_sdk::interval(Callback::of::<log_taps>(), Duration::from_millis(1000))
         .build()
         .map_err(|_| "failed to create timer")?;
     Ok(())
@@ -20,9 +22,7 @@ fn init(_md: Metadata) -> Result<()> {
 /// Timer target: walks the tap registry and logs each tap's current value/events.
 #[myrmic_sdk::cmd]
 fn log_taps(_md: Metadata) -> Result<()> {
-    let count = myrmic_sdk::tap::list_len()
-        .unwrap_or(0)
-        .min(MAX_TAPS as u32);
+    let count = myrmic_sdk::tap::list_len().unwrap_or(0).min(MAX_TAPS);
 
     for i in 0..count {
         let mut name_buf = [0u8; MAX_NAME];

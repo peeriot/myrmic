@@ -9,3 +9,6 @@ publish = false
 serde = { workspace = true }
 bincode = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true
