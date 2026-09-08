@@ -126,6 +126,8 @@ default-members = [
 # cut, and a release tag that disagrees with it is rejected.
 version = "0.5.0"
 edition = "2024"
+# Floored by the cranelift/pulley (wasmtime) stack.
+rust-version = "1.94"
 # Zone A (platform). Crates outside this zone declare their own license;
 # see REUSE.toml for the authoritative per-path declarations.
 license = "GPL-2.0-only WITH LicenseRef-Myrmic-exception-1.0"

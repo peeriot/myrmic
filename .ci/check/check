@@ -106,6 +106,13 @@ fi
 
 # Run cargo test / nextest
 if [[ "$SKIP_TESTS" != "true" ]]; then
+    # The host test-package set lives in a single file (`.ci/check/test-packages`)
+    # so the Check Code and Check MSRV jobs share one list. An explicit
+    # ONLY_TEST_PACKAGES in the environment still overrides it.
+    if [ -z "$ONLY_TEST_PACKAGES" ] && [ -f "$SCRIPT_DIR/test-packages" ]; then
+        ONLY_TEST_PACKAGES="$(sed -e 's/#.*//' "$SCRIPT_DIR/test-packages")"
+    fi
+
     PACKAGE_ARGS=()
     if [ -n "$ONLY_TEST_PACKAGES" ]; then
         for PACKAGE in $ONLY_TEST_PACKAGES; do

@@ -1,0 +1,46 @@
+# Host test-package set: the packages whose tests the Check Code and Check MSRV
+# jobs run (passed to `cargo citest` as `-p <name>`). Single source of truth for
+# both jobs; setting ONLY_TEST_PACKAGES in the environment overrides this file.
+#
+# One package per line. Blank lines and `#` comments are ignored.
+
+db
+filestore-client
+sorg-execution
+sorg-orchestration
+sorg-client
+sorg-common
+sorg-tests
+introspection-client
+myrmic-build
+swarm-telemetry
+myrmic-cli
+myrmic-sdk
+myrmic-common
+myrmic-sdk-macros
+myrmic-signal-layer-types
+signal-layer-core
+signal-layer-ipc
+signal-layer-linux-rt
+pipeline-backend-api
+pipeline-codegen
+esp-codegen
+linux-codegen
+linux-i2c-shim
+bme280-driver
+bmp180-driver
+ads1115-driver
+ccs811-driver
+veml7700-driver
+wsen-itds-driver
+sim-source-driver
+gpio-output-driver
+gpio-output-feedback-driver
+pwm-output-driver
+moving-average
+threshold-trigger
+max-value
+min-value
+cadence
+fan-curve
+hysteresis
