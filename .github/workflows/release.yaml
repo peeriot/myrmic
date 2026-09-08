@@ -219,7 +219,7 @@ jobs:
     needs: release
     runs-on: general
     environment: crates-io-release
-    # No cargo cache volume, deliberately (SR-05): a cache mounted into the job that
+    # No cargo cache volume, deliberately: a cache mounted into the job that
     # holds the registry credential is writable by anything that runs in it. The cost
     # is a cold resolve of the whole workspace on every promote. Do not "fix" it.
     container:
