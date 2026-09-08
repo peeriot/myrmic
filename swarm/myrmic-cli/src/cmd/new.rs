@@ -255,7 +255,7 @@ fn write_pipeline_yamls(name: &str, path: &std::path::Path, chip: Chip) -> anyho
 fn generate_board_yaml(name: &str, chip: &str) -> anyhow::Result<String> {
     let usable = esp_codegen::chip_general_purpose_pins(chip)
         .with_context(|| format!("no GPIO layout for chip `{chip}`"))?;
-    let (scl, sda) = pick_bus_pins(&usable)?;
+    let (scl, sda) = pick_bus_pins(chip, &usable)?;
     let gp = usable
         .iter()
         .copied()
@@ -292,11 +292,19 @@ fn generate_board_yaml(name: &str, chip: &str) -> anyhow::Result<String> {
     ))
 }
 
-/// Picks the example i2c bus pins: the conventional GPIO10/GPIO11 when both are
-/// usable, else the first two usable pins on the chip.
-fn pick_bus_pins(usable: &[u8]) -> anyhow::Result<(u8, u8)> {
-    if usable.contains(&10) && usable.contains(&11) {
-        return Ok((10, 11));
+/// Picks the example i2c bus pins: the conventional devkit pins for the chip
+/// when both are usable, else the first two usable pins.
+fn pick_bus_pins(chip: &str, usable: &[u8]) -> anyhow::Result<(u8, u8)> {
+    let conventional = match chip {
+        "esp32c6" => Some((10u8, 11u8)),
+        "esp32c5" | "esp32c61" => Some((23u8, 24u8)),
+        _ => None,
+    };
+    if let Some((scl, sda)) = conventional
+        && usable.contains(&scl)
+        && usable.contains(&sda)
+    {
+        return Ok((scl, sda));
     }
     let mut it = usable.iter().copied();
     let scl = it.next().context("chip has no usable GPIOs")?;
