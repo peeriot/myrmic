@@ -116,16 +116,20 @@ async fn bridge_test(myrmic: &Myrmic<LocalBinary>) {
     let output = myrmic
         .deploy_app_with_output("assets/apps/app_spec.yml")
         .await;
-    for sri in ["bridge.http", "bridge.mqtt"] {
+    for srn in ["bridge.http", "bridge.mqtt"] {
+        let sri = cell_protocol::Sri::of_path(srn).unwrap();
         assert!(
             output.lines().any(|line| line
                 == format!("INFO  deployed cell (sri = {sri}, placement = orchestrator)")),
-            "app deploy output must report native bridge placement for {sri}; got: {output:?}"
+            "app deploy output must report native bridge placement for {srn}; got: {output:?}"
         );
     }
+    let bridge_test_sri = cell_protocol::Sri::of_path("bridge.test").unwrap();
     let runtime = output.lines().find_map(|line| {
-        line.strip_prefix("INFO  deployed cell (sri = bridge.test, runtime = ")
-            .and_then(|line| line.strip_suffix(')'))
+        line.strip_prefix(&format!(
+            "INFO  deployed cell (sri = {bridge_test_sri}, runtime = "
+        ))
+        .and_then(|line| line.strip_suffix(')'))
     });
     assert!(
         runtime.is_some_and(|runtime| !runtime.is_empty()),
