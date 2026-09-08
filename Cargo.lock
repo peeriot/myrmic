@@ -3311,6 +3311,7 @@ name = "e2e-tests"
 version = "0.6.0"
 dependencies = [
  "allure-cargotest",
+ "cell-protocol",
  "rumqttc",
  "rumqttd",
  "serde",
