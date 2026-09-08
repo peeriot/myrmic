@@ -1,0 +1,7 @@
+# Self-hosted runner labels used by this repository. Without them actionlint
+# reports every `runs-on` as an unknown label and the real findings drown.
+self-hosted-runner:
+  labels:
+    - general
+    - hardware
+    - testnet
