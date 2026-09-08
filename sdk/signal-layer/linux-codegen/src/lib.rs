@@ -11,6 +11,8 @@ use pipeline_backend_api::manifest::parse_manifest;
 use pipeline_codegen::descriptor::{DriverSchema, load_schema_from_yaml};
 use pipeline_codegen::pipeline::PipelineFile;
 
+use include_dir::{Dir, include_dir};
+
 pub mod backend;
 mod linux_manifest;
 
@@ -42,13 +44,23 @@ pub fn validate_pipeline_only(pipeline_yaml: &str) -> Result<PipelineFile> {
 
 /// Generate a standalone Linux pipeline crate from paths on disk.
 ///
-/// Returns the formatted Rust source for the pipeline's `main.rs`.
-pub fn generate_linux(
+/// The generated pipeline module plus the parsed inputs the standalone-crate
+/// wrapper needs.
+pub(crate) struct PipelineModule {
+    /// The generated pipeline Rust source (the module, without a `main`).
+    pub source: String,
+    pub manifest: pipeline_backend_api::manifest::BoardManifest,
+    pub pipeline: PipelineFile,
+    pub driver_schemas: IndexMap<String, DriverSchema>,
+}
+
+/// Validates and generates the pipeline module from descriptor roots on disk.
+pub(crate) fn generate_pipeline_module_from_roots(
     manifest_yaml_path: &Path,
     pipeline_yaml_path: &Path,
     drivers_root: &Path,
     steps_root: &Path,
-) -> Result<GeneratedCrate> {
+) -> Result<PipelineModule> {
     let manifest_yaml = std::fs::read_to_string(manifest_yaml_path)
         .with_context(|| format!("reading Linux manifest: {}", manifest_yaml_path.display()))?;
     let manifest = parse_manifest(&manifest_yaml)
@@ -90,7 +102,7 @@ pub fn generate_linux(
     }
 
     // Generate the pipeline Rust source.
-    let pipeline_source = pipeline_codegen::generate(
+    let source = pipeline_codegen::generate(
         &manifest,
         &pipeline,
         &driver_schemas,
@@ -99,22 +111,158 @@ pub fn generate_linux(
     )
     .context("code generation failed")?;
 
+    Ok(PipelineModule {
+        source,
+        manifest,
+        pipeline,
+        driver_schemas,
+    })
+}
+
+/// Returns the formatted Rust source for the pipeline's `main.rs`.
+pub fn generate_linux(
+    manifest_yaml_path: &Path,
+    pipeline_yaml_path: &Path,
+    drivers_root: &Path,
+    steps_root: &Path,
+) -> Result<GeneratedCrate> {
+    let module = generate_pipeline_module_from_roots(
+        manifest_yaml_path,
+        pipeline_yaml_path,
+        drivers_root,
+        steps_root,
+    )?;
+
     // Append the tokio main entry point.
-    let main_rs = append_tokio_main(&pipeline_source, &pipeline);
+    let main_rs = append_tokio_main(&module.source, &module.pipeline);
 
     // Generate the Cargo.toml for the standalone crate.
-    let cargo_toml =
-        generate_cargo_toml(&pipeline.pipeline.id, &manifest, &driver_schemas, &pipeline);
+    let cargo_toml = generate_cargo_toml(
+        &module.pipeline.pipeline.id,
+        &module.manifest,
+        &module.driver_schemas,
+        &module.pipeline,
+    );
 
     // Generate the tap-contract test.
-    let tap_contract = generate_tap_contract(&pipeline);
+    let tap_contract = generate_tap_contract(&module.pipeline);
 
     Ok(GeneratedCrate {
-        pipeline_id: pipeline.pipeline.id.clone(),
+        pipeline_id: module.pipeline.pipeline.id.clone(),
         main_rs,
         cargo_toml,
         tap_contract_rs: tap_contract,
     })
+}
+
+/// Driver/step descriptors embedded at build time, so a firmware or Linux crate
+/// that generates its pipeline through this crate's build helper needs no
+/// `signal-modules` checkout on disk. Only `descriptor.yaml` files are used.
+static EMBEDDED_DRIVERS: Dir<'static> =
+    include_dir!("$CARGO_MANIFEST_DIR/../../../signal-modules/drivers");
+static EMBEDDED_STEPS: Dir<'static> =
+    include_dir!("$CARGO_MANIFEST_DIR/../../../signal-modules/steps");
+
+/// Generates just the pipeline module (no `main`, Cargo.toml or tests), sourcing
+/// the driver/step descriptors from the copies embedded in this crate. This is
+/// what a Linux Signal Layer crate includes from its build script. When
+/// `custom_descriptors` is `Some`, its `drivers/` and `steps/` `descriptor.yaml`
+/// files are overlaid on the embedded set.
+pub fn generate_module_embedded(
+    manifest_yaml_path: &Path,
+    pipeline_yaml_path: &Path,
+    custom_descriptors: Option<&Path>,
+) -> Result<String> {
+    let scratch = tempfile::tempdir().context("creating temp dir for embedded descriptors")?;
+    let drivers_root = scratch.path().join("drivers");
+    let steps_root = scratch.path().join("steps");
+
+    extract_descriptors(&EMBEDDED_DRIVERS, &drivers_root).context("extracting driver descriptors")?;
+    extract_descriptors(&EMBEDDED_STEPS, &steps_root).context("extracting step descriptors")?;
+
+    if let Some(custom) = custom_descriptors {
+        overlay_descriptors(&custom.join("drivers"), &drivers_root)
+            .context("overlaying custom driver descriptors")?;
+        overlay_descriptors(&custom.join("steps"), &steps_root)
+            .context("overlaying custom step descriptors")?;
+    }
+
+    let source = generate_pipeline_module_from_roots(
+        manifest_yaml_path,
+        pipeline_yaml_path,
+        &drivers_root,
+        &steps_root,
+    )?
+    .source;
+
+    // The generated source opens with a crate-level `#![allow(...)]`, valid in a
+    // file module but not when `include!`d into `mod pipeline_config { ... }`.
+    // Drop it; the including module carries the allow itself.
+    Ok(strip_leading_inner_attrs(&source))
+}
+
+/// Drops leading blank lines and `#![...]` inner attributes so the source can be
+/// `include!`d into a module body.
+fn strip_leading_inner_attrs(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut body = false;
+    for line in source.lines() {
+        if !body {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with("#![") {
+                continue;
+            }
+            body = true;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Writes the `<id>/descriptor.yaml` of every top-level entry in an embedded
+/// descriptor tree into `dest`, ignoring everything else the crate carries.
+fn extract_descriptors(root: &Dir<'_>, dest: &Path) -> Result<()> {
+    for sub in root.dirs() {
+        let name = sub
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .with_context(|| format!("bad descriptor dir name: {}", sub.path().display()))?;
+        let rel = format!("{name}/descriptor.yaml");
+        if let Some(file) = root.get_file(&rel) {
+            let out_dir = dest.join(name);
+            std::fs::create_dir_all(&out_dir)
+                .with_context(|| format!("creating {}", out_dir.display()))?;
+            let out = out_dir.join("descriptor.yaml");
+            std::fs::write(&out, file.contents())
+                .with_context(|| format!("writing {}", out.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies `<id>/descriptor.yaml` from a filesystem descriptor tree over `dest`.
+/// A missing source directory is not an error.
+fn overlay_descriptors(src_root: &Path, dest: &Path) -> Result<()> {
+    if !src_root.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(src_root).with_context(|| format!("reading {}", src_root.display()))? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let descriptor = entry.path().join("descriptor.yaml");
+        if !descriptor.is_file() {
+            continue;
+        }
+        let out_dir = dest.join(entry.file_name());
+        std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
+        std::fs::copy(&descriptor, out_dir.join("descriptor.yaml"))
+            .with_context(|| format!("copying {}", descriptor.display()))?;
+    }
+    Ok(())
 }
 
 /// The generated standalone crate contents.

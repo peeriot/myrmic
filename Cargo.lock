@@ -7178,6 +7178,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
+ "include_dir",
  "indexmap 2.14.0",
  "pipeline-backend-api",
  "pipeline-codegen",
