@@ -278,6 +278,14 @@ macro_rules! pipeline {
         #[rustfmt::skip]
         mod pipeline_config {
             #![allow(unused_imports, dead_code, unused_variables)]
+            // Route the generated bare crate paths (`esp_hal::`, `embassy_sync::`,
+            // `signal_layer_core::`, ...) through esp-firmware's re-exports, so a
+            // firmware crate needs no direct dependency on the infrastructure
+            // crates and cannot end up with a second version of the esp-hal fork.
+            use $crate::{
+                embassy_embedded_hal, embassy_sync, embassy_time, esp_hal, log,
+                signal_layer_core, signal_layer_types, static_cell, wasm_runtime,
+            };
             include!(concat!(env!("OUT_DIR"), "/pipeline.rs"));
         }
     };

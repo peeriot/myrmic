@@ -60,6 +60,7 @@ wdt-selftest = ["wasm-runtime/wdt-selftest", "esp-common/wdt-selftest"]
 embassy-executor = { workspace = true }
 embassy-sync     = { workspace = true }
 embassy-time     = { workspace = true }
+embassy-embedded-hal = { workspace = true }
 esp-hal          = { workspace = true, features = ["log-04", "unstable", "rt"] }
 esp-rtos         = { workspace = true, features = ["embassy", "esp-alloc", "esp-radio"] }
 log              = { workspace = true }

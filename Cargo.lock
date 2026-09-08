@@ -4084,6 +4084,7 @@ version = "0.4.0"
 dependencies = [
  "cell-protocol",
  "critical-section",
+ "embassy-embedded-hal",
  "embassy-executor",
  "embassy-sync 0.8.0",
  "embassy-time",
