@@ -7656,6 +7656,7 @@ dependencies = [
  "db-client",
  "db-commons",
  "dialoguer",
+ "esp-codegen",
  "espflash",
  "filestore-client",
  "flate2",

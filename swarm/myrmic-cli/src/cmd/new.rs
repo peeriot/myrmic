@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use myrmic_build::firmware::Chip;
 use textus::Template as _;
 
@@ -15,6 +16,11 @@ pub struct New {
     /// instead of a cell.
     #[clap(short, long, require_equals = true, num_args = 0..=1, default_missing_value = "esp32c6")]
     firmware: Option<Chip>,
+
+    /// Also scaffold a Signal Layer pipeline (board.yml + pipeline.yml, generated
+    /// into the firmware at build time). Requires `--firmware`.
+    #[clap(long)]
+    pipeline: bool,
 
     #[clap(long, alias = "repo")]
     sdk: Option<String>,
@@ -36,50 +42,91 @@ struct TemplateNewFirmware<'a> {
     firmware_build: models::CargoDep,
 }
 
+#[derive(textus::Template)]
+#[template(path = "templates/firmware-pipeline", strip_suffix = ".tmpl")]
+struct TemplateNewFirmwarePipeline<'a> {
+    name: &'a str,
+    chip: &'a str,
+    firmware_sdk: models::CargoDep,
+    firmware_build: models::CargoDep,
+    module_deps: String,
+    pipeline_feature_deps: String,
+}
+
 pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
     let New {
         path,
         name,
         sdk: repo,
         firmware,
+        pipeline,
     } = cmd;
 
     let name = determine_name(name.as_deref(), &path)?;
 
     validate_name(name)?;
 
-    if let Some(chip) = firmware {
-        crate::info!(ctx, "Creating firmware '{}' for {}", name, chip);
-    } else {
-        crate::info!(ctx, "Creating '{}'", name);
+    if pipeline && firmware.is_none() {
+        anyhow::bail!(
+            "`--pipeline` on its own scaffolds a Linux Signal Layer project, which is not \
+             implemented yet; use `--firmware[=<chip>] --pipeline` for an embedded pipeline"
+        );
+    }
+
+    match (firmware, pipeline) {
+        (Some(chip), true) => {
+            crate::info!(ctx, "Creating firmware pipeline '{}' for {}", name, chip);
+        }
+        (Some(chip), false) => crate::info!(ctx, "Creating firmware '{}' for {}", name, chip),
+        (None, _) => crate::info!(ctx, "Creating '{}'", name),
     }
 
     let repo = crate::utils::resolve_repo(ctx, repo.as_deref())?;
 
-    let result = if let Some(chip) = firmware {
-        let firmware_sdk = repo
-            .clone()
-            .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
-        let firmware_build =
-            repo.resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
+    let result = match (firmware, pipeline) {
+        (Some(chip), true) => {
+            let firmware_sdk = repo
+                .clone()
+                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
+            let firmware_build = repo
+                .clone()
+                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
+            let (module_deps, pipeline_feature_deps) = module_dep_lines(&repo);
 
-        let template = TemplateNewFirmware {
-            name,
-            chip: chip.name(),
-            firmware_sdk,
-            firmware_build,
-        };
+            TemplateNewFirmwarePipeline {
+                name,
+                chip: chip.name(),
+                firmware_sdk,
+                firmware_build,
+                module_deps,
+                pipeline_feature_deps,
+            }
+            .render_into(&path)
+        }
+        (Some(chip), false) => {
+            let firmware_sdk = repo
+                .clone()
+                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
+            let firmware_build =
+                repo.resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
 
-        template.render_into(&path)
-    } else {
-        let sdk = repo.resolve_or_assume_correct("sdk/myrmic-sdk");
+            TemplateNewFirmware {
+                name,
+                chip: chip.name(),
+                firmware_sdk,
+                firmware_build,
+            }
+            .render_into(&path)
+        }
+        (None, _) => {
+            let sdk = repo.resolve_or_assume_correct("sdk/myrmic-sdk");
 
-        let template = TemplateNew {
-            name,
-            myrmic_sdk: sdk,
-        };
-
-        template.render_into(&path)
+            TemplateNew {
+                name,
+                myrmic_sdk: sdk,
+            }
+            .render_into(&path)
+        }
     };
 
     if let Err(err) = result {
@@ -112,7 +159,136 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
         }
     }
 
+    if let (Some(chip), true) = (firmware, pipeline) {
+        write_pipeline_yamls(name, &path, chip)?;
+    }
+
     Ok(())
+}
+
+/// Renders the driver/step dependency lines and the `pipeline` feature's
+/// `dep:` list, seeding every module shipped with myrmic so any pipeline built
+/// from them compiles.
+fn module_dep_lines(repo: &models::Repo) -> (String, String) {
+    let modules = esp_codegen::driver_ids()
+        .into_iter()
+        .map(|id| (format!("{id}-driver"), format!("signal-modules/drivers/{id}")))
+        .chain(
+            esp_codegen::step_ids()
+                .into_iter()
+                .map(|id| (id.clone(), format!("signal-modules/steps/{id}"))),
+        );
+
+    let mut deps = Vec::new();
+    let mut feats = Vec::new();
+    for (crate_name, rel_path) in modules {
+        let dep = repo.clone().resolve_or_assume_correct(&rel_path);
+        deps.push(format!("{crate_name} = {}", optional_dep(&dep)));
+        feats.push(format!("    \"dep:{crate_name}\","));
+    }
+    (deps.join("\n"), feats.join("\n"))
+}
+
+/// Renders a [`models::CargoDep`] as a dependency table with `optional = true`.
+fn optional_dep(dep: &models::CargoDep) -> String {
+    let rendered = dep.to_string();
+    match rendered.strip_suffix(" }") {
+        Some(inner) => format!("{inner}, optional = true }}"),
+        None => format!("{{ version = {rendered}, optional = true }}"),
+    }
+}
+
+/// Writes `board.yml` and `pipeline.yml` next to a scaffolded pipeline firmware.
+fn write_pipeline_yamls(name: &str, path: &std::path::Path, chip: Chip) -> anyhow::Result<()> {
+    let board = generate_board_yaml(name, chip.name())?;
+    std::fs::write(path.join("board.yml"), board)
+        .with_context(|| format!("writing {}", path.join("board.yml").display()))?;
+    std::fs::write(path.join("pipeline.yml"), generate_pipeline_yaml(name))
+        .with_context(|| format!("writing {}", path.join("pipeline.yml").display()))?;
+    Ok(())
+}
+
+/// A starter board manifest: an example i2c bus, every usable GPIO for the chip
+/// (minus the bus pins) offered to the cell, and a headless `sim-source` device.
+fn generate_board_yaml(name: &str, chip: &str) -> anyhow::Result<String> {
+    let usable = esp_codegen::chip_general_purpose_pins(chip)
+        .with_context(|| format!("no GPIO layout for chip `{chip}`"))?;
+    let (scl, sda) = pick_bus_pins(&usable)?;
+    let gp = usable
+        .iter()
+        .copied()
+        .filter(|pin| *pin != scl && *pin != sda)
+        .map(|pin| pin.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!(
+        "# Board manifest: the hardware the Signal Layer pipeline runs on.\n\
+         id: {name}\n\
+         chip: {chip}\n\
+         \n\
+         # Buses the pipeline may use. The sim-source device below is bound to\n\
+         # this bus for codegen symmetry but never touches it, so nothing needs\n\
+         # to be wired up to build and run.\n\
+         buses:\n\
+         \x20\x20i2c0:\n\
+         \x20\x20\x20\x20transport: i2c\n\
+         \x20\x20\x20\x20pins:\n\
+         \x20\x20\x20\x20\x20\x20scl: {scl}\n\
+         \x20\x20\x20\x20\x20\x20sda: {sda}\n\
+         \x20\x20\x20\x20freq_khz: 400\n\
+         \n\
+         # Every usable GPIO on this chip, minus the bus pins above. Pins listed\n\
+         # here that the pipeline does not claim are offered to the cell.\n\
+         gpios:\n\
+         \x20\x20general_purpose: [{gp}]\n\
+         \n\
+         # Devices on the buses. Swap sim-source for a real sensor once wired up.\n\
+         devices:\n\
+         \x20\x20- id: sim\n\
+         \x20\x20\x20\x20driver: sim-source\n\
+         \x20\x20\x20\x20bus: i2c0\n"
+    ))
+}
+
+/// Picks the example i2c bus pins: the conventional GPIO10/GPIO11 when both are
+/// usable, else the first two usable pins on the chip.
+fn pick_bus_pins(usable: &[u8]) -> anyhow::Result<(u8, u8)> {
+    if usable.contains(&10) && usable.contains(&11) {
+        return Ok((10, 11));
+    }
+    let mut it = usable.iter().copied();
+    let scl = it.next().context("chip has no usable GPIOs")?;
+    let sda = it
+        .next()
+        .context("chip needs at least two usable GPIOs for the example bus")?;
+    Ok((scl, sda))
+}
+
+/// A starter pipeline: the headless `sim-source` ramp exposed as one tap.
+fn generate_pipeline_yaml(name: &str) -> String {
+    format!(
+        "# Signal Layer pipeline: sources, steps, and the taps the cell reads.\n\
+         pipeline:\n\
+         \x20\x20id: {name}\n\
+         \n\
+         # `sim` emits a deterministic ramp (0, 10, ... 100, 0, ...) so this\n\
+         # builds and runs with no hardware attached.\n\
+         sources:\n\
+         \x20\x20- id: sim\n\
+         \x20\x20\x20\x20device: sim\n\
+         \x20\x20\x20\x20config:\n\
+         \x20\x20\x20\x20\x20\x20sample_interval_ms: 500\n\
+         \x20\x20\x20\x20\x20\x20start: 0.0\n\
+         \x20\x20\x20\x20\x20\x20step: 10.0\n\
+         \x20\x20\x20\x20\x20\x20max: 100.0\n\
+         \n\
+         # A tap is a value the cell can read by name.\n\
+         taps:\n\
+         \x20\x20- name: sim_value\n\
+         \x20\x20\x20\x20kind: retained\n\
+         \x20\x20\x20\x20type: f32\n\
+         \x20\x20\x20\x20source: sim.value\n"
+    )
 }
 
 fn validate_name(name: &str) -> anyhow::Result<()> {

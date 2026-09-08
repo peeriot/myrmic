@@ -27,6 +27,34 @@ static EMBEDDED_DRIVERS: Dir<'static> =
 static EMBEDDED_STEPS: Dir<'static> =
     include_dir!("$CARGO_MANIFEST_DIR/../../../signal-modules/steps");
 
+/// The full set of usable GPIO numbers for a chip, for seeding a board
+/// manifest's `gpios.general_purpose`. `None` for an unsupported chip.
+pub fn chip_general_purpose_pins(chip: &str) -> Option<Vec<u8>> {
+    backend::chip_pin_layout(chip).map(|layout| layout.into_iter().flatten().collect())
+}
+
+/// Ids (directory names) of every embedded driver. A driver id `foo` maps to
+/// crate `foo-driver` under `signal-modules/drivers/foo`.
+pub fn driver_ids() -> Vec<String> {
+    embedded_ids(&EMBEDDED_DRIVERS)
+}
+
+/// Ids (directory names) of every embedded step. A step id is its crate name,
+/// under `signal-modules/steps/<id>`.
+pub fn step_ids() -> Vec<String> {
+    embedded_ids(&EMBEDDED_STEPS)
+}
+
+fn embedded_ids(root: &Dir<'_>) -> Vec<String> {
+    let mut ids: Vec<String> = root
+        .dirs()
+        .filter_map(|dir| dir.path().file_name().and_then(|n| n.to_str()))
+        .map(String::from)
+        .collect();
+    ids.sort();
+    ids
+}
+
 /// Run the full ESP32 generation pipeline from paths on disk.
 ///
 /// Reads `board_yaml_path`, `pipeline_yaml_path`, resolves driver/step
