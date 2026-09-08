@@ -65,7 +65,7 @@ BOARD="$(resolve "$BOARD_ARG" "$BOARDS_DIR")"
 echo "==> Regenerating pipeline config"
 echo "    board:    $BOARD"
 echo "    pipeline: $PIPELINE"
-(cd "$REPO_ROOT" && cargo +nightly run -p esp-codegen -- \
+(cd "$REPO_ROOT" && cargo +nightly-2026-08-07 run -p esp-codegen -- \
     --board "$BOARD" \
     --pipeline "$PIPELINE" \
     --drivers "$SIGNAL_MODULES_DIR/drivers" \

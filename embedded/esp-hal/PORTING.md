@@ -70,7 +70,7 @@ build-c61 = "build  -p modem-esp32 --release --target riscv32imac-unknown-none-e
 # … run-c61, clippy-c61, doc-c61, citest-c61
 ```
 
-After this, `cargo +nightly build-*` should at least start compiling (and fail on the missing feature arms you're about
+After this, `cargo +nightly-2026-08-07 build-*` should at least start compiling (and fail on the missing feature arms you're about
 to add).
 
 ### 2. Feature plumbing

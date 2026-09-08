@@ -43,7 +43,7 @@ env:
   # Can be used to pin nightly, used only where nightly is actually required: -Zbuild-std for
   # the ESP firmware, and the wasm cell check. Everything else uses the image's
   # stable channel.
-  RUST_NIGHTLY: "nightly"
+  RUST_NIGHTLY: "nightly-2026-08-07"
 
 jobs:
 
@@ -319,7 +319,7 @@ jobs:
           CARGO_NET_GIT_FETCH_WITH_CLI: true
           CARGO_BUILD_JOBS: "8"
           COMMAND_SUFFIX: -c6
-          CARGO_CHANNEL: nightly
+          CARGO_CHANNEL: ${{ env.RUST_NIGHTLY }}
         with:
           image: ${{ env.RUST_ESP_IMAGE }}
           username: ${{ github.actor }}

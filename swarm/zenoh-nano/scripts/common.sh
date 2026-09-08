@@ -103,7 +103,7 @@ build_esp() {
   local manifest="$workspace_parent/embedded/examples/esp/Cargo.toml"
   [[ -f "$manifest" ]] || fail "ESP manifest not found: $manifest"
 
-  local args=(+nightly build --manifest-path "$manifest" --bin "$bin_name" --target "$esp_target")
+  local args=(+nightly-2026-08-07 build --manifest-path "$manifest" --bin "$bin_name" --target "$esp_target")
   [[ "$esp_release" == "true" ]] && args+=(--release)
 
   printf '==> Building %s\n' "$bin_name"

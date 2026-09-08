@@ -46,5 +46,5 @@ esac
 "$SCRIPT_DIR/pipeline_regen.sh" "$PIPELINE" --board "$BOARD" --target "$TARGET"
 
 echo "==> Building firmware for $TARGET..."
-(cd "$REPO_ROOT" && cargo +nightly "$BUILD_ALIAS")
+(cd "$REPO_ROOT" && cargo +nightly-2026-08-07 "$BUILD_ALIAS")
 echo "Done."

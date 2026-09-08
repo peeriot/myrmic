@@ -21,7 +21,7 @@ Build a cell crate, a workspace of cells, or an application suite from source.
 
 If `PATH` is not provided, the current directory is used.
 
-All cell builds run in release mode using `cargo +nightly` internally. Set the `CARGO` environment variable to use a specific `cargo` binary.
+All cell builds run in release mode using `cargo +nightly-2026-08-07` internally. Set the `CARGO` environment variable to use a specific `cargo` binary.
 
 To learn about the application specification file, see [Cell and Application Configuration](../01_configuration/02_cell-and-application-configuration.md).
 

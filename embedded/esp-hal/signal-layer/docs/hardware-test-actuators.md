@@ -27,7 +27,7 @@ Regenerate + flash a pipeline:
 ```sh
 # from repo root
 sdk/signal-layer/scripts/pipeline_regen.sh <pipeline-name>
-cargo +nightly run-c6         # flashes + opens the serial monitor
+cargo +nightly-2026-08-07 run-c6         # flashes + opens the serial monitor
 ```
 
 `run-c6` = `run -p modem-esp32 --release --target riscv32imac-unknown-none-elf
@@ -41,7 +41,7 @@ cargo +nightly run-c6         # flashes + opens the serial monitor
 
 ```sh
 sdk/signal-layer/scripts/pipeline_regen.sh feed-forward-demo
-cargo +nightly run-c6
+cargo +nightly-2026-08-07 run-c6
 ```
 
 Warm the BME280 (finger/breath). Expect:
