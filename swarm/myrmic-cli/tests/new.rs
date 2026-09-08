@@ -289,23 +289,44 @@ fn new_firmware_pipeline_scaffolds_board_and_pipeline() {
 }
 
 #[test]
-fn new_pipeline_without_firmware_is_rejected() {
+fn new_pipeline_scaffolds_a_linux_project() {
     let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
+    let dir = project.path().join("demo");
 
     let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
         .args(["new", "--pipeline"])
-        .arg(project.path().join("x"))
+        .arg(&dir)
         .arg("--sdk")
         .arg(repo_root())
         .output()
         .expect("failed to run myrmic new");
-
-    assert!(!output.status.success(), "--pipeline without --firmware should fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--firmware"),
-        "the error should point at --firmware, got:\n{stderr}"
+        output.status.success(),
+        "myrmic new failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
+
+    let manifest = std::fs::read_to_string(dir.join("manifest.yml")).expect("manifest.yml");
+    assert!(manifest.contains("chip: linux"), "manifest targets linux:\n{manifest}");
+    assert!(
+        manifest.contains("dev_path: /dev/i2c-1"),
+        "manifest names the i2c dev path:\n{manifest}"
+    );
+    assert!(manifest.contains("driver: sim-source"), "manifest has the sim device:\n{manifest}");
+
+    let pipeline = std::fs::read_to_string(dir.join("pipeline.yml")).expect("pipeline.yml");
+    assert!(pipeline.contains("device: sim"), "pipeline uses the sim source:\n{pipeline}");
+
+    let manifest_toml = std::fs::read_to_string(dir.join("Cargo.toml")).expect("Cargo.toml");
+    for dep in ["signal-layer-linux-rt", "tokio", "sim-source-driver", "linux-codegen"] {
+        assert!(manifest_toml.contains(dep), "Cargo.toml is missing `{dep}`:\n{manifest_toml}");
+    }
+
+    let main = std::fs::read_to_string(dir.join("src/main.rs")).expect("main.rs");
+    assert!(main.contains("#[tokio::main]"), "main is a tokio binary:\n{main}");
+    assert!(main.contains("mod pipeline_config"), "main includes the generated module:\n{main}");
+    assert!(main.contains("setup_tap_registry"), "main starts the tap registry:\n{main}");
 
     let _ = project.close();
 }

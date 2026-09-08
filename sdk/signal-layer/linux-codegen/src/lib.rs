@@ -225,6 +225,55 @@ pub fn build_pipeline(manifest: &str, pipeline: &str, custom: Option<&str>) {
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"))
         .join("pipeline.rs");
     std::fs::write(&out, source).unwrap_or_else(|e| panic!("writing {}: {e}", out.display()));
+
+    // Every driver/step crate the pipeline names must be a dependency. Shipped
+    // modules are seeded by `myrmic new`; a custom one has to be added by hand,
+    // so fail with a precise message rather than a raw unresolved-import error.
+    let required = required_module_crates(&manifest_path, &pipeline_path)
+        .unwrap_or_else(|e| panic!("computing required pipeline crates: {e:#}"));
+    let declared = declared_dependencies(&manifest_dir);
+    let missing: Vec<&String> = required.iter().filter(|c| !declared.contains(*c)).collect();
+    assert!(
+        missing.is_empty(),
+        "the pipeline uses crates that are not dependencies of this project: {}\n\
+         Add each to [dependencies] and, for a custom driver or step, point \
+         build_pipeline's third argument at its descriptors.",
+        missing
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+/// The driver/step crates a pipeline needs (drivers as `<driver>-driver`, steps
+/// by their op name).
+fn required_module_crates(manifest_path: &Path, pipeline_path: &Path) -> Result<Vec<String>> {
+    let manifest = parse_manifest(
+        &std::fs::read_to_string(manifest_path)
+            .with_context(|| format!("reading manifest: {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("parsing manifest: {}", manifest_path.display()))?;
+    let pipeline = validate_pipeline_only(
+        &std::fs::read_to_string(pipeline_path)
+            .with_context(|| format!("reading pipeline: {}", pipeline_path.display()))?,
+    )?;
+    Ok(pipeline_codegen::cargo_update::required_crates(
+        &pipeline, &manifest,
+    ))
+}
+
+/// The dependency names declared in a crate's `Cargo.toml` `[dependencies]`.
+fn declared_dependencies(manifest_dir: &Path) -> std::collections::BTreeSet<String> {
+    let path = manifest_dir.join("Cargo.toml");
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let doc: toml::Value =
+        toml::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+    doc.get("dependencies")
+        .and_then(toml::Value::as_table)
+        .map(|deps| deps.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Drops leading blank lines and `#![...]` inner attributes so the source can be
