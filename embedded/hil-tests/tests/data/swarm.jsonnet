@@ -13,7 +13,7 @@ z.peer('7728d1a01a04f41e7b9e0ff3bab594a2')
 }) + {
  zenoh+: {
    listen: {
-     endpoints: { router: ['tcp/[::]:7447'], peer: ['tcp/[::]:7447'], },
+     endpoints: { router: ['tcp/[::]:7557'], peer: ['tcp/[::]:7557'], },
    },
  },
 }
