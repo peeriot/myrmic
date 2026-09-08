@@ -289,6 +289,32 @@ fn new_firmware_pipeline_scaffolds_board_and_pipeline() {
 }
 
 #[test]
+fn new_into_existing_dir_preserves_files_on_render_failure() {
+    let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
+    let dir = project.path().join("existing");
+    std::fs::create_dir_all(&dir).expect("create existing dir");
+    std::fs::write(dir.join("keep.txt"), "precious user data").expect("write user file");
+    // Block the template's `src/` directory with a file, so rendering fails.
+    std::fs::write(dir.join("src"), "blocker").expect("write blocker");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
+        .args(["new", "--pipeline"])
+        .arg(&dir)
+        .arg("--sdk")
+        .arg(repo_root())
+        .output()
+        .expect("failed to run myrmic new");
+
+    assert!(!output.status.success(), "render should fail when src/ is blocked");
+    assert!(
+        dir.join("keep.txt").exists(),
+        "a pre-existing user file must survive a failed scaffold into its directory"
+    );
+
+    let _ = project.close();
+}
+
+#[test]
 fn new_pipeline_scaffolds_a_linux_project() {
     let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
     let dir = project.path().join("demo");

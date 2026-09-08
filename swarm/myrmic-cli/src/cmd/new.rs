@@ -126,6 +126,10 @@ fn render_project(
     pipeline: bool,
     path: &std::path::Path,
 ) -> anyhow::Result<()> {
+    // Only a directory we create is ours to clean up on failure; never delete a
+    // directory the user pointed us at that already held files.
+    let preexisting = path.exists();
+
     let result = match (firmware, pipeline) {
         (Some(chip), true) => {
             let firmware_sdk = repo
@@ -188,7 +192,9 @@ fn render_project(
     };
 
     if let Err(err) = result {
-        if let Err(io_err) = std::fs::remove_dir_all(path) {
+        if !preexisting
+            && let Err(io_err) = std::fs::remove_dir_all(path)
+        {
             return Err(anyhow::Error::new(io_err).context(format!(
                 "unable to cleanup after template render failure: {err}"
             )));
