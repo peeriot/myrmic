@@ -1,4 +1,4 @@
-use cell_protocol::Sri;
+use cell_protocol::{RuntimeId, Sri};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod bridges;
@@ -26,6 +26,19 @@ impl DeployRequest {
     pub fn new(cells: Vec<CellDeployment>) -> Self {
         Self { cells }
     }
+}
+
+/// The committed placement of one cell in a successful deployment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployedCell {
+    pub sri: Sri,
+    pub runtime: RuntimeId,
+}
+
+/// The placements selected and committed for a successful deployment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployResponse {
+    pub cells: Vec<DeployedCell>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

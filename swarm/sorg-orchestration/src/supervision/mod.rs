@@ -551,7 +551,7 @@ async fn process_root_restarts(
         info!(%sri, "restart: redeploying root");
         let request = DeployRequest::new(vec![(*spec).clone()]);
         match deploy_cells(session, request, RESTART_DEPLOY_TIMEOUT).await {
-            Ok(()) => clear_death(session, sri).await,
+            Ok(_) => clear_death(session, sri).await,
             // No runtime can host the root right now (its only qualifying
             // node is down, say). That is not a crash, so it must not eat the
             // crash-loop budget: refund the attempt and keep the signal, and

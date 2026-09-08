@@ -202,9 +202,18 @@ async fn deploy_app_info(
     if request.cells.is_empty() {
         crate::warn!(ctx, "no cells to deploy; '{}' not deployed", info.name);
     } else {
-        sorg.deploy_cells(request)
+        let response = sorg
+            .deploy_cells(request)
             .await
             .context("application deployment failed")?;
+        for cell in response.cells {
+            crate::info!(
+                ctx,
+                "deployed cell (sri = {}, runtime = {})",
+                cell.sri,
+                cell.runtime
+            );
+        }
     }
 
     Ok(())
@@ -348,11 +357,20 @@ pub async fn deploy_cell(
     .with_app(Some(sri.to_owned()))
     .with_restart(root.restart);
 
-    sorg.deploy_cells(sorg_common::DeployRequest::new(vec![cell]))
+    let response = sorg
+        .deploy_cells(sorg_common::DeployRequest::new(vec![cell]))
         .await
         .context("unable to deploy cell")?;
+    let runtime = response
+        .cells
+        .first()
+        .expect("one-cell deployment returns one placement")
+        .runtime;
 
-    crate::info!(ctx, "deployed cell (srn = {sri}, sri = {cell_sri})");
+    crate::info!(
+        ctx,
+        "deployed cell (srn = {sri}, sri = {cell_sri}, runtime = {runtime})"
+    );
 
     Ok(())
 }

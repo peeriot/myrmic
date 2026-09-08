@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use cell_protocol::Gen;
 use cell_protocol::{PlacementEntry, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
-    CellDeployment, CellFailure, CellFailureKind, DeployRequest, DeploymentError, FenceOutcome,
-    PlacementClaimOutcome, SorgPayload, bail, claim_placement, commit_placement, get_placement,
-    list_placements, remove_placement, zenoh_err,
+    CellDeployment, CellFailure, CellFailureKind, DeployRequest, DeployResponse,
+    DeployedCell as DeploymentResult, DeploymentError, FenceOutcome, PlacementClaimOutcome,
+    SorgPayload, bail, claim_placement, commit_placement, get_placement, list_placements,
+    remove_placement, zenoh_err,
 };
 use tracing::{debug, warn};
 use zenoh::query::Query;
@@ -110,9 +111,11 @@ impl Runtime {
 
         let mut txn = DeployTransaction::new();
         match self.execute_deploy(&mut txn, request.cells).await {
-            Ok(()) => {
+            Ok(cells) => {
+                let response = DeployResponse { cells };
+                let payload = response.to_payload()?;
                 query
-                    .reply(query.key_expr(), vec![])
+                    .reply(query.key_expr(), payload)
                     .await
                     .map_err(|zen_err| {
                         zenoh_err!("orch failed to reply to cell deploy query", zen_err)
@@ -134,7 +137,7 @@ impl Runtime {
         &self,
         txn: &mut DeployTransaction,
         cells: Vec<CellDeployment>,
-    ) -> std::result::Result<(), DeploymentError> {
+    ) -> std::result::Result<Vec<DeploymentResult>, DeploymentError> {
         if cells.is_empty() {
             return Err(DeploymentError::EmptyDeployment);
         }
@@ -223,7 +226,13 @@ impl Runtime {
                 .map_err(|err| DeploymentError::Internal(err.to_string()))?;
             txn.wrote_specs.push(spec.sri);
         }
-        Ok(())
+        Ok(deployed
+            .into_iter()
+            .map(|cell| DeploymentResult {
+                sri: cell.sri,
+                runtime: cell.runtime,
+            })
+            .collect())
     }
 
     /// A cell's app is what it declares, or — for a spawned cell that declares

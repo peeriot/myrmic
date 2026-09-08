@@ -62,12 +62,18 @@ async fn single_tag_match() {
     let request = deploy_request(vec![wasm_cell(CELL_SRI).with_tags(tags.clone())]);
 
     // Act — deploy an app with one gpu-tagged cell
-    assert_ok!(sorg.deploy_cells(request).await);
+    let response = assert_ok!(sorg.deploy_cells(request).await);
+    assert_eq!(response.cells.len(), 1, "one cell has one placement result");
 
     // Assert — the cell landed on the gpu runtime
     let entry = assert_ok!(sorg.get_placement(&to_sri(CELL_SRI)).await)
         .expect("cell should be registered after deploy");
     let node_id = super::assert_wasm_runtime_id(&entry);
+    assert_eq!(response.cells[0].sri, to_sri(CELL_SRI));
+    assert_eq!(
+        response.cells[0].runtime, node_id,
+        "the deploy response names the runtime that committed the placement"
+    );
     let runtimes = assert_ok!(sorg.list_exec_runtimes().await);
     let expected = find_runtime_matching(&runtimes, &tags);
 

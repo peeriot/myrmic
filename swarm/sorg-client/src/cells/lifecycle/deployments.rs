@@ -1,8 +1,8 @@
 use cell_protocol::{PlacementEntry, Sri};
 use sorg_common::{
-    DeployRequest, DeploymentError, HttpBridgeApi, MqttBridge, RequirementTags, SpawnLineage,
-    delete_application, deploy_cells, deploy_wasm_cell, get_placement, list_placements,
-    placement_exists, undeploy_cell,
+    DeployRequest, DeployResponse, DeploymentError, HttpBridgeApi, MqttBridge, RequirementTags,
+    SpawnLineage, delete_application, deploy_cells, deploy_wasm_cell, get_placement,
+    list_placements, placement_exists, undeploy_cell,
 };
 
 use crate::{Client, Result};
@@ -117,7 +117,7 @@ impl Client {
     pub async fn deploy_cells(
         &self,
         request: DeployRequest,
-    ) -> std::result::Result<(), DeploymentError> {
+    ) -> std::result::Result<DeployResponse, DeploymentError> {
         deploy_cells(self.session(), request, self.config.query_timeout()).await
     }
 

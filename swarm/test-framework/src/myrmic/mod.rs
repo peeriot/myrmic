@@ -70,6 +70,32 @@ impl Myrmic<LocalBinary> {
         self.backend.build(&path, target).await;
         artifact_from_path(&path)
     }
+
+    /// Runs `myrmic deploy` and returns both its guard and its CLI output.
+    /// This is intentionally local-only: the output format is a CLI contract,
+    /// while other backends use remote command wrappers.
+    pub async fn deploy_with_output(
+        &self,
+        cell: CellSpec,
+        srn: &str,
+        tags: &[&str],
+    ) -> (DeployedCell<LocalBinary>, String) {
+        let output = self.backend.deploy_with_output(&cell, srn, tags).await;
+        let sri = cell_protocol::Sri::of_path(srn)
+            .expect("myrmic accepted an SRN that cannot be converted to an SRI")
+            .to_string();
+        let deployed = crate::wait_until(
+            crate::wait::DEFAULT_TIMEOUT,
+            crate::wait::DEFAULT_POLL_INTERVAL,
+            || async { self.is_sri_deployed(&sri).await },
+        )
+        .await;
+        assert!(
+            deployed,
+            "SRI `{sri}` not in `myrmic status` within 10s of deploy"
+        );
+        (DeployedCell::new(self.backend.clone(), sri), output)
+    }
 }
 
 impl Myrmic<DockerBinary> {

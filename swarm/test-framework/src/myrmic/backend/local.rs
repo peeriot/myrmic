@@ -37,6 +37,23 @@ impl LocalBinary {
         }
     }
 
+    /// Deploy a cell and return the CLI's diagnostic output.
+    pub async fn deploy_with_output(&self, cell: &CellSpec, srn: &str, tags: &[&str]) -> String {
+        let mut cmd = tokio::process::Command::new(&self.binary);
+        cmd.arg("deploy").arg("--name").arg(srn).arg(cell.as_path());
+        for tag in tags.iter().copied() {
+            cmd.arg("--tag").arg(tag);
+        }
+        let output = cmd.output().await.unwrap();
+
+        if !output.status.success() {
+            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+            panic!("deploy failed");
+        }
+
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
+
     /// Drop-only best-effort helper — used by the blocking delete variants; do not use for happy-path operations.
     fn run_blocking(&self, args: &[&str]) -> Result<(), String> {
         let output = std::process::Command::new(&self.binary)
@@ -157,17 +174,7 @@ impl MyrmicBackend for LocalBinary {
     }
 
     async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]) {
-        let mut cmd = tokio::process::Command::new(&self.binary);
-        cmd.arg("deploy").arg("--name").arg(srn).arg(cell.as_path());
-        for tag in tags.iter().copied() {
-            cmd.arg("--tag").arg(tag);
-        }
-        let output = cmd.output().await.unwrap();
-
-        if !output.status.success() {
-            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-            panic!("deploy failed");
-        }
+        self.deploy_with_output(&cell, srn, tags).await;
     }
 
     async fn deploy_app(&self, app_spec: &std::path::Path) {
