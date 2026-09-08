@@ -177,7 +177,8 @@ pub fn generate_module_embedded(
     let drivers_root = scratch.path().join("drivers");
     let steps_root = scratch.path().join("steps");
 
-    extract_descriptors(&EMBEDDED_DRIVERS, &drivers_root).context("extracting driver descriptors")?;
+    extract_descriptors(&EMBEDDED_DRIVERS, &drivers_root)
+        .context("extracting driver descriptors")?;
     extract_descriptors(&EMBEDDED_STEPS, &steps_root).context("extracting step descriptors")?;
 
     if let Some(custom) = custom_descriptors {
@@ -266,8 +267,8 @@ fn required_module_crates(manifest_path: &Path, pipeline_path: &Path) -> Result<
 /// The dependency names declared in a crate's `Cargo.toml` `[dependencies]`.
 fn declared_dependencies(manifest_dir: &Path) -> std::collections::BTreeSet<String> {
     let path = manifest_dir.join("Cargo.toml");
-    let text =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     let doc: toml::Value =
         toml::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
     doc.get("dependencies")
@@ -323,7 +324,9 @@ fn overlay_descriptors(src_root: &Path, dest: &Path) -> Result<()> {
     if !src_root.is_dir() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(src_root).with_context(|| format!("reading {}", src_root.display()))? {
+    for entry in
+        std::fs::read_dir(src_root).with_context(|| format!("reading {}", src_root.display()))?
+    {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
             continue;
@@ -333,7 +336,8 @@ fn overlay_descriptors(src_root: &Path, dest: &Path) -> Result<()> {
             continue;
         }
         let out_dir = dest.join(entry.file_name());
-        std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
+        std::fs::create_dir_all(&out_dir)
+            .with_context(|| format!("creating {}", out_dir.display()))?;
         std::fs::copy(&descriptor, out_dir.join("descriptor.yaml"))
             .with_context(|| format!("copying {}", descriptor.display()))?;
     }

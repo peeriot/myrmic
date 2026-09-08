@@ -274,7 +274,7 @@ macro_rules! partition_layout {
 #[macro_export]
 macro_rules! pipeline {
     () => {
-        #[cfg(feature = "pipeline")]
+#[cfg(feature = "pipeline")]
         #[rustfmt::skip]
         mod pipeline_config {
             #![allow(unused_imports, dead_code, unused_variables)]

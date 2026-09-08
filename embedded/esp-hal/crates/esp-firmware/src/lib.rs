@@ -161,18 +161,18 @@ pub use tap::{DeclareError, EventTap, Tap};
 /// because it is spliced into the entry point rather than called.
 pub use esp_firmware_macros::main;
 
+pub use embassy_embedded_hal;
 pub use embassy_executor;
-pub use esp_hal;
 pub use embassy_sync;
 pub use embassy_time;
-pub use embassy_embedded_hal;
-pub use static_cell;
-pub use signal_layer_core;
-pub use log;
-pub use wasm_runtime;
+pub use esp_hal;
 pub use esp_rtos;
+pub use log;
+pub use signal_layer_core;
 pub use signal_layer_core::{OutletRegistry, TapRegistry, Timestamp};
 pub use signal_layer_types;
+pub use static_cell;
+pub use wasm_runtime;
 pub use wasm_runtime::Pins;
 pub use wasm_storage::PartitionLayout;
 

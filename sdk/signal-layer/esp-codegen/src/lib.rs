@@ -161,7 +161,8 @@ pub fn generate_esp32_embedded(
     let drivers_root = scratch.path().join("drivers");
     let steps_root = scratch.path().join("steps");
 
-    extract_descriptors(&EMBEDDED_DRIVERS, &drivers_root).context("extracting driver descriptors")?;
+    extract_descriptors(&EMBEDDED_DRIVERS, &drivers_root)
+        .context("extracting driver descriptors")?;
     extract_descriptors(&EMBEDDED_STEPS, &steps_root).context("extracting step descriptors")?;
 
     if let Some(custom) = custom_descriptors {
@@ -171,7 +172,12 @@ pub fn generate_esp32_embedded(
             .context("overlaying custom step descriptors")?;
     }
 
-    generate_esp32(board_yaml_path, pipeline_yaml_path, &drivers_root, &steps_root)
+    generate_esp32(
+        board_yaml_path,
+        pipeline_yaml_path,
+        &drivers_root,
+        &steps_root,
+    )
 }
 
 /// Writes the `<id>/descriptor.yaml` of every top-level entry in an embedded
@@ -203,8 +209,8 @@ fn overlay_descriptors(src_root: &Path, dest: &Path) -> Result<()> {
     if !src_root.is_dir() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(src_root)
-        .with_context(|| format!("reading {}", src_root.display()))?
+    for entry in
+        std::fs::read_dir(src_root).with_context(|| format!("reading {}", src_root.display()))?
     {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {

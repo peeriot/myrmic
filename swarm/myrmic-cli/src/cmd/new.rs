@@ -192,9 +192,7 @@ fn render_project(
     };
 
     if let Err(err) = result {
-        if !preexisting
-            && let Err(io_err) = std::fs::remove_dir_all(path)
-        {
+        if !preexisting && let Err(io_err) = std::fs::remove_dir_all(path) {
             return Err(anyhow::Error::new(io_err).context(format!(
                 "unable to cleanup after template render failure: {err}"
             )));
@@ -211,7 +209,12 @@ fn render_project(
 fn module_dep_lines(repo: &models::Repo) -> (String, String) {
     let modules = esp_codegen::driver_ids()
         .into_iter()
-        .map(|id| (format!("{id}-driver"), format!("signal-modules/drivers/{id}")))
+        .map(|id| {
+            (
+                format!("{id}-driver"),
+                format!("signal-modules/drivers/{id}"),
+            )
+        })
         .chain(
             esp_codegen::step_ids()
                 .into_iter()
@@ -335,15 +338,30 @@ fn generate_pipeline_yaml(name: &str) -> String {
 fn linux_runtime_deps(repo: &models::Repo) -> String {
     let dep = |path: &str| repo.clone().resolve_or_assume_correct(path);
     let mut lines = vec![
-        format!("signal-layer-ipc      = {}", dep("sdk/signal-layer/signal-layer-ipc")),
+        format!(
+            "signal-layer-ipc      = {}",
+            dep("sdk/signal-layer/signal-layer-ipc")
+        ),
         format!(
             "signal-layer-linux-rt = {}",
             dep("swarm/signal-layer/signal-layer-linux-rt")
         ),
-        format!("linux-i2c-shim        = {}", dep("swarm/signal-layer/linux-i2c-shim")),
-        format!("linux-gpio-shim       = {}", dep("swarm/signal-layer/linux-gpio-shim")),
-        format!("linux-spi-shim        = {}", dep("swarm/signal-layer/linux-spi-shim")),
-        format!("signal-layer-core     = {}", dep("sdk/signal-layer/signal-layer-core")),
+        format!(
+            "linux-i2c-shim        = {}",
+            dep("swarm/signal-layer/linux-i2c-shim")
+        ),
+        format!(
+            "linux-gpio-shim       = {}",
+            dep("swarm/signal-layer/linux-gpio-shim")
+        ),
+        format!(
+            "linux-spi-shim        = {}",
+            dep("swarm/signal-layer/linux-spi-shim")
+        ),
+        format!(
+            "signal-layer-core     = {}",
+            dep("sdk/signal-layer/signal-layer-core")
+        ),
         format!(
             "signal-layer-types    = {}",
             with_package(
@@ -387,7 +405,12 @@ fn with_package(dep: &models::CargoDep, package: &str) -> String {
 fn linux_module_deps(repo: &models::Repo) -> String {
     esp_codegen::driver_ids()
         .into_iter()
-        .map(|id| (format!("{id}-driver"), format!("signal-modules/drivers/{id}")))
+        .map(|id| {
+            (
+                format!("{id}-driver"),
+                format!("signal-modules/drivers/{id}"),
+            )
+        })
         .chain(
             esp_codegen::step_ids()
                 .into_iter()
@@ -400,8 +423,11 @@ fn linux_module_deps(repo: &models::Repo) -> String {
 
 /// Writes `manifest.yml` and `pipeline.yml` for a Linux pipeline project.
 fn write_linux_pipeline_yamls(name: &str, path: &std::path::Path) -> anyhow::Result<()> {
-    std::fs::write(path.join("manifest.yml"), generate_linux_manifest_yaml(name))
-        .with_context(|| format!("writing {}", path.join("manifest.yml").display()))?;
+    std::fs::write(
+        path.join("manifest.yml"),
+        generate_linux_manifest_yaml(name),
+    )
+    .with_context(|| format!("writing {}", path.join("manifest.yml").display()))?;
     std::fs::write(path.join("pipeline.yml"), generate_pipeline_yaml(name))
         .with_context(|| format!("writing {}", path.join("pipeline.yml").display()))?;
     Ok(())
