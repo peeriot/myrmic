@@ -201,6 +201,32 @@ pub fn generate_module_embedded(
     Ok(strip_leading_inner_attrs(&source))
 }
 
+/// Build-script helper: generates the pipeline module from `manifest` +
+/// `pipeline` (paths relative to the crate root) into `$OUT_DIR/pipeline.rs`,
+/// which the crate includes via `mod pipeline_config`. `custom` overlays custom
+/// driver/step descriptors. Panics on error, as a build script should.
+pub fn build_pipeline(manifest: &str, pipeline: &str, custom: Option<&str>) {
+    let manifest_dir = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set for a build script"),
+    );
+    let manifest_path = manifest_dir.join(manifest);
+    let pipeline_path = manifest_dir.join(pipeline);
+    println!("cargo:rerun-if-changed={}", manifest_path.display());
+    println!("cargo:rerun-if-changed={}", pipeline_path.display());
+
+    let custom_path = custom.map(|c| manifest_dir.join(c));
+    if let Some(custom) = &custom_path {
+        println!("cargo:rerun-if-changed={}", custom.display());
+    }
+
+    let source = generate_module_embedded(&manifest_path, &pipeline_path, custom_path.as_deref())
+        .unwrap_or_else(|e| panic!("Signal Layer pipeline codegen failed:\n{e:#}"));
+
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"))
+        .join("pipeline.rs");
+    std::fs::write(&out, source).unwrap_or_else(|e| panic!("writing {}: {e}", out.display()));
+}
+
 /// Drops leading blank lines and `#![...]` inner attributes so the source can be
 /// `include!`d into a module body.
 fn strip_leading_inner_attrs(source: &str) -> String {

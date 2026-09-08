@@ -53,6 +53,15 @@ struct TemplateNewFirmwarePipeline<'a> {
     pipeline_feature_deps: String,
 }
 
+#[derive(textus::Template)]
+#[template(path = "templates/linux-pipeline", strip_suffix = ".tmpl")]
+struct TemplateNewLinuxPipeline<'a> {
+    name: &'a str,
+    runtime_deps: String,
+    module_deps: String,
+    linux_codegen: models::CargoDep,
+}
+
 pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
     let New {
         path,
@@ -66,78 +75,18 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
 
     validate_name(name)?;
 
-    if pipeline && firmware.is_none() {
-        anyhow::bail!(
-            "`--pipeline` on its own scaffolds a Linux Signal Layer project, which is not \
-             implemented yet; use `--firmware[=<chip>] --pipeline` for an embedded pipeline"
-        );
-    }
-
     match (firmware, pipeline) {
         (Some(chip), true) => {
             crate::info!(ctx, "Creating firmware pipeline '{}' for {}", name, chip);
         }
         (Some(chip), false) => crate::info!(ctx, "Creating firmware '{}' for {}", name, chip),
-        (None, _) => crate::info!(ctx, "Creating '{}'", name),
+        (None, true) => crate::info!(ctx, "Creating Linux pipeline '{}'", name),
+        (None, false) => crate::info!(ctx, "Creating '{}'", name),
     }
 
     let repo = crate::utils::resolve_repo(ctx, repo.as_deref())?;
 
-    let result = match (firmware, pipeline) {
-        (Some(chip), true) => {
-            let firmware_sdk = repo
-                .clone()
-                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
-            let firmware_build = repo
-                .clone()
-                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
-            let (module_deps, pipeline_feature_deps) = module_dep_lines(&repo);
-
-            TemplateNewFirmwarePipeline {
-                name,
-                chip: chip.name(),
-                firmware_sdk,
-                firmware_build,
-                module_deps,
-                pipeline_feature_deps,
-            }
-            .render_into(&path)
-        }
-        (Some(chip), false) => {
-            let firmware_sdk = repo
-                .clone()
-                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
-            let firmware_build =
-                repo.resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
-
-            TemplateNewFirmware {
-                name,
-                chip: chip.name(),
-                firmware_sdk,
-                firmware_build,
-            }
-            .render_into(&path)
-        }
-        (None, _) => {
-            let sdk = repo.resolve_or_assume_correct("sdk/myrmic-sdk");
-
-            TemplateNew {
-                name,
-                myrmic_sdk: sdk,
-            }
-            .render_into(&path)
-        }
-    };
-
-    if let Err(err) = result {
-        if let Err(io_err) = std::fs::remove_dir_all(&path) {
-            return Err(anyhow::Error::new(io_err).context(format!(
-                "unable to cleanup after template render failure: {}",
-                err
-            )));
-        }
-        return Err(anyhow::Error::new(err).context("failed to render template"));
-    }
+    render_project(repo, name, firmware, pipeline, &path)?;
 
     // A firmware crate also gets the partition layout for its chip - the same
     // per-chip files `modem-esp32` builds with (C5/C6 = 4 MB, C61 = 8 MB).
@@ -159,8 +108,92 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
         }
     }
 
-    if let (Some(chip), true) = (firmware, pipeline) {
-        write_pipeline_yamls(name, &path, chip)?;
+    match (firmware, pipeline) {
+        (Some(chip), true) => write_pipeline_yamls(name, &path, chip)?,
+        (None, true) => write_linux_pipeline_yamls(name, &path)?,
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Renders the selected project template into `path`, cleaning up the directory
+/// on failure.
+fn render_project(
+    repo: models::Repo,
+    name: &str,
+    firmware: Option<Chip>,
+    pipeline: bool,
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let result = match (firmware, pipeline) {
+        (Some(chip), true) => {
+            let firmware_sdk = repo
+                .clone()
+                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
+            let firmware_build = repo
+                .clone()
+                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
+            let (module_deps, pipeline_feature_deps) = module_dep_lines(&repo);
+
+            TemplateNewFirmwarePipeline {
+                name,
+                chip: chip.name(),
+                firmware_sdk,
+                firmware_build,
+                module_deps,
+                pipeline_feature_deps,
+            }
+            .render_into(path)
+        }
+        (Some(chip), false) => {
+            let firmware_sdk = repo
+                .clone()
+                .resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware");
+            let firmware_build =
+                repo.resolve_or_assume_correct("embedded/esp-hal/crates/esp-firmware-build");
+
+            TemplateNewFirmware {
+                name,
+                chip: chip.name(),
+                firmware_sdk,
+                firmware_build,
+            }
+            .render_into(path)
+        }
+        (None, true) => {
+            let linux_codegen = repo
+                .clone()
+                .resolve_or_assume_correct("sdk/signal-layer/linux-codegen");
+            let runtime_deps = linux_runtime_deps(&repo);
+            let module_deps = linux_module_deps(&repo);
+
+            TemplateNewLinuxPipeline {
+                name,
+                runtime_deps,
+                module_deps,
+                linux_codegen,
+            }
+            .render_into(path)
+        }
+        (None, false) => {
+            let sdk = repo.resolve_or_assume_correct("sdk/myrmic-sdk");
+
+            TemplateNew {
+                name,
+                myrmic_sdk: sdk,
+            }
+            .render_into(path)
+        }
+    };
+
+    if let Err(err) = result {
+        if let Err(io_err) = std::fs::remove_dir_all(path) {
+            return Err(anyhow::Error::new(io_err).context(format!(
+                "unable to cleanup after template render failure: {err}"
+            )));
+        }
+        return Err(anyhow::Error::new(err).context("failed to render template"));
     }
 
     Ok(())
@@ -288,6 +321,106 @@ fn generate_pipeline_yaml(name: &str) -> String {
          \x20\x20\x20\x20kind: retained\n\
          \x20\x20\x20\x20type: f32\n\
          \x20\x20\x20\x20source: sim.value\n"
+    )
+}
+
+/// Renders the Linux Signal Layer runtime dependency lines: git or path for the
+/// peeriot crates, versions for the crates.io ones.
+fn linux_runtime_deps(repo: &models::Repo) -> String {
+    let dep = |path: &str| repo.clone().resolve_or_assume_correct(path);
+    let mut lines = vec![
+        format!("signal-layer-ipc      = {}", dep("sdk/signal-layer/signal-layer-ipc")),
+        format!(
+            "signal-layer-linux-rt = {}",
+            dep("swarm/signal-layer/signal-layer-linux-rt")
+        ),
+        format!("linux-i2c-shim        = {}", dep("swarm/signal-layer/linux-i2c-shim")),
+        format!("linux-gpio-shim       = {}", dep("swarm/signal-layer/linux-gpio-shim")),
+        format!("linux-spi-shim        = {}", dep("swarm/signal-layer/linux-spi-shim")),
+        format!("signal-layer-core     = {}", dep("sdk/signal-layer/signal-layer-core")),
+        format!(
+            "signal-layer-types    = {}",
+            with_package(
+                &dep("sdk/signal-layer/signal-layer-types"),
+                "myrmic-signal-layer-types"
+            )
+        ),
+    ];
+    lines.push(String::from(
+        "tokio                 = { version = \"1\", features = [\"full\"] }",
+    ));
+    lines.push(String::from(
+        "tokio-stream          = { version = \"0.1\", features = [\"time\"] }",
+    ));
+    lines.push(String::from(
+        "critical-section      = { version = \"1\", features = [\"std\"] }",
+    ));
+    lines.push(String::from(
+        "log                   = { version = \"0.4\", default-features = false }",
+    ));
+    lines.push(String::from("env_logger            = \"0.11\""));
+    lines.join("\n")
+}
+
+/// Renders a [`models::CargoDep`] table with a `package = "..."` rename added.
+fn with_package(dep: &models::CargoDep, package: &str) -> String {
+    let rendered = dep.to_string();
+    match rendered.strip_suffix(" }") {
+        Some(inner) => format!("{inner}, package = \"{package}\" }}"),
+        None => format!("{{ version = {rendered}, package = \"{package}\" }}"),
+    }
+}
+
+/// Renders the driver/step dependency lines for a Linux pipeline: every shipped
+/// module, so any pipeline built from the YAMLs compiles.
+fn linux_module_deps(repo: &models::Repo) -> String {
+    esp_codegen::driver_ids()
+        .into_iter()
+        .map(|id| (format!("{id}-driver"), format!("signal-modules/drivers/{id}")))
+        .chain(
+            esp_codegen::step_ids()
+                .into_iter()
+                .map(|id| (id.clone(), format!("signal-modules/steps/{id}"))),
+        )
+        .map(|(name, path)| format!("{name} = {}", repo.clone().resolve_or_assume_correct(&path)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Writes `manifest.yml` and `pipeline.yml` for a Linux pipeline project.
+fn write_linux_pipeline_yamls(name: &str, path: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::write(path.join("manifest.yml"), generate_linux_manifest_yaml(name))
+        .with_context(|| format!("writing {}", path.join("manifest.yml").display()))?;
+    std::fs::write(path.join("pipeline.yml"), generate_pipeline_yaml(name))
+        .with_context(|| format!("writing {}", path.join("pipeline.yml").display()))?;
+    Ok(())
+}
+
+/// A starter Linux device manifest: an i2c bus by `dev_path` and a headless
+/// sim-source device.
+fn generate_linux_manifest_yaml(name: &str) -> String {
+    format!(
+        "# Linux device manifest: the devices the pipeline reads.\n\
+         id: {name}\n\
+         chip: linux\n\
+         \n\
+         # I2C buses by their Linux character device.\n\
+         buses:\n\
+         \x20\x20i2c0:\n\
+         \x20\x20\x20\x20transport: i2c\n\
+         \x20\x20\x20\x20pins: {{}}\n\
+         \x20\x20\x20\x20freq_khz: 400\n\
+         \x20\x20\x20\x20dev_path: /dev/i2c-1\n\
+         \n\
+         gpios:\n\
+         \x20\x20general_purpose: []\n\
+         \n\
+         # sim-source is synthetic and ignores the bus, so this builds and runs\n\
+         # with no hardware. Swap it for a real sensor and set the bus dev_path.\n\
+         devices:\n\
+         \x20\x20- id: sim\n\
+         \x20\x20\x20\x20driver: sim-source\n\
+         \x20\x20\x20\x20bus: i2c0\n"
     )
 }
 
