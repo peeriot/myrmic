@@ -55,6 +55,36 @@ fn embedded_ids(root: &Dir<'_>) -> Vec<String> {
     ids
 }
 
+/// The chip a board manifest targets (its `chip:` field).
+pub fn board_chip(board_yaml_path: &Path) -> Result<String> {
+    let yaml = std::fs::read_to_string(board_yaml_path)
+        .with_context(|| format!("reading board manifest: {}", board_yaml_path.display()))?;
+    let manifest = parse_manifest(&yaml)
+        .with_context(|| format!("parsing board manifest: {}", board_yaml_path.display()))?;
+    Ok(manifest.chip)
+}
+
+/// The driver/step crates a pipeline needs (drivers as `<driver>-driver`, steps
+/// by their op name). Call only on a validated board + pipeline pair.
+pub fn required_module_crates(
+    board_yaml_path: &Path,
+    pipeline_yaml_path: &Path,
+) -> Result<Vec<String>> {
+    let board_yaml = std::fs::read_to_string(board_yaml_path)
+        .with_context(|| format!("reading board manifest: {}", board_yaml_path.display()))?;
+    let manifest = parse_manifest(&board_yaml)
+        .with_context(|| format!("parsing board manifest: {}", board_yaml_path.display()))?;
+
+    let pipeline_yaml = std::fs::read_to_string(pipeline_yaml_path)
+        .with_context(|| format!("reading pipeline: {}", pipeline_yaml_path.display()))?;
+    let pipeline: PipelineFile = serde_yaml::from_str(&pipeline_yaml)
+        .with_context(|| format!("parsing pipeline: {}", pipeline_yaml_path.display()))?;
+
+    Ok(pipeline_codegen::cargo_update::required_crates(
+        &pipeline, &manifest,
+    ))
+}
+
 /// Run the full ESP32 generation pipeline from paths on disk.
 ///
 /// Reads `board_yaml_path`, `pipeline_yaml_path`, resolves driver/step

@@ -378,6 +378,20 @@ impl PipelineBuild {
             println!("cargo:rerun-if-changed={}", custom.display());
         }
 
+        // The board manifest's chip must match the chip feature the crate is
+        // built with; otherwise the generated peripherals would not match the
+        // hardware the firmware is compiled for.
+        let board_chip = esp_codegen::board_chip(&board)
+            .unwrap_or_else(|e| panic!("reading chip from {}: {e:#}", board.display()));
+        let crate_chip = detect_chip().name;
+        assert!(
+            board_chip == crate_chip,
+            "board manifest {} sets chip = \"{board_chip}\", but this crate is being built \
+             for \"{crate_chip}\"; set the board's chip to match, or build with \
+             --features {board_chip}",
+            board.display()
+        );
+
         let source = esp_codegen::generate_esp32_embedded(&board, &pipeline, custom.as_deref())
             .unwrap_or_else(|e| panic!("Signal Layer pipeline codegen failed:\n{e:#}"));
 
@@ -389,7 +403,41 @@ impl PipelineBuild {
 
         let out = out_dir().join("pipeline.rs");
         std::fs::write(&out, source).unwrap_or_else(|e| panic!("writing {}: {e}", out.display()));
+
+        // Every driver/step crate the pipeline names must be a dependency of
+        // this firmware. First-party modules are seeded by `myrmic new`; a
+        // custom one (see `.include`) has to be added by hand, so fail with a
+        // precise message rather than a raw unresolved-import error.
+        let required = esp_codegen::required_module_crates(&board, &pipeline)
+            .unwrap_or_else(|e| panic!("computing required pipeline crates: {e:#}"));
+        let declared = declared_dependencies(&manifest_dir);
+        let missing: Vec<&String> = required.iter().filter(|c| !declared.contains(*c)).collect();
+        assert!(
+            missing.is_empty(),
+            "the pipeline uses crates that are not dependencies of this firmware: {}\n\
+             Add each to [dependencies] (`<crate> = {{ git = \"...\", optional = true }}`) and \
+             to the `pipeline` feature (`\"dep:<crate>\"`). For a custom driver or step, also \
+             point `.include(...)` at its descriptor.",
+            missing
+                .iter()
+                .map(|c| c.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
+}
+
+/// The dependency names declared in a crate's `Cargo.toml` `[dependencies]`.
+fn declared_dependencies(manifest_dir: &Path) -> std::collections::BTreeSet<String> {
+    let path = manifest_dir.join("Cargo.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let doc: toml::Value =
+        toml::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+    doc.get("dependencies")
+        .and_then(toml::Value::as_table)
+        .map(|deps| deps.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Resolves a possibly-relative path against the crate root.
