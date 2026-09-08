@@ -52,7 +52,7 @@ scripts/build.sh basic-sensors --target esp32c6
 `build.sh` runs `pipeline_regen.sh` first (regenerating
 `embedded/esp-hal/modem-esp32/src/pipeline_config.rs` from the devkit manifest
 and the `basic-sensors` pipeline — that file is gitignored as a build artifact)
-and then `cargo +nightly build-c6` from the repo root. The resulting binary is
+and then `cargo +nightly-2026-08-07 build-c6` from the repo root. The resulting binary is
 at `target/riscv32imac-unknown-none-elf/release/modem-esp32`. Re-run `build.sh`
 any time you change the pipeline YAML, the manifest, a driver/step descriptor,
 or the codegen itself.

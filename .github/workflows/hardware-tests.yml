@@ -4,11 +4,14 @@ on:
   schedule:
     - cron: '44 1 * * 1-5'
 
+env:
+  RUST_NIGHTLY: "nightly-2026-08-07"
+
 jobs:
   hil-esp32c5:
     runs-on: hardware
     container:
-      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
         HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
         HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
@@ -38,11 +41,11 @@ jobs:
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C5, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c5
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +$RUST_NIGHTLY build-c5
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C5)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c5 --features wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +$RUST_NIGHTLY build-c5 --features wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
@@ -72,7 +75,7 @@ jobs:
     needs: hil-esp32c5
     if: ${{ !cancelled() }}
     container:
-      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
         HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
         HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
@@ -102,11 +105,11 @@ jobs:
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C6, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c6
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +$RUST_NIGHTLY build-c6
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C6)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c6 --features wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +$RUST_NIGHTLY build-c6 --features wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
@@ -134,7 +137,7 @@ jobs:
     needs: hil-esp32c6
     if: ${{ !cancelled() }}
     container:
-      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.95.0"
+      image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
         HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
         HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
@@ -164,11 +167,11 @@ jobs:
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C61, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c61
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +$RUST_NIGHTLY build-c61
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C61)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +nightly build-c61 --features wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 cargo +$RUST_NIGHTLY build-c61 --features wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm

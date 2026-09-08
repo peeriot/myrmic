@@ -170,7 +170,7 @@ pub(crate) fn compile_cell(
 
     let mut cmd = Command::new("cargo");
     cmd.args([
-        "+nightly",
+        "+nightly-2026-08-07",
         "rustc",
         "--release",
         "--target",
