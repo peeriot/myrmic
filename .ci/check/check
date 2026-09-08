@@ -6,6 +6,7 @@ export SCRIPT_DIR="$(dirname "$0")"
 
 ALL_TARGETS=${ALL_TARGETS:-true}
 ONLY_TEST_PACKAGES=${ONLY_TEST_PACKAGES:-}
+SKIP_CHECKS=${SKIP_CHECKS:-false}
 SKIP_TESTS=${SKIP_TESTS:-false}
 CARGO_CHANNEL=${CARGO_CHANNEL:-}
 COMMAND_SUFFIX=${COMMAND_SUFFIX:-}
@@ -44,37 +45,39 @@ cargo \
     --version
 
 
-# Run cargo fmt
-printf "\n\n--== Check Code Formatting ==--\n\n"
-cargo fmt --all \
-    -- \
-        --check
+if [[ "$SKIP_CHECKS" != "true" ]]; then
+    # Run cargo fmt
+    printf "\n\n--== Check Code Formatting ==--\n\n"
+    cargo fmt --all \
+        -- \
+            --check
 
 
-# Check the package lists still cover the workspace, before the expensive steps.
-if [ -z "$COMMAND_SUFFIX" ]; then
-    printf "\n\n--== Check List Coverage ==--\n\n"
-    "$SCRIPT_DIR/coverage"
+    # Check the package lists still cover the workspace, before the expensive steps.
+    if [ -z "$COMMAND_SUFFIX" ]; then
+        printf "\n\n--== Check List Coverage ==--\n\n"
+        "$SCRIPT_DIR/coverage"
+    fi
+
+
+    # Run cargo clippy
+    printf "\n\n--== Run Linter ==--\n\n"
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+        clippy"$COMMAND_SUFFIX" \
+        ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
+        -- \
+            --deny "warnings"
+
+
+    # Run cargo doc
+    printf "\n\n--== Check Doc ==--\n\n"
+
+    RUSTDOCFLAGS="-D warnings" \
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+        doc"$COMMAND_SUFFIX" \
+        --no-deps \
+        --document-private-items
 fi
-
-
-# Run cargo clippy
-printf "\n\n--== Run Linter ==--\n\n"
-cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
-    clippy"$COMMAND_SUFFIX" \
-    ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
-    -- \
-        --deny "warnings"
-
-
-# Run cargo doc
-printf "\n\n--== Check Doc ==--\n\n"
-
-RUSTDOCFLAGS="-D warnings" \
-cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
-    doc"$COMMAND_SUFFIX" \
-    --no-deps \
-    --document-private-items
 
 
 # Check the SDK crates
@@ -88,19 +91,21 @@ if [ -z "$COMMAND_SUFFIX" ]; then
 
     SDK_PACKAGES=(-p myrmic-common -p myrmic-sdk -p myrmic-sdk-macros -p myrmic-signal-layer-types)
 
-    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
-        clippy \
-        "${SDK_PACKAGES[@]}" \
-        ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
-        -- \
-            --deny "warnings"
+    if [[ "$SKIP_CHECKS" != "true" ]]; then
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            clippy \
+            "${SDK_PACKAGES[@]}" \
+            ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
+            -- \
+                --deny "warnings"
 
-    RUSTDOCFLAGS="-D warnings" \
-    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
-        doc \
-        "${SDK_PACKAGES[@]}" \
-        --no-deps \
-        --document-private-items
+        RUSTDOCFLAGS="-D warnings" \
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            doc \
+            "${SDK_PACKAGES[@]}" \
+            --no-deps \
+            --document-private-items
+    fi
 
     if [[ "$SKIP_TESTS" != "true" ]]; then
         cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
