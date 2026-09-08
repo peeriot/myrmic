@@ -229,6 +229,87 @@ fn local_sdk() -> PathBuf {
         .join("sdk/myrmic-sdk")
 }
 
+/// The repository root, used as `--sdk` for a firmware pipeline so the
+/// scaffolder resolves driver/step crates under `signal-modules/`.
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+#[test]
+fn new_firmware_pipeline_scaffolds_board_and_pipeline() {
+    let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
+    let fw = project.path().join("demo");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
+        .args(["new", "--firmware=esp32c6", "--pipeline"])
+        .arg(&fw)
+        .arg("--sdk")
+        .arg(repo_root())
+        .output()
+        .expect("failed to run myrmic new");
+    assert!(
+        output.status.success(),
+        "myrmic new failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let board = std::fs::read_to_string(fw.join("board.yml")).expect("board.yml is scaffolded");
+    assert!(board.contains("chip: esp32c6"), "board.yml keeps the chip:\n{board}");
+    assert!(board.contains("driver: sim-source"), "board.yml has the sim device:\n{board}");
+    assert!(
+        board.contains("general_purpose: ["),
+        "board.yml lists usable pins:\n{board}"
+    );
+
+    let pipeline = std::fs::read_to_string(fw.join("pipeline.yml")).expect("pipeline.yml");
+    assert!(pipeline.contains("device: sim"), "pipeline uses the sim source:\n{pipeline}");
+    assert!(pipeline.contains("kind: retained"), "pipeline exposes a tap:\n{pipeline}");
+
+    let manifest = std::fs::read_to_string(fw.join("Cargo.toml")).expect("Cargo.toml");
+    assert!(manifest.contains("pipeline = ["), "a pipeline feature is present:\n{manifest}");
+    assert!(
+        manifest.contains("sim-source-driver ="),
+        "the sim-source driver is seeded:\n{manifest}"
+    );
+    assert!(
+        manifest.contains("\"dep:sim-source-driver\""),
+        "the pipeline feature enables the driver dep:\n{manifest}"
+    );
+    assert!(
+        !manifest.lines().any(|line| line.starts_with("esp-hal =")),
+        "a pipeline firmware needs no direct esp-hal dependency:\n{manifest}"
+    );
+
+    let main = std::fs::read_to_string(fw.join("src/main.rs")).expect("main.rs");
+    assert!(main.contains("esp_firmware::pipeline!()"), "main pulls in the pipeline:\n{main}");
+    assert!(main.contains("pipeline_pins!"), "main claims the pipeline pins:\n{main}");
+
+    let _ = project.close();
+}
+
+#[test]
+fn new_pipeline_without_firmware_is_rejected() {
+    let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
+        .args(["new", "--pipeline"])
+        .arg(project.path().join("x"))
+        .arg("--sdk")
+        .arg(repo_root())
+        .output()
+        .expect("failed to run myrmic new");
+
+    assert!(!output.status.success(), "--pipeline without --firmware should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--firmware"),
+        "the error should point at --firmware, got:\n{stderr}"
+    );
+
+    let _ = project.close();
+}
+
 /// `--sdk <version>` scaffolds a registry dependency in cargo's canonical short
 /// form — what a release CLI bakes in as its default via `MYRMIC_SDK_VERSION`.
 #[test]
