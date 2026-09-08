@@ -5,9 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Cells need nightly for -Zbuild-std. Use the pinned channel the workflow passes,
-# rather than whatever floating `nightly` happens to be in the rustup volume.
-CARGO_CHANNEL=${CARGO_CHANNEL:-nightly}
+# Cells need nightly for -Zbuild-std. Dated rather than floating: `nightly` moves
+# on its own, and the set of lints it denies moves with it, so CI and a local run
+# stop agreeing on what clean means. The workflow passes the same date.
+CARGO_CHANNEL=${CARGO_CHANNEL:-nightly-2026-08-07}
 
 # Cell crates are `cdylib` and pull wasm-only SDK features, so they cannot join
 # `default-members` and are invisible to Check Code. This job is their only linter.
