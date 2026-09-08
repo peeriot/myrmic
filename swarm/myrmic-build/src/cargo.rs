@@ -158,14 +158,24 @@ fn locate_project(path: &Path) -> std::io::Result<PathBuf> {
         cmd.current_dir(path);
     } else {
         cmd.arg("--manifest-path").arg(path);
+        // Anchor cargo's working directory to the crate so toolchain resolution is driven by the
+        // crate's own `rust-toolchain.toml`, not by wherever `myrmic` happened to be invoked.
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            cmd.current_dir(dir);
+        }
     }
 
-    let out = cmd.output()?;
+    // Capture stdout (the manifest path, parsed below) but let stderr reach the
+    // terminal: resolving the manifest goes through the rustup proxy, which may
+    // auto-install a pinned-but-missing toolchain here and reports its progress
+    // on stderr. Inheriting it keeps that install visible instead of swallowed.
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::inherit());
+
+    let out = cmd.spawn()?.wait_with_output()?;
 
     if !out.status.success() {
-        return Err(std::io::Error::other(
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        ));
+        return Err(std::io::Error::other("cargo locate-project failed"));
     }
 
     let stdout = std::str::from_utf8(&out.stdout)
@@ -187,12 +197,28 @@ fn run_metadata(manifest_path: Option<&Path>) -> anyhow::Result<Value> {
     cmd.args(["metadata", "--format-version", "1", "--no-deps"]);
     if let Some(path) = manifest_path {
         cmd.arg("--manifest-path").arg(path);
+        // Anchor cargo's working directory to the crate so toolchain resolution is driven by the
+        // crate's own `rust-toolchain.toml`, not by wherever `myrmic` happened to be invoked.
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            cmd.current_dir(dir);
+        }
     }
 
-    let out = cmd.output()?;
+    // Capture stdout (the manifest path, parsed below) but let stderr reach the
+    // terminal: resolving the manifest goes through the rustup proxy, which may
+    // auto-install a pinned-but-missing toolchain here and reports its progress
+    // on stderr. Inheriting it keeps that install visible instead of swallowed.
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::inherit());
+
+    let out = cmd
+        .spawn()
+        .context("failed to run cargo metadata")?
+        .wait_with_output()
+        .context("failed to run cargo metadata")?;
 
     if !out.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).into_owned())
+        anyhow::bail!("cargo metadata failed");
     }
 
     serde_json::from_slice(&out.stdout).context("unable to parse cargo-metadata")

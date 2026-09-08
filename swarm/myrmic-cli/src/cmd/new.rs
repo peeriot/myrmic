@@ -19,6 +19,7 @@ pub struct New {
 struct TemplateNew<'a> {
     name: &'a str,
     myrmic_sdk: models::CargoDep,
+    toolchain: &'a str,
 }
 
 pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
@@ -35,6 +36,7 @@ pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
     let template = TemplateNew {
         name,
         myrmic_sdk: sdk,
+        toolchain: myrmic_build::TOOLCHAIN,
     };
 
     if let Err(err) = template.render_into(&path) {
