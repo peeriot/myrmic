@@ -136,7 +136,7 @@ You may notice the reading jumped - from the high 50s before the kill to the mid
 
 - A runtime carries **tags**, some automatic (`linux`, `@<id>`), some given at start (`--tag`). A cell **requires** tags with `-t`, and is only placed on a runtime that carries all of them.
 - A requirement pins a cell to hardware. The sensor lives on `node1` because the probe does; no other node ever qualifies.
-- `--policy always` makes the swarm restart a cell that stopped for any reason other than being removed. If no qualifying runtime exists, it waits; when one appears, the cell is back within about 20 seconds.
+- `--policy always` makes the swarm restart a cell that stopped for any reason other than being removed. If no qualifying runtime exists, it waits; when one appears, the cell is back within a few seconds.
 - `myrmic cells` tells you where each cell runs; `myrmic network status` translates the runtime id to a name; `myrmic runtimes list` gives you the process id to kill.
 
 Next: [Part 2 - The Grow-Bed and Its State](./02_the-grow-bed-and-its-state.md), where the cell can move - and its memory may not follow.

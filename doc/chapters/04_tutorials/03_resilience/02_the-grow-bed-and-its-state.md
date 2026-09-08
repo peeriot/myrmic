@@ -42,7 +42,7 @@ myrmic subscribe bed_state
 ```text
 [2026-09-06T18:58:53.954Z] event=bed_state sender=fd02ce9b-... payload=75 bytes
 {
-  "moisture": 37.399895,
+  "moisture": 62.399895,
   "pump_on": false,
   "target_high": 75.0,
   "target_low": 55.0

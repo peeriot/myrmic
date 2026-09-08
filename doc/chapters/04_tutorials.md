@@ -2,6 +2,6 @@
 
 Tutorials are hands-on walkthroughs that teach Myrmic by doing. Unlike guides - which explain individual concepts - tutorials take you through a complete task from start to finish, leaving you with a working result and a deeper understanding of how things fit together.
 
-- [Smart Greenhouse](./04_tutorials/02_smart-greenhouse.md) - Build a four-cell application on one computer - mock sensor, pump, asset, and agent - with a live web dashboard served by the Myrmic gateway.
+- [Smart Greenhouse](./04_tutorials/02_smart-greenhouse.md) - Build a five-cell application on one computer - mock sensor, pump, grow bed, agent, and dashboard - with a live web frontend served by the Myrmic gateway.
 - [Resilience](./04_tutorials/03_resilience.md) - Run the greenhouse's sensor and grow-bed across three runtimes, kill nodes, and learn how placement tags, restart policies and `myrmic replicate` decide whether a cell - and its state - comes back.
 - [Observability](./04_tutorials/06_observability.md) - Set up and use Myrmic's observability stack: logs, traces, and metrics.

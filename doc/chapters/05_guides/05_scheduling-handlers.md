@@ -1,4 +1,4 @@
-# Schedule Handlers
+# Scheduling Handlers
 
 A cell is event-driven - it waits for a command or event to arrive, handles it, then goes idle. Cell handlers run on a single thread, so while a handler is running, the cell cannot process other incoming messages. An infinite loop inside a handler - polling a sensor, for example - would block the cell entirely. For this reason, Myrmic provides the possibility to schedule handlers to run code at a fixed interval or after a delay.
 
@@ -122,6 +122,10 @@ The SDK provides `delay`, it takes:
 It returns a builder. Call `.build()` to create the timer and get back a handle.
 
 After the handler fires, the handle in state is no longer valid - the timer has already run and there is nothing left to cancel.
+
+## Timers and restarts
+
+Timers live with the cell instance. A cell that restarts, is redeployed, or moves to another node comes back with no timers - re-arm them from your initialization handler if the schedule has to survive.
 
 ## Cancelling a timer
 

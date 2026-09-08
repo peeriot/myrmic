@@ -13,7 +13,7 @@ Today, when a Node is lost:
 - Myrmic detects the departure,
 - affected deployments are removed,
 - the failure is reported explicitly,
-- the Cell does not automatically resume on another Node,
+- the Cell is restarted on another qualifying Node if it was deployed with a restart policy, but never resumed - it begins from stored State, not from where it stopped,
 - State or Mailbox data held only on the lost Node can be lost with it.
 
 This is conservative by design. Starting an empty Cell under the old identity would claim continuity that did not actually exist.

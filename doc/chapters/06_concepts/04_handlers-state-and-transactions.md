@@ -18,7 +18,7 @@ The model groups three operations:
 - changing the Cell's State,
 - writing outbound Messages.
 
-This unit is local to one Node. A destination mailbox whose data lives on another Node remains outside that local transaction boundary until Continuity adds support across Nodes.
+This unit is local to one Node. A destination mailbox whose data lives on another Node remains outside that local transaction boundary until Durability adds support across Nodes.
 
 The exact current behaviour after a Handler fails is release-sensitive. It is stated only on the [Guarantees](../08_guarantees.md) page.
 

@@ -36,7 +36,7 @@ Today:
 
 - authority uses one coordinator selected by lowest ID,
 - Cell data is held as one copy by default,
-- one Cell instance serves, but redeployment does not yet fully prevent a brief overlap.
+- one Cell instance serves; redeploying a class that has active instances is refused, so you delete the instance first.
 
 The [Guarantees](../08_guarantees.md) page states the exact current contract.
 
@@ -85,7 +85,7 @@ myrmic build ./my-cell
 myrmic runtimes start --detached
 myrmic deploy ./my-cell
 myrmic send my-cell increment
-myrmic telemetry debug --sri my-cell
+myrmic telemetry debug --id my-cell
 ```
 
 > **Create · Build · Run · Deploy · Interact · Observe**

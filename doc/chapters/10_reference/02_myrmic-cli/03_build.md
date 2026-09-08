@@ -72,7 +72,7 @@ myrmic build ./my-workspace
 4. Build an application suite from a specification file:
 
 ```bash
-myrmic build ./my-app/app.yml
+myrmic build ./my-app/app_specs.yml
 ```
 
 5. Select a specific cargo target:

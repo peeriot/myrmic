@@ -6,7 +6,7 @@ A Myrmic runtime can be configured in two ways:
 
 Both options are applied at startup with `myrmic runtimes start`. See [myrmic runtimes start](../02_myrmic-cli/04_runtimes/01_start.md) for details and examples.
 
-When starting a runtime without a config file or CLI flags, it starts with built-in defaults. A restart is required to apply any configuration change.
+When starting a runtime without a config file or CLI flags, it starts with built-in defaults. A restart is required to apply a configuration change, except for `telemetry.db_retention` and `telemetry.logs.env_filter`, which can be changed on a running runtime.
 
 This page covers configuration through the YAML file. It is structured as top-level sections, each controlling a specific aspect of the runtime.
 
@@ -29,7 +29,7 @@ Configures the execution behavior.
 
 Configures storage behavior.
 
-- `directory` *(optional)* - Path to the directory where data is stored on disk. If omitted, data is stored in-memory and lost on restart.
+- `directory` *(optional)* - Path to the directory where data is stored on disk. If omitted, the runtime uses a persistent database under its data folder (`~/.local/share/myrmic/<id>/db` on Linux). Start the runtime with [`runtimes start --tmp`](../02_myrmic-cli/04_runtimes/01_start.md) for an in-memory database that is lost on restart.
 - `gc_interval` *(optional)* - Garbage collection scan interval. Accepts [humantime](https://docs.rs/humantime/latest/humantime/) duration strings (e.g. `"100ms"`, `"30s"`, `"1min"`). Defaults to `"60s"`.
 - `tx_idle_timeout` *(optional)* - How long an RPC transaction may sit unused before the store rolls it back. Accepts [humantime](https://docs.rs/humantime/latest/humantime/) duration strings. Defaults to `"5min"`.
 - `load_from` *(optional)* - Loads files from disk into the database as blobs at startup. Each entry accepts:
