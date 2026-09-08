@@ -5,10 +5,10 @@ registry, and the `pipeline-codegen` library) live under
 [`sdk/signal-layer/`](../../../sdk/signal-layer/); this directory holds the ESP32 pieces that turn
 them into firmware:
 
-- **`esp-codegen/`** — the `esp-codegen` binary. Implements the `ChipBackend` seam from
+- **`esp-codegen/`** — the `esp-codegen` library. Implements the `ChipBackend` seam from
   `pipeline-codegen` (ESP peripheral construction, imports, bus types) and drives generation:
-  a board manifest + a pipeline YAML → the `pipeline_config.rs` the `modem-esp32` firmware
-  includes.
+  a board manifest + a pipeline YAML → the pipeline module the `modem-esp32` firmware includes,
+  generated at build time via `esp-firmware-build`.
 - **`boards/`** — **board manifests**: pure hardware descriptions of a specific device (buses,
   pins, ADCs, which sensors are wired where, hardware-scope config like I²C addresses). One
   file per board.

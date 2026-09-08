@@ -41,7 +41,7 @@ the chip from the crate that invokes it.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `esp32c6` (default) / `esp32c5` / `esp32c61` | Target SoC. `esp32c5` and `esp32c61` enable `ble` automatically.                              |
 | `ble`                            | NimBLE BLE host stack (user transport). Costs significant RAM — see the [capability matrix](../README.md).|
-| `pipeline`                       | Enables the Signal Layer firmware glue. Managed by `esp-codegen` — see [`../signal-layer/`](../signal-layer/); not committed by hand. |
+| `pipeline`                       | Enables the Signal Layer pipeline, generated at build time by `build.rs` (via `esp-codegen`) from a board manifest + pipeline YAML — see [`../signal-layer/`](../signal-layer/). Select them with `SIGNAL_LAYER_BOARD` / `SIGNAL_LAYER_PIPELINE`. |
 | `report`                         | Emit heap-stats snapshots at key milestones.                                                              |
 
 See the [`esp-hal` README](../README.md) for the supported-chip capability matrix and the full

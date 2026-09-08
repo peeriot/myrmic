@@ -308,12 +308,19 @@ use `esp32c5-hil` / `esp32c61-hil` for those chips). Build it — like the cell
 firmware, the harness never builds it for you:
 
 ```sh
-cd sdk/signal-layer
-scripts/build.sh hil-tests --board esp32c6-hil
+SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml \
+SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml \
+    cargo +nightly build-c6 --features pipeline,wdt-selftest
 ```
 
-That regenerates `modem-esp32/src/pipeline_config.rs` (gitignored) and builds the
-ELF at the usual `target/riscv32imac-unknown-none-elf/release/modem-esp32`.
+The `SIGNAL_LAYER_*` vars (paths relative to `embedded/esp-hal/modem-esp32`, or
+absolute) select the board manifest and pipeline the firmware's `build.rs`
+generates; `pipeline` compiles the generated dataplane and `wdt-selftest` the
+fault injection the watchdog tests need — CI builds this same combination, so an
+image missing either fails those tests. Use `build-c5` / `build-c61` with the
+matching `*-hil` board for those chips. The pipeline is generated into the
+crate's `OUT_DIR`, and the ELF lands at the usual
+`target/riscv32imac-unknown-none-elf/release/modem-esp32`.
 Because that is the *same* path the cell-test ELF uses, keep the two straight:
 either rebuild whichever firmware you're testing right before its run, or build
 the pipeline ELF elsewhere and point the harness at it with **`EMBEDDED_ELF`**:

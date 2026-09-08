@@ -10,14 +10,16 @@
 #
 # Published as: ghcr.io/peeriot/edgevance-node-buildenv
 #
-# Mount the monorepo at /work and run any script from sdk/signal-layer/scripts/:
+# Mount the monorepo at /work and build the firmware with the cargo aliases (the
+# pipeline is generated at build time; SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE
+# select the board manifest and pipeline, defaulting to the devkit + basic-sensors):
 #
 #   docker run --rm \
-#     -v $(pwd):/work \
+#     -v $(pwd):/work -w /work \
 #     -v edgevance-node-cargo-cache:/cache/cargo \
 #     -v $SSH_AUTH_SOCK:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent \
 #     ghcr.io/peeriot/edgevance-node-buildenv \
-#     /work/sdk/signal-layer/scripts/build.sh basic-sensors
+#     cargo +nightly build-c6 --features pipeline
 
 # ── Stage 1: build wamrc (WAMR 2.4.4 AOT compiler) ───────────────────────────
 FROM ubuntu:24.04 AS wamrc-builder

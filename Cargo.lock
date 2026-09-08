@@ -4034,7 +4034,6 @@ name = "esp-codegen"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "clap",
  "include_dir",
  "indexmap 2.14.0",
  "pipeline-codegen",
@@ -7177,7 +7176,6 @@ name = "linux-codegen"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "clap",
  "include_dir",
  "indexmap 2.14.0",
  "pipeline-backend-api",
@@ -7578,17 +7576,26 @@ dependencies = [
 name = "modem-esp32"
 version = "0.4.0"
 dependencies = [
- "embassy-embedded-hal",
- "embassy-sync 0.8.0",
- "embassy-time",
+ "ads1115-driver",
+ "bme280-driver",
+ "bmp180-driver",
+ "cadence",
+ "ccs811-driver",
  "esp-firmware",
  "esp-firmware-build",
- "esp-hal",
- "log",
- "myrmic-signal-layer-types",
- "signal-layer-core",
- "static_cell",
+ "fan-curve",
+ "gpio-output-driver",
+ "gpio-output-feedback-driver",
+ "hysteresis",
+ "max-value",
+ "min-value",
+ "moving-average",
+ "pwm-output-driver",
+ "sim-source-driver",
+ "threshold-trigger",
+ "veml7700-driver",
  "wasm-runtime",
+ "wsen-itds-driver",
 ]
 
 [[package]]

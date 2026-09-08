@@ -7,7 +7,7 @@ Linux-side crates for FEAT-2026-SIG-002 (Signal Layer on Linux).
 | `signal-layer-ipc` | IPC protocol types, framing, versioned tap server and client |
 | `signal-layer-linux-rt` | Fenced time seam (`time::now_millis`) and IPC-server bootstrap for generated pipelines |
 | `linux-i2c-shim` | `embedded_hal_async::i2c::I2c` over blocking `i2cdev` via `spawn_blocking` |
-| `linux-codegen` | `LinuxChipBackend` codegen CLI; generates a tokio pipeline crate from a pipeline YAML + Linux manifest |
+| `linux-codegen` | `LinuxChipBackend` codegen library; generates a tokio pipeline from a pipeline YAML + Linux manifest (used by `myrmic new --pipeline` and the pipeline `build.rs`) |
 
 ## D7 probe result (collision confirmed; test-filter remediation applied)
 

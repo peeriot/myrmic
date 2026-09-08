@@ -28,21 +28,21 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           access-private-key: ${{ secrets.CI_APP_SECRET }}
-      # The signal-layer suite needs the pipeline compiled into the firmware. Without this the
-      # taps do not exist and those tests cannot pass, whatever the rig is wired to.
-      - name: Generate signal-layer pipeline (esp32c5-hil)
-        run: |
-          sdk/signal-layer/scripts/pipeline_regen.sh hil-tests --board esp32c5-hil --target esp32c5
+      # The signal-layer suite needs the pipeline compiled into the firmware; the
+      # firmware's build.rs generates it from the board manifest and pipeline YAML
+      # named by SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE (relative to the
+      # modem-esp32 crate). Without the `pipeline` feature the taps do not exist and
+      # those tests cannot pass, whatever the rig is wired to.
       # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
       # without the test features. Built first and copied aside, so the wdt-selftest build below
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C5, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 cargo +nightly build-c5
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +nightly build-c5 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C5)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 cargo +nightly build-c5 --features wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +nightly build-c5 --features pipeline,wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
@@ -92,21 +92,21 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           access-private-key: ${{ secrets.CI_APP_SECRET }}
-      # The signal-layer suite needs the pipeline compiled into the firmware. Without this the
-      # taps do not exist and those tests cannot pass, whatever the rig is wired to.
-      - name: Generate signal-layer pipeline (esp32c6-hil)
-        run: |
-          sdk/signal-layer/scripts/pipeline_regen.sh hil-tests --board esp32c6-hil --target esp32c6
+      # The signal-layer suite needs the pipeline compiled into the firmware; the
+      # firmware's build.rs generates it from the board manifest and pipeline YAML
+      # named by SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE (relative to the
+      # modem-esp32 crate). Without the `pipeline` feature the taps do not exist and
+      # those tests cannot pass, whatever the rig is wired to.
       # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
       # without the test features. Built first and copied aside, so the wdt-selftest build below
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C6, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 cargo +nightly build-c6
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +nightly build-c6 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C6)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 cargo +nightly build-c6 --features wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +nightly build-c6 --features pipeline,wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
@@ -154,21 +154,21 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           access-private-key: ${{ secrets.CI_APP_SECRET }}
-      # The signal-layer suite needs the pipeline compiled into the firmware. Without this the
-      # taps do not exist and those tests cannot pass, whatever the rig is wired to.
-      - name: Generate signal-layer pipeline (esp32c61-hil)
-        run: |
-          sdk/signal-layer/scripts/pipeline_regen.sh hil-tests --board esp32c61-hil --target esp32c61
+      # The signal-layer suite needs the pipeline compiled into the firmware; the
+      # firmware's build.rs generates it from the board manifest and pipeline YAML
+      # named by SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE (relative to the
+      # modem-esp32 crate). Without the `pipeline` feature the taps do not exist and
+      # those tests cannot pass, whatever the rig is wired to.
       # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
       # without the test features. Built first and copied aside, so the wdt-selftest build below
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C61, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 cargo +nightly build-c61
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +nightly build-c61 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C61)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 cargo +nightly build-c61 --features wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +nightly build-c61 --features pipeline,wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
