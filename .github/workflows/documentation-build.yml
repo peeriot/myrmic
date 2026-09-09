@@ -30,7 +30,7 @@ jobs:
 
   build-book:
     name: Build Book
-    runs-on: general
+    runs-on: docu
     if: |
       github.repository == 'peeriot/swarm' &&
       (
@@ -72,7 +72,7 @@ jobs:
 
   build-docs:
     name: Build Docs
-    runs-on: general
+    runs-on: docu
     if: |
       github.repository == 'peeriot/swarm' &&
       (
