@@ -5,7 +5,6 @@ edition.workspace = true
 license           = "MIT OR Apache-2.0"
 description       = "SDK for writing Myrmic cells (WASM modules deployed and managed by the sorg infrastructure): host function bindings for db, tap, outlet, gpio, ble, gateway, cell messaging, logging and time, plus the #[cmd]/#[monitor] export macros."
 repository        = "https://github.com/peeriot/myrmic"
-readme            = "README.md"
 keywords          = ["myrmic", "wasm", "sdk", "embedded"]
 categories        = ["embedded", "wasm", "api-bindings"]
 publish           = true
