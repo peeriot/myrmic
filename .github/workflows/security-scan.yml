@@ -10,6 +10,11 @@
 #   --detect.wait.for.results=true
 
 name: Black Duck Security Scan
+
+# What: Black Duck SCA scan.
+# Where: swarm only, GitHub-hosted. Needs the organisation's BLACKDUCKSCA_URL, which
+#        the public mirror cannot see.
+# When: push, pull request, manual dispatch.
 on:
   push:
     branches:
@@ -21,9 +26,10 @@ on:
 jobs:
   blackducksca:
     runs-on: ubuntu-latest
+    if: github.repository == 'peeriot/swarm'
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Black Duck Security Scan
         id: black-duck-security-scan

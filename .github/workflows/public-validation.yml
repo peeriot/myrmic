@@ -1,0 +1,79 @@
+name: Public Validation
+
+# The validation the public mirror runs. It exists because master is mirrored to
+# peeriot/myrmic verbatim, and the internal workflows cannot run there: they need
+# private actions, the private CI image and the self-hosted runners.
+#
+# This one needs none of that. No secrets, no organisation variables, no private
+# actions, so it resolves and runs in a public repository and in a fork of it.
+#
+# It is not a second definition of what gets checked. It calls `.ci/check/check`
+# with the package list from `.ci/check/test-packages`, the same as the internal
+# `check_swarm` job in internal-validation.yml. Only the way it is started differs.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [ 'opened', 'reopened', 'synchronize', 'ready_for_review' ]
+  workflow_dispatch:
+
+jobs:
+
+  # `ubuntu-latest` is written out literally rather than derived from an
+  # expression. The public repository can reach the self-hosted runners, so a
+  # label that resolved to one would put pull request code on our own machines.
+  #
+  # Split in two because every fork pull request starts from a cold cache, and a
+  # formatting error should surface in minutes rather than after the full test run.
+
+  guidelines:
+    name: Guidelines
+    runs-on: ubuntu-latest
+    if: github.repository == 'peeriot/myrmic'
+    permissions:
+      contents: read
+    concurrency:
+      group: guidelines-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: guidelines
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Check
+        run: .ci/check/check
+        env:
+          SKIP_TESTS: "true"
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    if: github.repository == 'peeriot/myrmic'
+    permissions:
+      contents: read
+    concurrency:
+      group: tests-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tests
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      # `cargo citest` is an alias for `cargo nextest run`. Installed from the
+      # upstream release rather than through a third-party action to keep this
+      # job's supply chain to actions/* plus one pinned cache action.
+      - name: Install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+
+      - name: Test
+        run: .ci/check/check
+        env:
+          SKIP_CHECKS: "true"

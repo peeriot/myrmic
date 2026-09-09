@@ -171,11 +171,12 @@ macro:
 
 ### 7. CI
 
-**File:** [`.github/workflows/push-validation.yml`](../../.github/workflows/push-validation.yml)
+**File:** [`.github/workflows/internal-validation.yml`](../../.github/workflows/internal-validation.yml)
 
-Add a `check_*` job (copy `check_c6`) that runs the `.ci/check/check` script with
-`COMMAND_SUFFIX: -*` (this selects the `*-*` cargo aliases), `CARGO_CHANNEL: nightly`,
-`SKIP_TESTS: true`. Add a matching `check_*` `workflow_dispatch` input so the job can be triggered manually.
+Add the chip to the `chip` list of the `check_embedded` matrix. The job derives
+`COMMAND_SUFFIX: -<chip>` from it, which selects the `*-<chip>` cargo aliases, and already sets
+`CARGO_CHANNEL` and `SKIP_TESTS: true`. Nothing else needs adding: the single `check_embedded`
+`workflow_dispatch` input covers every chip in the matrix.
 
 ---
 

@@ -1,5 +1,11 @@
 name: Release
 
+# What: promotes an approved candidate - verifies its artifacts, publishes the
+#       packages and the SDK crates, fast-forwards the public mirror to the release
+#       commit and creates the release there.
+# Where: swarm only, self-hosted `general`, inside the archiver image.
+# When: a release is published.
+
 on:
   release:
     types: [published]
@@ -30,10 +36,10 @@ jobs:
   # Everything reversible runs first; the steps whose effects reach outside this
   # repository run last and are marked below.
   release:
-    if: github.repository != 'peeriot/myrmic' &&
+    runs-on: general
+    if: github.repository == 'peeriot/swarm' &&
         !github.event.release.draft &&
         startsWith(github.event.release.tag_name, 'myrmic/v')
-    runs-on: general
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-4"
 
@@ -218,6 +224,7 @@ jobs:
   publish-crates:
     needs: release
     runs-on: general
+    if: github.repository == 'peeriot/swarm'
     environment: crates-io-release
     # No cargo cache volume, deliberately: a cache mounted into the job that
     # holds the registry credential is writable by anything that runs in it. The cost
@@ -237,7 +244,7 @@ jobs:
           access-private-key: ${{ secrets.CI_APP_SECRET }}
 
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@v6
         with:
           path: source
           fetch-depth: 0

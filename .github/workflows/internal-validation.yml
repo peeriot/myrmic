@@ -1,0 +1,329 @@
+name: Internal Validation
+
+# What: everything swarm validates that the public mirror cannot - licenses, the
+#       interface, release-rule and coverage self-tests, the host check, the MSRV
+#       check, the end-to-end regression, the three embedded targets and the WASM
+#       cells.
+# Where: swarm only, self-hosted `general`, inside the CI images.
+# When: push to master, merge queue, non-draft pull requests, manual dispatch.
+#
+# The host check shares `.ci/check/check` and `.ci/check/test-packages` with
+# public-validation.yml, which runs the same two things on a GitHub-hosted runner
+# in peeriot/myrmic. Only the way they are started differs.
+
+on:
+  push:
+    branches:
+      - master
+  merge_group:
+  pull_request:
+    types: [ 'opened', 'reopened', 'synchronize', 'ready_for_review' ]
+  workflow_dispatch:
+    inputs:
+      verify_licenses:
+        description: "Verify Licenses"
+        required: false
+        type: boolean
+      check_swarm:
+        description: "Check Swarm"
+        required: false
+        type: boolean
+      check_msrv:
+        description: "Check MSRV"
+        required: false
+        type: boolean
+      myrmic_e2e:
+        description: "Run Myrmic E2E"
+        required: false
+        type: boolean
+      check_embedded:
+        description: "Check esp-hal C5, C6 and C61"
+        required: false
+        type: boolean
+      check_wasm:
+        description: "Check WASM"
+        required: false
+        type: boolean
+
+env:
+  RUST_IMAGE: "ghcr.io/peeriot/rust:1.97.0"
+  RUST_ESP_IMAGE: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
+  # Image pinned to the declared workspace MSRV (rust-version in Cargo.toml). The
+  # Check MSRV job also sets CARGO_CHANNEL=1.94.0 so every cargo call uses +1.94.0.
+  RUST_MSRV_IMAGE: "ghcr.io/peeriot/rust:1.94.0"
+  # Can be used to pin nightly, used only where nightly is actually required: -Zbuild-std for
+  # the ESP firmware, and the wasm cell check. Everything else uses the image's
+  # stable channel.
+  RUST_NIGHTLY: "nightly-2026-08-07"
+
+jobs:
+
+  # Verify Licenses
+
+  verify_licenses:
+    name: Verify Licenses
+    runs-on: general
+    if: |
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.verify_licenses == true ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Verify Licenses
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+          run: ./.ci/verify/licenses
+
+      # Runs even when the step above failed: the two check unrelated things, and the
+      # licenses step patches the tree (deny.patch touches deny.toml only, which this
+      # check does not read).
+      #
+      # Plain docker-run, not cargo-run: this one needs no cache volumes.
+      - name: Verify Interface Definition
+        if: ${{ !cancelled() }}
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          run: |
+            ./.ci/verify/wasm-host-interface
+
+      # Runs even when the step above failed: the two check unrelated things, and that
+      # step patches the tree.
+      - name: Verify Release Rules
+        if: ${{ !cancelled() }}
+        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          user: user
+          run: |
+            ./.ci/release/self-test
+
+      # Runs even when the step above failed: the two check unrelated things. Needs
+      # cargo for the workspace member set, so it mounts the same caches as the
+      # licenses step.
+      - name: Verify Coverage Rules
+        if: ${{ !cancelled() }}
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+          run: ./.ci/check/coverage-self-test
+
+  # Check Swarm
+
+  check_swarm:
+    name: Check Code
+    runs-on: general
+    if: |
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.check_swarm == true ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Check
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_BUILD_JOBS=8
+          run: ${{ github.workspace }}/.ci/check/check
+
+  # Check MSRV
+  #
+  # Identical to Check Code, but on the pinned MSRV image with CARGO_CHANNEL=1.94.0
+  # so every cargo call runs with the +1.94.0 override. Fails if the workspace stops
+  # building on its declared rust-version.
+
+  check_msrv:
+    name: Check MSRV
+    runs-on: general
+    if: |
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.check_msrv == true ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Check
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_MSRV_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_BUILD_JOBS=8
+            CARGO_CHANNEL=1.94.0
+          run: ${{ github.workspace }}/.ci/check/check
+
+  # Myrmic end-to-end regression coverage
+
+  myrmic_e2e:
+    name: Myrmic E2E
+    runs-on: general
+    timeout-minutes: 15
+    if: |
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.myrmic_e2e == true ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Run Myrmic E2E
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_BUILD_JOBS=8
+          run: |
+            # Pull-request validation builds the synthetic merge commit, which
+            # cannot be fetched as a revision from GitHub. Build the scaffolded
+            # test cell against the checked-out SDK instead.
+            export PEERIOT_MYRMIC_SDK="$PWD/sdk/myrmic-sdk"
+            cargo build --bin myrmic
+            cargo test -p e2e-tests --test myrmic myrmic_e2e
+
+  # Check the embedded targets
+  #
+  # One job per chip through a matrix. The three differ only in the alias suffix,
+  # so keeping them as separate copies meant every change had to be made three
+  # times. `fail-fast: false` keeps the previous behaviour of three independent
+  # jobs: one chip failing does not cancel the others.
+
+  check_embedded:
+    name: Check Code Embedded ${{ matrix.chip }}
+    runs-on: general
+    if: |
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.check_embedded == true ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [ c5, c6, c61 ]
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+          submodules: true
+
+      - name: Check ${{ matrix.chip }}
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_ESP_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_BUILD_JOBS=8
+            COMMAND_SUFFIX=-${{ matrix.chip }}
+            CARGO_CHANNEL=${{ env.RUST_NIGHTLY }}
+            ALL_TARGETS=false
+            SKIP_TESTS=true
+          run: ${{ github.workspace }}/.ci/check/check
+
+      # REQ-FEAT-2026-HWD-SEC-002: a production build must expose no cell-callable
+      # watchdog control surface. Runs on C6 only - the import gating lives in
+      # shared code, so one chip catches any regression.
+      - name: Verify Production Surface
+        if: matrix.chip == 'c6'
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_ESP_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_BUILD_JOBS=8
+            COMMAND_SUFFIX=-c6
+            CARGO_CHANNEL=${{ env.RUST_NIGHTLY }}
+          run: ${{ github.workspace }}/.ci/verify/production-surface
+
+  # Check WASM
+
+  check_wasm:
+    name: Check WASM
+    runs-on: general
+    if: |
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.check_wasm == true ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
+    steps:
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+
+      - name: Build WASM Crates
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
+        with:
+          image: ${{ env.RUST_IMAGE }}
+          token: ${{ steps.setup.outputs.token }}
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_CHANNEL=${{ env.RUST_NIGHTLY }}
+            CARGO_BUILD_JOBS=8
+          run: ./.ci/check/wasm

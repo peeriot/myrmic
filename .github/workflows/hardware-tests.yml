@@ -1,4 +1,9 @@
 name: Hardware Tests
+
+# What: the hardware-in-the-loop suite across the C5, C6 and C61 boards. The boards
+#       are chained rather than parallel: the runner drives one at a time.
+# Where: swarm only, self-hosted `hardware`.
+# When: weekdays at 01:44, or manual dispatch.
 on:
   workflow_dispatch:
   schedule:
@@ -10,6 +15,7 @@ env:
 jobs:
   hil-esp32c5:
     runs-on: hardware
+    if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
@@ -73,7 +79,7 @@ jobs:
     # run sequentially. `!cancelled()` keeps the next board running even if a prior one
     # failed, matching the suite's --no-fail-fast intent.
     needs: hil-esp32c5
-    if: ${{ !cancelled() }}
+    if: ${{ github.repository == 'peeriot/swarm' && (!cancelled()) }}
     container:
       image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
@@ -135,7 +141,7 @@ jobs:
     runs-on: hardware
     # Runs after the C6 board so only one HIL job uses the hardware runner at a time.
     needs: hil-esp32c6
-    if: ${{ !cancelled() }}
+    if: ${{ github.repository == 'peeriot/swarm' && (!cancelled()) }}
     container:
       image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:

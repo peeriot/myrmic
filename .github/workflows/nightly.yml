@@ -1,4 +1,8 @@
 name: Nightly
+
+# What: nightly coverage run, packaged and uploaded as an artifact.
+# Where: swarm only, self-hosted `general`.
+# When: weekdays at 02:37 Europe/Berlin.
 on:
   schedule:
     - cron: '37 2 * * 1-5'
@@ -11,6 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: general
+    if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-3"
       volumes:

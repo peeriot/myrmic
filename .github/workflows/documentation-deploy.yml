@@ -1,4 +1,9 @@
 name: Deploy Documentation
+
+# What: publishes the book and the API docs from the shared `myrmic-html` volume to
+#       their GitHub Pages repositories. documentation-build.yml fills that volume.
+# Where: swarm only, self-hosted `general`.
+# When: a published, non-draft release, or manual dispatch.
 on:
   workflow_dispatch:
     inputs:
@@ -22,8 +27,11 @@ jobs:
     name: Deploy Book
     runs-on: general
     if: |
-      ( github.event_name == 'release' && !github.event.release.draft ) ||
-      ( github.event_name == 'workflow_dispatch' && inputs.deploy_book == true )
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'release' && !github.event.release.draft ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.deploy_book == true )
+      )
     steps:
       - name: Setup
         uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
@@ -58,8 +66,11 @@ jobs:
     name: Deploy Docs
     runs-on: general
     if: |
-      ( github.event_name == 'release' && !github.event.release.draft ) ||
-      ( github.event_name == 'workflow_dispatch' && inputs.deploy_docs == true )
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'release' && !github.event.release.draft ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.deploy_docs == true )
+      )
     steps:
       - name: Setup
         uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
