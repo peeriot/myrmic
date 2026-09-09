@@ -102,8 +102,8 @@ myrmic cells status
 ```
 
 ```text
-  cell         sri           kind  runtime     age  class        srn
-  thermometer  e6f23498-...  wasm  [c]91d1706  3s   thermometer  thermometer
+  cell         sri           kind  runtime     age  policy  class        srn
+  thermometer  e6f23498-...  wasm  [c]91d1706  3s   never   thermometer  thermometer
 ```
 
 The `runtime` column shows the first characters of the runtime's id; right now that is the runtime

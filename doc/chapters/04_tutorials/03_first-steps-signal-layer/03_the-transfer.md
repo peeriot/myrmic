@@ -117,8 +117,8 @@ myrmic cells status
 ```
 
 ```text
-  cell         sri           kind  runtime     age  class        srn
-  thermometer  e6f23498-...  aot   [7]96d60de  4s   thermometer  thermometer
+  cell         sri           kind  runtime     age  policy  class        srn
+  thermometer  e6f23498-...  aot   [7]96d60de  4s   never   thermometer  thermometer
 ```
 
 Two things moved from the Part 2 row: the `kind` is now `aot` (ahead-of-time compiled for the
