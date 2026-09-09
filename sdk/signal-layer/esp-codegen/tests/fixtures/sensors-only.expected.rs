@@ -203,9 +203,9 @@ pub fn setup_outlet_registry() -> usize {
 #[macro_export]
 macro_rules! pipeline_pins {
     ($p:ident) => {
-        wasm_runtime::Pins([Some(esp_hal::gpio::Flex::new($p .GPIO0)),
-        Some(esp_hal::gpio::Flex::new($p .GPIO1)), None, None, None, None, None, None,
+        esp_firmware::wasm_runtime::Pins([Some(esp_firmware::esp_hal::gpio::Flex::new($p
+        .GPIO0)), Some(esp_firmware::esp_hal::gpio::Flex::new($p .GPIO1)), None, None,
         None, None, None, None, None, None, None, None, None, None, None, None, None,
-        None, None, None, None, None, None, None])
+        None, None, None, None, None, None, None, None, None, None, None])
     };
 }

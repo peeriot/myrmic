@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+# Scaffold a Signal Layer pipeline with `myrmic new --pipeline` and compile it,
+# for both the Linux and firmware targets.
+#
+# This is the only CI gate that *builds* a generated pipeline. The myrmic-cli
+# unit tests assert the scaffold's file contents but never compile it, and the
+# one test that does build a scaffold is `#[ignore]`d (it needs the CLI's SDK
+# git revision pushed plus credentials). So a scaffold that renders
+# non-compiling code -- a missing dependency, a codegen regression, a driver
+# path that does not resolve -- passes every other check.
+#
+# A full build, not `cargo check`: the failures this guards against include link
+# errors (e.g. a missing embassy-time backend) that only surface at link time.
+
+set -xeuo pipefail
+
+REPO="$PWD"
+MYRMIC="$REPO/target/debug/myrmic"
+CARGO_CHANNEL="${CARGO_CHANNEL:-nightly}"
+
+# Build the scaffolds into the (cached) workspace target dir so their path
+# dependencies reuse crates the other jobs already compiled, rather than a cold
+# build in a throwaway tmp dir every run.
+export CARGO_TARGET_DIR="$REPO/target"
+
+WORK="$(mktemp -d)"
+cleanup() { rm -rf "$WORK"; }
+trap cleanup EXIT
+
+# The firmware build needs a nightly toolchain with rust-src (for -Zbuild-std)
+# and the riscv target. Install only when absent; components/targets are
+# idempotent. Mirrors .ci/check/check so this job does not depend on another
+# seeding the toolchain volume first.
+printf "\n\n--== Ensure Toolchain ==--\n\n"
+rustup toolchain list | grep -q "^${CARGO_CHANNEL}" \
+    || rustup toolchain install "$CARGO_CHANNEL" --profile minimal
+rustup component add rust-src --toolchain "$CARGO_CHANNEL"
+rustup target add riscv32imac-unknown-none-elf --toolchain "$CARGO_CHANNEL"
+
+printf "\n\n--== Build myrmic ==--\n\n"
+cargo build --bin myrmic
+
+# `--sdk "$REPO"` makes the scaffold resolve the SDK and every driver/step crate
+# as path dependencies into this checkout, so the build needs no network or
+# credentials (unlike the git-SDK default, which needs the CLI's revision
+# pushed).
+
+printf "\n\n--== Linux pipeline: scaffold + build ==--\n\n"
+LINUX="$WORK/linux"
+"$MYRMIC" new --pipeline "$LINUX" --sdk "$REPO"
+# A native tokio binary, built with cargo per the scaffold's own README. A full
+# build links it, catching missing-backend link errors a `check` would miss.
+( cd "$LINUX" && cargo build )
+
+printf "\n\n--== Firmware pipeline: scaffold + build ==--\n\n"
+FIRMWARE="$WORK/firmware"
+"$MYRMIC" new --firmware=esp32c6 --pipeline "$FIRMWARE" --sdk "$REPO"
+# `myrmic build` supplies the nightly + -Zbuild-std + chip feature the firmware
+# needs; the chip comes from the scaffold manifest's default feature.
+"$MYRMIC" build "$FIRMWARE"
+
+printf "\n\n--== Pipeline scaffolds build clean ==--\n\n"

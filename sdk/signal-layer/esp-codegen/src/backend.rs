@@ -469,7 +469,7 @@ impl ChipBackend for Esp32Backend {
             .map(|slot| match slot {
                 Some(pin) if !reserved.contains(pin) && gp_set.contains(pin) => {
                     let gpio_ident = Ident::new(&format!("GPIO{pin}"), Span::call_site());
-                    quote! { Some(esp_hal::gpio::Flex::new($p.#gpio_ident)) }
+                    quote! { Some(esp_firmware::esp_hal::gpio::Flex::new($p.#gpio_ident)) }
                 }
                 _ => quote! { None },
             })
@@ -492,7 +492,7 @@ impl ChipBackend for Esp32Backend {
             #[macro_export]
             macro_rules! pipeline_pins {
                 ($p:ident) => {
-                    wasm_runtime::Pins([
+                    esp_firmware::wasm_runtime::Pins([
                         #(#slots),*
                     ])
                 };

@@ -22,14 +22,29 @@ esp32c61 = ["esp-firmware/esp32c61", "wasm-runtime/esp32c61", "ble"]
 # BLE host stack (NimBLE). Enabled automatically on esp32c5 and esp32c61.
 ble = ["esp-firmware/ble"]
 
-# Marker feature: gates all pipeline-dependent firmware code. Use
-# `#[cfg(feature = "pipeline")]` without hard-coding a specific pipeline name.
-# The pipeline-{name} feature and driver/node optional deps are managed by
-# esp-codegen (pipeline_regen.sh) and must not be committed.
+# The Signal Layer pipeline. Gates the generated pipeline module (see
+# `pipeline!()` in src/main.rs) and the driver/step crates it can use. The
+# pipeline is generated from a board manifest + pipeline YAML at build time
+# (build.rs); which pair is chosen by the SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE
+# env vars, defaulting to this chip's devkit board and the basic-sensors starter.
 pipeline = [
-    "dep:signal-layer-core",
-    "dep:signal-layer-types",
-    "dep:embassy-embedded-hal",
+    "dep:ads1115-driver",
+    "dep:bme280-driver",
+    "dep:bmp180-driver",
+    "dep:ccs811-driver",
+    "dep:gpio-output-driver",
+    "dep:gpio-output-feedback-driver",
+    "dep:pwm-output-driver",
+    "dep:sim-source-driver",
+    "dep:veml7700-driver",
+    "dep:wsen-itds-driver",
+    "dep:cadence",
+    "dep:fan-curve",
+    "dep:hysteresis",
+    "dep:max-value",
+    "dep:min-value",
+    "dep:moving-average",
+    "dep:threshold-trigger",
 ]
 
 # Emit structured heap-stats snapshots at key milestones over the log channel.
@@ -46,20 +61,32 @@ wdt-selftest = ["esp-firmware/wdt-selftest"]
 
 [dependencies]
 esp-firmware = { workspace = true }
-log          = { workspace = true }
-
-# Named by the esp-codegen-generated pipeline module.
-esp-hal      = { workspace = true, features = ["log-04", "unstable", "rt"] }
-embassy-sync = { workspace = true }
-embassy-time = { workspace = true }
-static_cell  = { workspace = true }
+# Enabled for its chip feature by the esp32c* features above; the generated
+# pipeline code reaches it through esp-firmware's re-exports.
 wasm-runtime = { workspace = true }
 
-# Infrastructure optional deps for the `pipeline` feature (committed).
-# Driver/node optional deps are managed by esp-codegen and must not be committed.
-signal-layer-core    = { workspace = true, optional = true }
-signal-layer-types   = { workspace = true, optional = true }
-embassy-embedded-hal = { workspace = true, optional = true }
+# Signal Layer driver and step crates, seeded for every module the reference
+# pipelines use so any of them compiles from a board + pipeline YAML. Only the
+# modules a pipeline actually uses reach the image. Enabled by the `pipeline`
+# feature; the generated code reaches them through esp-firmware's re-exports, so
+# no other infrastructure dependency is needed here.
+ads1115-driver              = { workspace = true, optional = true }
+bme280-driver               = { workspace = true, optional = true }
+bmp180-driver               = { workspace = true, optional = true }
+ccs811-driver               = { workspace = true, optional = true }
+gpio-output-driver          = { workspace = true, optional = true }
+gpio-output-feedback-driver = { workspace = true, optional = true }
+pwm-output-driver           = { workspace = true, optional = true }
+sim-source-driver           = { workspace = true, optional = true }
+veml7700-driver             = { workspace = true, optional = true }
+wsen-itds-driver            = { workspace = true, optional = true }
+cadence           = { workspace = true, optional = true }
+fan-curve         = { workspace = true, optional = true }
+hysteresis        = { workspace = true, optional = true }
+max-value         = { workspace = true, optional = true }
+min-value         = { workspace = true, optional = true }
+moving-average    = { workspace = true, optional = true }
+threshold-trigger = { workspace = true, optional = true }
 
 [build-dependencies]
 esp-firmware-build = { workspace = true }

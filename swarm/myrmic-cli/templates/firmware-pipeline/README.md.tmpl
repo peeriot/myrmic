@@ -1,0 +1,44 @@
+# {{name}}
+
+A myrmic firmware for the {{chip}} with a Signal Layer pipeline.
+
+## Layout
+
+- `board.yml` - the hardware: buses, the GPIOs offered to the cell, and the
+  devices on the buses.
+- `pipeline.yml` - the Signal Layer: sources (reading devices), steps
+  (processing), and taps (values the cell reads).
+- `src/main.rs` - brings up the node and starts the pipeline. The generated
+  pipeline code is pulled in by `esp_firmware::pipeline!()`.
+- `build.rs` - generates the pipeline from `board.yml` + `pipeline.yml` at build
+  time, into `$OUT_DIR`.
+
+The starter pipeline uses `sim-source`, a synthetic sensor, so it builds and
+runs with no hardware attached.
+
+## Build and flash
+
+```sh
+myrmic build .
+myrmic flash .
+```
+
+## Change the pipeline
+
+Edit `board.yml` and `pipeline.yml`, then rebuild. Every driver and step shipped
+with myrmic is already available as a dependency; swap `sim-source` for a real
+sensor and add sources, steps and taps as needed. If the board's `chip` and the
+build's chip feature disagree, or the pipeline names a crate that is not a
+dependency, the build fails with a message naming the fix.
+
+To use a driver or step you wrote yourself, add its crate to `[dependencies]`
+and the `pipeline` feature, then point the build at its descriptors:
+
+```rust
+// build.rs
+esp_firmware_build::pipeline()
+    .board("board.yml")
+    .pipeline("pipeline.yml")
+    .include("descriptors") // drivers/<id>/descriptor.yaml, steps/<id>/descriptor.yaml
+    .generate();
+```

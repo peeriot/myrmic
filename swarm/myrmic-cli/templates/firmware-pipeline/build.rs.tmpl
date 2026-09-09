@@ -1,0 +1,10 @@
+fn main() {
+    esp_firmware_build::configure();
+
+    // Generate the Signal Layer pipeline from board.yml + pipeline.yml into
+    // $OUT_DIR/pipeline.rs, which `esp_firmware::pipeline!()` includes.
+    esp_firmware_build::pipeline()
+        .board("board.yml")
+        .pipeline("pipeline.yml")
+        .generate();
+}

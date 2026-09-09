@@ -533,6 +533,8 @@ signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "
 signal-layer-core = { path = "sdk/signal-layer/signal-layer-core" }
 pipeline-codegen = { path = "sdk/signal-layer/pipeline-codegen" }
 pipeline-backend-api = { path = "sdk/signal-layer/pipeline-backend-api" }
+esp-codegen = { path = "sdk/signal-layer/esp-codegen" }
+include_dir = "0.7"
 
 # Linux Signal Layer (FEAT-2026-SIG-002)
 i2cdev = "0.6"

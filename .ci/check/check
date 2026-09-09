@@ -125,8 +125,4 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
         "${PACKAGE_ARGS[@]}"
 
-    # S4: verify the linux-codegen chain produces a compilable, working crate
-    # with self-hosted tap-contract tests (SR-2, SR-7, SR-9 second leg, D7).
-    printf "\n\n--== Generated Pipeline Verification (SR-9 / D7) ==--\n\n"
-    bash "$(dirname "$(dirname "$SCRIPT_DIR")")/ci/check-generated-pipeline.sh"
 fi

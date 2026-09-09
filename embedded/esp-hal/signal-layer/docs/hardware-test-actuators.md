@@ -22,15 +22,17 @@ Board pin map (`../boards/esp32c6-devkit.yaml`):
 | `relay_fb` | gpio-output-feedback | out = **GPIO14**, feedback = **GPIO18** |
 | `bme280` | bme280 | I2C0 |
 
-Regenerate + flash a pipeline:
+Build + flash a pipeline (from the repo root):
 
 ```sh
-# from repo root
-sdk/signal-layer/scripts/pipeline_regen.sh <pipeline-name>
-cargo +nightly run-c6         # flashes + opens the serial monitor
+SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/<pipeline-name>.yaml \
+    cargo +nightly run-c6 --features pipeline    # flashes + opens the serial monitor
 ```
 
-`run-c6` = `run -p modem-esp32 --release --target riscv32imac-unknown-none-elf
+The firmware's `build.rs` generates the pipeline into `OUT_DIR` at build time;
+`SIGNAL_LAYER_PIPELINE` (a path relative to `embedded/esp-hal/modem-esp32`, or
+absolute) selects it, and the board defaults to this chip's devkit. `run-c6` =
+`run -p modem-esp32 --release --target riscv32imac-unknown-none-elf
 --no-default-features --features esp32c6 -Zbuild-std=core,alloc`.
 
 ---
@@ -40,8 +42,8 @@ cargo +nightly run-c6         # flashes + opens the serial monitor
 **Pipeline:** `feed-forward-demo` · **Wiring:** scope on GPIO3 (PWM) and GPIO2 (relay).
 
 ```sh
-sdk/signal-layer/scripts/pipeline_regen.sh feed-forward-demo
-cargo +nightly run-c6
+SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/feed-forward-demo.yaml \
+    cargo +nightly run-c6 --features pipeline
 ```
 
 Warm the BME280 (finger/breath). Expect:
@@ -54,9 +56,9 @@ Exercises: PWM + GPIO output drivers, in-layer feed-forward (`fan-curve`, `hyste
 
 ## Test 2 — protective PWM update floor
 
-Edit `fan1`'s `hardware.min_update_interval_ms` (e.g. `500`) in the board manifest, regen,
-reflash. Scope GPIO3: duty now steps at most every 500 ms even as temperature moves — the
-driver floor overrides pipeline cadence.
+Edit `fan1`'s `hardware.min_update_interval_ms` (e.g. `500`) in the board manifest, then
+rebuild + reflash (cargo re-generates on the manifest change). Scope GPIO3: duty now steps at
+most every 500 ms even as temperature moves — the driver floor overrides pipeline cadence.
 
 ## Test 3 — cell-driven outlets (needs a WASM cell)
 
@@ -94,7 +96,7 @@ not inferred from the write. Forcing a read/apply failure emits an `OutletFault`
 ## Test 5 — static pin mutual-exclusion (build-time)
 
 In the board manifest, give a second device the same GPIO as `relay1` (`out: 2`), then
-`pipeline_regen.sh`. Codegen **fails** with "GPIO2 is claimed by both …" — the pin can be
+rebuild. Codegen (in `build.rs`) **fails** with "GPIO2 is claimed by both …" — the pin can be
 owned by the pipeline or the cell GPIO host function, never both (resolved at codegen time).
 
 ---
@@ -105,5 +107,6 @@ owned by the pipeline or the cell GPIO host function, never both (resolved at co
   undefined (SDS constraint 6). Don't rely on outputs for anything safety-critical.
 - **Soft real-time**: in-layer control is best-effort feed-forward (threshold/hysteresis/
   curve), preempted by radio threads — no bounded control-loop timing.
-- The `pipeline_config.rs` and the firmware `Cargo.toml` pipeline deps are regenerated, not
-  committed; run `pipeline_regen.sh` before flashing a given demo.
+- The pipeline is generated into the firmware's `OUT_DIR` at build time from the board manifest
+  and the pipeline named by `SIGNAL_LAYER_PIPELINE`; nothing is written into the source tree, so
+  there is no generated file to commit.
