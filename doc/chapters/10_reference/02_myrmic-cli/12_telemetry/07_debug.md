@@ -36,6 +36,10 @@ Stop streaming after the given duration, accepts humantime duration string - e.g
 
 Print each debug record as a JSON object. Useful for programmatic processing with tools like [jq](https://jqlang.org).
 
+`--level LEVEL`
+
+Temporarily raise the log level of cell logs on all connected nodes to `LEVEL` (e.g. `DEBUG`) for the duration of the stream. Only the cell log targets are changed - the rest of the active filter is left untouched - and the previous filter is restored when the stream ends. The command prints the filter it applied and the one it restored.
+
 `-v` / `--verbose`
 
 Global flag. Controls the CLI's own output verbosity, not the debug stream.
