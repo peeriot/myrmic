@@ -23,6 +23,8 @@ Each signal can go to one or both destinations:
 - **Internal DB** - every runtime stores its telemetry in the swarm's distributed database, and the `myrmic telemetry` CLI queries it from any node without extra infrastructure. Storage is **off by default**: nothing is written until a retention period is set. Every `myrmic` binary has this.
 - **OpenTelemetry (OTel) export** - a runtime pushes its own signals to an OTel collector, which forwards them to tools such as Grafana. This needs a `myrmic` binary built with the `open-telemetry` feature and an endpoint configured per signal.
 
+Both destinations receive everything the runtime's log filter lets through, and that is a lot of data on a swarm that runs for days. Part 1 shows how the retention period bounds what is kept on the node; Part 2 how the filter bounds what leaves it.
+
 ## How the Tutorial is Organised
 
 **Part 1** works with the `myrmic` you already have - the release package or a plain source build - and covers everything the CLI offers: the configuration that turns storage on, the `myrmic telemetry` commands for logs, traces and metrics, changing the log filter and the retention at runtime, and the live debug stream.

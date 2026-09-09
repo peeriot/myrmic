@@ -190,6 +190,8 @@ myrmic telemetry no-db-retention
 
 Each command answers with `DB retention set to '…' on all connected nodes`. A value set this way lives in the running processes only: after a runtime restart the configuration file's `db_retention` applies again, or nothing if it has none. Only records emitted after a retention is set are kept.
 
+The retention period is also the storage bound on the node: every log record and span the filter lets through is written to the runtime's database until it expires, and a runtime at `info` accumulates a lot within a day - at `debug`, hundreds of rows per second. On a device with little disk, keep the retention short, or turn it on only while you investigate.
+
 Before you go on, make sure storage is on again:
 
 ```bash

@@ -122,6 +122,8 @@ telemetry:
 
 Keep `db_retention`: the `myrmic telemetry` commands from Part 1 keep working next to Grafana. The `env_filter` matters as much as in Part 1 - it decides what is exported, spans included. With `swarm=info,warn` Loki would receive only the runtime's own lines and Tempo would stay empty.
 
+> **Mind the volume.** A runtime that exports telemetry sends *everything* its filter lets through: every log line, every span, every metric interval, for the runtime itself as much as for your cells. On a running swarm that adds up to gigabytes in the collector's storage within days, and to constant network traffic from every exporting node. Keep `env_filter` at `info` or narrower in production, exclude noisy targets such as `zenoh`, and remember that `db_retention` stores the same data a second time on the node itself - drop it or keep it short once Grafana is in place. The compile-time feature alone costs nothing; the data flows only once endpoints are configured.
+
 ---
 
 ## Step 4 - Restart the Runtime and Generate Activity
@@ -236,6 +238,7 @@ Results appear as a time-series graph and a table of raw data points below. Use 
 - The `env_filter` from Part 1 also decides what is exported, spans included.
 - Configuration is read at start: adding endpoints means a restart, and only telemetry emitted afterwards reaches the collector. The internal DB and the `myrmic telemetry` commands keep working alongside.
 - In Grafana the runtime is the service `swarm`; a trace ID from `myrmic send` finds the same command in Loki and Tempo that `myrmic telemetry logs --trace-id` showed in Part 1.
+- Volume is governed per runtime by the filter and the retention: keep `env_filter` narrow, exclude noisy targets, and drop or shorten `db_retention` once Grafana is in place so the data is not stored twice.
 
 ## Where to Go From Here
 
