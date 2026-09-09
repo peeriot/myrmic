@@ -2,11 +2,11 @@
 
 During its lifetime, a cell reads, creates, and modifies data. To choose the right way to store that data, it is important to understand how Myrmic works.
 
-Mymric cells run as Wasm modules. A Wasm module has its own linear memory, but this memory is temporary. It is initialized whenever a handler runs, such as a command, event, or scheduled handler, and it is discarded when the handler finishes.
+Myrmic cells run as Wasm modules. A Wasm module has its own linear memory, but this memory is temporary. It is initialized whenever a handler runs, such as a command, event, or scheduled handler, and it is discarded when the handler finishes.
 
 This is a fundamental property of the Wasm execution model: a cell cannot hold data in its own memory across calls.
 
-To preserve data between handler invocations, a cell stores it in the database provided by the Myrmic runtime. The database provides persistent and scoped storage, replicates the stored data, and supports retention policies.
+To preserve data between handler invocations, a cell stores it in the database provided by the Myrmic runtime. The database provides persistent and scoped storage and supports retention policies. Stored data is kept as a single copy unless you configure replication with [`myrmic replicate`](../10_reference/02_myrmic-cli/15_replicate.md).
 
 The runtime database supports several storage models: key-value, table-row, time series, and RDF. The Myrmic SDK provides the tools needed to work with each model.
 

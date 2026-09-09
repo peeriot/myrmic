@@ -34,7 +34,7 @@ A node that goes silent is declared lost after roughly 60 to 70 seconds. A short
 
 Two views update at different speeds. `network status` reflects transport liveness within seconds, while the cell view from `cells status` changes only after the swarm runs its periodic hygiene, so it lags behind. A node can already be gone from `network status` while it still appears under `cells status` for a short while.
 
-Messages to an unreachable node are not dropped. Commands wait in the node's mailbox and are delivered once it reconnects, and a partition that heals delivers each command exactly once.
+Messages to an unreachable node are not dropped. Commands wait in the node's mailbox and are delivered once it reconnects. In our tests a healed partition delivered each command exactly once, but deduplication is not yet guaranteed - see [Guarantees](../08_guarantees.md) and write handlers that are safe to run twice.
 
 If the node that holds one of the swarm's internal tables (the shared records that track what is deployed and where) disappears, operations that need it - `cells`, `send`, `network status` - can fail for up to a minute while the swarm moves that table to another node. This clears by itself; retrying after a few seconds succeeds.
 

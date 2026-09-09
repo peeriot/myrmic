@@ -111,7 +111,7 @@ myrmic deploy ./my-cell.wasm --name my-cell
 4. Deploy an application suite:
 
 ```bash
-myrmic deploy ./my-app.yml
+myrmic deploy ./my-app/app_specs.yml
 ```
 
 5. Deploy a pre-built application suite:

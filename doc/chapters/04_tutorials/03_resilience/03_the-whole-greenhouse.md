@@ -113,7 +113,7 @@ A greenhouse that survives losing a machine:
 - **State has one copy by default**, on a node the swarm picks independently of where the cell runs. A restart policy brings a cell back; only replication makes its memory likely to survive.
 - **Tags do double duty.** The same words decide where a cell may run and where its data may be kept. `compute` kept the bed and its copies off `node1` throughout.
 - **Name what a node must be, not which node it is.** A tag-based replication set follows nodes as they come and go.
-- **Expect about a minute.** Noticing a dead node and restarting its cells takes around 70 seconds in the current release; a cell that can only run on one node comes back about 20 seconds after that node does.
+- **Expect about a minute.** Noticing a dead node and restarting its cells takes around 70 seconds in the current release; a cell that can only run on one node comes back a few seconds after that node does.
 
 > **Preview version.** Everything in this tutorial is the *manual* approach: you chose the tags, the restart policy and the replication set by hand, and the swarm did exactly that and no more. A cell does not resume mid-handler - the copy of a moment ago is what comes back - and none of this is yet part of the [guarantee contract](../../08_guarantees.md). The [Roadmap](../../09_roadmap.md) describes the stages that turn today's configuration into something the swarm does by itself, robustly: keeping a cell, its authority and its state alive across the loss of a node without an operator in the loop.
 

@@ -25,7 +25,7 @@ Neither destination is guaranteed to be active by default - you get the CLI alon
 
 ## Prerequisites
 
-- Completed the First Cell Quickstart (TBD).
+- Completed the [Quickstart](../01_quickstart.md).
 - Rust toolchain & Cargo - required to build Myrmic from source. Install via [rustup](https://rustup.rs/) if not already set up.
 - Docker & Docker Compose *(optional - only needed for the Grafana visualization stack)*.
 - The swarm repository checked out locally - the Myrmic source live here.
@@ -186,7 +186,7 @@ myrmic:
 ## Step 4 - Start the Runtime
 
 ```bash
-myrmic runtime start path/to/your/config.yml
+myrmic runtimes start path/to/your/config.yml
 ```
 
 Once the runtime is running, it begins collecting telemetry. You can now query it with the CLI or inspect it in Grafana.
@@ -437,7 +437,7 @@ myrmic:
 EOF
 
 # 4. Start the runtime
-myrmic runtime start my-runtime.yml
+myrmic runtimes start my-runtime.yml
 
 # 5. In another terminal - deploy an app and generate some activity
 myrmic deploy dist

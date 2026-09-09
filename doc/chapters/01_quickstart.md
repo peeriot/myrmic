@@ -143,7 +143,7 @@ A few things to note about the code:
 
 - `State<i32>` - persistent state stored in the runtime database.
 
-- `#[myrmic_sdk::init]` - marks the init function. Runs once when the Cell is first deployed.
+- `#[myrmic_sdk::init]` - marks the init function. Runs once per deployment of the Cell, before it handles anything else - so redeploying runs it again.
 
 - `#[myrmic_sdk::cmd]` - marks a function as a command handler. Myrmic cells are event-driven: they sit idle until a message arrives. Messages are either commands - a request directed at a cell to perform an action - or events. A function marked with this macro is invoked whenever the Cell receives its matching command. Events are not covered here - see the tutorials or the dedicated guide.
 
@@ -166,6 +166,7 @@ myrmic build counter
 Expected output:
 
 ```text
+INFO  Attempting to build: .../counter
    Compiling counter v0.1.0 (.../counter)
     Finished release [optimized] target(s) in Xs
 ```
@@ -223,7 +224,7 @@ Expected output:
 INFO  DB retention set to '1h' on all connected nodes
 ```
 
-Retention lives in the running process. If you restart the runtime you have to set it again, or put `db_retention: "1h"` under `myrmic.telemetry` in a runtime configuration file - see [Runtime configuration](./10_reference/01_configuration/01_runtime-configuration.md).
+Retention lives in the running process. If you restart the runtime you have to set it again, or put `db_retention: "1h"` under a top-level `telemetry:` key in a runtime configuration file - see [Runtime configuration](./10_reference/01_configuration/01_runtime-configuration.md).
 
 ### 5. Deploy to the runtime.
 
@@ -263,6 +264,8 @@ Expected output:
 ──── counter ───────────────────────────────────────────────────────────────────────────────────
   counter  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  wasm  [x]xxxxxxx  0s   never   counter  counter
 ```
+
+In a terminal this is a live view: it redraws every couple of seconds until you press Ctrl-C. Use `myrmic cells --once` for a single listing - which is also what you get when the output is piped or redirected.
 
 `counter` is deployed on the local runtime, which the `runtime` column shows by id, and waiting for commands.
 
