@@ -1,4 +1,8 @@
 name: Rack Benchmark
+
+# What: load sweep against the rack test bed, cross-compiled for aarch64.
+# Where: swarm only, self-hosted `testnet`.
+# When: manual dispatch only.
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +15,7 @@ jobs:
   sweep:
     name: Run Sweep
     runs-on: testnet
+    if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-3"
       options: "--user root"

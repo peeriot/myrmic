@@ -1,4 +1,9 @@
 name: Build and Package
+
+# What: builds and packages the release artifacts for a release tag, publishes them
+#       to the package repository as a candidate, and opens a draft release.
+# Where: swarm only, self-hosted `general`, inside the archiver image.
+# When: push of a `myrmic/v*` tag.
 on:
   push:
     tags:
@@ -24,11 +29,11 @@ env:
 
 jobs:
   build:
+    runs-on: general
     # The target repository receives a release tag when a release is created there.
     # That tag is not a build trigger, so without this guard every release would
     # leave a red run on the repository customers see.
-    if: github.repository != 'peeriot/myrmic'
-    runs-on: general
+    if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-4"
       volumes:
@@ -111,6 +116,7 @@ jobs:
 
   publish:
     runs-on: general
+    if: github.repository == 'peeriot/swarm'
     needs: [build]
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-4"
@@ -150,6 +156,7 @@ jobs:
     # exist for a candidate that never reached the package repository it is tested
     # from.
     runs-on: general
+    if: github.repository == 'peeriot/swarm'
     needs: [build, publish]
     permissions:
       packages: read
