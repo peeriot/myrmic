@@ -31,7 +31,7 @@ use crate::network::{
 use crate::ops::publish::MAX_PUBLISHERS;
 use crate::transport::SessionConfig;
 
-/// Pool of PubSub Publishers
+/// Pool of `PubSub` Publishers
 /// Cater for zenoh publishers plus some for queryables and the dispatcher's re-declare publisher
 const PUB_CAPACITY: usize = MAX_PUBLISHERS + 10;
 
@@ -144,7 +144,7 @@ pub struct Session<'a, M: RawMutex = NoopRawMutex> {
     dispatch: &'a dyn Dispatch,
 }
 
-impl<'a, M: RawMutex> core::fmt::Debug for Session<'a, M> {
+impl<M: RawMutex> core::fmt::Debug for Session<'_, M> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Session(<zid>)")?;
         Ok(())
@@ -214,7 +214,7 @@ impl<'a, M: RawMutex> Session<'a, M> {
     /// This method will wait until the ZID is set, i.e. when the session runner has started
     pub async fn zid(&self) -> ZenohIdProto {
         loop {
-            if let Some(zid) = self.resources.zid.lock(|zid| zid.get()) {
+            if let Some(zid) = self.resources.zid.lock(core::cell::Cell::get) {
                 break zid;
             }
 
@@ -231,7 +231,7 @@ impl<'a, M: RawMutex> Session<'a, M> {
     #[allow(unused)]
     pub(crate) async fn peer_zid(&self) -> ZenohIdProto {
         loop {
-            if let Some(zid) = self.resources.peer_zid.lock(|zid| zid.get()) {
+            if let Some(zid) = self.resources.peer_zid.lock(core::cell::Cell::get) {
                 break zid;
             }
 
@@ -294,17 +294,17 @@ impl<'a, M: RawMutex> Session<'a, M> {
 
     /// The registered clock, if any.
     pub(crate) fn clock(&self) -> Option<&'static dyn Clock> {
-        self.resources.clock.lock(|c| c.get())
+        self.resources.clock.lock(core::cell::Cell::get)
     }
 }
 
-impl<'a, M: RawMutex> Clone for Session<'a, M> {
+impl<M: RawMutex> Clone for Session<'_, M> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'a, M: RawMutex> Copy for Session<'a, M> {}
+impl<M: RawMutex> Copy for Session<'_, M> {}
 
 /// Build the `DeclareToken` network message declaring this session's liveliness token,
 /// keyed on `{ke_prefix}{zid}`.
@@ -398,7 +398,7 @@ impl<'a, M: RawMutex> SessionRunner<'a, M> {
         // If liveliness is enabled, declare a liveliness token so other nodes can detect when
         // this device drops off the network. Sent on every (re)connection because the token is
         // tied to the transport session and is implicitly undeclared when that session dies.
-        if let Some(prefix) = self.resources.liveliness_prefix.lock(|p| p.get()) {
+        if let Some(prefix) = self.resources.liveliness_prefix.lock(core::cell::Cell::get) {
             let msg = liveliness_declare(network.config.our_zid, prefix);
             network
                 .send
@@ -445,7 +445,7 @@ impl<'a, M: RawMutex> SessionRunner<'a, M> {
 
             match msg {
                 IncomingMessage::Message(msg) => {
-                    if let Some(clock) = self.resources.clock.lock(|c| c.get())
+                    if let Some(clock) = self.resources.clock.lock(core::cell::Cell::get)
                         && let Some(ts) = message_timestamp(&msg)
                     {
                         clock.observe(ts);

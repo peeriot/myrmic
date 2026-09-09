@@ -59,7 +59,7 @@ impl traits::Error for ZNError {
     }
 }
 
-/// A `zenoh-nano`` session implementing the `Session` trait
+/// A `zenoh-nano` session implementing the `Session` trait
 pub struct ZNSession<'a, M: RawMutex = NoopRawMutex>(Session<'a, M>);
 
 impl<'a, M: RawMutex> ZNSession<'a, M> {
@@ -283,7 +283,7 @@ impl<M: RawMutex> traits::Write for ZNSetterSendPayload<'_, '_, M> {
     }
 }
 
-impl<'a, 't, M: RawMutex> traits::SendPayload<'a> for ZNSetterSendPayload<'a, 't, M> {
+impl<'a, M: RawMutex> traits::SendPayload<'a> for ZNSetterSendPayload<'a, '_, M> {
     type Write = Self;
 
     async fn with_encoding(self, _encoding: &str) -> Result<Self::Write, Self::Error> {
@@ -337,7 +337,7 @@ impl traits::Write for ZNPublisherSendPayload<'_, '_> {
     }
 }
 
-impl<'a, 't> traits::SendPayload<'a> for ZNPublisherSendPayload<'a, 't> {
+impl<'a> traits::SendPayload<'a> for ZNPublisherSendPayload<'a, '_> {
     type Write = Self;
 
     async fn with_encoding(self, _encoding: &str) -> Result<Self::Write, Self::Error> {
@@ -357,7 +357,7 @@ impl Drop for ZNPublisherSendPayload<'_, '_> {
 /// A type for implementing the `Read` and `Close` traits over a `ZBuf` buffer
 /// Used by the `ZNGetter` and `ZNSubscriber` types
 pub struct ZNBufRead {
-    /// The owned ZBuf instance
+    /// The owned `ZBuf` instance
     zbuf: ZBuf,
     /// The current position within the Vec instance
     pos: usize,
@@ -384,7 +384,7 @@ impl traits::Read for ZNBufRead {
             return Ok(0);
         }
 
-        let len = reader.read(buf).map(NonZeroUsize::get).unwrap_or(0);
+        let len = reader.read(buf).map_or(0, NonZeroUsize::get);
         self.pos += len;
 
         Ok(len)

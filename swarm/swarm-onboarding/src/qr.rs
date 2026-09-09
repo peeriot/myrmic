@@ -9,7 +9,7 @@ use crate::utils::slicebuf::SliceBuf;
 
 /// QR Payload
 pub struct QrPayload<'a> {
-    /// Device credentials (usually, the public key of the device, where NistP256 EC is used)
+    /// Device credentials (usually, the public key of the device, where `NistP256` EC is used)
     pub device_creds: &'a [u8],
     /// Device profile (optional)
     pub device_profile: &'a [u8],
@@ -19,7 +19,7 @@ impl<'a> QrPayload<'a> {
     /// Create a new QR payload
     ///
     /// # Arguments
-    /// - `device_creds` - Device credentials (usually, the public key of the device, where NistP256 EC is used)
+    /// - `device_creds` - Device credentials (usually, the public key of the device, where `NistP256` EC is used)
     /// - `device_profile` - Device profile (optional)
     pub const fn new(device_creds: &'a [u8], device_profile: &'a [u8]) -> Self {
         Self {
@@ -158,7 +158,7 @@ impl<'a> Qr<'a> {
 
     /// Get the size of the QR code
     pub fn size(&self) -> u32 {
-        self.0.size() as _
+        u32::try_from(self.0.size()).expect("QR code size is non-negative")
     }
 
     /// Get the module value at the given coordinates
@@ -192,10 +192,9 @@ impl<'a> Qr<'a> {
 
             if offset + bytes.len() > out_buf.len() {
                 return Err(BufferOverflowError);
-            } else {
-                out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
-                offset += bytes.len();
             }
+            out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
+            offset += bytes.len();
         }
 
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
@@ -236,10 +235,9 @@ impl<'a> Qr<'a> {
 
             if offset + bytes.len() > out_buf.len() {
                 return Err(BufferOverflowError);
-            } else {
-                out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
-                offset += bytes.len();
             }
+            out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
+            offset += bytes.len();
         }
 
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
@@ -260,9 +258,10 @@ impl<'a> Qr<'a> {
         text_type: QrTextType,
         border: u8,
     ) -> impl Iterator<Item = i32> + '_ + 'a {
-        let iborder: i32 = border as _;
+        let iborder: i32 = border.into();
+        let size = i32::try_from(self.size()).expect("QR code size fits in i32");
 
-        (-iborder..self.size() as i32 + iborder)
+        (-iborder..size + iborder)
             .filter(move |y| !matches!(text_type, QrTextType::Unicode) || (*y - -iborder) % 2 == 0)
     }
 
@@ -304,12 +303,13 @@ impl<'a> Qr<'a> {
         nl: bool,
         y: i32,
     ) -> impl Iterator<Item = char> + use<'_, 'a> {
-        let border: i32 = border as _;
+        let border: i32 = border.into();
+        let size = i32::try_from(self.size()).expect("QR code size fits in i32");
 
-        (-border..self.size() as i32 + border + 1)
+        ((-border)..=(size + border))
             .map(move |x| (x, y))
             .map(move |(x, y)| {
-                if x < self.size() as i32 + border {
+                if x < size + border {
                     let white = !self.get_module(x, y) ^ invert;
 
                     match text_type {
@@ -328,10 +328,12 @@ impl<'a> Qr<'a> {
                             }
                             .map(|prev_white| !prev_white ^ invert);
 
-                            if prev_white != Some(white) {
-                                if white { "\x1b[47m " } else { "\x1b[40m " }
-                            } else {
+                            if prev_white == Some(white) {
                                 " "
+                            } else if white {
+                                "\x1b[47m "
+                            } else {
+                                "\x1b[40m "
                             }
                         }
                         QrTextType::Unicode => {

@@ -18,12 +18,12 @@ pub struct OnboardingRequest {
 }
 
 /// IP network configuration
-/// For now, only IPv4 is supported
+/// For now, only `IPv4` is supported
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum IpNetwork {
     /// `DHCPv4` configuration
     Dhcpv4,
-    /// Static IPv4 configuration
+    /// Static `IPv4` configuration
     FixedIpv4 {
         /// The static IP address
         ip: Ipv4Addr,

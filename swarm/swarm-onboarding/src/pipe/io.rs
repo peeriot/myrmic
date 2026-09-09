@@ -62,6 +62,8 @@ where
         }
 
         for chunk in data.chunks(u8::MAX as usize) {
+            // `chunks(u8::MAX as usize)` guarantees each chunk length fits in a u8.
+            #[allow(clippy::cast_possible_truncation)]
             let len = chunk.len() as u8;
             self.write.write_all(&[len]).await?;
             self.write.write_all(chunk).await?;
@@ -128,7 +130,10 @@ where
 
         let max_len = buf.len().min(self.remaining_len as usize);
         let len = self.read.read(&mut buf[..max_len]).await?;
-        self.remaining_len -= len as u8;
+        // `len <= max_len <= remaining_len`, a u8, so this cannot truncate.
+        #[allow(clippy::cast_possible_truncation)]
+        let consumed = len as u8;
+        self.remaining_len -= consumed;
 
         trace!(
             "Read {} bytes, {} bytes remaining in chunk",

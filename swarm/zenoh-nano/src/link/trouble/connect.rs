@@ -35,7 +35,7 @@ where
     /// - `addr`: The address of the remote device.
     ///
     /// # Returns
-    /// - A tuple containing the GattLinkRunner, GattLinkSend, and GattLinkReceive.
+    /// - A tuple containing the `GattLinkRunner`, `GattLinkSend`, and `GattLinkReceive`.
     pub async fn connect<'s, C>(
         &mut self,
         stack: &'s Stack<'s, C, DefaultPacketPool>,

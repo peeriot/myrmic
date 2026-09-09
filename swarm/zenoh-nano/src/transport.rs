@@ -77,7 +77,7 @@ pub struct TransportReceive<R> {
 }
 
 impl<R> TransportReceive<R> {
-    /// Create a new TransportReceive
+    /// Create a new `TransportReceive`
     const fn new(receive: R, negotiated_mtu: u16) -> Self {
         Self {
             receive,
@@ -110,10 +110,10 @@ impl<R: LinkReceive> TransportReceive<R> {
         // Decode
         let codec = Zenoh080::new();
 
-        let mut reader = data.reader();
+        let reader = data.reader();
 
         let msg: TransportMessage = codec
-            .read(&mut reader)
+            .read(&mut *reader)
             .map_err(|_| TransportError::IncomingMessageInvalid)?;
 
         debug!("Received transport message: {:?}", msg);
@@ -129,7 +129,7 @@ pub struct TransportSend<S> {
 }
 
 impl<R> TransportSend<R> {
-    /// Create a new TransportSend
+    /// Create a new `TransportSend`
     const fn new(send: R, negotiated_mtu: u16) -> Self {
         Self {
             send,
@@ -149,7 +149,7 @@ impl<S: LinkSend> TransportSend<S> {
     ///
     /// # Arguments
     /// - msg: The transport message to send
-    /// - fragment_sequence: An optional atomic sequence number to use for fragmentation.
+    /// - `fragment_sequence`: An optional atomic sequence number to use for fragmentation.
     ///   If not provided, messages that require fragmentation will result in an error.
     ///
     /// # Returns
@@ -179,7 +179,7 @@ impl<S: LinkSend> TransportSend<S> {
 
         let mut buf = BBuf::with_capacity(max_payload_size);
 
-        if Zenoh080::new().write(&mut buf.writer(), msg).is_ok() {
+        if Zenoh080::new().write(&mut *buf.writer(), msg).is_ok() {
             // Message is good to be sent (no fragmentation needed)
             self.send.send(buf.into()).await?;
         } else if let TransportBody::Frame(frame) = &msg.body {
@@ -227,7 +227,7 @@ impl<S: LinkSend> TransportSend<S> {
 
                     // Pass the reader and the Fragment Header so that the codec can handle it for us
                     codec
-                        .write(&mut buf.writer(), (&mut reader, &mut header))
+                        .write(&mut *buf.writer(), (&mut reader, &mut header))
                         .map_err(|_| TransportError::OutgoingMessageEncoding)?;
 
                     debug!("Fragment size: {}", buf.len());

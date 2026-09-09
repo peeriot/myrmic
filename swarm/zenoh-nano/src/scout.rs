@@ -301,7 +301,7 @@ where
 
     let codec = Zenoh080::new();
     let msg: ScoutingMessage = codec
-        .read(&mut zslice.reader())
+        .read(&mut *zslice.reader())
         .map_err(|_| TransportError::IncomingMessageInvalid)?;
 
     Ok(msg.body)
@@ -329,7 +329,7 @@ where
     let msg: ScoutingMessage = scouting.into();
 
     codec
-        .write(&mut buf.writer(), &msg)
+        .write(&mut *buf.writer(), &msg)
         .map_err(|_| TransportError::OutgoingMessageEncoding)?;
 
     send.send(buf.into()).await?;

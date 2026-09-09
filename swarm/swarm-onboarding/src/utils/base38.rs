@@ -82,6 +82,8 @@ const DECODE_BASE38: [u8; 46] = [
     35,     // 'Z', =90
 ];
 
+// `BASE38_CHARS` has 38 entries, well within u32.
+#[allow(clippy::cast_possible_truncation)]
 const RADIX: u32 = BASE38_CHARS.len() as u32;
 
 /// An error indicating that invalid data was encountered during base38 decoding
@@ -109,9 +111,9 @@ pub fn encode(bytes: &[u8]) -> impl Iterator<Item = char> + '_ {
             let offset = index * 3;
 
             encode_base38(
-                ((bytes[offset + 2] as u32) << 16)
-                    | ((bytes[offset + 1] as u32) << 8)
-                    | (bytes[offset] as u32),
+                (u32::from(bytes[offset + 2]) << 16)
+                    | (u32::from(bytes[offset + 1]) << 8)
+                    | u32::from(bytes[offset]),
                 5,
             )
         })
@@ -121,10 +123,10 @@ pub fn encode(bytes: &[u8]) -> impl Iterator<Item = char> + '_ {
 
                 match remainder {
                     2 => encode_base38(
-                        ((bytes[offset + 1] as u32) << 8) | (bytes[offset] as u32),
+                        (u32::from(bytes[offset + 1]) << 8) | u32::from(bytes[offset]),
                         4,
                     ),
-                    1 => encode_base38(bytes[offset] as u32, 2),
+                    1 => encode_base38(u32::from(bytes[offset]), 2),
                     _ => encode_base38(0, 0),
                 }
             }),
@@ -179,7 +181,7 @@ fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, InvalidDataErr
     if repeat >= 0 {
         for c in chars.iter().rev() {
             match decode_char(*c) {
-                Ok(v) => value = value * RADIX + v as u32,
+                Ok(v) => value = value * RADIX + u32::from(v),
                 Err(err) => {
                     cerr = Some(err);
                     break;
@@ -187,7 +189,7 @@ fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, InvalidDataErr
             }
         }
     } else {
-        cerr = Some(InvalidDataError)
+        cerr = Some(InvalidDataError);
     }
 
     (0..repeat)

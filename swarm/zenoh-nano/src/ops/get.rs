@@ -318,6 +318,6 @@ async fn next_get_response(slot: &GetSlot<'_>) -> GetResponse {
 }
 
 fn to_embassy_duration(duration: StdDuration) -> embassy_time::Duration {
-    let micros = duration.as_micros().min(u64::MAX as u128) as u64;
+    let micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
     embassy_time::Duration::from_micros(micros)
 }

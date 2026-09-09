@@ -27,8 +27,6 @@
 //! 4. Spawn runner task
 //! 5. Pass `TlsLinkReceive`/`TlsLinkSend` to `Network::connect`
 
-extern crate alloc;
-
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::channel::{Receiver, Sender};
 use zenoh_buffers::ZSlice;
@@ -179,14 +177,14 @@ mod tls_impl {
     /// [`StreamingLinkSend`].
     pub struct TlsLinkRunner<'a, S>
     where
-        S: Read + Write + 'a,
+        S: Read + Write,
     {
         tls: TlsConnection<'a, S, Aes128GcmSha256>,
         incoming_tx: embassy_sync::channel::Sender<'a, NoopRawMutex, ZSlice, 1>,
         outgoing_rx: embassy_sync::channel::Receiver<'a, NoopRawMutex, ZSlice, 1>,
         /// Partial length-header bytes received so far (0, 1, or 2).
         ///
-        /// Preserved across select iterations so a cancelled read() does not
+        /// Preserved across select iterations so a cancelled `read()` does not
         /// lose a partially-received header byte.
         len_partial: [u8; 2],
         len_partial_n: usize,
@@ -197,7 +195,9 @@ mod tls_impl {
         S: Read + Write + 'a,
     {
         async fn send_frame(&mut self, payload: ZSlice) -> Result<(), TlsError> {
-            let len_bytes = (payload.len() as u16).to_le_bytes();
+            let len_bytes = u16::try_from(payload.len())
+                .map_err(|_| TlsError::InvalidRecord)?
+                .to_le_bytes();
             self.tls
                 .write_all(&len_bytes)
                 .await

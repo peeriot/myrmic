@@ -26,9 +26,8 @@ where
         if total == buf.len() {
             if let Some(overflow_err) = overflow_err {
                 break Err(overflow_err);
-            } else {
-                break Ok(total);
             }
+            break Ok(total);
         }
 
         let len = read.read(&mut buf[total..]).await.map_err(|e| e.kind())?;

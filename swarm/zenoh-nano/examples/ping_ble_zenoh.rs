@@ -58,8 +58,6 @@ use zenoh_nano::rng::RandomSource;
 use zenoh_nano::scout::ZenohIdProto;
 use zenoh_nano::session::{Session, SessionResources, SessionRunner};
 
-extern crate alloc;
-
 // Topics
 const PING_TOPIC: &str = "test/ping";
 const PONG_TOPIC: &str = "test/pong";
@@ -79,12 +77,6 @@ fn main() {
 }
 
 macro_rules! mk_static {
-    ($t:ty) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit();
-        x
-    }};
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
@@ -120,7 +112,7 @@ async fn main_task_tokio(spawner: Spawner) {
     let stack_resources = mk_static!(PingHostResources, PingHostResources::new());
 
     let stack = mk_static!(
-        Stack<'static, PingController, DefaultPacketPool>,
+        Stack<'static, PingController<'_>, DefaultPacketPool>,
         trouble_host::new(controller, stack_resources).build()
     );
 
@@ -185,9 +177,9 @@ async fn ble_task(
     struct Handler<'a>(&'a Signal<NoopRawMutex, Address>);
 
     impl EventHandler for Handler<'_> {
-        fn on_vendor(&self, _vendor: &Vendor) {}
+        fn on_vendor(&self, _vendor: &Vendor<'_>) {}
 
-        fn on_adv_reports(&self, reports: bt_hci::param::LeAdvReportsIter) {
+        fn on_adv_reports(&self, reports: bt_hci::param::LeAdvReportsIter<'_>) {
             if let Some(addr) = zenoh_addrs(reports).next() {
                 info!("Discovered Zenoh node at BLE address: {:?}", addr);
 
@@ -195,7 +187,7 @@ async fn ble_task(
             }
         }
 
-        fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter) {
+        fn on_ext_adv_reports(&self, reports: bt_hci::param::LeExtAdvReportsIter<'_>) {
             if let Some(addr) = zenoh_addrs(reports).next() {
                 info!("Discovered Zenoh node at BLE address: {:?}", addr);
 
@@ -207,15 +199,15 @@ async fn ble_task(
     runner
         .run_with_handler(&Handler(scout_signal))
         .await
-        .unwrap()
+        .unwrap();
 }
 
-/// Run the GattLink connection
+/// Run the `GattLink` connection
 #[embassy_executor::task]
 async fn gatt_link_task(
     runner: GattLinkConnectRunner<'static, 'static, PingController<'static>, NoopRawMutex>,
 ) {
-    runner.run().await.unwrap()
+    runner.run().await.unwrap();
 }
 
 /// Scouting function: discovers a Zenoh node using BLE advertisements
@@ -266,7 +258,7 @@ async fn run_session(
     mut runner: SessionRunner<'static>,
     network: Network<'static, GattLinkReceive<'static>, GattLinkSend<'static>>,
 ) {
-    runner.run(network).await.unwrap()
+    runner.run(network).await.unwrap();
 }
 
 struct LocalRng;

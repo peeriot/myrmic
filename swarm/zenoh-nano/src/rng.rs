@@ -32,6 +32,12 @@ impl<'d> RandomSource<'d> {
             }
 
             *rref = Some(RandomRef {
+                // SAFETY: The `'d` borrow is extended to `'static` only to store it in the
+                // `RANDOM` static. Access is guarded by the ref count: `Clone` increments it
+                // and `Drop` decrements it, clearing the static entry once the last
+                // `RandomSource` (which carries the `'d` lifetime) is dropped. The reference
+                // is therefore never used past `'d`, provided the `RandomSource` is not leaked
+                // beyond that lifetime.
                 rng: unsafe {
                     core::mem::transmute::<
                         &'d mut (dyn RngCore + Send),
@@ -101,6 +107,9 @@ struct RandomRef<'a> {
 
 //#[cfg(feature = "getrandom-custom")]
 #[allow(unsafe_op_in_unsafe_fn)]
+// The `Result<(), getrandom::Error>` return type is mandated by the getrandom custom backend
+// ABI; this implementation cannot fail, but the fallible signature is required.
+#[allow(clippy::unnecessary_wraps)]
 #[unsafe(no_mangle)]
 unsafe extern "Rust" fn __getrandom_custom(
     dest: *mut u8,
