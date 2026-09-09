@@ -1,8 +1,8 @@
 //! Timing knobs and the observer-local lease staleness tracker used by the
 //! supervision machinery (exec fencing pass, orchestrator hygiene).
 
-use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cell_protocol::{RuntimeId, Sri};
 
@@ -56,6 +56,263 @@ pub fn jittered(base: Duration, salt: u64) -> Duration {
 /// durations, but the tick core speaks `u64`).
 fn millis_u64(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Margin over the pass age bound for the ahead direction, and the whole
+/// threshold for the behind direction.
+const SKEW_MARGIN_MS: i64 = 5_000;
+
+/// Fresh same-direction confirmations required before the first report.
+const CONFIRM_PASSES: u32 = 2;
+
+/// Minimum passes between reports. One shared interval, advanced on any pass
+/// where some direction holds a majority and got a fresh vote for it.
+const REPEAT_PASSES: u32 = 30;
+
+/// A peer's declared `ttl_ms` is clamped into this window before it is used
+/// to retain that peer's verdict. The floor is three pass periods, so a peer
+/// at the floor cannot lose its verdict between two passes.
+const VERDICT_WINDOW_MIN_MS: u64 = 36_000;
+const VERDICT_WINDOW_MAX_MS: u64 = 120_000;
+
+/// Epoch millis above this are not a clock reading. Bounding the range from
+/// both sides is what keeps a `u64::MAX` reading out of the arithmetic.
+const PLAUSIBLE_EPOCH_MS_MAX: u64 = 4_000_000_000_000;
+
+/// Epoch millis below this are not a clock reading. A test pins the lease
+/// writer's minted `seq` inside this range; nothing enforces it at runtime.
+const PLAUSIBLE_EPOCH_MS_MIN: u64 = 1_600_000_000_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Ahead,
+    Behind,
+    InStep,
+}
+
+/// A peer's last reading, and the margin it proved when it was measured -
+/// never recomputed against a later pass's bound.
+#[derive(Debug)]
+struct PeerVerdict {
+    direction: Direction,
+    margin_ms: i64,
+    expires_at: Instant,
+}
+
+#[derive(Debug)]
+struct PeerState {
+    seq: u64,
+    verdict: Option<PeerVerdict>,
+}
+
+/// A confirmed disagreement between this node's clock and its peers'.
+/// `offset_ms` is signed: positive means this node's clock reads later.
+/// `peers` voted for the direction; `tracked` is the count the majority was
+/// taken over.
+#[derive(Debug)]
+pub struct SkewReport {
+    pub offset_ms: i64,
+    pub peers: usize,
+    pub tracked: usize,
+}
+
+/// Local clock-skew observation from the lease scan the fencing pass already
+/// runs. Depends on `NodeLease.seq` being epoch millis straight off the
+/// writer's wall clock.
+///
+/// It does not say which clock is wrong: the measurement is a difference and
+/// the peer majority is the reference, so a swarm sharing one bad time source
+/// is invisible. In either direction detection floors near the margin and is
+/// only dependable well above it: a lease reading carries a non-negative,
+/// unmeasured age, but that age varies per peer and the report takes the
+/// extremum, so a row read soon after its renewal hides little of the offset.
+#[derive(Debug, Default)]
+pub struct ClockSkewWatch {
+    peers: HashMap<RuntimeId, PeerState>,
+    last_scan: Option<Instant>,
+    ahead_run: u32,
+    behind_run: u32,
+    since_report: Option<u32>,
+}
+
+impl ClockSkewWatch {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// This node's wall clock in epoch millis, or `None` when it reads
+    /// outside the plausible range - a node with no usable clock is not one
+    /// whose skew can be characterised. It is read before the lease scan, so
+    /// read-path lag biases the estimate toward behind; what biases it toward
+    /// ahead is a read served by a staler replica, whose rows predate the scan.
+    pub fn local_now_ms() -> Option<u64> {
+        let ms = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_millis(),
+        )
+        .ok()?;
+        Self::plausible(ms).then_some(ms)
+    }
+
+    /// Whether a value is in range to be an epoch-millis clock reading.
+    pub fn plausible(ms: u64) -> bool {
+        (PLAUSIBLE_EPOCH_MS_MIN..=PLAUSIBLE_EPOCH_MS_MAX).contains(&ms)
+    }
+
+    /// A peer row's clock reading: `None` for this node's own row, and for a
+    /// `seq` outside the plausible range - such a row is no reference at all.
+    fn peer_reading(own: RuntimeId, id: RuntimeId, seq: u64) -> Option<u64> {
+        (id != own && Self::plausible(seq)).then_some(seq)
+    }
+
+    /// `local - peer` in signed millis, saturating at `-i64::MAX` rather than
+    /// `i64::MIN`, whose negation and absolute value both overflow.
+    fn signed_diff_ms(local: u64, peer: u64) -> i64 {
+        if local >= peer {
+            i64::try_from(local - peer).unwrap_or(i64::MAX)
+        } else {
+            -i64::try_from(peer - local).unwrap_or(i64::MAX)
+        }
+    }
+
+    fn margins(&self, dir: Direction) -> impl Iterator<Item = i64> {
+        self.peers.values().filter_map(move |peer| {
+            peer.verdict
+                .as_ref()
+                .filter(|v| v.direction == dir)
+                .map(|v| v.margin_ms)
+        })
+    }
+
+    /// Folds one lease scan into the peer verdicts and returns a report when
+    /// a direction has held a majority for long enough.
+    pub fn sample<I>(
+        &mut self,
+        own: RuntimeId,
+        local_now_ms: Option<u64>,
+        now: Instant,
+        rows: I,
+    ) -> Option<SkewReport>
+    where
+        I: IntoIterator<Item = (RuntimeId, u64, u64)>,
+    {
+        let bound = self.last_scan.map(|prev| {
+            i64::try_from(now.saturating_duration_since(prev).as_millis()).unwrap_or(i64::MAX)
+        });
+        self.last_scan = Some(now);
+
+        let mut present: HashSet<RuntimeId> = HashSet::new();
+        let mut fresh_ahead = false;
+        let mut fresh_behind = false;
+
+        for (id, seq, ttl_ms) in rows {
+            let Some(reading) = Self::peer_reading(own, id, seq) else {
+                continue;
+            };
+            present.insert(id);
+            let Some(peer) = self.peers.get_mut(&id) else {
+                self.peers.insert(
+                    id,
+                    PeerState {
+                        seq: reading,
+                        verdict: None,
+                    },
+                );
+                continue;
+            };
+            if reading <= peer.seq {
+                // A lower reading re-baselines - a corrected peer clock, or a
+                // read served by a staler replica. An equal one is no advance.
+                peer.seq = reading;
+                continue;
+            }
+            peer.seq = reading;
+            let (Some(local), Some(bound)) = (local_now_ms, bound) else {
+                continue;
+            };
+            let offset = Self::signed_diff_ms(local, reading);
+            let (direction, margin_ms) = if offset.saturating_sub(bound) > SKEW_MARGIN_MS {
+                (Direction::Ahead, offset.saturating_sub(bound))
+            } else if offset < -SKEW_MARGIN_MS {
+                (Direction::Behind, offset)
+            } else {
+                (Direction::InStep, 0)
+            };
+            let window =
+                Duration::from_millis(ttl_ms.clamp(VERDICT_WINDOW_MIN_MS, VERDICT_WINDOW_MAX_MS));
+            peer.verdict = Some(PeerVerdict {
+                direction,
+                margin_ms,
+                expires_at: now.checked_add(window).unwrap_or(now),
+            });
+            match direction {
+                Direction::Ahead => fresh_ahead = true,
+                Direction::Behind => fresh_behind = true,
+                Direction::InStep => {}
+            }
+        }
+
+        self.peers.retain(|id, peer| {
+            if peer.verdict.as_ref().is_some_and(|v| v.expires_at <= now) {
+                peer.verdict = None;
+            }
+            peer.verdict.is_some() || present.contains(id)
+        });
+
+        self.decide(fresh_ahead, fresh_behind)
+    }
+
+    /// A direction's confirmation run. It resets when the majority is lost,
+    /// advances only on a fresh vote for it, and otherwise holds.
+    fn step(run: u32, majority: bool, fresh: bool) -> u32 {
+        if !majority {
+            0
+        } else if fresh {
+            run.saturating_add(1)
+        } else {
+            run
+        }
+    }
+
+    fn decide(&mut self, fresh_ahead: bool, fresh_behind: bool) -> Option<SkewReport> {
+        let tracked = self.peers.values().filter(|p| p.verdict.is_some()).count();
+        let ahead_votes = self.margins(Direction::Ahead).count();
+        let behind_votes = self.margins(Direction::Behind).count();
+        let ahead_majority = ahead_votes.saturating_mul(2) > tracked;
+        let behind_majority = behind_votes.saturating_mul(2) > tracked;
+
+        self.ahead_run = Self::step(self.ahead_run, ahead_majority, fresh_ahead);
+        self.behind_run = Self::step(self.behind_run, behind_majority, fresh_behind);
+
+        if (ahead_majority && fresh_ahead) || (behind_majority && fresh_behind) {
+            self.since_report = self.since_report.map(|n| n.saturating_add(1));
+        }
+
+        let winner = if ahead_majority && fresh_ahead && self.ahead_run >= CONFIRM_PASSES {
+            self.margins(Direction::Ahead)
+                .max()
+                .map(|m| (ahead_votes, m))
+        } else if behind_majority && fresh_behind && self.behind_run >= CONFIRM_PASSES {
+            self.margins(Direction::Behind)
+                .min()
+                .map(|m| (behind_votes, m))
+        } else {
+            None
+        };
+        let (votes, margin) = winner?;
+        let due = self.since_report.is_none_or(|n| n >= REPEAT_PASSES);
+        if !due {
+            return None;
+        }
+        self.since_report = Some(0);
+        Some(SkewReport {
+            offset_ms: margin,
+            peers: votes,
+            tracked,
+        })
+    }
 }
 
 /// Observer-local lease staleness: an `Instant` façade over the shared
@@ -429,5 +686,746 @@ mod tests {
             g.ready(&[rid(1)], t0 + Duration::from_secs(35)),
             vec![rid(1)]
         );
+    }
+
+    #[test]
+    fn first_sight_of_a_lease_is_not_evidence() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        // A lingering row from a long-dead node, on first sight and then
+        // never advancing.
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(0))]).is_none());
+    }
+
+    #[test]
+    fn a_swarm_of_one_is_silent() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..5 {
+            assert!(pass(&mut w, t0, n, &[(rid(OWN), ahead_seq(n))]).is_none());
+        }
+    }
+
+    #[test]
+    fn millisecond_conversion_and_the_own_id_filter() {
+        assert_eq!(ClockSkewWatch::signed_diff_ms(10, 4), 6);
+        assert_eq!(ClockSkewWatch::signed_diff_ms(4, 10), -6);
+        assert_eq!(ClockSkewWatch::signed_diff_ms(u64::MAX, 0), i64::MAX);
+        // Negatable, unlike `i64::MIN`.
+        assert_eq!(ClockSkewWatch::signed_diff_ms(0, u64::MAX), -i64::MAX);
+
+        assert_eq!(
+            ClockSkewWatch::peer_reading(rid(OWN), rid(OWN), T0_MS),
+            None
+        );
+        assert_eq!(
+            ClockSkewWatch::peer_reading(rid(OWN), rid(1), T0_MS),
+            Some(T0_MS)
+        );
+        assert_eq!(ClockSkewWatch::peer_reading(rid(OWN), rid(1), 0), None);
+        assert_eq!(
+            ClockSkewWatch::peer_reading(rid(OWN), rid(1), u64::MAX),
+            None
+        );
+    }
+
+    #[test]
+    fn a_retained_majority_with_a_contrary_fresh_vote_does_not_confirm() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        // Two peers read ahead, one reads in-step.
+        let rows = |n: u64| {
+            [
+                (rid(1), ahead_seq(n)),
+                (rid(2), ahead_seq(n)),
+                (rid(3), in_step_seq(n)),
+            ]
+        };
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        // The two ahead peers stop advancing; only the in-step peer is fresh.
+        // Their retained verdicts still carry the majority, and that alone
+        // must not complete the run.
+        assert!(
+            pass(
+                &mut w,
+                t0,
+                2,
+                &[
+                    (rid(1), ahead_seq(1)),
+                    (rid(2), ahead_seq(1)),
+                    (rid(3), in_step_seq(2)),
+                ]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_corrected_clock_stops_repeating_while_stale_verdicts_live() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let mut reported = Vec::new();
+        for n in 0..=31 {
+            let rows = [
+                (rid(1), ahead_seq(n)),
+                (rid(2), ahead_seq(n)),
+                (rid(3), in_step_seq(n)),
+            ];
+            if pass(&mut w, t0, n, &rows).is_some() {
+                reported.push(n);
+            }
+        }
+        assert_eq!(reported, vec![2]);
+        // The clock is corrected: the peer that is still renewing now reads
+        // in-step. The two ahead verdicts are retained and still live, so the
+        // majority survives - but the scheduled repeat must not fire on it.
+        assert!(
+            pass(
+                &mut w,
+                t0,
+                32,
+                &[
+                    (rid(1), ahead_seq(31)),
+                    (rid(2), ahead_seq(31)),
+                    (rid(3), in_step_seq(32)),
+                ]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn two_peers_declaring_different_ttls_share_one_age_bound() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| {
+            [
+                (rid(1), ahead_seq(n), VERDICT_WINDOW_MIN_MS),
+                (rid(2), ahead_seq(n), VERDICT_WINDOW_MAX_MS),
+            ]
+        };
+        assert!(pass_with(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass_with(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass_with(&mut w, t0, 2, &rows(2)).expect("a report");
+        // Both peers cast the same vote for the same offset despite the
+        // ttl they each declared.
+        assert_eq!(report.peers, 2);
+        assert_eq!(report.tracked, 2);
+    }
+
+    #[test]
+    fn a_longer_pass_widens_the_bound_and_drops_a_borderline_vote() {
+        // On a normal pass the borderline offset clears the bound plus the
+        // margin and votes ahead.
+        let mut normal = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..2 {
+            assert!(pass(&mut normal, t0, n, &[(rid(1), borderline_ahead_seq(n))]).is_none());
+        }
+        let report =
+            pass(&mut normal, t0, 2, &[(rid(1), borderline_ahead_seq(2))]).expect("a report");
+        assert_eq!(report.offset_ms, 8_000);
+
+        // The same offsets on passes twice as far apart no longer clear it.
+        let mut slow = ClockSkewWatch::new();
+        for n in [0, 2, 4, 6] {
+            assert!(pass(&mut slow, t0, n, &[(rid(1), borderline_ahead_seq(n))]).is_none());
+        }
+    }
+
+    #[test]
+    fn one_dissenting_peer_of_five_never_carries_a_majority() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..8 {
+            let rows = [
+                (rid(1), ahead_seq(n)),
+                (rid(2), in_step_seq(n)),
+                (rid(3), in_step_seq(n)),
+                (rid(4), in_step_seq(n)),
+                (rid(5), in_step_seq(n)),
+            ];
+            assert!(pass(&mut w, t0, n, &rows).is_none());
+        }
+    }
+
+    #[test]
+    fn two_of_three_peers_agreeing_reports() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| {
+            [
+                (rid(1), ahead_seq(n)),
+                (rid(2), ahead_seq(n)),
+                (rid(3), in_step_seq(n)),
+            ]
+        };
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass(&mut w, t0, 2, &rows(2)).expect("a report");
+        assert_eq!(report.offset_ms, 10_000);
+        assert_eq!(report.peers, 2);
+        assert_eq!(report.tracked, 3);
+    }
+
+    #[test]
+    fn four_of_five_peers_agreeing_reports() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| {
+            [
+                (rid(1), ahead_seq(n)),
+                (rid(2), ahead_seq(n)),
+                (rid(3), ahead_seq(n)),
+                (rid(4), ahead_seq(n)),
+                (rid(5), in_step_seq(n)),
+            ]
+        };
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass(&mut w, t0, 2, &rows(2)).expect("a report");
+        assert_eq!(report.offset_ms, 10_000);
+        assert_eq!(report.peers, 4);
+        assert_eq!(report.tracked, 5);
+    }
+
+    #[test]
+    fn one_of_two_peers_disagreeing_stays_silent() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..6 {
+            let rows = [(rid(1), ahead_seq(n)), (rid(2), in_step_seq(n))];
+            assert!(pass(&mut w, t0, n, &rows).is_none());
+        }
+    }
+
+    #[test]
+    fn peers_split_across_opposite_directions_stay_silent() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..6 {
+            let rows = [(rid(1), ahead_seq(n)), (rid(2), behind_seq(n))];
+            assert!(pass(&mut w, t0, n, &rows).is_none());
+        }
+    }
+
+    #[test]
+    fn in_step_peers_count_toward_the_tracked_total() {
+        let mut with_bystanders = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..4 {
+            let rows = [
+                (rid(1), ahead_seq(n)),
+                (rid(2), in_step_seq(n)),
+                (rid(3), in_step_seq(n)),
+                (rid(4), in_step_seq(n)),
+                (rid(5), in_step_seq(n)),
+            ];
+            assert!(pass(&mut with_bystanders, t0, n, &rows).is_none());
+        }
+        // The same lone voter, with the in-step peers gone from the
+        // denominator, does report.
+        let mut alone = ClockSkewWatch::new();
+        assert!(pass(&mut alone, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut alone, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        let report = pass(&mut alone, t0, 2, &[(rid(1), ahead_seq(2))]).expect("a report");
+        assert_eq!(report.tracked, 1);
+    }
+
+    #[test]
+    fn a_lingering_row_leaves_the_majority_after_its_declared_ttl() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let lingering_ttl = VERDICT_WINDOW_MIN_MS;
+        assert!(
+            pass_with(
+                &mut w,
+                t0,
+                0,
+                &[
+                    (rid(1), in_step_seq(0), lingering_ttl),
+                    (rid(2), ahead_seq(0), PEER_TTL_MS),
+                ]
+            )
+            .is_none()
+        );
+        assert!(
+            pass_with(
+                &mut w,
+                t0,
+                1,
+                &[
+                    (rid(1), in_step_seq(1), lingering_ttl),
+                    (rid(2), ahead_seq(1), PEER_TTL_MS),
+                ]
+            )
+            .is_none()
+        );
+        // The lingering row stays present but never advances again.
+        for n in 2..=5 {
+            assert!(
+                pass_with(
+                    &mut w,
+                    t0,
+                    n,
+                    &[
+                        (rid(1), in_step_seq(1), lingering_ttl),
+                        (rid(2), ahead_seq(n), PEER_TTL_MS),
+                    ],
+                )
+                .is_none(),
+                "pass {n} should be silent"
+            );
+        }
+        let report = pass_with(
+            &mut w,
+            t0,
+            6,
+            &[
+                (rid(1), in_step_seq(1), lingering_ttl),
+                (rid(2), ahead_seq(6), PEER_TTL_MS),
+            ],
+        )
+        .expect("a report");
+        assert_eq!(report.tracked, 1);
+        assert_eq!(report.peers, 1);
+    }
+
+    #[test]
+    fn a_single_peer_reports_and_says_so() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        let report = pass(&mut w, t0, 2, &[(rid(1), ahead_seq(2))]).expect("a report");
+        assert_eq!(report.peers, 1);
+        assert_eq!(report.tracked, 1);
+    }
+
+    #[test]
+    fn the_largest_ahead_disagreement_is_the_greatest_margin() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| [(rid(1), ahead_seq(n)), (rid(2), far_ahead_seq(n))];
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass(&mut w, t0, 2, &rows(2)).expect("a report");
+        assert_eq!(report.offset_ms, 30_000);
+        assert_eq!(report.peers, 2);
+    }
+
+    #[test]
+    fn the_largest_behind_disagreement_is_the_least_margin() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| [(rid(1), behind_seq(n)), (rid(2), far_behind_seq(n))];
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass(&mut w, t0, 2, &rows(2)).expect("a report");
+        assert_eq!(report.offset_ms, -30_000);
+        assert_eq!(report.peers, 2);
+    }
+
+    #[test]
+    fn verdicts_measured_under_different_bounds_are_not_recomputed() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(
+            pass(
+                &mut w,
+                t0,
+                0,
+                &[(rid(1), far_ahead_seq(0)), (rid(2), ahead_seq(0))]
+            )
+            .is_none()
+        );
+        // One peer's verdict is measured across a double-length pass, so its
+        // stored margin is 20 s rather than the 30 s a 10 s bound would give.
+        assert!(
+            pass(
+                &mut w,
+                t0,
+                2,
+                &[(rid(1), far_ahead_seq(2)), (rid(2), ahead_seq(0))]
+            )
+            .is_none()
+        );
+        let report = pass(
+            &mut w,
+            t0,
+            3,
+            &[(rid(1), far_ahead_seq(2)), (rid(2), ahead_seq(3))],
+        )
+        .expect("a report");
+        assert_eq!(report.offset_ms, 20_000);
+        assert_eq!(report.peers, 2);
+    }
+
+    #[test]
+    fn a_reading_behind_local_time_reports_at_a_smaller_magnitude() {
+        let mut behind = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut behind, t0, 0, &[(rid(1), behind_seq(0))]).is_none());
+        assert!(pass(&mut behind, t0, 1, &[(rid(1), behind_seq(1))]).is_none());
+        let report = pass(&mut behind, t0, 2, &[(rid(1), behind_seq(2))]).expect("a report");
+        assert_eq!(report.offset_ms, -10_000);
+
+        // The same magnitude in the other direction is inside the age bound
+        // and votes in-step.
+        let mut ahead = ClockSkewWatch::new();
+        for n in 0..6 {
+            assert!(pass(&mut ahead, t0, n, &[(rid(1), mild_ahead_seq(n))]).is_none());
+        }
+    }
+
+    #[test]
+    fn reporting_needs_two_fresh_same_direction_confirmations() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        assert!(pass(&mut w, t0, 2, &[(rid(1), ahead_seq(2))]).is_some());
+    }
+
+    #[test]
+    fn the_first_report_is_not_delayed_by_the_repeat_interval() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let mut reported = None;
+        for n in 0..=8 {
+            if pass(&mut w, t0, n, &[(rid(1), ahead_seq(n))]).is_some() {
+                reported = Some(n);
+                break;
+            }
+        }
+        // Two confirmations, not the repeat interval.
+        assert_eq!(reported, Some(2));
+    }
+
+    #[test]
+    fn a_report_repeats_only_after_the_interval() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let mut reported = Vec::new();
+        for n in 0..=40 {
+            if pass(&mut w, t0, n, &[(rid(1), ahead_seq(n))]).is_some() {
+                reported.push(n);
+            }
+        }
+        assert_eq!(reported, vec![2, 32]);
+    }
+
+    #[test]
+    fn a_pass_without_a_fresh_vote_neither_reports_nor_shortens_the_next() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..2 {
+            assert!(pass(&mut w, t0, n, &[(rid(1), ahead_seq(n))]).is_none());
+        }
+        assert!(pass(&mut w, t0, 2, &[(rid(1), ahead_seq(2))]).is_some());
+        // Two passes where the row is present but frozen: the retained
+        // verdict still carries the majority and nothing is emitted.
+        assert!(pass(&mut w, t0, 3, &[(rid(1), ahead_seq(2))]).is_none());
+        assert!(pass(&mut w, t0, 4, &[(rid(1), ahead_seq(2))]).is_none());
+        // And they did not count toward the repeat: it lands two passes later
+        // than it would have.
+        let mut repeat = None;
+        for n in 5..=40 {
+            if pass(&mut w, t0, n, &[(rid(1), ahead_seq(n))]).is_some() {
+                repeat = Some(n);
+                break;
+            }
+        }
+        assert_eq!(repeat, Some(34));
+    }
+
+    #[test]
+    fn an_irregular_oscillation_reports_once_not_once_per_swing() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        // Irregular, deliberately not alternating.
+        let swings = [
+            true, true, true, false, true, true, false, false, true, true, true, false, true, true,
+            false, false, false, true, true, true,
+        ];
+        let mut reports = 0;
+        for (i, ahead) in swings.iter().enumerate() {
+            let n = u64::try_from(i).expect("pass index fits");
+            let seq = if *ahead { ahead_seq(n) } else { in_step_seq(n) };
+            if pass(&mut w, t0, n, &[(rid(1), seq)]).is_some() {
+                reports += 1;
+            }
+        }
+        assert_eq!(reports, 1);
+    }
+
+    #[test]
+    fn a_corrected_peer_clock_rebaselines_and_votes_again() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        // The peer's clock is corrected: its seq steps back and keeps
+        // advancing from there. The step itself is not a sample.
+        let corrected = ahead_seq(0) - 50_000;
+        assert!(pass(&mut w, t0, 2, &[(rid(1), corrected)]).is_none());
+        assert!(pass(&mut w, t0, 3, &[(rid(1), corrected + PASS_MS)]).is_some());
+    }
+
+    #[test]
+    fn a_staler_replica_read_rebaselines_without_losing_the_peer() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        // One pass is served by a staler replica and reads lower.
+        assert!(pass(&mut w, t0, 2, &[(rid(1), ahead_seq(0))]).is_none());
+        // The next fresh read is an advance again and completes the run.
+        assert!(pass(&mut w, t0, 3, &[(rid(1), ahead_seq(3))]).is_some());
+    }
+
+    #[test]
+    fn a_seq_below_the_plausible_range_is_not_a_reference() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| [(rid(1), 0), (rid(2), ahead_seq(n))];
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass(&mut w, t0, 2, &rows(2)).expect("a report");
+        // The pre-epoch row never entered the denominator.
+        assert_eq!(report.tracked, 1);
+        assert_eq!(report.peers, 1);
+    }
+
+    #[test]
+    fn a_seq_at_the_top_of_its_range_is_not_a_reference() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let rows = |n: u64| [(rid(1), u64::MAX), (rid(2), ahead_seq(n))];
+        assert!(pass(&mut w, t0, 0, &rows(0)).is_none());
+        assert!(pass(&mut w, t0, 1, &rows(1)).is_none());
+        let report = pass(&mut w, t0, 2, &rows(2)).expect("a report");
+        assert_eq!(report.tracked, 1);
+        assert_eq!(report.peers, 1);
+    }
+
+    #[test]
+    fn an_implausible_declared_ttl_is_clamped() {
+        // A zero ttl cannot expire a verdict inside a pass.
+        let mut zero = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass_with(&mut zero, t0, 0, &[(rid(1), ahead_seq(0), 0)]).is_none());
+        assert!(pass_with(&mut zero, t0, 1, &[(rid(1), ahead_seq(1), 0)]).is_none());
+        // Frozen row: the verdict is retained, so the run holds for want of a
+        // fresh vote rather than being reset.
+        assert!(pass_with(&mut zero, t0, 2, &[(rid(1), ahead_seq(1), 0)]).is_none());
+        assert!(pass_with(&mut zero, t0, 3, &[(rid(1), ahead_seq(3), 0)]).is_some());
+
+        // A maximal ttl cannot retain one past the ceiling.
+        let mut forever = ClockSkewWatch::new();
+        let rows = |n: u64, frozen: u64| {
+            [
+                (rid(1), in_step_seq(frozen), u64::MAX),
+                (rid(2), ahead_seq(n), PEER_TTL_MS),
+            ]
+        };
+        assert!(pass_with(&mut forever, t0, 0, &rows(0, 0)).is_none());
+        assert!(pass_with(&mut forever, t0, 1, &rows(1, 1)).is_none());
+        for n in 2..=13 {
+            assert!(
+                pass_with(&mut forever, t0, n, &rows(n, 1)).is_none(),
+                "pass {n} should be silent"
+            );
+        }
+        let report = pass_with(&mut forever, t0, 14, &rows(14, 1)).expect("a report");
+        assert_eq!(report.tracked, 1);
+    }
+
+    #[test]
+    fn an_unset_local_clock_yields_no_evidence() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        for n in 0..6 {
+            let rows = [(rid(1), ahead_seq(n), PEER_TTL_MS)];
+            assert!(
+                w.sample(rid(OWN), None, at(t0, n), rows.iter().copied())
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_slow_cadence_swarm_reports_a_real_skew() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        // Two peers renewing far slower than this observer scans, staggered.
+        assert!(
+            pass(
+                &mut w,
+                t0,
+                0,
+                &[(rid(1), ahead_seq(0)), (rid(2), ahead_seq(0))]
+            )
+            .is_none()
+        );
+        assert!(
+            pass(
+                &mut w,
+                t0,
+                1,
+                &[(rid(1), ahead_seq(1)), (rid(2), ahead_seq(0))]
+            )
+            .is_none()
+        );
+        for n in 2..=3 {
+            assert!(
+                pass(
+                    &mut w,
+                    t0,
+                    n,
+                    &[(rid(1), ahead_seq(1)), (rid(2), ahead_seq(0))]
+                )
+                .is_none(),
+                "pass {n} should be silent"
+            );
+        }
+        let report = pass(
+            &mut w,
+            t0,
+            4,
+            &[(rid(1), ahead_seq(1)), (rid(2), ahead_seq(4))],
+        )
+        .expect("a report");
+        assert_eq!(report.peers, 2);
+        assert_eq!(report.tracked, 2);
+    }
+
+    #[test]
+    fn intervening_passes_without_a_fresh_vote_do_not_reset_the_run() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        let ttl = VERDICT_WINDOW_MAX_MS;
+        assert!(pass_with(&mut w, t0, 0, &[(rid(1), ahead_seq(0), ttl)]).is_none());
+        assert!(pass_with(&mut w, t0, 1, &[(rid(1), ahead_seq(1), ttl)]).is_none());
+        // Six passes carrying no fresh vote at all.
+        for n in 2..=7 {
+            assert!(
+                pass_with(&mut w, t0, n, &[(rid(1), ahead_seq(1), ttl)]).is_none(),
+                "pass {n} should be silent"
+            );
+        }
+        // The second advance completes the run: it was held, not reset.
+        assert!(pass_with(&mut w, t0, 8, &[(rid(1), ahead_seq(8), ttl)]).is_some());
+    }
+
+    #[test]
+    fn a_present_rows_record_survives_its_verdict_expiring() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        // Present but frozen well past the verdict window.
+        for n in 2..=6 {
+            assert!(
+                pass(&mut w, t0, n, &[(rid(1), ahead_seq(1))]).is_none(),
+                "pass {n} should be silent"
+            );
+        }
+        // The record survived, so the next advance is a sample rather than a
+        // first sight, and two of them are enough.
+        assert!(pass(&mut w, t0, 7, &[(rid(1), ahead_seq(7))]).is_none());
+        assert!(pass(&mut w, t0, 8, &[(rid(1), ahead_seq(8))]).is_some());
+    }
+
+    #[test]
+    fn an_absent_peer_with_an_expired_verdict_returns_as_first_sight() {
+        let mut w = ClockSkewWatch::new();
+        let t0 = Instant::now();
+        assert!(pass(&mut w, t0, 0, &[(rid(1), ahead_seq(0))]).is_none());
+        assert!(pass(&mut w, t0, 1, &[(rid(1), ahead_seq(1))]).is_none());
+        // Absent from the scan until its verdict has expired: the record goes
+        // with it.
+        for n in 2..=6 {
+            assert!(
+                pass(&mut w, t0, n, &[]).is_none(),
+                "pass {n} should be silent"
+            );
+        }
+        // On return it is first sight again - one pass later than the
+        // present-row case.
+        assert!(pass(&mut w, t0, 7, &[(rid(1), ahead_seq(7))]).is_none());
+        assert!(pass(&mut w, t0, 8, &[(rid(1), ahead_seq(8))]).is_none());
+        assert!(pass(&mut w, t0, 9, &[(rid(1), ahead_seq(9))]).is_some());
+    }
+
+    const OWN: u8 = 9;
+    const T0_MS: u64 = 1_700_000_000_000;
+    const PASS_MS: u64 = 10_000;
+    const PEER_TTL_MS: u64 = 45_000;
+
+    /// This observer's wall clock at pass `n`.
+    fn local_at(n: u64) -> u64 {
+        T0_MS + n * PASS_MS
+    }
+
+    /// The monotonic instant of pass `n`.
+    fn at(t0: Instant, n: u64) -> Instant {
+        t0 + Duration::from_millis(n * PASS_MS)
+    }
+
+    /// Readings against a 10 s pass bound and a 5 s margin: 20 s of offset
+    /// votes ahead, 1 s votes in-step, 10 s of negative offset votes behind.
+    fn ahead_seq(n: u64) -> u64 {
+        local_at(n) - 20_000
+    }
+
+    fn far_ahead_seq(n: u64) -> u64 {
+        local_at(n) - 40_000
+    }
+
+    fn borderline_ahead_seq(n: u64) -> u64 {
+        local_at(n) - 18_000
+    }
+
+    fn mild_ahead_seq(n: u64) -> u64 {
+        local_at(n) - 10_000
+    }
+
+    fn in_step_seq(n: u64) -> u64 {
+        local_at(n) - 1_000
+    }
+
+    fn behind_seq(n: u64) -> u64 {
+        local_at(n) + 10_000
+    }
+
+    fn far_behind_seq(n: u64) -> u64 {
+        local_at(n) + 30_000
+    }
+
+    /// One pass, every row declaring the same ttl.
+    fn pass(
+        w: &mut ClockSkewWatch,
+        t0: Instant,
+        n: u64,
+        rows: &[(RuntimeId, u64)],
+    ) -> Option<SkewReport> {
+        let rows: Vec<(RuntimeId, u64, u64)> = rows
+            .iter()
+            .map(|(id, seq)| (*id, *seq, PEER_TTL_MS))
+            .collect();
+        pass_with(w, t0, n, &rows)
+    }
+
+    /// One pass with a per-row ttl.
+    fn pass_with(
+        w: &mut ClockSkewWatch,
+        t0: Instant,
+        n: u64,
+        rows: &[(RuntimeId, u64, u64)],
+    ) -> Option<SkewReport> {
+        w.sample(rid(OWN), Some(local_at(n)), at(t0, n), rows.iter().copied())
     }
 }
