@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use crate::CargoTarget;
 use crate::cargo;
-use crate::compile::{Selector, resolve_selector};
+use crate::compile::{Selector, TOOLCHAIN, resolve_selector};
 
 /// The bare-metal target every supported chip compiles for.
 pub const TARGET: &str = "riscv32imac-unknown-none-elf";
@@ -125,8 +125,8 @@ pub fn build(
 
     let mut cmd = Command::new("cargo");
     cmd.current_dir(manifest_dir);
+    cmd.arg(format!("+{TOOLCHAIN}"));
     cmd.args([
-        "+nightly",
         "build",
         "--release",
         "--target",
