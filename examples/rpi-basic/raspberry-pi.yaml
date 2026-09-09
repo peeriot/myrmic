@@ -1,5 +1,4 @@
 # Reference Linux device manifest — Raspberry Pi with BME280 + VEML7700 on /dev/i2c-1.
-# Used by ci/check-generated-pipeline.sh (Task 11, SR-4, SR-7).
 id: rpi-basic
 chip: linux
 
