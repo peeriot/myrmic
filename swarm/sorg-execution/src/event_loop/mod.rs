@@ -103,6 +103,9 @@ struct Runtime {
     meta: HashMap<Sri, crate::supervision::fencing::WatchedCell>,
     fencing: crate::supervision::fencing::FencingState,
     lease_tracker: sorg_common::supervision::LeaseTracker,
+    /// Fed by the same lease scan; reports when this node's own clock looks
+    /// out of step with its peers'.
+    skew: sorg_common::supervision::ClockSkewWatch,
     /// Registry cleanup owed for cells this exec killed; drained each
     /// verification pass, kept across db outages (spec §3 retry queue).
     cleanup: Vec<CleanupAction>,
@@ -140,6 +143,7 @@ impl Runtime {
             meta: HashMap::new(),
             fencing: crate::supervision::fencing::FencingState::new(),
             lease_tracker: sorg_common::supervision::LeaseTracker::new(),
+            skew: sorg_common::supervision::ClockSkewWatch::new(),
             cleanup: Vec::new(),
             sweep_done: false,
         };

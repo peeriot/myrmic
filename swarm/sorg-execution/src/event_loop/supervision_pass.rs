@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use cell_protocol::{RuntimeId, Sri};
+use sorg_common::supervision::ClockSkewWatch;
 use sorg_common::{LostReason, node_lease, report_cell_death};
 use tracing::{debug, warn};
 
@@ -63,15 +64,34 @@ impl Runtime {
         }
         self.drain_cleanup().await;
 
+        let my_exec = self.info.id();
+        let local_now_ms = ClockSkewWatch::local_now_ms();
+        let scan_at = Instant::now();
         match node_lease::list_leases(&self.session).await {
             Ok(leases) => {
                 let now = Instant::now();
-                for (id, lease) in leases {
+                for (id, lease) in &leases {
                     self.lease_tracker.observe(
-                        id,
+                        *id,
                         lease.seq,
                         std::time::Duration::from_millis(lease.ttl_ms),
                         now,
+                    );
+                }
+                if let Some(report) = self.skew.sample(
+                    my_exec,
+                    local_now_ms,
+                    scan_at,
+                    leases
+                        .iter()
+                        .map(|(id, lease)| (*id, lease.seq, lease.ttl_ms)),
+                ) {
+                    let offset_ms = report.offset_ms;
+                    warn!(
+                        offset_ms,
+                        peers = report.peers,
+                        tracked = report.tracked,
+                        "this node's clock disagrees with its peers; the largest confirmed disagreement is {offset_ms} ms - check time synchronisation on this node and on its peers"
                     );
                 }
             }
@@ -79,7 +99,6 @@ impl Runtime {
         }
 
         let now = Instant::now();
-        let my_exec = self.info.id();
         let watched: Vec<WatchedCell> = self.meta.values().cloned().collect();
         let mut row_cache: HashMap<Sri, RowRead<RowFacts>> = HashMap::new();
 

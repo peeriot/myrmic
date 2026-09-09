@@ -14,6 +14,20 @@ pub(crate) fn next_renewal_delay(timing: &SupervisionTiming, tick: u64) -> Durat
     jittered(timing.renew, tick)
 }
 
+/// Wall-clock millis, not a counter: node ids are stable across restarts, so
+/// the seq must keep advancing through one - a restarted counter would look
+/// like a frozen (dead) lease to observers that saw the old incarnation's
+/// higher values, and it would mute the skew watch on every observer.
+pub(crate) fn mint_seq() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
 /// Renews this node's liveness lease forever. Failures are logged and retried
 /// next tick — the lease going stale on persistent failure IS the designed
 /// signal, not an error path to handle.
@@ -31,17 +45,7 @@ pub(crate) fn spawn_renewal(
         let mut tick: u64 = 0;
         loop {
             tick += 1;
-            // Wall-clock millis, not a counter: node ids are stable across
-            // restarts, so the seq must keep advancing through one — a
-            // restarted counter would look like a frozen (dead) lease to
-            // observers that saw the old incarnation's higher values.
-            let seq = u64::try_from(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis(),
-            )
-            .unwrap_or(u64::MAX);
+            let seq = mint_seq();
             let lease = NodeLease {
                 device_id: device_id.clone(),
                 seq,
@@ -83,5 +87,12 @@ mod tests {
         assert_ne!(d1, d2);
         assert!(d1 >= Duration::from_secs(8) && d1 <= Duration::from_secs(12));
         assert!(d2 >= Duration::from_secs(8) && d2 <= Duration::from_secs(12));
+    }
+
+    #[test]
+    fn lease_seq_is_epoch_millis_not_a_counter() {
+        assert!(sorg_common::supervision::ClockSkewWatch::plausible(
+            mint_seq()
+        ));
     }
 }
