@@ -39,4 +39,4 @@ You will use two terminals:
 
 1. [The Sensor and Its Node](./03_resilience/01_the-sensor-and-its-node.md) - start three tagged runtimes, pin the sensor to one, kill that runtime and bring it back - **learning how placement tags and a restart policy work.**
 2. [The Grow-Bed and Its State](./03_resilience/02_the-grow-bed-and-its-state.md) - deploy the grow-bed, find out where its state is kept, kill the node it runs on, and see when the state survives - and how to make that likely - **learning that a cell's state lives in one place unless you ask for copies.**
-3. [The Whole Greenhouse](./03_resilience/03_the-whole-greenhouse.md) - fold placement and restart into the application specification and replicate the whole application - **learning how the pieces fit together in one deployment.**
+3. [The Whole Greenhouse](./03_resilience/03_the-whole-greenhouse.md) - add a fourth runtime for the pump, fold placement and restart into the application specification and replicate the whole application - **learning how the pieces fit together in one deployment.**
