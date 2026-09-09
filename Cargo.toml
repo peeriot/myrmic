@@ -123,13 +123,61 @@ default-members = [
     "benchmarks/harness",
     "benchmarks/report",
     "benchmarks/warehouse",
+    # Signal layer: host-side codegen, runtimes and shims
+    "sdk/signal-layer/signal-layer-core",
+    "sdk/signal-layer/signal-layer-ipc",
+    "sdk/signal-layer/pipeline-backend-api",
+    "sdk/signal-layer/pipeline-codegen",
+    "sdk/signal-layer/esp-codegen",
+    "sdk/signal-layer/linux-codegen",
+    "swarm/signal-layer/signal-layer-linux-rt",
+    "swarm/signal-layer/linux-i2c-shim",
+    "swarm/signal-layer/linux-gpio-shim",
+    "swarm/signal-layer/linux-spi-shim",
+    # Signal modules
+    "signal-modules/drivers/ads1115",
+    "signal-modules/drivers/bme280",
+    "signal-modules/drivers/bmp180",
+    "signal-modules/drivers/ccs811",
+    "signal-modules/drivers/gpio-output",
+    "signal-modules/drivers/gpio-output-feedback",
+    "signal-modules/drivers/pwm-output",
+    "signal-modules/drivers/sim-source",
+    "signal-modules/drivers/spi-loopback",
+    "signal-modules/drivers/veml7700",
+    "signal-modules/drivers/wsen-itds",
+    "signal-modules/steps/cadence",
+    "signal-modules/steps/fan-curve",
+    "signal-modules/steps/hysteresis",
+    "signal-modules/steps/max-value",
+    "signal-modules/steps/min-value",
+    "signal-modules/steps/moving-average",
+    "signal-modules/steps/threshold-trigger",
+    # Host-buildable embedded, tooling and tutorial crates
+    "swarm/swarm-telemetry-embedded",
+    "swarm/myrmic-tags",
+    "sdk/tools/aot-compiler",
+    "swarm/tutorials/sorg/code/common",
+    "swarm/tutorials/sorg/code/publisher",
+    "swarm/tutorials/sorg/code/subscriber",
+    "embedded/hil-tests",
+    "embedded/esp-hal/crates/esp-heap",
+    "embedded/esp-hal/crates/esp-mmu-consts",
+    "embedded/esp-hal/crates/wasm-runtime-macros",
+    # Cell fixtures the wasm job skips, so nothing else lints them
+    "tests/fixtures/cell-counter-caller-logic",
+    "tests/fixtures/cell-event-sub-logic",
+    "tests/fixtures/cell-nested-caller-logic",
+    "tests/fixtures/cell-thermostat-logic",
 ]
 
 [workspace.package]
 # The release version. A release-prep commit sets this to the version about to be
 # cut, and a release tag that disagrees with it is rejected.
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
+# Floored by the cranelift/pulley (wasmtime) stack.
+rust-version = "1.94"
 # Zone A (platform). Crates outside this zone declare their own license;
 # see REUSE.toml for the authoritative per-path declarations.
 license = "GPL-2.0-only WITH LicenseRef-Myrmic-exception-1.0"
@@ -509,9 +557,9 @@ swarm-api = { path = "swarm/swarm-api", default-features = false }
 bluer = "0.17.4"
 
 aot-compiler = { path = "sdk/tools/aot-compiler" }
-myrmic-common = { path = "sdk/myrmic-common", version = "0.4.0" }
+myrmic-common = { path = "sdk/myrmic-common", version = "0.5.0" }
 myrmic-sdk = { path = "sdk/myrmic-sdk" }
-myrmic-sdk-macros = { path = "sdk/myrmic-sdk-macros", version = "0.4.0" }
+myrmic-sdk-macros = { path = "sdk/myrmic-sdk-macros", version = "0.5.0" }
 wasm-runtime-macros = { path = "embedded/esp-hal/crates/wasm-runtime-macros" }
 wasm-runtime = { path = "embedded/esp-hal/crates/wasm-runtime" }
 wasm-storage = { path = "embedded/esp-hal/crates/wasm-storage", default-features = false }
@@ -529,7 +577,7 @@ esp-firmware-macros = { path = "embedded/esp-hal/crates/esp-firmware-macros" }
 esp-firmware-build = { path = "embedded/esp-hal/crates/esp-firmware-build" }
 
 # Signal Layer core
-signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.4.0", default-features = false }
+signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.5.0", default-features = false }
 signal-layer-core = { path = "sdk/signal-layer/signal-layer-core" }
 pipeline-codegen = { path = "sdk/signal-layer/pipeline-codegen" }
 pipeline-backend-api = { path = "sdk/signal-layer/pipeline-backend-api" }

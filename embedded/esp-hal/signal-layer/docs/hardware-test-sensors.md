@@ -58,7 +58,7 @@ YAML path, resolved relative to `embedded/esp-hal/modem-esp32` or absolute:
 ```bash
 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-devkit.yaml \
 SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/basic-sensors.yaml \
-    cargo +nightly build-c6 --features pipeline
+    cargo +nightly-2026-08-07 build-c6 --features pipeline
 ```
 
 The resulting binary is at

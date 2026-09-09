@@ -207,6 +207,19 @@ impl RestartBudget {
             .is_none_or(|last| now.duration_since(*last) >= delay)
     }
 
+    /// Uncharges the most recent attempt recorded for `sri`. For a restart
+    /// that failed at placement — no eligible runtime exists yet — rather
+    /// than by crashing: such an attempt says nothing about a crash loop and
+    /// must not eat into the budget while the swarm waits for a runtime.
+    pub fn refund(&mut self, sri: &Sri) {
+        if let Some(recent) = self.attempts.get_mut(sri) {
+            recent.pop_back();
+            if recent.is_empty() {
+                self.attempts.remove(sri);
+            }
+        }
+    }
+
     /// Forgets a root's restart history (on terminal removal or give-up).
     pub fn forget(&mut self, sri: &Sri) {
         self.attempts.remove(sri);
@@ -277,6 +290,29 @@ mod tests {
         assert!(!b.ready(&s, delay, t0 + Duration::from_secs(4)));
         // After the delay: ready again.
         assert!(b.ready(&s, delay, t0 + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn refund_uncharges_only_the_latest_attempt() {
+        let mut b = RestartBudget::new();
+        let (max, win) = (2, Duration::from_mins(1));
+        let t0 = Instant::now();
+        let s = sri("root-a");
+        assert!(b.allow(s, max, win, t0));
+        assert!(b.allow(s, max, win, t0 + Duration::from_secs(1)));
+        // Budget exhausted...
+        assert!(!b.allow(s, max, win, t0 + Duration::from_secs(2)));
+        // ...until the latest attempt is refunded; one attempt is still charged.
+        b.refund(&s);
+        assert!(b.allow(s, max, win, t0 + Duration::from_secs(3)));
+        assert!(!b.allow(s, max, win, t0 + Duration::from_secs(4)));
+        // Refunding an unknown root is a no-op.
+        b.refund(&sri("root-b"));
+        // A refunded attempt no longer holds the inter-attempt delay either.
+        let mut c = RestartBudget::new();
+        assert!(c.allow(s, max, win, t0));
+        c.refund(&s);
+        assert!(c.ready(&s, Duration::from_secs(30), t0));
     }
 
     #[test]

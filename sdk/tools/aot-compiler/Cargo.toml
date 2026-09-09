@@ -15,3 +15,6 @@ which   = { workspace = true }
 sha2 = { workspace = true }
 # Local
 wasm-storage = { workspace = true }
+
+[lints]
+workspace = true

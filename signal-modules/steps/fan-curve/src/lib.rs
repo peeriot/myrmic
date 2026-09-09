@@ -10,6 +10,7 @@
 use signal_layer_core::ProcessingStep;
 use signal_layer_types::PwmDuty;
 
+#[derive(Debug, Clone, Copy)]
 pub struct FanCurveConfig {
     /// Input value mapped to `out_min`.
     pub in_min: f32,

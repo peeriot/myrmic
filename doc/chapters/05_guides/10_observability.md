@@ -18,7 +18,7 @@ To inspect all runtimes connected across the swarm network, `myrmic network stat
 
 ### List running cells
 
-To inspect deployed cells or the status of a specific cell, `myrmic cells status` lists all deployed cells - each showing its identifier, type, and the runtime it runs on. See [`myrmic cells status` reference](../10_reference/02_myrmic-cli/06_cells/01_status.md) for synopsis, options and examples.
+To inspect deployed cells or the status of a specific cell, `myrmic cells status` lists all deployed cells - each with its identity, placement, age and restart policy. See [`myrmic cells status` reference](../10_reference/02_myrmic-cli/06_cells/01_status.md) for synopsis, options and examples.
 
 ## Logs
 
@@ -76,7 +76,9 @@ So far, all three signals - logs, traces, and metrics - are stored, past telemet
 
 ## Telemetry retention
 
-Telemetry data is stored in the data layer - logs, traces, and metrics each in their own dedicated table. With no limit set, they accumulate indefinitely - on long-running deployments, that is a storage concern.
+Telemetry data is stored in the data layer - logs, traces, and metrics each in their own dedicated table. Nothing is written there until a retention period is set: with no retention, the `myrmic telemetry` query commands return nothing. Once a retention is set, records are kept for that long and then purged.
+
+A retention set with the CLI lives in the running process: after a runtime restart nothing is stored again until you set it once more. A retention in the runtime configuration file applies at every start.
 
 There are two ways to set a retention period:
 

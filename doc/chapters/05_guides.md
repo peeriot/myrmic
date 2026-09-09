@@ -8,6 +8,7 @@ Guides cover individual Myrmic features and concepts. Each guide focuses on one 
 - [Message Encoding](./05_guides/04_message-encoding.md)
 - [Scheduling Handlers](./05_guides/05_scheduling-handlers.md)
 - [State and Storage](./05_guides/06_state-and-storage.md)
+- [Operating a Swarm](./05_guides/09_operating-a-swarm.md)
 - [Observability](./05_guides/10_observability.md)
 - [Signal Layer](./05_guides/11_signal-layer.md)
 - [BLE](./05_guides/12_ble.md)

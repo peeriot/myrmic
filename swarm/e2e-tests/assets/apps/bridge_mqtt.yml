@@ -9,3 +9,6 @@ egress:
   - id: publish_response
     topic: "${db:e2e/test/data@topic}"
     payload: "${json:data}"
+  - id: publish_http_response
+    topic: "e2e/test/http-output"
+    payload: "${json:data}"

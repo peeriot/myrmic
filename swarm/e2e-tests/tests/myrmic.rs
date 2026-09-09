@@ -47,14 +47,17 @@ where
 }
 
 #[step]
-async fn deploy_cell<B>(myrmic: &Myrmic<B>)
-where
-    B: MyrmicBackend + Clone,
-{
+async fn deploy_cell(myrmic: &Myrmic<LocalBinary>) {
     let cell_name = format!("Cell{}", uuid::Uuid::new_v4().as_simple());
 
     // start a runtime (waits until listed); dropped at the end -> guard deletes it
     let _rt = myrmic.start_runtime_with_random_name(&[]).await;
+
+    // Listing a runtime only confirms its process was started. Wait until it
+    // has registered a live exec lease, the same readiness condition the
+    // scheduler requires before accepting a deployment.
+    let session = myrmic.connect_session().await;
+    let _sorg = SorgHandle::connect(session).await;
 
     // create and deploy a new cell with a generated SRI (deploy waits until deployed)
     let cell_spec = myrmic.new_cell(cell_name.as_str(), None).await;
@@ -75,8 +78,10 @@ async fn bridge_test(myrmic: &Myrmic<LocalBinary>) {
     Mock::given(method("GET"))
         .and(path("/test"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({"hello": "world"})),
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"body": "hello world"})),
         )
+        .expect(1..)
+        .named("HTTP bridge request")
         .mount(&mock_server)
         .await;
 
@@ -86,14 +91,15 @@ async fn bridge_test(myrmic: &Myrmic<LocalBinary>) {
     // subscribe to the MQTT egress output topic before deploying
     const MQTT_OUTPUT_TOPIC: &str = "e2e/test/output";
     let mut mqtt_sub = mqtt.subscribe(MQTT_OUTPUT_TOPIC).await;
+    let mut http_sub = mqtt.subscribe("e2e/test/http-output").await;
 
     let _rt = myrmic.start_runtime_with_random_name(&[]).await;
-    myrmic.deploy_app("assets/apps/app_spec.yml").await;
-
-    // open a session into the swarm mesh; SorgHandle::connect waits until the
-    // exec runtime is reachable, ensuring the DB service is also available.
+    // Wait for the runtime to become placeable before issuing deploy. This is
+    // stronger than `runtimes list`, which reports it before node discovery
+    // and scheduler registration have completed.
     let session = myrmic.connect_session().await;
     let _sorg = SorgHandle::connect(session.clone()).await;
+    myrmic.deploy_app("assets/apps/app_spec.yml").await;
 
     // seed the DB template used by MQTT egress: ${db:e2e/test/data@topic}
     let db = DbHandle::new(&session);
@@ -105,9 +111,14 @@ async fn bridge_test(myrmic: &Myrmic<LocalBinary>) {
     .await;
 
     // --- HTTP bridge test ---
-    // send the test_http command; the cell calls the HTTP mock and returns the body
-    let response = myrmic.send("bridge.test", "test_http").await;
-    assert!(response.is_some(), "test_http returned no response");
+    // send the test_http command; the cell asks the HTTP bridge to call the mock
+    // and receives the typed result asynchronously through its callback command.
+    let _ = myrmic.send("bridge.test", "test_http").await;
+    let received = http_sub
+        .recv_timeout(std::time::Duration::from_secs(15))
+        .await
+        .expect("HTTP bridge callback did not publish a response");
+    assert_eq!(received, serde_json::to_vec("hello world").unwrap());
 
     // --- MQTT bridge test ---
     // republish the ingress message until the bridge (which needs time to connect

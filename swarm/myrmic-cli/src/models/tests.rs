@@ -219,6 +219,15 @@ fn restart_type_name_to_policy_keeps_default_bounds() {
     );
 }
 
+/// The one place a trigger is spelled: `--policy`, an app spec's `restart:`,
+/// the override warning and the `cells` column all read it from here.
+#[test]
+fn restart_type_names_spell_every_trigger() {
+    assert_eq!(RestartTypeName::spelling(RestartType::Never), "never");
+    assert_eq!(RestartTypeName::spelling(RestartType::OnError), "on-error");
+    assert_eq!(RestartTypeName::spelling(RestartType::Always), "always");
+}
+
 /// The `restart:` shorthand accepts the same `onerror` spelling as `--policy`.
 #[test]
 fn restart_shorthand_accepts_onerror_spelling() {
@@ -360,6 +369,12 @@ fn cargo_dep_git_renders_an_inline_table() {
     assert_eq!(
         dep("ssh://git@github.com/peeriot/swarm.git").to_string(),
         r#"{ git = "ssh://git@github.com/peeriot/swarm.git" }"#
+    );
+
+    let dep = dep("https://github.com/peeriot/swarm.git?rev=abc12345");
+    assert_eq!(
+        dep.to_string(),
+        r#"{ git = "https://github.com/peeriot/swarm.git", rev = "abc12345" }"#
     );
 }
 

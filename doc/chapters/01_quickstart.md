@@ -47,6 +47,8 @@ Create a working directory and navigate into it:
 mkdir myrmic-quickstart && cd myrmic-quickstart
 ```
 
+If you built the CLI from source, create this outside the cloned repository. A cell created inside the myrmic checkout is captured by its Cargo workspace and fails to build with `current package believes it's in a workspace when it's not`. Cells inside your own app workspace are fine (see [Cells](./05_guides/01_cells.md)).
+
 Then scaffold the cell, run:
 
 ```bash
@@ -63,7 +65,8 @@ This command creates a minimal cell as a Rust crate, using a built-in template t
 
 ```text
 counter/
-  Cargo.toml   -- crate named "counter"; has the myrmic myrmic-sdk as dependency
+  Cargo.toml   -- crate named "counter"; depends on myrmic-sdk and serde
+    .gitignore
   src/
     lib.rs     -- the Cell code lives here
 ```
@@ -80,14 +83,16 @@ edition = "2024"
 publish = false
 
 [package.metadata.myrmic]
-heap_size = 65_536
+heap_size = 32_768
 
 [dependencies]
 myrmic-sdk = "x.x.x"
+
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 ```
 
 Most of that is self explaining except:
-`heap_size` - which set how much memory this Cell gets: 64 KB, baked into the Wasm binary at build time. See [Cell and application configuration](./10_reference/01_configuration/02_cell-and-application-configuration.md) to understand more.
+`heap_size` - sets how much memory this Cell gets: 32 KB, baked into the Wasm binary at build time. See [Cell and application configuration](./10_reference/01_configuration/02_cell-and-application-configuration.md) to understand more.
 
 Now open `counter/src/lib.rs`. This is the starter Cell code that was generated:
 
@@ -138,7 +143,7 @@ A few things to note about the code:
 
 - `State<i32>` - persistent state stored in the runtime database.
 
-- `#[myrmic_sdk::init]` - marks the init function. Runs once when the Cell is first deployed.
+- `#[myrmic_sdk::init]` - marks the init function. Runs once per deployment of the Cell, before it handles anything else - so redeploying runs it again.
 
 - `#[myrmic_sdk::cmd]` - marks a function as a command handler. Myrmic cells are event-driven: they sit idle until a message arrives. Messages are either commands - a request directed at a cell to perform an action - or events. A function marked with this macro is invoked whenever the Cell receives its matching command. Events are not covered here - see the tutorials or the dedicated guide.
 
@@ -161,12 +166,12 @@ myrmic build counter
 Expected output:
 
 ```text
-INFO  Attempting to build: .../counter/Cargo.toml
+INFO  Attempting to build: .../counter
    Compiling counter v0.1.0 (.../counter)
     Finished release [optimized] target(s) in Xs
 ```
 
-This compiles the Cell to WebAssembly. The binary `counter.wasm` is placed in `counter/target/`.
+This compiles the Cell to WebAssembly. The binary `counter.wasm` is placed in `counter/target/wasm32-unknown-unknown/release/`.
 
 ### 4. Start a local runtime.
 
@@ -175,6 +180,15 @@ The runtime must be running before you can deploy. Start it in a separate termin
 ```bash
 myrmic runtimes start
 ```
+
+It logs some startup detail and then a readiness line once it is serving:
+
+```text
+INFO  runtime "default" ready (<id>)
+```
+
+On the first start you may also see one or two `WARN` lines about missing
+prior state - these are normal and can be ignored.
 
 Verify the runtime is running from your original terminal:
 
@@ -190,6 +204,14 @@ default	running	pid=<pid>
 
 This means that we have a local Myrmic runtime running on the machine.
 
+You can also see the swarm from the network's side:
+
+```bash
+myrmic network status
+```
+
+Runtimes that can reach each other on the network automatically join one swarm, with no explicit join step, and cell names (SRNs) are shared across it, so the same name is the same cell on every node. On a single machine that swarm is just this runtime. See [Operating a swarm](./05_guides/09_operating-a-swarm.md) for what this means once more machines are involved.
+
 Finally, tell the runtime to keep telemetry. By default a runtime only prints its logs to its own stdout; nothing is stored in the telemetry database that `myrmic telemetry logs` reads until a retention period is set. Run this once - it applies to all connected runtimes immediately and only affects records emitted afterwards:
 
 ```bash
@@ -202,7 +224,7 @@ Expected output:
 INFO  DB retention set to '1h' on all connected nodes
 ```
 
-Retention lives in the running process. If you restart the runtime you have to set it again, or put `db_retention: "1h"` under `myrmic.telemetry` in a runtime configuration file - see [Runtime configuration](./10_reference/01_configuration/01_runtime-configuration.md).
+Retention lives in the running process. If you restart the runtime you have to set it again, or put `db_retention: "1h"` under a top-level `telemetry:` key in a runtime configuration file - see [Runtime configuration](./10_reference/01_configuration/01_runtime-configuration.md).
 
 ### 5. Deploy to the runtime.
 
@@ -238,12 +260,14 @@ myrmic cells
 Expected output:
 
 ```text
-  cell     sri                                   kind  runtime  class    srn
-──────────────────────────────────────────────────────────────────────────────
-  counter  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  wasm  default  counter  counter
+  cell     sri                                   kind  runtime     age  policy  class    srn
+──── counter ───────────────────────────────────────────────────────────────────────────────────
+  counter  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  wasm  [x]xxxxxxx  0s   never   counter  counter
 ```
 
-`counter` is deployed on the `default` runtime and waiting for commands.
+In a terminal this is a live view: it redraws every couple of seconds until you press Ctrl-C. Use `myrmic cells --once` for a single listing - which is also what you get when the output is piped or redirected.
+
+`counter` is deployed on the local runtime, which the `runtime` column shows by id, and waiting for commands.
 
 ### 7. Call `increment`.
 
@@ -283,7 +307,9 @@ myrmic runtimes default logs
 myrmic delete counter
 ```
 
-Removes the Cell from the runtime.
+Removes the Cell from the runtime. In a terminal this asks which of the cell, its app or its
+descendants to remove; run non-interactively (a script or a pipe) it will not prompt and needs
+the choice as a flag - here, `myrmic delete counter --cell`.
 
 Expected output:
 
@@ -308,6 +334,8 @@ No cells registered
 ```bash
 myrmic runtimes stop
 ```
+
+(`stop` is an alias; `myrmic runtimes --help` lists the command as `delete`.)
 
 Expected output:
 

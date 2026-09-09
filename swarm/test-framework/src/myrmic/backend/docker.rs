@@ -148,9 +148,9 @@ impl MyrmicBackend for DockerBinary {
         }
     }
 
-    async fn deploy(&self, cell: CellSpec, sri: &str, tags: &[&str]) {
+    async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]) {
         let cell_path = cell.as_path().display().to_string();
-        let mut args = vec!["deploy", "--sri", sri, cell_path.as_str()];
+        let mut args = vec!["deploy", "--name", srn, cell_path.as_str()];
         for tag in tags.iter().copied() {
             args.push("--tag");
             args.push(tag);
@@ -172,7 +172,7 @@ impl MyrmicBackend for DockerBinary {
     }
 
     async fn delete_cell(&self, sri: &str) {
-        let output = self.exec(&["delete", sri]).await;
+        let output = self.exec(&["delete", "--cell", sri]).await;
         if !output.success {
             eprintln!("{}", output.stderr);
             panic!("delete failed");
@@ -193,6 +193,6 @@ impl MyrmicBackend for DockerBinary {
     }
 
     fn delete_cell_blocking(&self, sri: &str) -> Result<(), String> {
-        self.exec_blocking(&["delete", sri])
+        self.exec_blocking(&["delete", "--cell", sri])
     }
 }

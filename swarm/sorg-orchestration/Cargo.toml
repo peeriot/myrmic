@@ -2,6 +2,7 @@
 name = "sorg-orchestration"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish = false
 
@@ -35,6 +36,8 @@ serde_json = { workspace = true }
 sorg-client = { path = "../sorg-client" }
 filestore-client = { path = "../filestore-client" }
 sorg-tests = { path = "../sorg-tests" }
+db-commons = { workspace = true, features = ["models", "topics"] }
+uhlc = { workspace = true }
 module-examples-common = { path = "../../tests/fixtures/module-examples-common" }
 
 [lints]

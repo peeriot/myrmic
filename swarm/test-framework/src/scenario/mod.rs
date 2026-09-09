@@ -5,7 +5,7 @@ use std::{fmt::Debug, future::Future, path::PathBuf, time::Duration};
 use cell_protocol::Sri;
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
-use sorg_common::{CellInfeasibility, DeploymentError, RejectionReason, RequirementTags};
+use sorg_common::{DeploymentError, RequirementTags};
 use uuid::Uuid;
 
 use crate::cell::{AotCellArtifact, CellArtifact};
@@ -552,11 +552,11 @@ impl SwarmTestCtx {
     ///
     /// `NoRuntimesAvailable` specifically is retried with backoff before the panic: the
     /// orchestrator's placement read routes through its *own* client, and under pass-boundary
-    /// churn that read can land on an empty or behind `sys` replica (a drowned locate falls back
-    /// to `any_node`) even while the driver-side registry barrier has just verified every
-    /// runtime registered and leased — an empty view moments after provisioning is far more
-    /// likely a read-placement artifact than truth. [`Self::try_load_cells`] keeps the failed
-    /// cell (and everything after it) queued, so a retry resumes exactly where it stopped.
+    /// churn a locate can drown and fall back to `any_node` even while the driver-side registry
+    /// barrier has just verified every runtime registered and leased - an empty view moments
+    /// after provisioning is far more likely a read-placement artifact than truth.
+    /// [`Self::try_load_cells`] keeps the failed cell (and everything after it) queued, so a
+    /// retry resumes exactly where it stopped.
     pub async fn load_cells(&mut self) {
         const ATTEMPTS: u32 = 8;
 
@@ -565,44 +565,45 @@ impl SwarmTestCtx {
                 Ok(()) => return,
                 Err(DeploymentError::NoRuntimesAvailable) if attempt < ATTEMPTS => {
                     eprintln!(
-                        "deploy hit NoRuntimesAvailable (attempt {attempt}/{ATTEMPTS}); retrying \
-                         — placement's registry read likely landed on a stale replica"
+                        "deploy hit NoRuntimesAvailable (attempt {attempt}/{ATTEMPTS}); retrying, \
+                         placement's exec-registry locate likely drowned and conceded to any node"
                     );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
-                // Same argument, different symptom: `wait_for_class_visible`
-                // proves *some* holder has the class, while placement's own
-                // read routes independently and may land on one that does not
-                // yet. That divergence used to be impossible — every equal-head
-                // read in the mesh resolved to the same node — and became
-                // possible once those ties were spread. A runtime that is
-                // eligible on every other count and only lacks the artifact is
-                // a read that arrived early, not a deployment that cannot work.
-                Err(DeploymentError::Infeasible(ref cells))
-                    if attempt < ATTEMPTS && Self::only_missing_artifacts(cells) =>
-                {
+                // An absent class row surfaces as its own error rather than as
+                // a per-runtime artifact rejection. Two things still put an
+                // early reader on a holder that does not carry the row: a
+                // locate that drowns under load and concedes to any node, and
+                // a head tie against a replica whose history has a hole an
+                // earlier chunk apply gave up on. Both heal on the next
+                // anti-entropy round, so this is worth waiting out.
+                Err(DeploymentError::UnknownClass { .. }) if attempt < ATTEMPTS => {
                     eprintln!(
-                        "deploy hit MissingArtifact (attempt {attempt}/{ATTEMPTS}); retrying \
-                         — placement's class read likely landed on a stale replica"
+                        "deploy hit UnknownClass (attempt {attempt}/{ATTEMPTS}); retrying, \
+                         placement's class read likely landed on a holder without the row"
+                    );
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                // The shape that survives once placement reads the class
+                // registry through its own scope: a class with an AOT target is
+                // registered in two writes, and the AOT pair is both the last
+                // one before the deploy query and the largest to replicate. A
+                // holder carrying the wasm row but not the AOT one reports a
+                // class whose artifact list is empty, and `wait_for_class_visible`
+                // is satisfied by the wasm row alone, so the driver-side barrier
+                // does not wait for it either. A runtime eligible on every other
+                // count and lacking only the artifact is a read that arrived
+                // early, not a deployment that cannot work.
+                Err(ref err) if attempt < ATTEMPTS && err.blocked_only_by_missing_artifacts() => {
+                    eprintln!(
+                        "deploy hit MissingArtifact (attempt {attempt}/{ATTEMPTS}); retrying, \
+                         the class registry's holder likely has the wasm row but not the AOT one"
                     );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 Err(err) => panic!("failed to load scenario cells: {err:?}"),
             }
         }
-    }
-
-    /// Whether every unplaceable cell was blocked only by a missing artifact —
-    /// i.e. some runtime was otherwise eligible and merely could not see the
-    /// class yet. A cell no runtime has the tags for is a real configuration
-    /// error and must not be retried into a timeout.
-    fn only_missing_artifacts(cells: &[CellInfeasibility]) -> bool {
-        !cells.is_empty()
-            && cells.iter().all(|cell| {
-                cell.rejections
-                    .iter()
-                    .any(|r| matches!(r.reason, RejectionReason::MissingArtifact(_)))
-            })
     }
 
     /// [`Self::load_cells`] returning the orchestrator's error instead of panicking.

@@ -54,8 +54,8 @@ pub trait MyrmicBackend: Sized {
     /// run: myrmic send `sri` `command`
     async fn send(&self, sri: &str, command: &str) -> Option<String>;
 
-    /// run: myrmic deploy --sri `sri`
-    async fn deploy(&self, cell: CellSpec, sri: &str, tags: &[&str]);
+    /// run: myrmic deploy --name `srn`
+    async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]);
 
     /// run: myrmic deploy `app-spec.yml`
     async fn deploy_app(&self, app_spec: &std::path::Path);

@@ -332,10 +332,10 @@ mod tests {
     #[test]
     fn high_resolution_full_scale_uses_smallest_lsb() {
         futures::executor::block_on(async {
-            let (pga_bits, lsb_mv) = pga(FullScale::Mv256);
+            let (pga_bits, _) = pga(FullScale::Mv256);
             let dr_bits = u16::from(DataRate::Sps128 as u8) << 5;
-            // 100 mV input → counts = 100 / 0.0078125 ≈ 12800
-            let counts: i16 = (100.0_f32 / lsb_mv) as i16;
+            // 100 mV input at 0.0078125 mV per LSB = 12800 counts
+            let counts: i16 = 12_800;
             let cfg_word =
                 CFG_OS_START | MUX[0] | pga_bits | CFG_MODE_SINGLE | dr_bits | CFG_COMP_DISABLE;
             let cb = cfg_word.to_be_bytes();
@@ -350,13 +350,9 @@ mod tests {
             ));
             // channels 1-3 zero
             let (pga_bits2, _) = pga(FullScale::Mv256);
-            for ch in 1..4usize {
-                let cw = CFG_OS_START
-                    | MUX[ch]
-                    | pga_bits2
-                    | CFG_MODE_SINGLE
-                    | dr_bits
-                    | CFG_COMP_DISABLE;
+            for mux in MUX.iter().skip(1) {
+                let cw =
+                    CFG_OS_START | *mux | pga_bits2 | CFG_MODE_SINGLE | dr_bits | CFG_COMP_DISABLE;
                 let cb2 = cw.to_be_bytes();
                 txns.push(T::write(ADDR, vec![REG_CONFIG, cb2[0], cb2[1]]));
                 txns.push(T::write_read(ADDR, vec![REG_CONFIG], vec![0x80, 0x00]));

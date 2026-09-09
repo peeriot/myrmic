@@ -1,4 +1,8 @@
 name: Warehouse Benchmark
+
+# What: load sweep producing a PDF report.
+# Where: swarm only, self-hosted `general`.
+# When: manual dispatch only.
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +15,7 @@ jobs:
   sweep:
     name: Run Sweep
     runs-on: general
+    if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-3"
       volumes:

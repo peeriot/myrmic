@@ -207,9 +207,9 @@ impl MyrmicBackend for SshBinary {
         self.exec(&options).await.expect_success("new");
     }
 
-    async fn deploy(&self, cell: CellSpec, sri: &str, tags: &[&str]) {
+    async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]) {
         let cell_path = cell.as_path().display().to_string();
-        let mut args = vec!["deploy", "--sri", sri, cell_path.as_str()];
+        let mut args = vec!["deploy", "--name", srn, cell_path.as_str()];
         for tag in tags.iter().copied() {
             args.push("--tag");
             args.push(tag);
@@ -225,7 +225,9 @@ impl MyrmicBackend for SshBinary {
     }
 
     async fn delete_cell(&self, sri: &str) {
-        self.exec(&["delete", sri]).await.expect_success("delete");
+        self.exec(&["delete", "--cell", sri])
+            .await
+            .expect_success("delete");
     }
 
     async fn status(&self) -> Vec<String> {
@@ -241,7 +243,7 @@ impl MyrmicBackend for SshBinary {
     }
 
     fn delete_cell_blocking(&self, sri: &str) -> Result<(), String> {
-        self.exec_blocking(&["delete", sri])
+        self.exec_blocking(&["delete", "--cell", sri])
     }
 }
 

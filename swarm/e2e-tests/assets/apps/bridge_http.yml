@@ -1,6 +1,15 @@
 name: "http"
 base_url: "http://localhost:10000"
 
+types:
+  definitions:
+    TestResponse:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+
 endpoints:
   - id: test
     request:
@@ -8,4 +17,4 @@ endpoints:
       path: "/test"
       timeout_ms: 5000
     response:
-      200: "${json:body}"
+      200: "${json:TestResponse}"

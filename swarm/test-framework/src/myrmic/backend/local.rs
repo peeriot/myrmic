@@ -156,9 +156,9 @@ impl MyrmicBackend for LocalBinary {
         }
     }
 
-    async fn deploy(&self, cell: CellSpec, sri: &str, tags: &[&str]) {
+    async fn deploy(&self, cell: CellSpec, srn: &str, tags: &[&str]) {
         let mut cmd = tokio::process::Command::new(&self.binary);
-        cmd.arg("deploy").arg("--sri").arg(sri).arg(cell.as_path());
+        cmd.arg("deploy").arg("--name").arg(srn).arg(cell.as_path());
         for tag in tags.iter().copied() {
             cmd.arg("--tag").arg(tag);
         }
@@ -187,6 +187,7 @@ impl MyrmicBackend for LocalBinary {
     async fn delete_cell(&self, sri: &str) {
         let output = tokio::process::Command::new(&self.binary)
             .arg("delete")
+            .arg("--cell")
             .arg(sri)
             .output()
             .await
@@ -219,6 +220,6 @@ impl MyrmicBackend for LocalBinary {
     }
 
     fn delete_cell_blocking(&self, sri: &str) -> Result<(), String> {
-        self.run_blocking(&["delete", sri])
+        self.run_blocking(&["delete", "--cell", sri])
     }
 }

@@ -128,14 +128,12 @@ pub async fn deploy_app(
 /// resets the crash-loop bounds too, so they are spelled out alongside the
 /// trigger — otherwise an override that only moves the bounds reads as a no-op.
 fn describe_restart(policy: &RestartPolicy) -> String {
-    let trigger = match policy.restart_type {
-        sorg_common::RestartType::Never => "never",
-        sorg_common::RestartType::OnError => "on-error",
-        sorg_common::RestartType::Always => "always",
-    };
     format!(
-        "{trigger} (max {}, window {}ms, delay {}ms)",
-        policy.max_restarts, policy.window_ms, policy.delay_ms
+        "{} (max {}, window {}ms, delay {}ms)",
+        models::RestartTypeName::spelling(policy.restart_type),
+        policy.max_restarts,
+        policy.window_ms,
+        policy.delay_ms
     )
 }
 

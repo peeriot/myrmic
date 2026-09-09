@@ -105,21 +105,21 @@ pub async fn load_error_no_orch() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-pub async fn load_error_missing_binary() {
-    // Arrange - orch + exec, but no binary uploaded
+pub async fn load_error_unregistered_class() {
+    // Arrange - orch + exec, but no class registered
     let swarm = swarm_config!("cells/cells.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
-    // Act - try to load a cell whose binary doesn't exist
+    // Act - try to load a cell whose class was never registered
     let result = test_app
         .try_deploy_wasm_cell("nonexistent.wasm", DUMMY_CELL_SRI)
         .await;
 
-    // Assert - infeasible: the linux exec is rejected for the missing wasm artifact
+    // Assert - the class is named, not reported as every runtime lacking an artifact
     assert_matches!(
         assert_err!(result),
-        DeploymentError::Infeasible(_),
-        "expected Infeasible with a missing-artifact rejection"
+        DeploymentError::UnknownClass { class } if class == "nonexistent.wasm",
+        "expected UnknownClass naming the class that is not registered"
     );
 }
 
@@ -128,7 +128,7 @@ const MISSING_CELL_SRI: &str = "a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6";
 // A *failed* deploy of one cell must not disturb an already-running cell: the incumbent
 // stays registered AND keeps executing (proven by a post-failure increment landing).
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-pub async fn load_error_missing_binary_does_not_affect_existing_cell() {
+pub async fn load_error_unregistered_class_does_not_affect_existing_cell() {
     // Arrange - deploy the counter cell successfully
     let swarm = swarm_config!("cells/cells.jsonnet");
     build_and_register_cell_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
@@ -136,7 +136,7 @@ pub async fn load_error_missing_binary_does_not_affect_existing_cell() {
     let test_app = spawn_test_app_with_swarm(swarm).await;
     test_app.deploy_wasm_cell("counter.wasm", COUNTER_SRI).await;
 
-    // Act - try to load a cell with a missing binary
+    // Act - try to load a cell whose class was never registered
     let result = test_app
         .try_deploy_wasm_cell("nonexistent.wasm", MISSING_CELL_SRI)
         .await;

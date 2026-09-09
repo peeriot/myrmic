@@ -159,7 +159,22 @@ pub(crate) fn handler_impl(
         Kind::Event | Kind::Monitor => quote_spanned! { span => },
     };
 
+    // `needless_pass_by_value` can only fire on the decoded payload, which the
+    // dispatch hands over by value. `Metadata` is `Copy`, so a handler taking
+    // nothing else never trips the lint and carries no suppression for it.
+    let payload_allow = if params.len() == 2 {
+        quote_spanned! { span => #[allow(clippy::needless_pass_by_value)] }
+    } else {
+        TokenStream::new()
+    };
+
     quote_spanned! { span =>
+        // Scoped to the re-emitted user function: the dispatch below applies `?` to
+        // its return value, so a body that always returns `Ok` is not a defect here.
+        // `allow` rather than `expect` because the lint fires on the shape of the
+        // user's own function, which need not have that shape.
+        #[allow(clippy::unnecessary_wraps)]
+        #payload_allow
         #func
 
         #marker

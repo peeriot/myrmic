@@ -1,4 +1,10 @@
-name: Update Documentation
+name: Build Documentation
+
+# What: builds the book and the API docs into the shared `myrmic-html` volume and
+#       uploads them as artifacts. documentation-deploy.yml publishes them later.
+# Where: swarm only, self-hosted `general`.
+# When: push to master, `myrmic/v*` tags, merge queue, non-draft pull requests,
+#       manual dispatch.
 on:
   push:
     branches:
@@ -26,10 +32,13 @@ jobs:
     name: Build Book
     runs-on: general
     if: |
-      ( github.event_name == 'push' ) ||
-      ( github.event_name == 'merge_group' ) ||
-      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false ) ||
-      ( github.event_name == 'workflow_dispatch' && inputs.upload_book == true )
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.upload_book == true )
+      )
     container:
       image: node:24
       options: --user 1003:1003
@@ -65,10 +74,13 @@ jobs:
     name: Build Docs
     runs-on: general
     if: |
-      ( github.event_name == 'push' ) ||
-      ( github.event_name == 'merge_group' ) ||
-      ( github.event_name == 'pull_request' && github.event.pull_request.draft == false ) ||
-      ( github.event_name == 'workflow_dispatch' && inputs.upload_docs == true )
+      github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'merge_group' ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false ) ||
+        ( github.event_name == 'workflow_dispatch' && inputs.upload_docs == true )
+      )
     steps:
       - name: Setup
         uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
@@ -79,21 +91,14 @@ jobs:
           submodules: true
 
       - name: Build Docs
-        uses: "peeriot/actions/docker-run@f1de69144739ce6bb25250bbb9096d3632574163"
-        env:
-          CARGO_NET_GIT_FETCH_WITH_CLI: true
-          CARGO_BUILD_JOBS: "8"
+        uses: "peeriot/actions/cargo-run@b29fc5b5fc54b72f9fd6d34c98ba80eb960eedda"
         with:
           image: ghcr.io/peeriot/rust:1.95.0-1
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          user: user
           token: ${{ steps.setup.outputs.token }}
-          volumes: |
-            myrmic-html:/myrmic,rw,external
-            cache-cargo:/usr/local/cargo
-            cache-rustup:/usr/local/rustup
-            target:${{ github.workspace }}/target,lockfiles=Cargo.lock
+          volumes: myrmic-html:/myrmic,rw,external
+          env: |
+            CARGO_NET_GIT_FETCH_WITH_CLI=true
+            CARGO_BUILD_JOBS=8
           run: |
             set -euo pipefail
             mkdir -p /myrmic/docs

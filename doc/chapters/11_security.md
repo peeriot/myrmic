@@ -8,6 +8,10 @@ Myrmic Nodes can authenticate each other and protect the traffic between them wi
 
 Mutual TLS is off in the default configuration and is turned on per deployment. Issuing the certificates is the deployment's responsibility, because the preview ships no CA service, and `swarm/tutorials/mTLS/` brings up a complete multi-node environment with a locally created CA hierarchy that stands in for one.
 
+## Network trust in the default configuration
+
+With mutual TLS off, which is the default, the network segment is the trust boundary. Any runtime that can reach the others on the segment joins the same swarm, with no explicit join step and no authentication, and messages between Nodes carry no cryptographic proof of the sender. Treat the segment as trusted: keep runtimes on a network you control, and use a dedicated segment to keep separate groups of machines from merging into one swarm. Turning on mutual TLS narrows that boundary to the holders of a certificate issued under your root.
+
 ## Cell Isolation
 
 Every Cell runs as a WebAssembly module inside a runtime that mediates its access to the Node. On OS-based Nodes that runtime is Wasmtime, and on supported MCUs it is WAMR, compiled ahead of time and executed in place from flash. In both cases the module reaches the host only through the host-call families its runner links into it, which include Cell commands and events, timers, the data layer, and the Signal Layer taps and outlets. Neither target links WASI, so a Cell has no ambient access to the filesystem, to sockets, to processes, or to the host clock, and it addresses its own linear memory alone. On OS-based Nodes the runtime meters guest instruction execution with Wasmtime fuel, so the computation a Cell performs is bounded by the fuel its runner grants it.

@@ -9,7 +9,7 @@ use rand_core::CryptoRngCore;
 /// - Signer: ECDSA/NistP256 via `UnsecureProvider` (client certificate auth).
 /// - Verifier: CA-chain validation via `CertVerifier` with `NoClock`.
 ///
-/// # NoClock — cert validity not checked
+/// # `NoClock` - cert validity not checked
 ///
 /// `NoClock` is intentional: the ESP32 has no RTC and no SNTP sync at TLS
 /// handshake time, so `notBefore`/`notAfter` fields cannot be validated.

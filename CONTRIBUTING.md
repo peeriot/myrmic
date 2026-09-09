@@ -96,8 +96,9 @@ cargo deny check
 For embedded and WASM changes, also run the relevant target checks, e.g.:
 
 ```bash
-cargo clippy-c6       # or clippy-c5 / clippy-c61
-./.ci/check/wasm      # builds and lints the WASM module examples
+cargo +nightly-2026-08-07 clippy-c6   # or clippy-c5 / clippy-c61
+./.ci/check/wasm                      # builds and lints the WASM module examples
+./.ci/check/coverage                  # asserts every member is linted and tested somewhere
 ```
 
 Notes:
@@ -106,6 +107,9 @@ Notes:
 - Clippy must be **warning-free**; CI runs with `--deny warnings`.
 - New dependencies must pass `cargo deny` (acceptable licenses, no banned crates or advisories). See [deny.toml](deny.toml).
 - Add or update tests for behavior you change.
+- Every workspace member must be named by a lint list and every host-testable one by the test list; `./.ci/check/coverage` fails if one is not.
+- The chip aliases pass `-Zbuild-std`, which stable rejects, so they need the dated nightly that [embedded/esp-hal/rust-toolchain.toml](embedded/esp-hal/rust-toolchain.toml) pins. Running an alias from that directory picks the channel up without naming the date.
+- `cargo citest` with no `-p` covers the default members, `hil-tests` among them, whose tests need a board. The gate instead runs the list in [.ci/check/test-packages](.ci/check/test-packages).
 
 ## Pull Request Process
 

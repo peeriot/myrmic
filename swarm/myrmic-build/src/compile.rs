@@ -15,6 +15,13 @@ use crate::cargo;
 const TARGET: &str = "wasm32-unknown-unknown";
 const BUILD_STD: &str = "core,alloc,compiler_builtins";
 
+/// The nightly toolchain cells are compiled with. `-Z build-std` requires the
+/// `rust-src` component, so a cell scaffolded by `myrmic new` ships a
+/// `rust-toolchain.toml` pinning this channel and declaring that component (see
+/// the `new` template); the pin is rendered from here to keep a single source of
+/// truth.
+pub const TOOLCHAIN: &str = "nightly-2026-08-07";
+
 const DEFAULT_STACK_SIZE: usize = 32 * 1024;
 const DEFAULT_INITIAL_MEMORY: usize = 64 * 1024;
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024;
@@ -165,15 +172,32 @@ pub(crate) fn compile_cell(
 
     let selector = resolve_selector(manifest_path, cargo_target)?;
 
+    // Resolve to an absolute manifest path so `--manifest-path` stays correct
+    // even after the command's working directory is changed below.
+    let manifest_path = manifest_path
+        .canonicalize()
+        .with_context(|| format!("cell manifest not found: {}", manifest_path.display()))?;
     let manifest_arg = manifest_path
         .to_str()
         .context("manifest path is not valid UTF-8")?;
 
     let build_std = format!("build-std={BUILD_STD}");
 
+    // Cells without a pin fall back to the toolchain this crate declares.
+    let pinned_dir = manifest_path.parent().filter(|dir| {
+        dir.join("rust-toolchain.toml").exists() || dir.join("rust-toolchain").exists()
+    });
+
     let mut cmd = Command::new("cargo");
+    match pinned_dir {
+        Some(dir) => {
+            cmd.current_dir(dir);
+        }
+        None => {
+            cmd.arg(format!("+{TOOLCHAIN}"));
+        }
+    }
     cmd.args([
-        "+nightly",
         "rustc",
         "--release",
         "--target",

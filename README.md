@@ -30,7 +30,7 @@ Myrmic is designed exclusively for use within the bounds described below. Use ou
 
 ## Getting Started
 
-The complete documentation is published as a handbook at **[book.myrmic.dev](https://book.myrmic.dev)**, with the generated API reference at **[docs.myrmic.dev](https://docs.myrmic.dev)**. The handbook sources also live in this repository under [`doc/chapters/`](doc/chapters/) - see [SUMMARY.md](SUMMARY.md) for the full table of contents.
+The complete documentation is published as a handbook at **[book.myrmic.dev](https://book.myrmic.dev)**, with the generated API reference at **[docs.myrmic.dev](https://docs.myrmic.dev)**. The handbook sources also live in this repository under [`doc/chapters/`](doc/chapters/).
 
 ## Supported Targets
 

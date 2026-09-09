@@ -31,6 +31,7 @@ pub struct New {
 struct TemplateNew<'a> {
     name: &'a str,
     myrmic_sdk: models::CargoDep,
+    toolchain: &'a str,
 }
 
 #[derive(textus::Template)]
@@ -186,6 +187,7 @@ fn render_project(
             TemplateNew {
                 name,
                 myrmic_sdk: sdk,
+                toolchain: myrmic_build::TOOLCHAIN,
             }
             .render_into(path)
         }

@@ -185,15 +185,16 @@ Now redeploy the modified cell. Your first instinct might be to run `myrmic depl
 
 ```text
 Caused by: class 'moisture-sensor' has active instances and cannot be modified
-Error: ()
 ```
 
 The runtime protects a running cell: its code (its *class*) cannot be swapped underneath it. To replace a modified cell, delete the running instance first, then deploy:
 
 ```bash
-myrmic delete moisture-sensor
+myrmic delete moisture-sensor --cell
 myrmic deploy moisture-sensor
 ```
+
+`--cell` says which kind of target you mean. Without it, `myrmic delete` asks - and in a script, or anywhere without an interactive terminal, it refuses rather than guessing.
 
 Glance at Terminal 3: the readings resume from 65% - not because state does not survive (it does), but because our `init` deliberately reseeds it on every deploy. A fresh pot of soil for every experiment.
 

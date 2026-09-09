@@ -8,35 +8,6 @@ use zenoh::Session;
 use super::fence::{self, FenceOutcome};
 use crate::{Result, custom_err};
 
-/// Lists all placements within an existing read transaction. Use this inside
-/// the placement OCC loop so the occupancy snapshot is consistent with the
-/// exec list.
-pub async fn list_placements_in_tx(db: &DbClient, tx_id: TxId) -> Result<Vec<PlacementEntry>> {
-    let response = db
-        .send(tb_list::Request {
-            id: tx_id,
-            op: tb_list::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                cursor: None,
-                limit: None,
-                order: None,
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("unable to send list request: {}", err))?
-        .map_err(|err| custom_err!("unable to list placements: {}", err.message))?;
-
-    response
-        .entities
-        .into_iter()
-        .map(|(_id, value)| {
-            postcard::from_bytes::<PlacementEntry>(&value)
-                .map_err(|_| custom_err!("failed to deserialize placement entry"))
-        })
-        .collect()
-}
-
 /// Returns the placements of all currently placed cells.
 pub async fn list_placements(session: &Session) -> Result<Vec<PlacementEntry>> {
     let db = DbClient::new(session);
@@ -100,8 +71,12 @@ pub async fn get_placement(session: &Session, sri: &Sri) -> Result<Option<Placem
     }
 }
 
-/// Returns a cell's placement within an existing transaction.
-pub async fn get_placement_in_tx(
+/// Returns a cell's placement within an existing transaction. Private on
+/// purpose: an op carries its own scope wherever it lands, so a placement read
+/// issued on someone else's transaction is answered by that scope's holder,
+/// which can be a write behind on this one. Callers outside this module take
+/// [`get_placement`], which routes by the placement scope's own locate round.
+async fn get_placement_in_tx(
     db: &DbClient,
     tx_id: TxId,
     sri: &Sri,
@@ -126,24 +101,6 @@ pub async fn get_placement_in_tx(
                 .map_err(|_| custom_err!("failed to deserialize placement entry"))
         })
         .transpose()
-}
-
-/// Checks whether a cell has a placement within an existing transaction.
-pub async fn placement_exists_in_tx(db: &DbClient, tx_id: TxId, sri: &Sri) -> Result<bool> {
-    let response = db
-        .send(tb_get::Request {
-            id: tx_id,
-            op: tb_get::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                eid: sri.to_string().into_bytes(),
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("unable to send get request: {}", err))?
-        .map_err(|err| custom_err!("unable to get placement: {}", err.message))?;
-
-    Ok(response.value.is_some())
 }
 
 /// Checks whether the cell with the given SRI has a placement.
@@ -174,15 +131,6 @@ pub async fn placement_exists(session: &Session, sri: &Sri) -> Result<bool> {
 
 pub async fn ensure_placement_exists(session: &Session, sri: &Sri) -> Result<(), &'static str> {
     check_presence(placement_exists(session, sri).await, sri)
-}
-
-/// [`ensure_placement_exists`] inside an existing transaction.
-pub async fn ensure_placement_exists_in_tx(
-    db: &DbClient,
-    tx_id: TxId,
-    sri: &Sri,
-) -> Result<(), &'static str> {
-    check_presence(placement_exists_in_tx(db, tx_id, sri).await, sri)
 }
 
 fn check_presence(present: Result<bool>, sri: &Sri) -> Result<(), &'static str> {

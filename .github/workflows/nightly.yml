@@ -1,4 +1,8 @@
 name: Nightly
+
+# What: nightly coverage run, packaged and uploaded as an artifact.
+# Where: swarm only, self-hosted `general`.
+# When: weekdays at 02:37 Europe/Berlin.
 on:
   schedule:
     - cron: '37 2 * * 1-5'
@@ -11,6 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: general
+    if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/archiver:1.95.0-3"
       volumes:
@@ -35,6 +40,16 @@ jobs:
           CARGO_BUILD_JOBS: "8"
         run: |
           .ci/coverage/collect
+      # Attached to the run itself, so the report is one click away instead of a
+      # trip to the object store. GitHub serves artifacts as a download, not as a
+      # rendered page: unpack it and open index.html.
+      - name: Attach coverage report to the run
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html
+          path: target/coverage
+
       - name: package
         run: |
           # Package coverage

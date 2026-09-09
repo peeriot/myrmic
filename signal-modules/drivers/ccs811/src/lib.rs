@@ -21,7 +21,7 @@
 //! # Pins
 //!
 //! The optional NINT (data-ready interrupt) line is supported via
-//! [`Ccs811::init_with_pins`] and [`Ccs811Pins`]. When NINT is wired the
+//! [`Ccs811::new_with_pins`] and [`Ccs811Pins`]. When NINT is wired the
 //! driver enables hardware interrupt mode and waits for the line to assert
 //! before reading; otherwise it polls the STATUS register. Both paths
 //! defensively check `STATUS_DATA_READY` and the algorithm error bit before

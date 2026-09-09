@@ -1625,6 +1625,26 @@ async fn peer_view_lists_live_peers_holding_the_scope() {
 }
 
 #[tokio::test]
+async fn forgetting_a_peer_drops_it_from_the_peer_view() {
+    let store = super::open_tmp();
+    let scope = api::Scope::new("d", "db", "schema");
+
+    let mut known = VecMap::new();
+    known.insert(scope.clone(), frontier_at(7));
+    store.record_peer_frontier([1u8; 16], known, true);
+    assert_eq!(store.peer_view(&scope, std::time::Instant::now()).len(), 1);
+
+    store.forget_peer(&[1u8; 16]);
+
+    assert!(
+        store
+            .peer_view(&scope, std::time::Instant::now())
+            .is_empty(),
+        "a forgotten peer is not vouched for, however fresh its last announce",
+    );
+}
+
+#[tokio::test]
 async fn peer_view_reports_a_drainer_as_draining() {
     let store = super::open_tmp();
     let scope = api::Scope::new("d", "db", "schema");

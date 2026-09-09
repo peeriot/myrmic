@@ -14,6 +14,27 @@ use crate::{Result, bail, custom_err};
 /// same generation means the row is a live cell's record. An absent row is
 /// reported, not an error — callers routinely race undeploy's own erase.
 pub async fn erase_instance(session: &Session, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
+    // Each row is read through its own scope's locate round. Issued on this
+    // function's transaction, a placement read is answered by the node holding
+    // the instance registry, which can be a write behind on the placement scope
+    // and then reports a placement that is already gone.
+    //
+    // The row's own generation decides first: a row of another incarnation is
+    // not this caller's to erase, whatever the placement says.
+    let existing = get_instance(session, sri).await?;
+    if let Err(outcome) = fence::admit(existing.map(|record| record.gen_id), gen_id) {
+        return Ok(outcome);
+    }
+    if placement::get_placement(session, sri)
+        .await?
+        .is_some_and(|entry| entry.gen_id == gen_id)
+    {
+        bail!(
+            "cannot erase instance '{}': cell is currently deployed",
+            sri
+        );
+    }
+
     let sri = *sri;
     let db = DbClient::new(session);
 
@@ -74,16 +95,8 @@ async fn do_erase(client: &DbClient, tx_id: TxId, sri: &Sri, gen_id: Gen) -> Res
     if let Err(outcome) = fence::admit(existing.map(|record| record.gen_id), gen_id) {
         return Ok(outcome);
     }
-    if placement::get_placement_in_tx(client, tx_id, sri)
-        .await?
-        .is_some_and(|entry| entry.gen_id == gen_id)
-    {
-        bail!(
-            "cannot erase instance '{}': cell is currently deployed",
-            sri
-        );
-    }
     do_delete_registry_entry(client, tx_id, sri).await?;
+
     Ok(FenceOutcome::Applied)
 }
 

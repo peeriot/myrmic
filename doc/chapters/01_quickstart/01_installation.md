@@ -61,7 +61,14 @@ You need all of these whether you installed the CLI from a package or built it y
 
 `git` clones the repository, and the build shells out to it for the source revision it stamps into the binary. `cmake` is used by a C dependency of the CLI binary.
 
-Both package lists above are derived from Myrmic's dependency tree and from installs observed on a handful of images. Nothing in this repository proves them, and they are not a minimal set - if your machine already has a working C compiler, `cmake` and `git`, however they got there, that works too.
+Both package lists above are derived from Myrmic's dependency tree and from installs observed on a handful of images. They are not a minimal set - if your machine already has a working C compiler, `cmake` and `git`, however they got there, that works too.
+
+### Build resources
+
+These are lab measurements on small cloud instances, not guaranteed minimums - they move with your CPU, disk and how busy the machine is.
+
+- **A cell build takes seconds.** Once the C toolchain is present, `myrmic build` was 9 to 10 seconds on 2 to 4 vCPU, and up to around 30 seconds on a busier host. The first build in a fresh crate also compiles the cell's dependencies, so it is the slow one; later builds are quicker.
+- **Building the CLI from source is the heavy step**, and wants a few GB of both RAM and disk. On 8 vCPU running alone it took about three and a half minutes, roughly 2 GB peak resident memory and 2.6 GB left in `target/`. On a contended host it takes proportionally longer - around 9 to 10 minutes when three builds shared a 16-thread machine.
 
 ## Install from a release package (x86_64)
 
@@ -137,7 +144,7 @@ sudo dnf install "./myrmic-cli-${version}"-*.x86_64.rpm
 
 ### Distributions
 
-The `.deb` carries a `libc6` dependency that `dpkg-shlibdeps` derives at build time, from the glibc the release binary happened to be built against - as of Myrmic 0.4.0, `libc6 (>= 2.34)`. Nothing in this repository pins that floor, so treat the number as the current value rather than a promise, and read the real one off the package you downloaded:
+The `.deb` carries a `libc6` dependency that `dpkg-shlibdeps` derives at build time, from the glibc the release binary happened to be built against - as of Myrmic 0.5.0, `libc6 (>= 2.34)`. Nothing in this repository pins that floor, so treat the number as the current value rather than a promise, and read the real one off the package you downloaded:
 
 ```bash
 dpkg-deb -f "myrmic-cli_${version}_amd64.deb" Depends

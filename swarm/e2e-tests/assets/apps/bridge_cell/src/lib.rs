@@ -1,42 +1,34 @@
 #![no_std]
 
-extern crate alloc;
+use myrmic_sdk::{Callback, Metadata, Result};
 
-use alloc::string::ToString;
-use wasm_sdk::{
-    String,
-    macros::{cell, import},
-};
+myrmic_sdk::import!("../bridge_http.yml", "../bridge_mqtt.yml");
 
-import!("../bridge_http.yml");
-import!("../bridge_mqtt.yml");
+#[myrmic_sdk::init]
+fn init(_: Metadata) -> Result<()> {
+    Ok(())
+}
 
-wasm_sdk::cell_prelude!();
+#[myrmic_sdk::cmd]
+fn test_http(_: Metadata) -> Result<()> {
+    HttpClient::new("bridge.http").test(Callback::of::<on_test_http>())
+}
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct TestCell {}
-
-#[cell]
-impl TestCell {
-    #[init]
-    fn init() -> Self {
-        Self {}
+#[myrmic_sdk::cmd]
+fn on_test_http(_: Metadata, reply: TestReply) -> Result<()> {
+    match reply {
+        TestReply::Ok(response) => {
+            MqttClient::new("bridge.mqtt").publish_http_response(PublishHttpResponse {
+                data: myrmic_sdk::JsonValue::String(response.body),
+            })
+        }
+        TestReply::Unknown(status) => Err(match status {
+            _ => "unexpected HTTP response status",
+        }),
     }
+}
 
-    #[command]
-    fn test_http(&mut self) -> wasm_sdk::Result<String> {
-        let http_client = HttpClient::new("bridge.http");
-
-        let Ok(response) = http_client.test() else {
-            return Err("http request failed");
-        };
-
-        Ok(response.body.to_string())
-    }
-
-    #[event_handler]
-    fn receive_request(&mut self, event: ReceiveRequest) {
-        let mqtt_client = MqttClient::new("bridge.mqtt");
-        let _ = mqtt_client.publish_response(PublishResponse { data: event.data });
-    }
+#[myrmic_sdk::evt]
+fn receive_request(_: Metadata, event: ReceiveRequest) -> Result<()> {
+    MqttClient::new("bridge.mqtt").publish_response(PublishResponse { data: event.data })
 }

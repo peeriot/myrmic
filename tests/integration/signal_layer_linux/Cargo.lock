@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "cell-mailbox"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cell-protocol",
  "db-client",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "cell-protocol"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "db-commons",
  "myrmic-common",
@@ -942,7 +942,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "db-client"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "db-commons",
  "futures",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "db-commons"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -1137,7 +1137,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "filestore-client"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "db-client",
  "serde",
@@ -2174,14 +2174,14 @@ dependencies = [
 
 [[package]]
 name = "moving-average"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "signal-layer-core",
 ]
 
 [[package]]
 name = "myrmic-common"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "embedded-io 0.6.1",
  "heapless",
@@ -2203,7 +2203,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-signal-layer-types"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "postcard",
  "serde",
@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-tags"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nanorand"
@@ -3511,7 +3511,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "signal-layer-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "critical-section",
  "heapless",
@@ -3523,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-ipc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "postcard",
@@ -3550,7 +3550,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-linux-rt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "signal-layer-ipc",
@@ -3632,7 +3632,7 @@ dependencies = [
 
 [[package]]
 name = "sorg-client"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cell-mailbox",
  "cell-protocol",
@@ -3647,7 +3647,7 @@ dependencies = [
 
 [[package]]
 name = "sorg-common"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cell-mailbox",
  "cell-protocol",
@@ -3669,7 +3669,7 @@ dependencies = [
 
 [[package]]
 name = "sorg-execution"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -3781,7 +3781,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swarm-api"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "flume",

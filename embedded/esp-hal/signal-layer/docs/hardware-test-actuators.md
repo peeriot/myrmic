@@ -26,7 +26,7 @@ Build + flash a pipeline (from the repo root):
 
 ```sh
 SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/<pipeline-name>.yaml \
-    cargo +nightly run-c6 --features pipeline    # flashes + opens the serial monitor
+    cargo +nightly-2026-08-07 run-c6 --features pipeline    # flashes + opens the serial monitor
 ```
 
 The firmware's `build.rs` generates the pipeline into `OUT_DIR` at build time;
@@ -43,7 +43,7 @@ absolute) selects it, and the board defaults to this chip's devkit. `run-c6` =
 
 ```sh
 SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/feed-forward-demo.yaml \
-    cargo +nightly run-c6 --features pipeline
+    cargo +nightly-2026-08-07 run-c6 --features pipeline
 ```
 
 Warm the BME280 (finger/breath). Expect:

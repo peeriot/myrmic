@@ -1,11 +1,8 @@
 use utils::*;
 
 /// The git repository hosting `myrmic_sdk`.
-const MYRMIC_REPO_GIT_URL: &str = match option_env!("PEERIOT_MYRMIC_REPO") {
-    Some(repo) => repo,
-    None => "ssh://git@github.com/peeriot/myrmic.git",
-};
-const MYRMIC_REPO_OVERRIDE: &str = "PEERIOT_MYRMIC_REPO";
+const MYRMIC_SDK_GIT_URL: &str = "https://github.com/peeriot/myrmic.git";
+const MYRMIC_SDK_OVERRIDE: &str = "PEERIOT_MYRMIC_SDK";
 
 /// The default source of myrmic crates for scaffolded projects, baked in at
 /// build time: a release sets `MYRMIC_SDK_VERSION` to the published release it
@@ -13,15 +10,15 @@ const MYRMIC_REPO_OVERRIDE: &str = "PEERIOT_MYRMIC_REPO";
 /// was built from (see `build.rs`).
 ///
 /// Errors when neither is known, so scaffolding never silently pins to a
-/// guessed revision — pass `--sdk` or set `PEERIOT_MYRMIC_REPO` in that case.
-fn default_repo() -> anyhow::Result<String> {
-    default_repo_from(
+/// guessed revision — pass `--sdk` or set `PEERIOT_MYRMIC_SDK` in that case.
+fn default_sdk() -> anyhow::Result<String> {
+    default_sdk_from(
         option_env!("MYRMIC_SDK_VERSION"),
         option_env!("MYRMIC_GIT_HASH"),
     )
 }
 
-fn default_repo_from(version: Option<&str>, rev: Option<&str>) -> anyhow::Result<String> {
+fn default_sdk_from(version: Option<&str>, rev: Option<&str>) -> anyhow::Result<String> {
     if let Some(version) = version {
         return Ok(version.to_owned());
     }
@@ -29,11 +26,11 @@ fn default_repo_from(version: Option<&str>, rev: Option<&str>) -> anyhow::Result
     let rev = rev.ok_or_else(|| {
         anyhow::anyhow!(
             "could not determine the myrmic SDK revision (this CLI was built without VCS info); \
-             pass --sdk <version|git-url|path> or set {MYRMIC_REPO_OVERRIDE}"
+             pass --sdk <version|git-url|path> or set {MYRMIC_SDK_OVERRIDE}"
         )
     })?;
 
-    Ok(format!("{MYRMIC_REPO_GIT_URL}?rev={rev}"))
+    Ok(format!("{MYRMIC_SDK_GIT_URL}?rev={rev}"))
 }
 
 mod archive;
@@ -102,7 +99,7 @@ where
     rt.block_on(fut)
 }
 
-fn main() -> Result<(), ()> {
+fn main() -> std::process::ExitCode {
     // Die quietly when a pipe closes (`m rt logs | head`) instead of
     // panicking on the next print. Rust ignores SIGPIPE by default; the
     // runtime restores that before spawning (see `runtimes::start`).
@@ -142,8 +139,13 @@ fn main() -> Result<(), ()> {
         error!(ctx, "{}", format_error(err));
     }
 
-    // We want to return a correct error code, but we don't want to log the error message (we already did that)
-    result.map_err(|_| ())
+    // The error message is already logged above; return only an exit code so the
+    // process does not also print Rust's `Error: ...` Termination trailer.
+    if result.is_ok() {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
 }
 
 fn format_error(err: &anyhow::Error) -> String {
@@ -161,20 +163,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_repo_prefers_the_baked_release_version() {
-        let sdk = default_repo_from(Some("0.2.1"), Some("abc12345")).unwrap();
+    fn default_sdk_prefers_the_baked_release_version() {
+        let sdk = default_sdk_from(Some("0.2.1"), Some("abc12345")).unwrap();
         assert_eq!(sdk, "0.2.1");
     }
 
     #[test]
-    fn default_repo_falls_back_to_the_build_revision() {
-        let sdk = default_repo_from(None, Some("abc12345")).unwrap();
-        assert_eq!(sdk, "ssh://git@github.com/peeriot/myrmic.git?rev=abc12345");
+    fn default_sdk_falls_back_to_the_build_revision() {
+        let sdk = default_sdk_from(None, Some("abc12345")).unwrap();
+        assert_eq!(sdk, "https://github.com/peeriot/myrmic.git?rev=abc12345");
     }
 
     #[test]
-    fn default_repo_errors_without_a_version_or_revision() {
-        assert!(default_repo_from(None, None).is_err());
+    fn default_sdk_errors_without_a_version_or_revision() {
+        assert!(default_sdk_from(None, None).is_err());
     }
 
     #[test]

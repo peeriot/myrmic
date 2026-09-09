@@ -15,6 +15,7 @@ use db_commons::models;
 mod apply;
 mod config;
 mod handler;
+mod liveliness;
 mod load_from;
 mod metrics;
 mod replica_sets;
@@ -65,6 +66,8 @@ impl crate::plugins::MyrmicPlugin for Plugin {
             tx_idle_timeout,
             escalation_timeout,
         );
+
+        handle.spawn(liveliness::watch(context.clone()));
 
         for subject in replica_sets::unconditional() {
             context.start_replication(subject).await;

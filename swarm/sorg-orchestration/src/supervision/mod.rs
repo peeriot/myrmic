@@ -15,8 +15,9 @@ use sorg_common::supervision::{
     ExpiryGate, LeaseTracker, RestartBudget, SupervisionTiming, jittered,
 };
 use sorg_common::{
-    CellDeployment, DeployRequest, FenceOutcome, LostReason, deploy_cells, instance_registry,
-    list_placements, node_lease, remove_placement, root_death, root_restart, should_restart,
+    CellDeployment, DeployRequest, DeploymentError, FenceOutcome, LostReason, deploy_cells,
+    instance_registry, list_placements, node_lease, remove_placement, root_death, root_restart,
+    should_restart,
 };
 use tracing::{debug, info, warn};
 use zenoh::Session;
@@ -410,9 +411,9 @@ struct RestartPlan {
 
 /// Resolves restart actions from persisted specs and pending death signals.
 /// Pure and deterministic given the db snapshot plus the leader-local budget
-/// and sweep state. A death is acted on only once the dead instance's rows are
-/// gone (so the redeploy claims a free SRI); a newer generation on the row
-/// means the root already came back and the signal is stale.
+/// and sweep state. A death is acted on only once the dead incarnation's
+/// placement row is gone, since that row is what a redeploy claims; a newer
+/// generation on it means the root already came back and the signal is stale.
 fn plan_root_restarts(
     specs: &[CellDeployment],
     deaths: &[RootDeath],
@@ -445,11 +446,9 @@ fn plan_root_restarts(
             Some(_) => continue,
             None => {}
         }
-        if has_instance.contains(&sri) {
-            // Placement gone but the instance row lingers; wait for its erase.
-            continue;
-        }
-
+        // A lingering instance row of the dead incarnation is not waited on:
+        // the placement row is the claim a redeploy takes, and the successor's
+        // init overwrites the row it finds under its own greater generation.
         let policy = &spec.restart;
         if should_restart(policy.restart_type, &death.reason) {
             // Hold off until the fixed inter-attempt delay has elapsed.
@@ -553,6 +552,14 @@ async fn process_root_restarts(
         let request = DeployRequest::new(vec![(*spec).clone()]);
         match deploy_cells(session, request, RESTART_DEPLOY_TIMEOUT).await {
             Ok(()) => clear_death(session, sri).await,
+            // No runtime can host the root right now (its only qualifying
+            // node is down, say). That is not a crash, so it must not eat the
+            // crash-loop budget: refund the attempt and keep the signal, and
+            // the next pass tries again until a runtime appears.
+            Err(err @ (DeploymentError::Infeasible(_) | DeploymentError::NoRuntimesAvailable)) => {
+                budget.refund(sri);
+                debug!(%sri, "restart: no eligible runtime yet, will retry: {err}");
+            }
             // Keep the signal; the next level-triggered pass retries.
             Err(err) => warn!(%sri, "restart: redeploy failed: {err}"),
         }
@@ -1015,19 +1022,26 @@ mod tests {
     }
 
     #[test]
-    fn defers_while_instance_row_lingers() {
+    fn restarts_while_the_corpse_instance_row_lingers() {
         let mut budget = RestartBudget::new();
         let mut sweep = RestartSweep::default();
+        // Placement gone, instance row of the same corpse still there: a node
+        // loss releases the two separately, and only the placement is the claim
+        // a redeploy takes. Restart now - the successor mints a greater
+        // generation and its init overwrites the row it finds - rather than
+        // wait on a row nothing is obliged to remove.
         let plan = plan_root_restarts(
             &[root_spec("r", RestartType::Always, 5)],
-            &[death("r", g(1), LostReason::Crashed)],
+            &[death("r", g(1), LostReason::NodeLost)],
             &[],
             &[instance(sri("r"), None, false)],
             &mut budget,
             &mut sweep,
             Instant::now(),
         );
-        assert_eq!(plan, RestartPlan::default());
+        assert_eq!(plan.restart, vec![sri("r")]);
+        assert!(plan.drop_specs.is_empty());
+        assert!(plan.clear_deaths.is_empty());
     }
 
     #[test]

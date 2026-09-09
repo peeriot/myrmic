@@ -1,4 +1,5 @@
 [toolchain]
+channel = "1.97.0"
 components = ["rustfmt", "cargo", "clippy", "llvm-tools-preview"]
 targets = [
     "x86_64-unknown-linux-gnu",

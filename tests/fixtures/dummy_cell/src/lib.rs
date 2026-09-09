@@ -1,5 +1,6 @@
 //! Simple example cell used by the sorg integration tests.
-#![no_std] // required for wasm32-unknown-unknown
+// `no_std` is required for wasm32-unknown-unknown.
+#![no_std]
 
 use myrmic_sdk::db::tree::Kv;
 use myrmic_sdk::{Metadata, Result};

@@ -89,7 +89,7 @@ The code above defines a cell that keeps a counter in state and exposes three co
 
 - **State** - `State<T>` is a typed handle to a state value that persists. It lives on the runtime database - not in Wasm memory. By default it is private to the cell. See [State and Storage](./06_state-and-storage.md) for more information and how to use it.
 
-- **Initialization handler** - Runs once when the cell is first deployed. Use it for any initialization logic your cell needs - setting up initial state, logging startup info, or running custom business logic before the cell starts handling requests. It can also accept initialization args that are passed at deploy time. Here is an example:
+- **Initialization handler** - Runs once per deployment of the cell, before it handles anything else; redeploying runs it again. Use it for any initialization logic your cell needs - setting up initial state, logging startup info, or running custom business logic before the cell starts handling requests. It can also accept initialization args that are passed at deploy time. Here is an example:
 
     ```rust
     use serde::Deserialize;

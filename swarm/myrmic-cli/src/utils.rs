@@ -29,16 +29,16 @@ macro_rules! split {
 pub fn resolve_repo(ctx: Ctx, sdk: Option<&str>) -> anyhow::Result<models::Repo> {
     let sdk: std::borrow::Cow<'_, str> = if let Some(sdk) = sdk {
         std::borrow::Cow::Borrowed(sdk)
-    } else if let Ok(sdk) = std::env::var(crate::MYRMIC_REPO_OVERRIDE) {
+    } else if let Ok(sdk) = std::env::var(crate::MYRMIC_SDK_OVERRIDE) {
         crate::debug!(
             ctx,
             "env `{}` was set, using...",
-            crate::MYRMIC_REPO_OVERRIDE
+            crate::MYRMIC_SDK_OVERRIDE
         );
 
         std::borrow::Cow::Owned(sdk)
     } else {
-        std::borrow::Cow::Owned(crate::default_repo()?)
+        std::borrow::Cow::Owned(crate::default_sdk()?)
     };
 
     let repo = sdk.parse::<models::Repo>()?;

@@ -130,6 +130,17 @@ pub enum RestartTypeName {
 }
 
 impl RestartTypeName {
+    /// The name `--policy` and an app spec's `restart:` spell this trigger
+    /// with. The one place the CLI renders a trigger, so the deploy warning
+    /// and the `cells` listing cannot drift apart.
+    pub fn spelling(restart_type: RestartType) -> &'static str {
+        match restart_type {
+            RestartType::Never => "never",
+            RestartType::OnError => "on-error",
+            RestartType::Always => "always",
+        }
+    }
+
     /// The named trigger with [`RestartPolicy`]'s default crash-loop bounds.
     pub fn to_policy(self) -> RestartPolicy {
         RestartPolicy {
@@ -500,7 +511,7 @@ impl std::str::FromStr for Repo {
         // Probably a cleaner way to do it, but it works for now...
         let dep = if looks_like_version_req(value) {
             Self::Version(String::from(value))
-        } else if value.starts_with("ssh://git") {
+        } else if value.starts_with("ssh://") || value.starts_with("https://") {
             let (url, rev) = if let Some((url, rev)) = value.split_once("?rev=") {
                 (url, Some(rev))
             } else {

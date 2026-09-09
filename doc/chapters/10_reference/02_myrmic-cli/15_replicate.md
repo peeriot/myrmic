@@ -40,7 +40,7 @@ The listing has one row per target, with the tags configured for it:
 ```
 TARGET                          TAGS
 app:chatty                      region-1, region-2
-chatty/server                   @6483ae05b2c94f10
+chatty/server                   @6483ae05b2c94f10a7d1c35e0f2b8946
 scope:application-data/metrics  @a0b1c2d3e4f50617 (provisional)
 ```
 
@@ -97,7 +97,7 @@ myrmic replicate chatty/server -t region-1 -t region-2
 4. Pin a cell's replica to one runtime:
 
 ```bash
-myrmic replicate chatty/server -t @6483ae05b2c94f10
+myrmic replicate chatty/server -t @6483ae05b2c94f10a7d1c35e0f2b8946
 ```
 
 5. Replicate a public scope shared by several cells:
@@ -123,7 +123,7 @@ myrmic replicate app:chatty
 ```yaml
 # replicas.yml
 app:chatty: [region-1, region-2]
-chatty/server: ['@6483ae05b2c94f10']
+chatty/server: ['@6483ae05b2c94f10a7d1c35e0f2b8946']
 scope:application-data/metrics: [region-1]
 ```
 

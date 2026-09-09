@@ -8,7 +8,7 @@
 use myrmic_sdk::{Callback, Metadata, Result, Sri, publish, send};
 
 /// A single measurement with a value and unit identifier.
-#[derive(serde::Serialize, serde::Deserialize, myrmic_sdk::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, myrmic_sdk::Message)]
 #[codec(myrmic_sdk::Postcard)]
 struct Measurement {
     value: i32,
@@ -16,7 +16,7 @@ struct Measurement {
 }
 
 /// A timestamped reading containing a measurement.
-#[derive(serde::Serialize, serde::Deserialize, myrmic_sdk::Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, myrmic_sdk::Message)]
 #[codec(myrmic_sdk::Postcard)]
 struct Reading {
     measurement: Measurement,

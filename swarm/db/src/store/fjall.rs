@@ -735,6 +735,13 @@ impl<M: Send + Sync + 'static> Store<M> {
         }
     }
 
+    /// Drops everything `peer` announced. For a peer known to be gone — its
+    /// liveliness token was deleted — whose entries would otherwise stay
+    /// vouched for until `PEER_TTL` expires.
+    pub fn forget_peer(&self, peer: &models::NodeId) {
+        self.peer_frontiers.remove(peer);
+    }
+
     /// The responder's view of who else holds `scope`, for a locate reply.
     ///
     /// Every peer whose announce mentioned the scope within `PEER_TTL`, with
