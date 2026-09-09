@@ -47,11 +47,11 @@ jobs:
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C5, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c5 --features pipeline
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c5 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C5)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c5 --features pipeline,wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c5 --features pipeline,wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
@@ -111,11 +111,11 @@ jobs:
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C6, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c6 --features pipeline
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c6 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C6)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c6 --features pipeline,wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c6 --features pipeline,wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
@@ -173,11 +173,11 @@ jobs:
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C61, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
       - name: Build embedded firmware (C61)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7447 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline,wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline,wdt-selftest
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
