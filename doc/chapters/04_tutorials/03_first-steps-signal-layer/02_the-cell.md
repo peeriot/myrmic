@@ -8,26 +8,17 @@ reads them, and watch the values flow.
 
 ## Step 1 - Start a runtime
 
-A runtime hosts cells. In a **new terminal** (the pipeline stays running in its own), start one —
-it runs in the foreground, so leave it up:
+A runtime hosts cells. In a **new terminal** (the pipeline stays running in its own), start one and
+leave it up:
 
 ```bash
 myrmic runtimes start
 ```
 
-From a third terminal, confirm it:
-
-```bash
-myrmic runtimes list
-```
-
-```text
-default	running	pid=26094
-```
-
-The runtime is named `default`. It announces itself on the local network, and everything that
-joins the swarm later — including the ESP32 in Part 3 — finds it by that announcement. Nothing
-about its address needs writing down.
+Starting a runtime and confirming it with `myrmic runtimes list` are covered in
+[the quickstart](../../01_quickstart.md). The part that matters here: the runtime is named
+`default` and announces itself on the local network, so everything that joins the swarm later —
+including the ESP32 in Part 3 — finds it by that announcement, with no address to write down.
 
 ## Step 2 - Scaffold the cell
 

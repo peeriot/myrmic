@@ -24,15 +24,9 @@ the physical machine, differs between the two.
 - A Linux machine with an I²C device node such as `/dev/i2c-1` (a Raspberry Pi works well). The
   simulated sensor never touches the bus, but the generated process opens it at startup, so the
   node has to exist.
-- A checkout of the `myrmic` repository and a Rust toolchain (`rustup`), with the
-  `wasm32-unknown-unknown` target installed.
-- The `myrmic` CLI installed from your checkout. This is one long build; everything after it is
-  minutes:
-
-  ```bash
-  cd ~/myrmic
-  cargo install --path swarm/myrmic-cli    # installs `myrmic` into ~/.cargo/bin
-  ```
+- The `myrmic` CLI and the Rust toolchain it builds cells with, per
+  [Installation](../01_quickstart/01_installation.md). Take the *Install from source* path — it also
+  leaves you the repository checkout this tutorial points `--sdk` at (called `~/myrmic` below).
 
 **Part 3, the ESP32 half:**
 
