@@ -58,7 +58,7 @@ jobs:
           external_repository: ${{ vars.BOOK_PAGES_REPO }}
           publish_branch: ${{ vars.BOOK_PAGES_BRANCH }}
           publish_dir: ${{ github.workspace }}/book-out
-          cname: ${{ vars.BOOK_CNAME }}
+          cname: ${{ vars.BOOK_CNAME || 'book.myrmic.dev' }}
 
   # Deploy Docs
 
@@ -97,4 +97,4 @@ jobs:
           external_repository: ${{ vars.DOCS_PAGES_REPO }}
           publish_branch: ${{ vars.DOCS_PAGES_BRANCH }}
           publish_dir: ${{ github.workspace }}/docs-out
-          cname: ${{ vars.DOCS_CNAME }}
+          cname: ${{ vars.DOCS_CNAME || 'docs.myrmic.dev' }}
