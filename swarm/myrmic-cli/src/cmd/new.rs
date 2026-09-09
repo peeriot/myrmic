@@ -17,8 +17,9 @@ pub struct New {
     #[clap(short, long, require_equals = true, num_args = 0..=1, default_missing_value = "esp32c6")]
     firmware: Option<Chip>,
 
-    /// Also scaffold a Signal Layer pipeline (board.yml + pipeline.yml, generated
-    /// into the firmware at build time). Requires `--firmware`.
+    /// Also scaffold a Signal Layer pipeline (board.yml + pipeline.yml). With
+    /// --firmware the pipeline is generated into the firmware image; on its own
+    /// it scaffolds a standalone Linux pipeline project.
     #[clap(long)]
     pipeline: bool,
 
