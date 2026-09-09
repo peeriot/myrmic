@@ -71,6 +71,8 @@ Each driver, the per-device piece introduced above, declares which settings it h
 
 ## What you will do
 
+Scaffold a project first with `myrmic new --pipeline` (Linux) or `myrmic new --firmware=<chip> --pipeline` (ESP32): it writes the board and pipeline files described below and generates the pipeline from them at build time, with no separate generate step. The [First Steps with the Signal Layer](../04_tutorials/03_first-steps-signal-layer.md) tutorial walks the whole path end to end. Then:
+
 1. [Describe your hardware](./11_signal-layer/01_describe-your-hardware.md) in the board file.
 2. [Design your pipeline](./11_signal-layer/02_design-your-pipeline.md): the parts, their connections and their parameters.
 3. [Read values](./11_signal-layer/03_read-values.md) and [know when hardware fails](./11_signal-layer/04_know-when-hardware-fails.md).

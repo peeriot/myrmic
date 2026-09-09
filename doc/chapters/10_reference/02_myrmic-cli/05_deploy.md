@@ -141,7 +141,7 @@ myrmic deploy ./my-cell --init-file ./init
 9. Deploy a cell built for an embedded platform:
 
 ```bash
-myrmic deploy ./my-cell --platform esp32c6 --tag esp32c6
+myrmic deploy ./my-cell --platform riscv32imac --tag esp32c6
 ```
 
 10. Deploy a cell that is restarted after a crash:

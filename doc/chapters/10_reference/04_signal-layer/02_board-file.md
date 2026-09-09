@@ -1,7 +1,7 @@
 # Board file
 
 The board file describes one physical board: which chip, which pins carry which bus, and what is
-wired to it. It is the only file in the Signal Layer that is not portable.
+wired to it. It is the only file in the Signal Layer that is not portable. In a scaffolded project it is named `board.yml`, on both Linux and embedded.
 
 ```yaml
 id: esp32c6-devkit
