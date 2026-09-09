@@ -71,3 +71,6 @@ critical-section = { workspace = true, features = ["std"] }
 bt-hci-linux = { version = "0.1", git = "https://github.com/embassy-rs/trouble", rev = "e1aff18291e466474752a3beea75004325e6e0ad" }
 async-compat = "0.2.5"
 embedded-tls = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

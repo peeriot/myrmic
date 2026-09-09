@@ -53,3 +53,6 @@ x509-cert = { workspace = true, default-features = false }
 critical-section  = { workspace = true, features = ["std"] }
 edge-nal = { workspace = true }
 edge-nal-std = { workspace = true }
+
+[lints]
+workspace = true

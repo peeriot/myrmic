@@ -39,3 +39,6 @@ log = { workspace = true }
 zenoh-nano = { workspace = true, features = ["log"] }
 rand = { workspace = true }
 critical-section = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true
