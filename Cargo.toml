@@ -42,7 +42,6 @@ members = [
     "sdk/myrmic-sdk",
     "sdk/myrmic-sdk-macros",
     "tests/fixtures/*",
-    "embedded/examples/esp",
     "embedded/esp-hal/crates/wasm-runtime",
     "embedded/esp-hal/crates/wasm-runtime-macros",
     "embedded/esp-hal/crates/wasm-storage",
@@ -305,8 +304,6 @@ serde-json-core = "0.6"
 qrcodegen-no-heap = "1.8"
 elliptic-curve = { version = "0.13", default-features = false }
 p256 = { version = "0.13", default-features = false }
-der = { version = "0.8", default-features = false }
-signature = { version = "2", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 aes-gcm = { version = "0.10", default-features = false }
 bt-hci = "0.9"
@@ -327,7 +324,6 @@ esp-idf-svc = { version = "0.52" }
 esp-alloc = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-backtrace = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-bootloader-esp-idf = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
-esp-metadata-generated = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-hal = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-nimble-host = { git = "https://github.com/peeriot/esp-nimble-host.git", branch = "main" }
 esp-println = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream", default-features = false }
