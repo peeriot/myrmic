@@ -151,13 +151,22 @@ jobs:
         run: |
           ./.ci/release/verify-indexed "${{ needs.build.outputs.rc_version }}"
 
+  # Called rather than restated, so the release path gates on the same definition
+  # of the suite the mirror runs.
+  public_validation:
+    if: github.repository == 'peeriot/swarm'
+    uses: ./.github/workflows/public-validation.yml
+    permissions:
+      contents: read
+
   release:
     # Waits for publish: a draft is one click away from a release, so it must not
     # exist for a candidate that never reached the package repository it is tested
-    # from.
+    # from. And on public_validation, because on its own triggers that suite runs
+    # in the mirror, which a promote has already handed the release to.
     runs-on: general
     if: github.repository == 'peeriot/swarm'
-    needs: [build, publish]
+    needs: [build, publish, public_validation]
     permissions:
       packages: read
       contents: write

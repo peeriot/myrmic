@@ -18,6 +18,17 @@ on:
   pull_request:
     types: [ 'opened', 'reopened', 'synchronize', 'ready_for_review' ]
   workflow_dispatch:
+  # Callable so the release pipeline can gate on this suite.
+  workflow_call:
+    inputs:
+      called:
+        description: >-
+          Bypasses the repository guard below. `github.event_name` cannot serve
+          instead: in a called workflow the whole `github` context is the
+          caller's, so it never reports `workflow_call` and never
+          `peeriot/myrmic`.
+        type: boolean
+        default: true
 
 jobs:
 
@@ -31,7 +42,9 @@ jobs:
   guidelines:
     name: Guidelines
     runs-on: ubuntu-latest
-    if: github.repository == 'peeriot/myrmic'
+    if: inputs.called
+        || github.event_name == 'workflow_dispatch'
+        || github.repository == 'peeriot/myrmic'
     permissions:
       contents: read
     concurrency:
@@ -53,7 +66,9 @@ jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
-    if: github.repository == 'peeriot/myrmic'
+    if: inputs.called
+        || github.event_name == 'workflow_dispatch'
+        || github.repository == 'peeriot/myrmic'
     permissions:
       contents: read
     concurrency:
