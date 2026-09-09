@@ -12,7 +12,7 @@ workspace = true
 # crates.io
 anyhow     = { workspace = true }
 claims     = { workspace = true }
-espflash   = { workspace = true }
+espflash   = { workspace = true, features = ["cli"] }
 serialport = { workspace = true }
 serde      = { workspace = true, features = ["derive"] }
 tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }

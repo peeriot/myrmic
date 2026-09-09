@@ -5,7 +5,7 @@ mod triage;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
-use cell_protocol::{ClassInfo, PlacementKind, RuntimeId, Sri};
+use cell_protocol::{ClassInfo, RuntimeId, Sri};
 use sorg_common::{
     CellConfig, CellDeployment, DeploymentError, ExecRuntimeInfo, class_registry, exec_registry,
     list_placements, node_lease, supervision::SupervisionTiming,
@@ -122,13 +122,13 @@ impl PlacementContext {
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read placements: {err}"))?;
 
+        // Every row naming a host counts against it, native firmware cells
+        // included: a node whose firmware claimed its own cell slot is as full
+        // as one hosting a WASM module.
         let mut cells_per_runtime: HashMap<RuntimeId, Vec<Sri>> = HashMap::new();
         for entry in all_cells {
-            if let PlacementKind::Wasm { ref runtime } = entry.kind {
-                cells_per_runtime
-                    .entry(runtime.id())
-                    .or_default()
-                    .push(entry.sri);
+            if let Some(host) = entry.kind.host() {
+                cells_per_runtime.entry(host).or_default().push(entry.sri);
             }
         }
 
@@ -163,12 +163,12 @@ impl Runtime {
     /// loading happens after - a runtime can leave between the two. This is by design:
     /// the load will fail and the caller handles the error (app rollback / standalone error).
     ///
-    /// Capacity enforcement assumes a single orchestrator writer. Nothing here excludes
-    /// a concurrent deploy, so two of them both observe the same "runtime empty" snapshot
-    /// and both place a cell on the same capacity-1 runtime. Additionally,
-    /// `cells_per_runtime` only counts `PlacementKind::Wasm` entries -
-    /// `PlacementKind::Placeholder` (written by `claim_placement` before the load completes)
-    /// is invisible to the capacity check, so in-flight concurrent deploys are not counted
+    /// Capacity enforcement assumes a single orchestrator writer. The placement tx is
+    /// read-only, so two concurrent deploys both observe the same "runtime empty" snapshot,
+    /// both commit without OCC conflict, and both place a cell on the same capacity-1
+    /// runtime. Additionally, `cells_per_runtime` counts only rows naming a host
+    /// (`PlacementKind::host`) — `PlacementKind::Placeholder` (written by `claim_placement`
+    /// before the load completes) names none, so in-flight concurrent deploys are not counted
     /// toward occupancy. Both limitations are benign with a single orchestrator instance.
     ///
     /// An outcome blocked only by a missing artifact is retried, because it is the one

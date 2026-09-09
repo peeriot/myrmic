@@ -6,7 +6,7 @@ use signal_layer_core::{
 use signal_layer_types::{DriverHealth, HealthEvent};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use embassy_executor::Spawner;
+use esp_firmware::embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Ticker};
@@ -58,7 +58,9 @@ macro_rules! pipeline_board_peripherals {
         $p .GPIO2,)
     };
 }
-#[embassy_executor::task]
+#[esp_firmware::embassy_executor::task(
+    embassy_executor = esp_firmware::embassy_executor
+)]
 async fn relay1_sink_task(out: esp_hal::gpio::Output<'static>) {
     let cfg = gpio_output_driver::GpioOutputConfig {
         active_low: false,
@@ -136,9 +138,9 @@ pub fn setup_outlet_registry() -> usize {
 #[macro_export]
 macro_rules! pipeline_pins {
     ($p:ident) => {
-        wasm_runtime::Pins([Some(esp_hal::gpio::Flex::new($p .GPIO0)),
-        Some(esp_hal::gpio::Flex::new($p .GPIO1)), None, None, None, None, None, None,
+        esp_firmware::wasm_runtime::Pins([Some(esp_firmware::esp_hal::gpio::Flex::new($p
+        .GPIO0)), Some(esp_firmware::esp_hal::gpio::Flex::new($p .GPIO1)), None, None,
         None, None, None, None, None, None, None, None, None, None, None, None, None,
-        None, None, None, None, None, None, None])
+        None, None, None, None, None, None, None, None, None, None, None])
     };
 }

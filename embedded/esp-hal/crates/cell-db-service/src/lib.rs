@@ -12,8 +12,11 @@ extern crate alloc;
 mod deploy;
 mod mailbox;
 mod myrmic;
+mod native;
 mod requests;
 mod service;
 mod supervision;
+mod time;
 
+pub use native::NativeCell;
 pub use service::service;

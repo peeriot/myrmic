@@ -46,9 +46,15 @@ open-telemetry = [
 anyhow = { workspace = true }
 clap = { workspace = true }
 dialoguer = { workspace = true }
+# With espflash's CLI layer: port selection, connection flags, progress bars, the monitor.
+espflash = { workspace = true, features = ["cli"] }
+log = { workspace = true, features = ["std"] }
+miette = { workspace = true }
+serialport = { workspace = true }
 
 sha2 = { workspace = true }
 myrmic-build = { workspace = true }
+esp-codegen = { workspace = true }
 myrmic-tags = { workspace = true }
 
 cell-protocol = { workspace = true, default-features = true }

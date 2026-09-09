@@ -1,0 +1,39 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.myrmic]
+firmware = "{{chip}}"
+
+[features]
+default = ["{{chip}}", "pipeline"]
+
+# Target SoC. A firmware crate declares its own chip feature and forwards it:
+# `esp_firmware::board!` and `esp_firmware_build::configure()` both read the
+# chip from the crate that invokes them.
+esp32c5  = ["esp-firmware/esp32c5", "ble"]
+esp32c6  = ["esp-firmware/esp32c6"]
+esp32c61 = ["esp-firmware/esp32c61", "ble"]
+
+ble = ["esp-firmware/ble"]
+
+# The Signal Layer pipeline. Gates the generated pipeline module (see
+# `pipeline!()` in src/main.rs) and the driver/step crates it uses. The pipeline
+# is generated from board.yml + pipeline.yml at build time.
+pipeline = [
+{{pipeline_feature_deps}}
+]
+
+[dependencies]
+esp-firmware = {{firmware_sdk}}
+
+# Signal Layer driver and step crates, seeded for every module shipped with
+# myrmic so any pipeline built from board.yml + pipeline.yml compiles. Only the
+# modules your pipeline uses end up in the image. Add your own here to use custom
+# drivers or steps (see build.rs `.include(...)`).
+{{module_deps}}
+
+[build-dependencies]
+esp-firmware-build = {{firmware_build}}

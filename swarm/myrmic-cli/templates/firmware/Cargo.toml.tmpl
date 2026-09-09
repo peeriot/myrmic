@@ -1,0 +1,26 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.myrmic]
+firmware = "{{chip}}"
+
+[features]
+default = ["{{chip}}"]
+
+# Target SoC. A firmware crate declares its own chip feature and forwards it:
+# `esp_firmware::board!` and `esp_firmware_build::configure()` both read the
+# chip from the crate that invokes them.
+esp32c5  = ["esp-firmware/esp32c5", "ble"]
+esp32c6  = ["esp-firmware/esp32c6"]
+esp32c61 = ["esp-firmware/esp32c61", "ble"]
+
+ble = ["esp-firmware/ble"]
+
+[dependencies]
+esp-firmware = {{firmware_sdk}}
+
+[build-dependencies]
+esp-firmware-build = {{firmware_build}}

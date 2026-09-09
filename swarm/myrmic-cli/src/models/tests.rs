@@ -339,35 +339,39 @@ fn instance_rejects_unknown_field() {
     assert!(serde_yaml::from_str::<Instance>("{ class: a, tag: foo }").is_err());
 }
 
+/// A repo resolved for `myrmic-sdk`, the way `myrmic new` renders a cell's
+/// dependency.
+fn dep(value: &str) -> CargoDep {
+    Repo::from_str(value)
+        .unwrap_or_else(|err| panic!("{value}: {err}"))
+        .resolve_or_assume_correct("sdk/myrmic-sdk")
+}
+
 #[test]
 fn cargo_dep_version_renders_as_a_registry_dep() {
-    let dep = CargoDep::from_str("0.2.1").expect("a bare version is a registry dep");
-    assert_eq!(dep.to_string(), r#""0.2.1""#);
+    assert_eq!(dep("0.2.1").to_string(), r#""0.2.1""#);
 }
 
 #[test]
 fn cargo_dep_version_requirements_parse_as_versions() {
     for req in ["^0.2", "~0.2.1", "=0.2.1", ">=0.2, <0.3", "*"] {
-        let dep = CargoDep::from_str(req).unwrap_or_else(|err| panic!("{req}: {err}"));
-        assert_eq!(dep.to_string(), format!(r#""{req}""#));
+        assert_eq!(dep(req).to_string(), format!(r#""{req}""#));
     }
 }
 
 #[test]
 fn cargo_dep_git_renders_an_inline_table() {
-    let dep = CargoDep::from_str("ssh://git@github.com/peeriot/swarm.git?rev=abc12345").unwrap();
     assert_eq!(
-        dep.to_string(),
+        dep("ssh://git@github.com/peeriot/swarm.git?rev=abc12345").to_string(),
         r#"{ git = "ssh://git@github.com/peeriot/swarm.git", rev = "abc12345" }"#
     );
 
-    let dep = CargoDep::from_str("ssh://git@github.com/peeriot/swarm.git").unwrap();
     assert_eq!(
-        dep.to_string(),
+        dep("ssh://git@github.com/peeriot/swarm.git").to_string(),
         r#"{ git = "ssh://git@github.com/peeriot/swarm.git" }"#
     );
 
-    let dep = CargoDep::from_str("https://github.com/peeriot/swarm.git?rev=abc12345").unwrap();
+    let dep = dep("https://github.com/peeriot/swarm.git?rev=abc12345");
     assert_eq!(
         dep.to_string(),
         r#"{ git = "https://github.com/peeriot/swarm.git", rev = "abc12345" }"#
@@ -377,11 +381,22 @@ fn cargo_dep_git_renders_an_inline_table() {
 #[test]
 fn cargo_dep_path_renders_an_inline_table() {
     let here = env!("CARGO_MANIFEST_DIR");
-    let dep = CargoDep::from_str(here).expect("the crate dir exists");
-    assert_eq!(dep.to_string(), format!(r#"{{ path = "{here}" }}"#));
+    assert_eq!(dep(here).to_string(), format!(r#"{{ path = "{here}" }}"#));
+}
+
+/// A checkout of the whole repo resolves to the crate inside it; any other
+/// path is taken as the crate itself.
+#[test]
+fn repo_path_resolves_to_the_known_crate_dir() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let CargoDep::Path(path) = Repo::Path(root.clone()).resolve_or_assume_correct("sdk/myrmic-sdk")
+    else {
+        panic!("a path repo resolves to a path dep");
+    };
+    assert_eq!(path, root.join("sdk/myrmic-sdk"));
 }
 
 #[test]
 fn cargo_dep_rejects_a_missing_path() {
-    assert!(CargoDep::from_str("does/not/exist").is_err());
+    assert!(Repo::from_str("does/not/exist").is_err());
 }

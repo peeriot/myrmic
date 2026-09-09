@@ -3,7 +3,7 @@ use crate::models::{self, CellInstance};
 use crate::platforms::Platform;
 use crate::utils::PathType;
 use anyhow::Context;
-use myrmic_build::cargo;
+use myrmic_build::{cargo, firmware};
 use sorg_common::{HttpBridgeApi, MqttBridge};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -106,7 +106,16 @@ pub fn build_app(
 
         match ty {
             PathType::Toml => {
-                if let Some(cc) = build_cell(ctx, path.as_ref(), &platforms, &cargo_target)? {
+                if let Some(chip) = firmware::chip_of(&path)? {
+                    anyhow::bail!(
+                        "class `{id}` points at a {chip} firmware crate, not a cell; build it on \
+                         its own with `myrmic build {}`",
+                        og_path.display()
+                    );
+                }
+                if let Some(cc) =
+                    build_cell(ctx, path.as_ref(), &platforms, &cargo_target, Some(&id))?
+                {
                     info.classes.insert(id, cc);
                 }
             }
@@ -197,7 +206,7 @@ fn parse_platforms(spec: Option<models::PlatformSpec>) -> anyhow::Result<Vec<Pla
     }
 }
 
-fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build::CargoTarget {
+pub(crate) fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build::CargoTarget {
     match target {
         models::CargoTarget::Auto => myrmic_build::CargoTarget::Auto,
         models::CargoTarget::Lib => myrmic_build::CargoTarget::Lib,
@@ -205,37 +214,138 @@ fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build::CargoTarg
     }
 }
 
+/// Builds the crate, or every member of the workspace, at `manifest_path`.
+/// `runtime_name` only means something to a firmware crate, which bakes it in
+/// as the device's name.
 pub fn build_toml(
     ctx: Ctx,
     manifest_path: &Path,
     platforms: &[Platform],
     cargo_target: models::CargoTarget,
+    runtime_name: Option<&str>,
 ) -> anyhow::Result<Vec<CellClass>> {
     let info = cargo::crate_info(manifest_path)?;
     let cargo_target = to_build_cargo_target(cargo_target);
 
-    let mut classes = vec![];
-
-    if let Some(ws) = info.as_root() {
-        // A single selector can't span a workspace; each member resolves its
-        // own target automatically (sole bin, else sole lib).
-        if cargo_target != myrmic_build::CargoTarget::Auto {
-            anyhow::bail!(
-                "`--target` selects a target within a single crate, but `{}` is a workspace; \
-                 point the build path at a specific crate",
-                manifest_path.display(),
-            );
-        }
-        for member in &ws.members {
-            if let Some(cc) = build_cell(ctx, member, platforms, &cargo_target)? {
-                classes.push(cc);
+    let members: Vec<&Path> = match info.as_root() {
+        Some(ws) => {
+            // A single selector can't span a workspace; each member resolves its
+            // own target automatically (sole bin, else sole lib).
+            if cargo_target != myrmic_build::CargoTarget::Auto {
+                anyhow::bail!(
+                    "`--target` selects a target within a single crate, but `{}` is a workspace; \
+                     point the build path at a specific crate",
+                    manifest_path.display(),
+                );
             }
+            ws.members.iter().map(PathBuf::as_path).collect()
         }
-    } else if let Some(cc) = build_cell(ctx, &info.manifest_path, platforms, &cargo_target)? {
-        classes.push(cc);
+        None => vec![&info.manifest_path],
+    };
+
+    let mut classes = vec![];
+    for member in &members {
+        if let Some(cc) = build_member(ctx, member, platforms, &cargo_target, runtime_name)? {
+            classes.push(cc);
+        }
+    }
+    if runtime_name.is_some() && classes.len() == members.len() {
+        crate::warn!(
+            ctx,
+            "--name was provided, but will be ignored: it names a firmware's runtime, and `{}` \
+             builds no firmware",
+            manifest_path.display()
+        );
     }
 
     Ok(classes)
+}
+
+/// Builds one crate of a `myrmic build <path>` run. A firmware crate yields an
+/// ELF and no cell class; anything else is a cell.
+fn build_member(
+    ctx: Ctx,
+    path: &Path,
+    platforms: &[Platform],
+    cargo_target: &myrmic_build::CargoTarget,
+    runtime_name: Option<&str>,
+) -> anyhow::Result<Option<CellClass>> {
+    match firmware::chip_of(path)? {
+        Some(chip) => {
+            build_firmware(ctx, path, chip, platforms, cargo_target, runtime_name)?;
+            Ok(None)
+        }
+        None => build_cell(ctx, path, platforms, cargo_target, None),
+    }
+}
+
+fn build_firmware(
+    ctx: Ctx,
+    path: &Path,
+    chip: firmware::Chip,
+    platforms: &[Platform],
+    cargo_target: &myrmic_build::CargoTarget,
+    runtime_name: Option<&str>,
+) -> anyhow::Result<()> {
+    if platforms != Platform::DEFAULT {
+        crate::warn!(
+            ctx,
+            "--platform is ignored for a firmware crate; the chip ({chip}) comes from \
+             `[package.metadata.myrmic] firmware`"
+        );
+    }
+    report_building(ctx, chip, path, runtime_name);
+
+    let built = firmware::build(path, cargo_target, None, runtime_name)?;
+    report_layout(ctx, &built);
+
+    crate::info!(ctx, "Firmware: {}", built.elf.display());
+    if let Some(table) = &built.partition_table {
+        crate::info!(ctx, "Partition table: {}", table.display());
+    }
+    crate::info!(
+        ctx,
+        "Flash with: myrmic flash {}",
+        path.parent().unwrap_or(path).display()
+    );
+
+    Ok(())
+}
+
+/// Announces a firmware build, naming the runtime it is built for when one was
+/// given.
+pub(crate) fn report_building(
+    ctx: Ctx,
+    chip: firmware::Chip,
+    manifest_path: &Path,
+    runtime_name: Option<&str>,
+) {
+    match runtime_name {
+        Some(name) => crate::info!(
+            ctx,
+            "Building {chip} firmware for runtime `{name}`: {}",
+            manifest_path.display()
+        ),
+        None => crate::info!(ctx, "Building {chip} firmware: {}", manifest_path.display()),
+    }
+}
+
+/// Logs where a firmware build's partition layout came from, and warns when
+/// nothing tells espflash which table to flash it with.
+pub(crate) fn report_layout(ctx: Ctx, built: &firmware::FirmwareBuild) {
+    if let Some(partitions) = &built.default_partitions {
+        crate::info!(
+            ctx,
+            "No partitions.toml beside the crate; using the default layout ({partitions})"
+        );
+    }
+    if built.partition_table.is_none() {
+        crate::warn!(
+            ctx,
+            "no espflash.toml beside the crate names a partition table; flashing will fall \
+             back to espflash's default table and may write an oversized image"
+        );
+    }
 }
 
 /// Maps the CLI's build platforms to `myrmic-build` platforms
@@ -254,6 +364,7 @@ fn build_cell(
     path: &Path,
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
+    spec_id: Option<&str>,
 ) -> anyhow::Result<Option<CellClass>> {
     let _folder = path
         .parent()
@@ -304,16 +415,52 @@ fn build_cell(
         return Ok(None);
     }
 
-    // An explicitly named target becomes a class of its own, so several cells
-    // can live in one crate as separate bins; otherwise the class is the package.
-    let name = match cargo_target {
-        myrmic_build::CargoTarget::Named(target) => target.clone(),
-        myrmic_build::CargoTarget::Lib | myrmic_build::CargoTarget::Auto => package_name,
-    };
-
     Ok(Some(CellClass {
-        name,
+        name: class_name(spec_id, cargo_target, &package_name),
         wasm_path,
         riscv32imac,
     }))
+}
+
+/// The name a class is registered under and referenced by (`declare!`, the
+/// class registry, the nest). A class from an app spec is its spec id, whatever
+/// the crate calls the target — the same name the nest reader reconstructs. A
+/// standalone build takes the named target, so several cells can live in one
+/// crate as separate bins, else the package.
+fn class_name(
+    spec_id: Option<&str>,
+    cargo_target: &myrmic_build::CargoTarget,
+    package_name: &str,
+) -> String {
+    if let Some(id) = spec_id {
+        return id.to_owned();
+    }
+    match cargo_target {
+        myrmic_build::CargoTarget::Named(target) => target.clone(),
+        myrmic_build::CargoTarget::Lib | myrmic_build::CargoTarget::Auto => package_name.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use myrmic_build::CargoTarget;
+
+    use super::class_name;
+
+    #[test]
+    fn app_spec_class_is_named_by_its_id_not_its_cargo_target() {
+        let target = CargoTarget::Named("simple_sensor".to_owned());
+        assert_eq!(
+            class_name(Some("t2-simple-sensor"), &target, "simple_sensor"),
+            "t2-simple-sensor"
+        );
+    }
+
+    #[test]
+    fn standalone_class_is_named_by_target_then_package() {
+        let named = CargoTarget::Named("server".to_owned());
+        assert_eq!(class_name(None, &named, "pkg"), "server");
+        assert_eq!(class_name(None, &CargoTarget::Lib, "pkg"), "pkg");
+        assert_eq!(class_name(None, &CargoTarget::Auto, "pkg"), "pkg");
+    }
 }

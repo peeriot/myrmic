@@ -262,7 +262,7 @@ macro_rules! pins_from_peripherals {
                 None,
                 None,
                 None,
-                None,
+                Some($crate::__reexports::esp_hal::gpio::Flex::new($periph.GPIO8)),
                 None,
                 // Only in QFN40
                 Some($crate::__reexports::esp_hal::gpio::Flex::new(

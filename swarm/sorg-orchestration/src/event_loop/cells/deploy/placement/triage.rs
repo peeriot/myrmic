@@ -46,7 +46,9 @@ fn bind_trivial(mappings: Vec<CellMapping>, embedded_nodes: &HashSet<RuntimeId>)
         .collect();
 
     // Detect capacity violations: a capacity-1 runtime assigned to more than
-    // one cell in this batch cannot host all of them.
+    // one cell in this batch cannot host all of them. Runtimes already occupied
+    // before the batch were rejected in preprocessing, so only the intra-batch
+    // collision is left to catch here.
     let mut counts: HashMap<RuntimeId, usize> = HashMap::new();
     for b in &bindings {
         if embedded_nodes.contains(&b.rt_id) {

@@ -6,7 +6,7 @@ use signal_layer_core::{
 use signal_layer_types::{DriverHealth, HealthEvent};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use embassy_executor::Spawner;
+use esp_firmware::embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Ticker};
@@ -89,7 +89,9 @@ macro_rules! pipeline_board_peripherals {
         $p .GPIO1, $p .LEDC,)
     };
 }
-#[embassy_executor::task]
+#[esp_firmware::embassy_executor::task(
+    embassy_executor = esp_firmware::embassy_executor
+)]
 async fn fan1_sink_task(
     out: esp_hal::ledc::channel::Channel<'static, esp_hal::ledc::LowSpeed>,
 ) {
@@ -168,9 +170,9 @@ pub fn setup_outlet_registry() -> usize {
 #[macro_export]
 macro_rules! pipeline_pins {
     ($p:ident) => {
-        wasm_runtime::Pins([Some(esp_hal::gpio::Flex::new($p .GPIO0)), None,
-        Some(esp_hal::gpio::Flex::new($p .GPIO2)), None, None, None, None, None, None,
+        esp_firmware::wasm_runtime::Pins([Some(esp_firmware::esp_hal::gpio::Flex::new($p
+        .GPIO0)), None, Some(esp_firmware::esp_hal::gpio::Flex::new($p .GPIO2)), None,
         None, None, None, None, None, None, None, None, None, None, None, None, None,
-        None, None, None, None, None, None])
+        None, None, None, None, None, None, None, None, None, None, None])
     };
 }

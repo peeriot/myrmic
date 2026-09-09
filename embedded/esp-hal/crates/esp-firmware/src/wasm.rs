@@ -11,7 +11,7 @@ use wasm_runtime::async_request::{DbClientRequest, DbClientResponse};
 use wasm_runtime::{Pins, WasmTransfer};
 use wasm_storage::WasmStorage;
 
-use crate::network::CONNECTED;
+use crate::net::CONNECTED;
 use esp_common::esp_watchdog::liveness::{Task, bump};
 
 /// Task that handles the system (Hardware and async WASM requests)

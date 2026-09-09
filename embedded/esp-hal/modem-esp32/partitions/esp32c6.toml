@@ -1,0 +1,16 @@
+# Flash partition layout for the ESP32-C6.
+#
+# Defaults to the smallest supported flash (4 MB): 3 MB firmware + 1 MB AOT
+# fills the 4 MB. The firmware partition holds the app; the AOT region holds the
+# 64 KB metadata block and the XIP WASM module.
+#
+# A 4 MB layout is the safe default: it also boots on a larger C6 (an 8 MB
+# C6-DevKitC-1), leaving the extra flash unused. If your board has more flash
+# and you want the extra capacity, raise the knobs below.
+#
+# See embedded/esp-hal/modem-esp32/partitions.toml.example for a description of the knobs and how to override them.
+
+[partitions]
+firmware_size = "3M"
+aot_size = "1M"
+flash_size = "4M"

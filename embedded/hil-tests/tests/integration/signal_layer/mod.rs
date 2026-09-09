@@ -6,7 +6,9 @@
 //! `esp32c5-hil` / `esp32c61-hil` for those chips):
 //!
 //! ```sh
-//! cd sdk/signal-layer && scripts/build.sh hil-tests --board esp32c6-hil
+//! SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml \
+//!   SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml \
+//!   cargo +nightly build-c6 --features pipeline
 //! EMBEDDED_TARGET=ESP32C6 EMBEDDED_ELF=<path-to-pipeline-elf> \
 //!   cargo nextest run -p hil-tests signal_layer
 //! ```

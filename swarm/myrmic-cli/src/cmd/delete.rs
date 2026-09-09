@@ -240,13 +240,12 @@ fn validate_flag(action: Action, facts: &Facts, target: &str) -> anyhow::Result<
 fn prompt_action(facts: &Facts, target: &str) -> anyhow::Result<Action> {
     let actions = facts.actions();
     let labels: Vec<String> = actions.iter().map(|a| facts.label(*a, target)).collect();
-    let selection = Select::new()
+    let prompt = Select::new()
         .with_prompt(format!("Delete '{target}'?"))
         .items(&labels)
-        .default(0)
-        .interact_opt()
-        .context("selection prompt failed")?;
-    // Escaping the prompt is the same as choosing Nothing.
+        .default(0);
+    let selection = crate::prompt::select(prompt).context("selection prompt failed")?;
+    // Backing out of the prompt is the same as choosing Nothing.
     Ok(selection.map_or(Action::Nothing, |i| actions[i]))
 }
 

@@ -79,6 +79,8 @@ cell-event-sub-logic
 cell-nested-caller-logic
 cell-thermostat-logic
 common
+esp-firmware-build
+esp-firmware-macros
 esp-heap
 esp-mmu-consts
 linux-gpio-shim

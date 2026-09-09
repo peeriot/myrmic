@@ -28,18 +28,18 @@ pub use service::{
 
 /// Install the tap registry for use by the "tap" WAMR host calls.
 ///
-/// Called exclusively from the generated `pipeline_config::setup_tap_registry()`.
-/// Must complete before `wasm_task()` is spawned.
-#[cfg(feature = "signal-layer")]
+/// Called once by `esp_firmware::start` with the board's registry. Must
+/// complete before the WAMR thread starts; a later call replaces the whole
+/// registry, so earlier registrations are lost.
 pub fn init_tap_registry(registry: signal_layer_core::TapRegistry) {
     imports::tap::init(registry);
 }
 
 /// Install the outlet registry for use by the "outlet" WAMR host calls.
 ///
-/// Called exclusively from the generated `pipeline_config::setup_outlet_registry()`.
-/// Must complete before `wasm_task()` is spawned.
-#[cfg(feature = "signal-layer")]
+/// Called once by `esp_firmware::start` with the board's registry. Must
+/// complete before the WAMR thread starts; a later call replaces the whole
+/// registry, so earlier registrations are lost.
 pub fn init_outlet_registry(registry: signal_layer_core::OutletRegistry) {
     imports::outlet::init(registry);
 }

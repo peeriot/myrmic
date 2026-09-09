@@ -335,7 +335,7 @@ pub enum AddMode {
 pub struct PlacementEntry {
     /// The cell's self-referential identifier.
     pub sri: Sri,
-    /// Where the cell is placed (WASM runtime, bridge, or placeholder).
+    /// Where the cell is placed (WASM runtime, native firmware, bridge, or placeholder).
     pub kind: PlacementKind,
     /// The application this cell belongs to, if any.
     pub app: Option<String>,
@@ -345,13 +345,27 @@ pub struct PlacementEntry {
     pub gen_id: Gen,
 }
 
-/// Where a cell is placed: a WASM exec runtime, a native bridge, or nowhere yet.
+/// Where a cell is placed: a WASM exec runtime, native firmware, a native
+/// bridge, or nowhere yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlacementKind {
     /// A WASM cell running on an execution runtime.
     Wasm {
         /// The runtime this cell is loaded on, including its capabilities.
         runtime: ExecRuntimeInfo,
+    },
+    /// A cell implemented natively by a node's own firmware, occupying that
+    /// node's cell slot instead of a WASM module. The row is written by the
+    /// node itself — no orchestrator deploy precedes it — so the node is the
+    /// authority on its own contents.
+    ///
+    /// Carries the hosting node so the row counts against that node's
+    /// occupancy and is reaped with it, exactly as a [`Wasm`] row is.
+    ///
+    /// [`Wasm`]: PlacementKind::Wasm
+    Native {
+        /// The node whose firmware implements this cell.
+        runtime: RuntimeId,
     },
     /// A bridge cell (HTTP or MQTT) running natively, addressed by its own SRI.
     Bridge {
@@ -360,6 +374,24 @@ pub enum PlacementKind {
     },
     /// Transient state: SRI has been claimed but the cell is not yet deployed.
     Placeholder,
+}
+
+impl PlacementKind {
+    /// The node hosting this cell, when the placement names one.
+    ///
+    /// [`Bridge`] cells run on the orchestrator and [`Placeholder`] rows name
+    /// no host yet, so neither is charged to a node.
+    ///
+    /// [`Bridge`]: PlacementKind::Bridge
+    /// [`Placeholder`]: PlacementKind::Placeholder
+    #[must_use]
+    pub fn host(&self) -> Option<RuntimeId> {
+        match self {
+            Self::Wasm { runtime } => Some(runtime.id()),
+            Self::Native { runtime } => Some(*runtime),
+            Self::Bridge { .. } | Self::Placeholder => None,
+        }
+    }
 }
 
 /// The ID of a self-organization runtime (equivalent to the ID of the zenoh runtime that we are running on)
@@ -837,5 +869,49 @@ mod node_lease_tests {
             .into();
         let parsed = RuntimeId::from_str(&id.to_string()).unwrap();
         assert_eq!(parsed, id);
+    }
+}
+
+#[cfg(test)]
+mod placement_kind_tests {
+    use super::{ExecRuntimeInfo, ExecutionCapabilities, PlacementKind, RuntimeId, Sri};
+
+    fn runtime(n: u8) -> RuntimeId {
+        zenoh_protocol::core::ZenohIdProto::try_from(&[n; 8][..])
+            .unwrap()
+            .into()
+    }
+
+    #[test]
+    fn native_placement_is_charged_to_its_node() {
+        let node = runtime(3);
+        assert_eq!(
+            Some(node),
+            PlacementKind::Native { runtime: node }.host(),
+            "a native firmware cell occupies its node's slot, so it must name that node"
+        );
+    }
+
+    #[test]
+    fn wasm_placement_is_charged_to_its_runtime() {
+        let zid = zenoh_protocol::core::ZenohIdProto::try_from(&[4u8; 8][..]).unwrap();
+        let kind = PlacementKind::Wasm {
+            runtime: ExecRuntimeInfo::new(zid, None, ExecutionCapabilities::new(Vec::new())),
+        };
+        assert_eq!(Some(RuntimeId::from(zid)), kind.host());
+    }
+
+    #[test]
+    fn hostless_placements_are_charged_to_nobody() {
+        // Bridges run on the orchestrator and placeholders name no host yet;
+        // charging either to a node would make that node look full.
+        assert_eq!(None, PlacementKind::Placeholder.host());
+        assert_eq!(
+            None,
+            PlacementKind::Bridge {
+                sri: Sri::from_uuid(uuid::Uuid::nil()),
+            }
+            .host()
+        );
     }
 }

@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use cell_protocol::{CellInstance, Gen, PlacementEntry, PlacementKind, RuntimeId, Sri};
+use cell_protocol::{CellInstance, Gen, PlacementEntry, RuntimeId, Sri};
 use sorg_common::root_death::RootDeath;
 use sorg_common::supervision::{
     ExpiryGate, LeaseTracker, RestartBudget, SupervisionTiming, jittered,
@@ -55,10 +55,7 @@ impl HygienePlan {
 }
 
 fn placement_node(entry: &PlacementEntry) -> Option<RuntimeId> {
-    match &entry.kind {
-        PlacementKind::Wasm { runtime } => Some(runtime.id()),
-        PlacementKind::Bridge { .. } | PlacementKind::Placeholder => None,
-    }
+    entry.kind.host()
 }
 
 /// Placed nodes with no lease row at all. Every live node leases, and a dead
@@ -590,7 +587,7 @@ async fn drop_spec(session: &Session, sri: &Sri) {
 
 #[cfg(test)]
 mod tests {
-    use cell_protocol::{ExecRuntimeInfo, ExecutionCapabilities};
+    use cell_protocol::{ExecRuntimeInfo, ExecutionCapabilities, PlacementKind};
 
     use super::*;
 

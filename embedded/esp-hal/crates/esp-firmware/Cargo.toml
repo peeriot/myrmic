@@ -1,0 +1,78 @@
+[package]
+name              = "esp-firmware"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+publish.workspace = true
+description       = "Myrmic firmware for ESP32 SoCs, as a library: bring up a swarm node and host a cell, keeping the parts you want and replacing the ones you don't."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+esp32c5 = [
+    "esp-common/esp32c5",
+    "esp-rtos/esp32c5",
+    "esp-hal/esp32c5",
+    "wasm-runtime/esp32c5",
+    "ble",
+    "hang-record",
+]
+esp32c6 = [
+    "esp-common/esp32c6",
+    "esp-rtos/esp32c6",
+    "esp-hal/esp32c6",
+    "wasm-runtime/esp32c6",
+    "hang-record",
+]
+esp32c61 = [
+    "esp-common/esp32c61",
+    "esp-rtos/esp32c61",
+    "esp-hal/esp32c61",
+    "wasm-runtime/esp32c61",
+    "ble",
+    "hang-record",
+]
+
+# The shipped NimBLE BLE host stack. Enabled automatically on esp32c5 and
+# esp32c61. Withholding the BT peripheral from the `Board` at runtime is what
+# stops it starting; this feature decides whether it is compiled in at all.
+ble = ["esp-common/ble", "wasm-runtime/ble"]
+
+# See `esp-watchdog` — the watchdog hang record, enabled by the chip features.
+hang-record = ["esp-common/hang-record"]
+
+# Emit structured heap-stats snapshots at key milestones over the log channel.
+report = ["esp-common/report"]
+
+# Measure peak main-stack usage: paint the unused stack at boot and log the
+# high-water mark from the stats task. For local profiling only — never ship.
+stack-hwm = []
+
+# Watchdog timeout characterization (#1014). Bench measurement only.
+wdt-characterize = ["esp-common/wdt-characterize"]
+
+# Test-only fault injection for HIL watchdog tests. Never ship.
+wdt-selftest = ["wasm-runtime/wdt-selftest", "esp-common/wdt-selftest"]
+
+[dependencies]
+embassy-executor = { workspace = true }
+embassy-sync     = { workspace = true }
+embassy-time     = { workspace = true }
+embassy-embedded-hal = { workspace = true }
+esp-hal          = { workspace = true, features = ["log-04", "unstable", "rt"] }
+esp-rtos         = { workspace = true, features = ["embassy", "esp-alloc", "esp-radio"] }
+log              = { workspace = true }
+serde            = { workspace = true, default-features = false }
+static_cell      = { workspace = true }
+
+cell-protocol       = { workspace = true }
+critical-section    = { workspace = true }
+esp-common          = { workspace = true }
+esp-firmware-macros = { workspace = true }
+myrmic-common       = { workspace = true, features = ["alloc", "cells"] }
+signal-layer-core   = { workspace = true }
+signal-layer-types  = { workspace = true }
+wasm-runtime        = { workspace = true }
+wasm-storage        = { workspace = true }

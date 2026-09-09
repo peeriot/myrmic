@@ -24,24 +24,14 @@ use zenoh_result::{ZResult, zerror};
 use crate::service::DEFAULT_TIMEOUT;
 
 /// The period chosen for re-registering the exec runtime in the registry
-pub(crate) const REGISTRATION_PERIOD: EmbDuration = EmbDuration::from_secs(5 * 60);
+pub(crate) const REGISTRATION_PERIOD: EmbDuration = EmbDuration::from_secs(60);
 /// The retention period of the exec registration which overlaps the [`REGISTRATION_PERIOD`] to
 /// guarantee the entry always lives in the registry (when no problem occurs).
 const RETENTION_PERIOD_S: u64 = REGISTRATION_PERIOD.as_secs() + 60;
 
-/// Liveness-lease renewal period, slower than the Linux exec's 10s to
-/// respect the radio budget; [`LEASE_TTL_MS`] absorbs the sparser cadence.
-pub(crate) const LEASE_RENEW_PERIOD: EmbDuration = EmbDuration::from_secs(30);
 /// Retry delay when a renewal could not be written (no swarm time yet, or
 /// the db was unreachable).
 pub(crate) const LEASE_RETRY_PERIOD: EmbDuration = EmbDuration::from_secs(5);
-/// The silence this node asks observers to tolerate: three renewal periods,
-/// so a couple of dropped radio rounds never declare it dead.
-const LEASE_TTL_MS: u64 = 90_000;
-/// Db retention for lease rows: 5 × (ttl + the cluster margin), matching the
-/// Linux exec's `lease_retention`, so hygiene always acts before a dead
-/// node's last renewal purges.
-const LEASE_RETENTION_S: u64 = 5 * (LEASE_TTL_MS / 1000 + 15);
 
 /// The tags this device carries by virtue of what it is: its target, its
 /// radios, its peripherals and its own runtime tag. All facts about the
@@ -242,22 +232,31 @@ pub(crate) fn device_id() -> String {
 pub(crate) async fn renew_node_lease(
     db_client: &Client,
     zid: ZenohIdProto,
+    node_lease_ttl: core::time::Duration,
     wall_time: fn() -> Option<core::time::Duration>,
 ) -> bool {
     let Some(now) = wall_time() else {
         log::debug!("[lease] no swarm time yet; renewal deferred");
         return false;
     };
+
+    let ttl_ms = u64::try_from(node_lease_ttl.as_millis()).unwrap_or(u64::MAX);
+    // Db retention for lease rows: 5 × (ttl + the cluster margin), matching the
+    // Linux exec's `lease_retention`, so hygiene always acts before a dead
+    // node's last renewal purges.
+    let retention = 3 * (node_lease_ttl.as_secs() + 15);
+    let retention = Duration::from_secs(retention);
+
     let lease = NodeLease {
         device_id: device_id(),
         seq: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
-        ttl_ms: LEASE_TTL_MS,
+        ttl_ms,
     };
     let id: RuntimeId = zid.into();
     let result = db_client
         .write_tx_in_with_retention(
             node_lease_scope(),
-            Some(Duration::from_secs(LEASE_RETENTION_S)),
+            Some(retention),
             async move |client, tx_id| {
                 client
                     .send(tb_insert::Request {

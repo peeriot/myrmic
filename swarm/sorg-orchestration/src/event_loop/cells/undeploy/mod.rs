@@ -75,6 +75,17 @@ impl Runtime {
                 // would leak a live bridge with nothing to reap it.
                 self.undeploy_bridge_cell(sri)?;
             }
+            PlacementKind::Native { runtime } => {
+                // The node's firmware is the authority on its own cell: there is
+                // no module to unload and no deploy to reverse. Releasing the row
+                // below is all the orchestrator can do, and a live node re-claims
+                // it on its next reconcile — so this only sticks once the node is
+                // gone (or reflashed without the cell).
+                warn!(
+                    "undeploy '{cell_sri}': native firmware cell on node {runtime}; \
+                     releasing rows, but a live node will re-claim them"
+                );
+            }
             PlacementKind::Placeholder => {}
         }
 
@@ -150,7 +161,8 @@ impl Runtime {
         let result = match kind {
             PlacementKind::Wasm { runtime } => self.undeploy_wasm_cell(sri, gen_id, runtime).await,
             PlacementKind::Bridge { sri: bridge_sri } => self.undeploy_bridge_cell(bridge_sri),
-            PlacementKind::Placeholder => return,
+            // Nothing the orchestrator deployed, so nothing for it to roll back.
+            PlacementKind::Native { .. } | PlacementKind::Placeholder => return,
         };
         if let Err(err) = result {
             warn!("deploy rollback: failed to tear down cell '{sri}' on its exec: {err}");

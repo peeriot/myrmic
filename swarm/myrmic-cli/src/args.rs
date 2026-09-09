@@ -54,13 +54,30 @@ pub enum Command {
     ///
     /// Creates a fresh Rust crate wired up against peeriot's `myrmic_sdk`, ready to build.
     New(new::New),
-    /// Build a cell or an application suite.
+    /// Build a cell, a firmware, or an application suite.
     ///
     /// Compiles the cell to the provided platform (default is `linux`)
     /// Can also be used to generate an api file to provide external parties your cell's API.
     ///
+    /// A crate whose `[package.metadata.myrmic]` names a `firmware` chip is built
+    /// as an ESP firmware image instead: the ELF plus the partition table it
+    /// should be flashed with, which `myrmic flash` does in one go.
+    ///
     /// If compiling an `app_specs.yml`, then all artifacts will be bundled into a `nest` archive.
     Build(build::Build),
+    /// Build a firmware and flash it onto the attached board.
+    ///
+    /// Connects to the board before building, so the crate is laid out for the
+    /// flash it actually has: without a `partitions.toml`, the firmware
+    /// partition takes whatever the AOT region leaves of it. The image is
+    /// written with the partition table that build generated, and the board
+    /// resets into it. `--monitor` keeps streaming its serial output afterwards.
+    Flash(flash::Flash),
+    /// Watch a board's serial output with espflash's monitor.
+    ///
+    /// The port is picked as `flash` picks it. Ctrl+R resets the board, Ctrl+C
+    /// quits; `--elf` names the firmware to resolve backtrace addresses against.
+    Monitor(monitor::Monitor),
 
     // Management
     /// Import, export, and inspect the distributed database.

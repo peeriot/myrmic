@@ -1,9 +1,9 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use alloc::string::String;
-
 use crate::{Bytes, Result};
+use alloc::string::String;
+use myrmic_common::cells::Sri;
 
 /// Turns a raw payload buffer into `Self`.
 ///
@@ -101,6 +101,20 @@ impl Decoder for Bytes {
 impl Encoder for Bytes {
     fn to_bytes(&self) -> Result<Bytes> {
         Ok(self.clone())
+    }
+}
+
+impl Decoder for Sri {
+    fn from_bytes(bytes: Bytes) -> Result<Self> {
+        let (hi, lo): (i64, i64) = <Postcard as Codec>::decode(&bytes)?;
+        Ok(Sri::from_parts(hi, lo))
+    }
+}
+
+impl Encoder for Sri {
+    fn to_bytes(&self) -> Result<Bytes> {
+        let parts = self.to_parts();
+        <Postcard as Codec>::encode(&parts)
     }
 }
 

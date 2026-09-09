@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use cell_protocol::{PlacementKind, RuntimeId, Sri};
+use cell_protocol::{RuntimeId, Sri};
 use sorg_common::{LostReason, node_lease, report_cell_death};
 use tracing::{debug, warn};
 
@@ -245,10 +245,7 @@ impl Runtime {
                 // exec placement; the self-exec check cannot refute them, so
                 // this exec's own id stands in and only the incarnation is
                 // compared.
-                let node = match &entry.kind {
-                    PlacementKind::Wasm { runtime } => runtime.id(),
-                    PlacementKind::Bridge { .. } | PlacementKind::Placeholder => my_exec,
-                };
+                let node = entry.kind.host().unwrap_or(my_exec);
                 RowRead::Ok((node, entry.gen_id))
             }
             Ok(None) => RowRead::Absent,

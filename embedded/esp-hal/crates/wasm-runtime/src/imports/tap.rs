@@ -19,19 +19,19 @@ use wamr_rust_sdk::sys::NativeSymbol;
 use crate::Error;
 use crate::macros::{host_function, host_function_decl};
 
-// `TAP_REGISTRY` is written exactly once by `init()`, which is called
-// exclusively from `pipeline_config::setup_tap_registry()` (generated code) —
-// there is no other call site. All WAMR host functions that read it run on the
-// single WAMR thread after init completes. No concurrent write is possible, so
-// no synchronisation is required.
+// `TAP_REGISTRY` is written by `init()`, which `esp_firmware::start` calls once
+// from the main executor before the WAMR thread exists. All WAMR host functions
+// that read it run on the single WAMR thread after init completes. No
+// concurrent write is possible, so no synchronisation is required.
 static mut TAP_REGISTRY: Option<TapRegistry> = None;
 
-/// Install the tap registry. Called exclusively from the generated
-/// `pipeline_config::setup_tap_registry()`; must complete before WAMR starts.
-#[cfg(feature = "signal-layer")]
-pub(crate) fn init(registry: TapRegistry) {
-    // SAFETY: see `TAP_REGISTRY` comment — single writer before WAMR, single-threaded reads after.
-    unsafe { TAP_REGISTRY = Some(registry) };
+/// Install the tap registry; must complete before WAMR starts.
+pub(crate) fn init(incoming: TapRegistry) {
+    if registry().is_some() {
+        log::warn!("[wasm] tap registry replaced: earlier registrations are gone");
+    }
+    // SAFETY: see `TAP_REGISTRY` comment — writes only before WAMR, single-threaded reads after.
+    unsafe { TAP_REGISTRY = Some(incoming) };
 }
 
 fn registry() -> Option<&'static TapRegistry> {

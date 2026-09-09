@@ -19,6 +19,7 @@ syn = { workspace = true, features = ["parsing"] }
 quote = { workspace = true }
 heck = { workspace = true }
 aot-compiler = { workspace = true }
+esp-firmware-build = { workspace = true }
 myrmic-tags = { workspace = true }
 myrmic-common = { workspace = true }
 sha2 = { workspace = true }

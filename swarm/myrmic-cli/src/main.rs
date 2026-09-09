@@ -4,9 +4,9 @@ use utils::*;
 const MYRMIC_SDK_GIT_URL: &str = "https://github.com/peeriot/myrmic.git";
 const MYRMIC_SDK_OVERRIDE: &str = "PEERIOT_MYRMIC_SDK";
 
-/// The default `myrmic_sdk` dependency for scaffolded cells, baked in at build
-/// time: a release sets `MYRMIC_SDK_VERSION` to the published SDK release it
-/// ships alongside; otherwise the swarm repo pinned to the revision this CLI
+/// The default source of myrmic crates for scaffolded projects, baked in at
+/// build time: a release sets `MYRMIC_SDK_VERSION` to the published release it
+/// ships alongside; otherwise the myrmic repo pinned to the revision this CLI
 /// was built from (see `build.rs`).
 ///
 /// Errors when neither is known, so scaffolding never silently pins to a
@@ -37,6 +37,7 @@ mod archive;
 mod args;
 mod build;
 mod deploy;
+mod flash;
 mod live;
 mod log;
 mod models;
@@ -44,6 +45,7 @@ mod nest;
 mod payload;
 mod pid;
 mod platforms;
+mod prompt;
 mod render;
 mod spawn_patch;
 mod utils;
@@ -54,7 +56,9 @@ mod cmd {
     pub mod database;
     pub mod delete;
     pub mod deploy;
+    pub mod flash;
     pub mod gateway;
+    pub mod monitor;
     pub mod network;
     pub mod new;
     pub mod platforms;
@@ -76,9 +80,19 @@ fn block_on<F, R>(fut: F) -> R
 where
     F: Future<Output = R>,
 {
+    block_on_with(1, fut)
+}
+
+/// `block_on` with `workers` async worker threads. A CLI command needs one; a
+/// node runs its whole data plane on this runtime, where a store scan on a
+/// lone worker stalls every other task until it finishes.
+fn block_on_with<F, R>(workers: usize, fut: F) -> R
+where
+    F: Future<Output = R>,
+{
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(1)
+        .worker_threads(workers)
         .build()
         .expect("unable to build tokio runtime");
 
@@ -100,6 +114,8 @@ fn main() -> std::process::ExitCode {
         // Project
         args::Command::New(cmd) => cmd::new::handle(ctx, cmd),
         args::Command::Build(cmd) => cmd::build::handle(ctx, cmd),
+        args::Command::Flash(cmd) => cmd::flash::handle(ctx, cmd),
+        args::Command::Monitor(cmd) => cmd::monitor::handle(ctx, cmd),
         // Management
         args::Command::Send(cmd) => block_on(cmd::send::handle(ctx, cmd)),
         args::Command::Publish(cmd) => block_on(cmd::publish::handle(ctx, cmd)),
@@ -161,5 +177,16 @@ mod tests {
     #[test]
     fn default_sdk_errors_without_a_version_or_revision() {
         assert!(default_sdk_from(None, None).is_err());
+    }
+
+    #[test]
+    fn block_on_with_sizes_the_worker_pool() {
+        let workers = |n| {
+            block_on_with(n, async {
+                tokio::runtime::Handle::current().metrics().num_workers()
+            })
+        };
+        assert_eq!(workers(1), 1);
+        assert_eq!(workers(4), 4);
     }
 }

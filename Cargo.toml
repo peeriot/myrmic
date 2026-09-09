@@ -55,6 +55,10 @@ members = [
     "embedded/esp-hal/crates/esp-mmu-consts",
     "embedded/hil-tests",
     "embedded/esp-hal/modem-esp32",
+    "embedded/esp-hal/crates/esp-firmware",
+    "embedded/esp-hal/crates/esp-firmware-macros",
+    "embedded/esp-hal/crates/esp-firmware-build",
+    "embedded/esp-hal/firmware-examples",
     "sdk/signal-layer/esp-codegen",
     "sdk/signal-layer/signal-layer-types",
     "sdk/signal-layer/signal-layer-core",
@@ -159,6 +163,8 @@ default-members = [
     "embedded/hil-tests",
     "embedded/esp-hal/crates/esp-heap",
     "embedded/esp-hal/crates/esp-mmu-consts",
+    "embedded/esp-hal/crates/esp-firmware-macros",
+    "embedded/esp-hal/crates/esp-firmware-build",
     "embedded/esp-hal/crates/wasm-runtime-macros",
     # Cell fixtures the wasm job skips, so nothing else lints them
     "tests/fixtures/cell-counter-caller-logic",
@@ -354,7 +360,7 @@ base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 darling = "0.21.0"
 
 rust-embed = { version = "8.5.0" }
-espflash = { version = "4.4.0" }
+espflash = { version = "4.4.0", default-features = false }
 serialport = { version = "4.9", default-features = false }
 
 flume = { version = "0.11.1", default-features = false }
@@ -406,6 +412,7 @@ rustc-hash = { version = "2.1.1", default-features = false }
 clap = { version = "4.5.23", features = ["derive"] }
 comfy-table = { version = "7.1.3", features = ["custom_styling"] }
 dialoguer = { version = "0.12", default-features = false }
+miette = "7.6.0"
 rand = "0.9.0"
 itertools = "0.14.0"
 owo-colors = "4.3.0"
@@ -567,12 +574,17 @@ cell-db-service = { path = "embedded/esp-hal/crates/cell-db-service" }
 esp-common = { path = "embedded/esp-hal/crates/esp-common" }
 esp-network = { path = "embedded/esp-hal/crates/esp-network" }
 esp-mmu-consts = { path = "embedded/esp-hal/crates/esp-mmu-consts" }
+esp-firmware = { path = "embedded/esp-hal/crates/esp-firmware" }
+esp-firmware-macros = { path = "embedded/esp-hal/crates/esp-firmware-macros" }
+esp-firmware-build = { path = "embedded/esp-hal/crates/esp-firmware-build" }
 
 # Signal Layer core
 signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.5.0", default-features = false }
 signal-layer-core = { path = "sdk/signal-layer/signal-layer-core" }
 pipeline-codegen = { path = "sdk/signal-layer/pipeline-codegen" }
 pipeline-backend-api = { path = "sdk/signal-layer/pipeline-backend-api" }
+esp-codegen = { path = "sdk/signal-layer/esp-codegen" }
+include_dir = "0.7"
 
 # Linux Signal Layer (FEAT-2026-SIG-002)
 i2cdev = "0.6"

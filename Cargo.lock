@@ -1345,6 +1345,7 @@ dependencies = [
  "myrmic-common",
  "myrmic-tags",
  "portable-atomic-util",
+ "serde",
  "thiserror 2.0.20",
  "wasm-runtime",
  "wasm-storage",
@@ -4033,12 +4034,13 @@ name = "esp-codegen"
 version = "0.5.0"
 dependencies = [
  "anyhow",
- "clap",
+ "include_dir",
  "indexmap 2.14.0",
  "pipeline-codegen",
  "proc-macro2",
  "quote",
  "serde_norway",
+ "tempfile",
 ]
 
 [[package]]
@@ -4073,6 +4075,50 @@ dependencies = [
  "serde",
  "serde_yaml",
  "somni-expr",
+]
+
+[[package]]
+name = "esp-firmware"
+version = "0.5.0"
+dependencies = [
+ "cell-protocol",
+ "critical-section",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "esp-common",
+ "esp-firmware-macros",
+ "esp-hal",
+ "esp-rtos",
+ "log",
+ "myrmic-common",
+ "myrmic-signal-layer-types",
+ "serde",
+ "signal-layer-core",
+ "static_cell",
+ "wasm-runtime",
+ "wasm-storage",
+]
+
+[[package]]
+name = "esp-firmware-build"
+version = "0.5.0"
+dependencies = [
+ "esp-codegen",
+ "esp-mmu-consts",
+ "serde",
+ "tempfile",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "esp-firmware-macros"
+version = "0.5.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -4897,6 +4943,17 @@ name = "find-msvc-tools"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+
+[[package]]
+name = "firmware-examples"
+version = "0.5.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-time",
+ "esp-firmware",
+ "esp-firmware-build",
+ "log",
+]
 
 [[package]]
 name = "fixedbitset"
@@ -6363,6 +6420,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7100,7 +7176,7 @@ name = "linux-codegen"
 version = "0.5.0"
 dependencies = [
  "anyhow",
- "clap",
+ "include_dir",
  "indexmap 2.14.0",
  "pipeline-backend-api",
  "pipeline-codegen",
@@ -7109,6 +7185,7 @@ dependencies = [
  "serde",
  "serde_norway",
  "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -7499,23 +7576,26 @@ dependencies = [
 name = "modem-esp32"
 version = "0.5.0"
 dependencies = [
- "critical-section",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-sync 0.8.0",
- "embassy-time",
- "esp-common",
- "esp-hal",
- "esp-mmu-consts",
- "esp-rtos",
- "log",
- "myrmic-signal-layer-types",
- "serde",
- "signal-layer-core",
- "static_cell",
- "toml 0.8.23",
+ "ads1115-driver",
+ "bme280-driver",
+ "bmp180-driver",
+ "cadence",
+ "ccs811-driver",
+ "esp-firmware",
+ "esp-firmware-build",
+ "fan-curve",
+ "gpio-output-driver",
+ "gpio-output-feedback-driver",
+ "hysteresis",
+ "max-value",
+ "min-value",
+ "moving-average",
+ "pwm-output-driver",
+ "sim-source-driver",
+ "threshold-trigger",
+ "veml7700-driver",
  "wasm-runtime",
- "wasm-storage",
+ "wsen-itds-driver",
 ]
 
 [[package]]
@@ -7556,6 +7636,7 @@ dependencies = [
  "anyhow",
  "aot-compiler",
  "claims",
+ "esp-firmware-build",
  "heck",
  "myrmic-common",
  "myrmic-tags",
@@ -7584,6 +7665,8 @@ dependencies = [
  "db-client",
  "db-commons",
  "dialoguer",
+ "esp-codegen",
+ "espflash",
  "filestore-client",
  "flate2",
  "fork",
@@ -7592,6 +7675,8 @@ dependencies = [
  "humantime",
  "introspection-client",
  "libc",
+ "log",
+ "miette",
  "myrmic-build",
  "myrmic-common",
  "myrmic-tags",
@@ -7600,6 +7685,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "serialport",
  "sha2 0.10.9",
  "sorg-client",
  "sorg-common",

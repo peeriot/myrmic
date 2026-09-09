@@ -23,7 +23,7 @@ flowchart TD
 ```
 
 The crates here are chip-agnostic. The ESP32-specific pieces (board manifests, pipelines,
-the `esp-codegen` binary, and the `modem-esp32` firmware) live under
+the `esp-codegen` generator, and the `modem-esp32` firmware) live under
 `../esp-hal/signal-layer/` and `../esp-hal/modem-esp32/`.
 
 ## Crate map

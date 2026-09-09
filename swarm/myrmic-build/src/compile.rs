@@ -72,7 +72,7 @@ impl MemoryConfig {
 
 /// The concrete cargo target a [`CargoTarget`] selection resolves to.
 #[derive(Debug)]
-enum Selector {
+pub(crate) enum Selector {
     Lib,
     Bin(String),
 }
@@ -88,7 +88,10 @@ fn is_lib_kind(kind: &str) -> bool {
 
 /// Resolve a [`CargoTarget`] selection against the crate's declared targets,
 /// erroring with the available options when the choice is ambiguous or missing.
-fn resolve_selector(manifest_path: &Path, cargo_target: &CargoTarget) -> anyhow::Result<Selector> {
+pub(crate) fn resolve_selector(
+    manifest_path: &Path,
+    cargo_target: &CargoTarget,
+) -> anyhow::Result<Selector> {
     let targets = cargo::package_targets(manifest_path)?;
 
     let bins: Vec<&str> = targets
@@ -222,10 +225,10 @@ pub(crate) fn compile_cell(
 
     let mut artifacts = Vec::new();
 
-    cargo::process_cargo_build(cmd, |artifact_path| {
-        let ext = Path::new(artifact_path).extension();
+    cargo::process_cargo_build(cmd, |artifact| {
+        let ext = artifact.path.extension();
         if ext.is_some_and(|ext| ext.eq_ignore_ascii_case("wasm")) {
-            artifacts.push(PathBuf::from(artifact_path));
+            artifacts.push(artifact.path.clone());
         }
     })?;
 

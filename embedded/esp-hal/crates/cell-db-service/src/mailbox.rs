@@ -246,8 +246,10 @@ async fn read_head(client: &Client, sri: &Sri) -> Option<(Id, Vec<u8>)> {
     }
 }
 
-/// Removes a message the runtime will never be given, in a transaction of its own.
-async fn discard_message(client: &Client, sri: &Sri, msg_id: Id) {
+/// Removes a message in a transaction of its own — for one the runtime will
+/// never be given, and for one a native cell has finished with (it has no
+/// batched cell transaction to fold the removal into).
+pub(crate) async fn discard_message(client: &Client, sri: &Sri, msg_id: Id) {
     let scope = scope_of_cell(*sri);
 
     let result = client

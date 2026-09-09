@@ -26,7 +26,7 @@ macro_rules! split {
     }};
 }
 
-pub fn resolve_sdk(ctx: Ctx, sdk: Option<&str>) -> anyhow::Result<models::CargoDep> {
+pub fn resolve_repo(ctx: Ctx, sdk: Option<&str>) -> anyhow::Result<models::Repo> {
     let sdk: std::borrow::Cow<'_, str> = if let Some(sdk) = sdk {
         std::borrow::Cow::Borrowed(sdk)
     } else if let Ok(sdk) = std::env::var(crate::MYRMIC_SDK_OVERRIDE) {
@@ -41,9 +41,9 @@ pub fn resolve_sdk(ctx: Ctx, sdk: Option<&str>) -> anyhow::Result<models::CargoD
         std::borrow::Cow::Owned(crate::default_sdk()?)
     };
 
-    let sdk = sdk.parse::<models::CargoDep>()?;
+    let repo = sdk.parse::<models::Repo>()?;
 
-    Ok(sdk)
+    Ok(repo)
 }
 
 pub fn parse_from_file<T: std::str::FromStr<Err = anyhow::Error>>(

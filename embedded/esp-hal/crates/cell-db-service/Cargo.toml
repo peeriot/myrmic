@@ -26,6 +26,7 @@ embassy-time         = { workspace = true }
 esp-hal              = { workspace = true, features = ["unstable"] }
 log                  = { workspace = true }
 portable-atomic-util = { workspace = true }
+serde                = { workspace = true }
 thiserror            = { workspace = true }
 # Peeriot org
 zenoh-result = { workspace = true }

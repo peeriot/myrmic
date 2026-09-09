@@ -10,73 +10,83 @@ publish.workspace = true
 workspace = true
 
 [features]
-default  = ["esp32c6"]
-esp32c5  = ["esp-common/esp32c5", "esp-rtos/esp32c5", "esp-hal/esp32c5", "wasm-runtime/esp32c5", "ble", "hang-record"]
-esp32c6  = ["esp-common/esp32c6", "esp-rtos/esp32c6", "esp-hal/esp32c6", "wasm-runtime/esp32c6", "hang-record"]
-esp32c61 = ["esp-common/esp32c61", "esp-rtos/esp32c61", "esp-hal/esp32c61", "wasm-runtime/esp32c61", "ble", "hang-record"]
-# BLE host stack (NimBLE). Enabled automatically on esp32c5 and esp32c61
-ble = ["esp-common/ble", "wasm-runtime/ble"]
+default = ["esp32c6"]
 
-# The D1 watchdog hang record (SDS-FEAT-2026-HWD-001): retain the hang evidence and the cumulative reset count across a
-# watchdog reset. Which storage in the always-on domain backs it is picked per chip in `watchdog::record_storage`
-# (`rtc_fast` persistent RAM, or LP_AON scratch registers where there is none).
-# Enabled by the chip features above, never set directly. Without it the watchdog still detects hangs and resets, but
-# reports no evidence afterwards.
-hang-record = ["esp-common/hang-record"]
+# Target SoC. Selected here rather than inherited: `esp_firmware::board!`
+# expands `pins_from_peripherals!`, which reads the chip feature from the crate
+# that invokes it — so every firmware crate declares its own and forwards.
+esp32c5  = ["esp-firmware/esp32c5", "wasm-runtime/esp32c5", "ble"]
+esp32c6  = ["esp-firmware/esp32c6", "wasm-runtime/esp32c6"]
+esp32c61 = ["esp-firmware/esp32c61", "wasm-runtime/esp32c61", "ble"]
 
-# Marker feature: gates all pipeline-dependent firmware code. Use
-# `#[cfg(feature = "pipeline")]` without hard-coding a specific pipeline name.
-# The pipeline-{name} feature and driver/node optional deps are managed by
-# esp-codegen (pipeline_regen.sh) and must not be committed.
-pipeline = ["dep:signal-layer-core", "dep:signal-layer-types", "dep:embassy-embedded-hal", "wasm-runtime/signal-layer"]
+# BLE host stack (NimBLE). Enabled automatically on esp32c5 and esp32c61.
+ble = ["esp-firmware/ble"]
 
-# Expose I2C bus directly to the WASM module (ESP32-C6 only).
-# Mutually exclusive with `pipeline` — only one owner of I2C0 at a time.
+# The Signal Layer pipeline. Gates the generated pipeline module (see
+# `pipeline!()` in src/main.rs) and the driver/step crates it can use. The
+# pipeline is generated from a board manifest + pipeline YAML at build time
+# (build.rs); which pair is chosen by the SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE
+# env vars, defaulting to this chip's devkit board and the basic-sensors starter.
+pipeline = [
+    "dep:ads1115-driver",
+    "dep:bme280-driver",
+    "dep:bmp180-driver",
+    "dep:ccs811-driver",
+    "dep:gpio-output-driver",
+    "dep:gpio-output-feedback-driver",
+    "dep:pwm-output-driver",
+    "dep:sim-source-driver",
+    "dep:veml7700-driver",
+    "dep:wsen-itds-driver",
+    "dep:cadence",
+    "dep:fan-curve",
+    "dep:hysteresis",
+    "dep:max-value",
+    "dep:min-value",
+    "dep:moving-average",
+    "dep:threshold-trigger",
+]
 
-# Emit structured heap-stats snapshots at key milestones over the log channel
-report = ["esp-common/report"]
+# Emit structured heap-stats snapshots at key milestones over the log channel.
+report = ["esp-firmware/report"]
 
-# Measure peak main-stack usage: paint the unused stack at boot and log the
-# high-water mark from the stats task. For local profiling only — never ship.
-stack-hwm = ["dep:critical-section"]
+# Measure peak main-stack usage. For local profiling only — never ship.
+stack-hwm = ["esp-firmware/stack-hwm"]
 
-# Watchdog timeout characterization (#1014): the liveness supervisor logs
-# worst-case round-scheduling lateness and per-required-task staleness as
-# high-water marks, to size the watchdog timeouts under real radio load. For
-# bench measurement only — never ship.
-wdt-characterize = ["esp-common/wdt-characterize"]
+# Watchdog timeout characterization (#1014). Bench measurement only.
+wdt-characterize = ["esp-firmware/wdt-characterize"]
 
-# Test-only fault injection for HIL watchdog tests: exposes the `selftest` host
-# import so a guest cell can trigger a deliberate liveness stall (executor spin
-# or required-task stall), driving the watchdog to reset. Never ship.
-wdt-selftest = ["wasm-runtime/wdt-selftest", "esp-common/wdt-selftest"]
+# Test-only fault injection for HIL watchdog tests. Never ship.
+wdt-selftest = ["esp-firmware/wdt-selftest"]
 
 [dependencies]
-# crates.io
-critical-section       = { workspace = true, optional = true }
-embassy-executor       = { workspace = true }
-embassy-sync           = { workspace = true }
-embassy-time           = { workspace = true }
-esp-hal                = { workspace = true, features = ["log-04", "unstable", "rt"] }
-esp-rtos               = { workspace = true, features = ["embassy", "esp-alloc", "esp-radio"] }
-log                  = { workspace = true }
-static_cell          = { workspace = true }
-# Peeriot org
+esp-firmware = { workspace = true }
+# Enabled for its chip feature by the esp32c* features above; the generated
+# pipeline code reaches it through esp-firmware's re-exports.
+wasm-runtime = { workspace = true }
 
-# Infrastructure optional deps for the `pipeline` feature (committed).
-# Driver/node optional deps are managed by esp-codegen and must not be committed.
-signal-layer-core    = { workspace = true, optional = true }
-signal-layer-types   = { workspace = true, optional = true }
-embassy-embedded-hal = { workspace = true, optional = true }
-
-# local
-esp-common   = { workspace = true }
-# Direct (not via esp-common): build.rs emits an absolute `::wasm_storage` path
-# into the generated partition layout.
-wasm-storage = { workspace = true }
-wasm-runtime  = { workspace = true }
+# Signal Layer driver and step crates, seeded for every module the reference
+# pipelines use so any of them compiles from a board + pipeline YAML. Only the
+# modules a pipeline actually uses reach the image. Enabled by the `pipeline`
+# feature; the generated code reaches them through esp-firmware's re-exports, so
+# no other infrastructure dependency is needed here.
+ads1115-driver              = { workspace = true, optional = true }
+bme280-driver               = { workspace = true, optional = true }
+bmp180-driver               = { workspace = true, optional = true }
+ccs811-driver               = { workspace = true, optional = true }
+gpio-output-driver          = { workspace = true, optional = true }
+gpio-output-feedback-driver = { workspace = true, optional = true }
+pwm-output-driver           = { workspace = true, optional = true }
+sim-source-driver           = { workspace = true, optional = true }
+veml7700-driver             = { workspace = true, optional = true }
+wsen-itds-driver            = { workspace = true, optional = true }
+cadence           = { workspace = true, optional = true }
+fan-curve         = { workspace = true, optional = true }
+hysteresis        = { workspace = true, optional = true }
+max-value         = { workspace = true, optional = true }
+min-value         = { workspace = true, optional = true }
+moving-average    = { workspace = true, optional = true }
+threshold-trigger = { workspace = true, optional = true }
 
 [build-dependencies]
-serde          = { workspace = true, features = ["derive"] }
-toml           = { workspace = true }
-esp-mmu-consts = { workspace = true }
+esp-firmware-build = { workspace = true }

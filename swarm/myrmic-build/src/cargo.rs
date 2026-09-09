@@ -274,7 +274,7 @@ where
 /// It's up to the callee to filter the ones it wants. (ie, you'll be given a lot of rlibs, which probably aren't super important)
 pub fn process_cargo_build<F>(mut cmd: Command, mut func: F) -> anyhow::Result<()>
 where
-    F: for<'a> FnMut(&'a str),
+    F: FnMut(&Artifact),
 {
     cmd.arg("--message-format").arg("json-render-diagnostics");
 
@@ -285,19 +285,8 @@ where
 
     for line in std::io::BufRead::lines(std::io::BufReader::new(stdout)) {
         let line = line.context("unable to read cargo output")?;
-        let Ok(msg) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if msg["reason"].as_str() != Some("compiler-artifact") {
-            continue;
-        }
-        let Some(filenames) = msg["filenames"].as_array() else {
-            continue;
-        };
-        for name in filenames {
-            if let Some(path) = name.as_str() {
-                func(path);
-            }
+        for artifact in artifacts_in(&line) {
+            func(&artifact);
         }
     }
 
@@ -307,4 +296,58 @@ where
     }
 
     Ok(())
+}
+
+/// A file cargo reported as the output of a `compiler-artifact` message.
+pub struct Artifact {
+    pub path: PathBuf,
+    /// Whether this is the target's linked executable (a `bin`'s ELF).
+    pub executable: bool,
+}
+
+/// The artifacts in one line of `--message-format json` output; empty for
+/// anything but a `compiler-artifact` message.
+fn artifacts_in(line: &str) -> Vec<Artifact> {
+    let Ok(msg) = serde_json::from_str::<Value>(line) else {
+        return Vec::new();
+    };
+    if msg["reason"].as_str() != Some("compiler-artifact") {
+        return Vec::new();
+    }
+    let executable = msg["executable"].as_str();
+    msg["filenames"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|path| Artifact {
+            path: PathBuf::from(path),
+            executable: executable == Some(path),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifacts_in_flags_the_executable_among_the_filenames() {
+        let line = r#"{"reason":"compiler-artifact","target":{"kind":["bin"]},"filenames":["/t/deps/fw-abc.d","/t/release/fw"],"executable":"/t/release/fw"}"#;
+        let artifacts = artifacts_in(line);
+        let seen: Vec<(&str, bool)> = artifacts
+            .iter()
+            .map(|a| (a.path.to_str().unwrap(), a.executable))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![("/t/deps/fw-abc.d", false), ("/t/release/fw", true)]
+        );
+    }
+
+    #[test]
+    fn artifacts_in_ignores_other_messages() {
+        assert!(artifacts_in(r#"{"reason":"build-script-executed","package_id":"x"}"#).is_empty());
+        assert!(artifacts_in("not json").is_empty());
+    }
 }

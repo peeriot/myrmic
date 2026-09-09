@@ -153,7 +153,4 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
         "${PACKAGE_ARGS[@]}"
 
-    # The generated crates declare their own workspace, so nothing above builds them.
-    printf "\n\n--== Check Generated Pipeline Crates ==--\n\n"
-    bash "$(dirname "$(dirname "$SCRIPT_DIR")")/ci/check-generated-pipeline.sh"
 fi

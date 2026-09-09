@@ -1,0 +1,38 @@
+# {{name}}
+
+A Linux Signal Layer pipeline: a process that reads devices, runs the pipeline,
+and serves its taps and outlets over the signal-layer IPC socket.
+
+## Layout
+
+- `board.yml` - the devices: I2C buses by their Linux `dev_path`, and the
+  devices on them.
+- `pipeline.yml` - the Signal Layer: sources (reading devices), steps
+  (processing), and taps (values a cell reads).
+- `src/main.rs` - the tokio entry point. The generated pipeline is pulled in by
+  `mod pipeline_config`.
+- `build.rs` - generates the pipeline from `board.yml` + `pipeline.yml` at
+  build time.
+
+The starter uses `sim-source`, a synthetic sensor, so it builds and runs with no
+hardware attached.
+
+## Run
+
+```sh
+cargo run
+```
+
+## Change the pipeline
+
+Edit `board.yml` and `pipeline.yml`, then rebuild. Every driver and step
+shipped with myrmic is already a dependency; swap `sim-source` for a real sensor
+and set its bus `dev_path`.
+
+To use a driver or step you wrote yourself, add its crate to `[dependencies]`
+and point the build at its descriptors:
+
+```rust
+// build.rs
+linux_codegen::build_pipeline("board.yml", "pipeline.yml", Some("descriptors"));
+```

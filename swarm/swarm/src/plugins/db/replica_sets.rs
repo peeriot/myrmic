@@ -406,13 +406,8 @@ async fn reconcile(
     // A stopped subject's local data must not stay stranded; offer it up now
     // rather than waiting for the stray-scan backstop.
     if stopped {
-        match context.store.stray_scopes() {
-            Ok(scopes) => {
-                for scope in scopes {
-                    context.start_offload(scope, OffloadKind::Hidden);
-                }
-            }
-            Err(err) => tracing::warn!("unable to scan for stray scopes: {err}"),
+        for scope in super::stray_scopes(context).await {
+            context.start_offload(scope, OffloadKind::Hidden);
         }
     }
 

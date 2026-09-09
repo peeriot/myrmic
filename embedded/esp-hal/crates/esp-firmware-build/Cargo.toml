@@ -1,0 +1,19 @@
+[package]
+name              = "esp-firmware-build"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+publish.workspace = true
+description       = "Build-script support for esp-firmware: flash partition layout, app partition table, and the main-stack link assert."
+
+[lints]
+workspace = true
+
+[dependencies]
+esp-mmu-consts = { workspace = true }
+serde          = { workspace = true, features = ["derive"] }
+toml           = { workspace = true }
+esp-codegen    = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

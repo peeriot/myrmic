@@ -157,6 +157,18 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "sized-chunks" },
     { allow = ["MPL-2.0"], crate = "im-rc" },
     { allow = ["MPL-2.0"], crate = "bitmaps" },
+
+    #########################
+    # espflash dependencies #
+    #########################
+
+    # espflash itself is MIT OR Apache-2.0. These ride its serial and
+    # defmt-decoding layers, which `m flash` and `m monitor` build on.
+
+    { allow = ["MPL-2.0"], crate = "serialport" },
+    { allow = ["MPL-2.0"], crate = "colored" },
+    { allow = ["MPL-2.0"], crate = "alterable_logger" },
+
     { allow = ["BlueOak-1.0.0"], crate = "tinyrlibc" },
 ]
 
