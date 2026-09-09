@@ -21,9 +21,9 @@ the physical machine, differs between the two.
 
 **Part 1 and 2, the Linux half:**
 
-- A Linux machine with an I²C device node such as `/dev/i2c-1` (a Raspberry Pi works well). The
-  simulated sensor never touches the bus, but the generated process opens it at startup, so the
-  node has to exist.
+- A Linux machine. The simulated sensor is synthetic and never touches the I²C bus, so this
+  tutorial needs no I²C hardware and no `/dev/i2c-*` node. (A Raspberry Pi works too — it is where
+  the real-sensor follow-ups in *What's next* would run.)
 - The `myrmic` CLI and the Rust toolchain it builds cells with, per
   [Installation](../01_quickstart/01_installation.md). Take the *Install from source* path — it also
   leaves you the repository checkout this tutorial points `--sdk` at (called `~/myrmic` below).

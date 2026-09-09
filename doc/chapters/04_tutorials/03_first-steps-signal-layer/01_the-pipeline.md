@@ -55,9 +55,9 @@ Three things worth pausing on:
   names the chip's peripheral, and the C6 has an `I2C0` and no `I2C1`. Keeping `i2c0` here keeps
   the two board files parallel, and Part 3 will thank you.
 - **`sim-source` is a real driver that fakes a sensor.** It emits a deterministic climbing value
-  and never touches the bus it is bound to. It still must be bound to one, and the generated
-  process opens that bus at startup, fatally if the node is missing. That is why the machine
-  needs `/dev/i2c-1` even for a simulation.
+  and never touches the bus it is bound to. It still must be bound to one in the file, but nothing
+  opens that bus unless a driver actually transacts on it — and `sim-source` never does, so the
+  pipeline runs with no I²C hardware and no `/dev/i2c-*` node.
 
 ## Step 3 - The pipeline file
 
@@ -118,6 +118,16 @@ cargo run
      Running `target/debug/first-steps`
 Pipeline `first-steps` running. Press Ctrl-C to stop.
 [INFO  sim_source_driver] [sim-source] init OK (synthetic)
+```
+
+If instead `cargo run` panics with `no socket path available`, your shell has no
+`XDG_RUNTIME_DIR`. It is set on a desktop login but often unset over SSH or on a headless box (a
+Raspberry Pi included). Set it and re-run — and because the runtime in Part 2 reaches the pipeline
+over the same socket, set it the same in every terminal you use here (or add the line to your shell
+profile):
+
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
 ```
 
 The pipeline is now sampling the simulated sensor twice a second, feeding the average, and serving
