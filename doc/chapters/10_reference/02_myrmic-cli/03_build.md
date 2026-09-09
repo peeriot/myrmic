@@ -1,7 +1,7 @@
 # myrmic build
 
 ## Name
-`myrmic build` - build a cell, workspace, or application suite
+`myrmic build` - build a cell, workspace, firmware, or application suite
 
 ## Synopsis
 ```
@@ -18,6 +18,7 @@ Build a cell crate, a workspace of cells, or an application suite from source.
 - A workspace directory - compiles all member crates to `.wasm` binaries in the workspace's `target` directory.
 - A workspace `Cargo.toml` - same as above, specified explicitly.
 - A `.yml` / `.yaml` application specification file - builds every cell class defined in the specification and bundles the compiled binaries and application metadata into a `.nest` bundle placed in the working directory.
+- A firmware crate directory - a crate whose `[package.metadata.myrmic]` names a `firmware` chip compiles to an ESP firmware image (ELF plus a generated partition table). `--platform` is ignored (the chip comes from the manifest); `--name` sets the runtime name baked into the image. A crate scaffolded with `myrmic new --firmware --pipeline` also generates its Signal Layer pipeline at build time.
 
 If `PATH` is not provided, the current directory is used.
 
@@ -60,7 +61,7 @@ myrmic build ./my-cell
 2. Build for multiple platforms:
 
 ```bash
-myrmic build --platform linux,esp32c6
+myrmic build --platform linux,riscv32imac
 ```
 
 3. Build a workspace (all member crates):

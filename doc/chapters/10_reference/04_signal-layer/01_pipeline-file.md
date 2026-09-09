@@ -2,7 +2,7 @@
 
 The pipeline file says what a node does with its hardware: which devices produce readings, what
 happens to those readings, and what a cell can see and change. It names devices, not pins, so the
-same pipeline runs against any board whose devices match.
+same pipeline runs against any board whose devices match. In a project scaffolded by `myrmic new --pipeline` it is named `pipeline.yml`.
 
 ```yaml
 pipeline:
