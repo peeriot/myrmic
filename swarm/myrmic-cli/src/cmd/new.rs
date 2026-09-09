@@ -429,13 +429,13 @@ fn linux_module_deps(repo: &models::Repo) -> String {
         .join("\n")
 }
 
-/// Writes `manifest.yml` and `pipeline.yml` for a Linux pipeline project.
+/// Writes `board.yml` and `pipeline.yml` for a Linux pipeline project.
 fn write_linux_pipeline_yamls(name: &str, path: &std::path::Path) -> anyhow::Result<()> {
     std::fs::write(
-        path.join("manifest.yml"),
+        path.join("board.yml"),
         generate_linux_manifest_yaml(name),
     )
-    .with_context(|| format!("writing {}", path.join("manifest.yml").display()))?;
+    .with_context(|| format!("writing {}", path.join("board.yml").display()))?;
     std::fs::write(path.join("pipeline.yml"), generate_pipeline_yaml(name))
         .with_context(|| format!("writing {}", path.join("pipeline.yml").display()))?;
     Ok(())

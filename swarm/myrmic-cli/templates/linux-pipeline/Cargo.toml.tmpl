@@ -9,7 +9,7 @@ publish = false
 {{runtime_deps}}
 
 # Signal Layer driver and step crates, seeded for every module shipped with
-# myrmic so any pipeline built from manifest.yml + pipeline.yml compiles. Only
+# myrmic so any pipeline built from board.yml + pipeline.yml compiles. Only
 # the modules your pipeline uses end up in the binary. Add your own here to use
 # custom drivers or steps (see build.rs `.include(...)`).
 {{module_deps}}

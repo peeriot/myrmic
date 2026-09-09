@@ -1,5 +1,5 @@
 fn main() {
-    // Generate the Signal Layer pipeline from manifest.yml + pipeline.yml into
+    // Generate the Signal Layer pipeline from board.yml + pipeline.yml into
     // $OUT_DIR/pipeline.rs, which src/main.rs includes.
-    linux_codegen::build_pipeline("manifest.yml", "pipeline.yml", None);
+    linux_codegen::build_pipeline("board.yml", "pipeline.yml", None);
 }

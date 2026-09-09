@@ -357,7 +357,7 @@ fn new_pipeline_scaffolds_a_linux_project() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let manifest = std::fs::read_to_string(dir.join("manifest.yml")).expect("manifest.yml");
+    let manifest = std::fs::read_to_string(dir.join("board.yml")).expect("board.yml");
     assert!(
         manifest.contains("chip: linux"),
         "manifest targets linux:\n{manifest}"
