@@ -298,7 +298,6 @@ bitflags = { version = "2.5", default-features = false }
 rand_core = { version = "0.9", default-features = false }
 edge-nal = "0.7"
 heapless = "0.9.2"
-hashbrown = { version = "0.16.0", default-features = false }
 static_assertions = "1.1"
 serde-json-core = "0.6"
 qrcodegen-no-heap = "1.8"
@@ -315,12 +314,8 @@ embedded-storage = "0.3.1"
 edge-nal-embassy = { version = "0.9", features = ["all"] }
 embassy-net = "0.9"
 riscv = "0.15.0"
-embuild = "0.33.1"
 esp32c5 = "0.2.2"
 esp32c61 = "0.3.2"
-esp-idf-sys = { version = "0.37" }
-esp-idf-hal = { version = "0.46" }
-esp-idf-svc = { version = "0.52" }
 esp-alloc = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-backtrace = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-bootloader-esp-idf = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
@@ -342,7 +337,6 @@ x509-cert = { version = "0.2.5", default-features = false }
 getrandom = { version = "0.2.16", default-features = false } # Because of `zenoh-protocol`
 
 anyhow = { version = "1.0.97" }
-async-trait = { version = "0.1.87" }
 uhlc = { version = "0.8.0", default-features = false }
 tracing = { version = "0.1.41", default-features = false }
 tracing-core = { version = "0.1.36" }
@@ -375,7 +369,6 @@ tokio-stream = { version = "0.1.17", features = ["sync"] }
 
 serde = { version = "1.0.216", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.133", default-features = false }
-json5 = "0.4"
 serde_yaml = { package = "serde_norway", version = "0.9.42" }
 serde_with = { version = "3.14.1", features = ["json"] }
 toml = "0.8"
@@ -400,9 +393,7 @@ mime_guess = "2.0.5"
 
 claims = "0.8.0"
 wiremock = "0.6.5"
-assert_approx_eq = "1.1.0"
 argh = "0.1.13"
-nom = { version = "8.0.0", default-features = false }
 rustc-hash = { version = "2.1.1", default-features = false }
 
 clap = { version = "4.5.23", features = ["derive"] }
@@ -415,13 +406,10 @@ owo-colors = "4.3.0"
 which = "8.0.2"
 libc = "0.2.186"
 
-git-version = "0.3.9"
-
 tryhard = "0.5.2"
 wasmtime = "47.0.3"
 
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
-sha1_smol = "1.0.1"
 
 rustls = { version = "0.23", default-features = false }
 rumqttc = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07", default-features = false, features = [
@@ -429,15 +417,10 @@ rumqttc = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07", defa
 ] }
 rumqttd = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07" }
 
-oxttl = { version = "0.2.2", default-features = false }
 oxiri = { version = "0.2.11", default-features = false }
 oxrdf = { version = "0.3.2", default-features = false }
-oxrdfio = { version = "0.2.2", default-features = false }
-oxigraph = { version = "0.5.4", default-features = false }
-sparopt = { version = "0.3.4", default-features = false }
 spareval = { version = "0.2.4", default-features = false }
 spargebra = { version = "0.4.4", default-features = false }
-sparesults = { version = "0.3.2", default-features = false }
 oxsdatatypes = { version = "0.2.2", default-features = false }
 
 vecmap-rs = "0.2.4"
@@ -461,7 +444,6 @@ object_store = { version = "0.14.0", features = ["aws"] }
 #spargebra = { path = "../oxigraph/lib/spargebra", default-features = false }
 
 siphasher = { version = "1.0.1", default-features = false }
-adler32 = "1.2.0"
 
 criterion = { version = "0.5", features = ["async_tokio"] }
 dashmap = "6.1.0"
@@ -470,8 +452,6 @@ revision = { version = "0.17.0" }
 
 axum = "0.8"
 tower-http = "0.6"
-tower-service = "0.3"
-tower = "0.5"
 
 openidconnect = { version = "4.0.1" }
 tower-sessions = { version = "0.14", default-features = false, features = ["axum-core", "memory-store"] }
@@ -516,8 +496,6 @@ db-commons = { path = "swarm/db-commons", default-features = false }
 
 skey = { path = "swarm/skey" }
 skey-macros = { path = "swarm/skey-macros" }
-
-influxdb-line-protocol = { version = "2.0.0" }
 
 swarm = { path = "swarm/swarm" }
 swarm-gateway = { path = "swarm/swarm-gateway" }
@@ -587,11 +565,6 @@ i2cdev = "0.6"
 spidev = "0.7"
 linux-embedded-hal = { version = "0.5", default-features = false }
 signal-layer-ipc = { path = "sdk/signal-layer/signal-layer-ipc" }
-signal-layer-linux-rt = { path = "swarm/signal-layer/signal-layer-linux-rt" }
-linux-i2c-shim = { path = "swarm/signal-layer/linux-i2c-shim" }
-linux-gpio-shim = { path = "swarm/signal-layer/linux-gpio-shim" }
-linux-spi-shim = { path = "swarm/signal-layer/linux-spi-shim" }
-linux-codegen = { path = "sdk/signal-layer/linux-codegen" }
 
 # Signal Layer sensor drivers
 bme280-driver = { path = "signal-modules/drivers/bme280" }
@@ -625,30 +598,13 @@ zenoh = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", defaul
     "tracing-instrument",
 ] }
 zenoh-result = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-config = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
 zenoh-protocol = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
 zenoh-keyexpr = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-core = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
 zenoh-buffers = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
 zenoh-util = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-crypto = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
 zenoh-codec = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-sync = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-collections = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-macros = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
 zenoh-plugin-trait = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
 zenoh_backend_traits = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-transport = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-link-tls = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link-tcp = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link-unixsock_stream = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link-quic = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link-udp = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link-ws = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-link-commons = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-runtime = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-task = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
 zenoh-plugin-storage-manager = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
 
 wamr-rust-sdk = { git = "https://github.com/peeriot/wamr-rust-sdk.git", branch = "fvs-no-std-support", default-features = false }
