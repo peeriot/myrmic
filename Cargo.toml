@@ -163,6 +163,8 @@ default-members = [
     "embedded/hil-tests",
     "embedded/esp-hal/crates/esp-heap",
     "embedded/esp-hal/crates/esp-mmu-consts",
+    "embedded/esp-hal/crates/esp-firmware-macros",
+    "embedded/esp-hal/crates/esp-firmware-build",
     "embedded/esp-hal/crates/wasm-runtime-macros",
     # Cell fixtures the wasm job skips, so nothing else lints them
     "tests/fixtures/cell-counter-caller-logic",

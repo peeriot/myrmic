@@ -68,7 +68,8 @@ fn show(
     // 24 data bits, the reset and the end marker fit in one RMT memory block.
     let mut frame = [PulseCode::end_marker(); 26];
     // The WS2812 shifts green in first, most significant bit first.
-    for (byte, codes) in [g, r, b].into_iter().zip(frame.chunks_exact_mut(8)) {
+    let (bytes, _) = frame.as_chunks_mut::<8>();
+    for (byte, codes) in [g, r, b].into_iter().zip(bytes) {
         for (bit, code) in codes.iter_mut().enumerate() {
             *code = if byte & (0x80 >> bit) == 0 { ZERO } else { ONE };
         }
