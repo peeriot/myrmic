@@ -42,6 +42,7 @@ struct TemplateNewFirmware<'a> {
     chip: &'a str,
     firmware_sdk: models::CargoDep,
     firmware_build: models::CargoDep,
+    toolchain: &'a str,
 }
 
 #[derive(textus::Template)]
@@ -53,6 +54,7 @@ struct TemplateNewFirmwarePipeline<'a> {
     firmware_build: models::CargoDep,
     module_deps: String,
     pipeline_feature_deps: String,
+    toolchain: &'a str,
 }
 
 #[derive(textus::Template)]
@@ -149,6 +151,7 @@ fn render_project(
                 firmware_build,
                 module_deps,
                 pipeline_feature_deps,
+                toolchain: myrmic_build::TOOLCHAIN,
             }
             .render_into(path)
         }
@@ -164,6 +167,7 @@ fn render_project(
                 chip: chip.name(),
                 firmware_sdk,
                 firmware_build,
+                toolchain: myrmic_build::TOOLCHAIN,
             }
             .render_into(path)
         }

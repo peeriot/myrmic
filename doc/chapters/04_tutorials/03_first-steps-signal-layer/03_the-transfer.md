@@ -5,8 +5,9 @@ reason the first two exist. The pipeline and the cell are running on the Linux m
 same pipeline goes onto an ESP32-C6, and the same cell moves onto it, unchanged.
 
 Make sure the embedded prerequisites from the
-[tutorial's intro](../03_first-steps-signal-layer.md) are installed: nightly Rust with `rust-src`
-and the `riscv32imac-unknown-none-elf` target, `espflash`, and `wamrc` 2.4.4 on your PATH.
+[tutorial's intro](../03_first-steps-signal-layer.md) are installed: nightly Rust
+(`nightly-2026-08-07`) with `rust-src`, `riscv32imac-unknown-none-elf` target and `wamrc` 2.4.4 on
+your PATH.
 
 ---
 
