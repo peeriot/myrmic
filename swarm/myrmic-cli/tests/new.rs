@@ -223,6 +223,42 @@ fn new_firmware_refuses_an_unknown_chip() {
     );
 }
 
+/// `-f esp32c5` (space-separated) must be treated the same as `-f=esp32c5`:
+/// the value attaches to the flag as the chip, rather than being consumed as
+/// the `<PATH>` positional with the firmware silently defaulting to esp32c6.
+#[test]
+fn new_firmware_accepts_a_space_separated_chip() {
+    let project = tempfile::TempDir::with_prefix("myrmic-").expect("can always create a tempdir");
+    let fw = project.path().join("fw");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
+        .arg("new")
+        .arg("--firmware")
+        .arg("esp32c5")
+        .arg(&fw)
+        .arg("--sdk")
+        .arg(local_sdk())
+        .output()
+        .expect("failed to run myrmic new");
+
+    assert!(
+        output.status.success(),
+        "myrmic new failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("esp32c5"),
+        "the firmware chip should be esp32c5, not the default:\n{stderr}"
+    );
+    assert!(
+        fw.join("partitions.toml").exists(),
+        "a firmware crate should be scaffolded at the <PATH>, got only:\n{stderr}"
+    );
+}
+
 fn local_sdk() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
