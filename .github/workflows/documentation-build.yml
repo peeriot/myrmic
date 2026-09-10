@@ -54,7 +54,7 @@ jobs:
           submodules: true
 
       - name: Build Book
-        uses: peeriot/myrmic-docs-site/actions/build-docs@51d5756a767cadadc184a20052d89f2b80d83820
+        uses: peeriot/myrmic-docs-site/actions/build-docs@c46e18b8f2fe374b9ffc3a7f06224e39a3bc264e
         with:
           input_dir: ./doc/chapters
           output_dir: ./book

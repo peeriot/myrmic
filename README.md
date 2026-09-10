@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-Myrmic is an open-source runtime for distributed edge applications, developed by <a href="https://peeriot.io">Peeriot</a> - built for heterogeneous environments where microcontrollers, gateways, and servers coordinate locally without a central cloud controller making decisions. You write application logic, not infrastructure - Myrmic handles execution, messaging, state, and placement.
+<a href="https://book.myrmic.dev">Myrmic</a> is an open-source runtime for distributed edge applications, developed by <a href="https://peeriot.io">Peeriot</a> - built for heterogeneous environments where microcontrollers, gateways, and servers coordinate locally without a central cloud controller making decisions. You write application logic, not infrastructure - Myrmic handles execution, messaging, state, and placement.
 </p>
 
 <p align="center">
