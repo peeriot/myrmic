@@ -228,22 +228,13 @@ impl Runtime {
         }
         Ok(deployed
             .into_iter()
-            .map(|cell| {
+            .map(|cell| DeploymentResult {
+                sri: cell.sri,
                 // The scheduler proposes a runtime for every request, but a
-                // native bridge ignores it and commits a Bridge placement on
-                // the orchestrator. Report the committed placement, never the
-                // scheduler candidate.
-                let runtime = match cell.kind {
-                    PlacementKind::Wasm { runtime } => Some(runtime.id()),
-                    PlacementKind::Bridge { .. } => None,
-                    PlacementKind::Placeholder => {
-                        unreachable!("deployed cell cannot be a placeholder")
-                    }
-                };
-                DeploymentResult {
-                    sri: cell.sri,
-                    runtime,
-                }
+                // bridge ignores it and commits a Bridge placement on the
+                // orchestrator. Report the host the committed placement names,
+                // never the scheduler candidate.
+                runtime: cell.kind.host(),
             })
             .collect())
     }
