@@ -7,6 +7,15 @@ publish = false
 [package.metadata.myrmic]
 firmware = "{{chip}}"
 
+# Link-time optimization is required here, not merely an optimization. On the
+# BLE + PSRAM chips (C5/C61) the firmware otherwise boots into a watchdog reset
+# loop: the esp-mmu routine that maps the AOT flash region runs with the flash
+# cache disabled, and without cross-crate inlining some of its callees remain in
+# XIP flash, which cannot be fetched during that window. `thin` inlines them
+# while keeping build times reasonable. C6 does not need it, but it is harmless.
+[profile.release]
+lto = "thin"
+
 [features]
 default = ["{{chip}}"]
 
