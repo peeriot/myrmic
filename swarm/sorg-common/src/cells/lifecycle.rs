@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use zenoh::Session;
 
 use crate::{
-    CellDeployment, DeployRequest, DeploymentError, RequirementTags, SorgPayload,
+    CellDeployment, DeployRequest, DeployResponse, DeploymentError, RequirementTags, SorgPayload,
     TOPIC_ORCH_APP_DELETE, TOPIC_ORCH_CELL_DEPLOY, TOPIC_ORCH_CELL_UNDEPLOY, bail,
     is_query_timeout, zenoh_err,
 };
@@ -65,7 +65,9 @@ async fn deploy_cell(
         .with_lineage(lineage)
         .with_arguments(arguments)
         .with_app(app);
-    deploy_cells(session, DeployRequest::new(vec![cell]), timeout).await
+    deploy_cells(session, DeployRequest::new(vec![cell]), timeout)
+        .await
+        .map(|_| ())
 }
 
 /// Deploys a batch of cells atomically via the orchestration plugin. A single
@@ -75,7 +77,7 @@ pub async fn deploy_cells(
     session: &Session,
     request: DeployRequest,
     timeout: Duration,
-) -> std::result::Result<(), DeploymentError> {
+) -> std::result::Result<DeployResponse, DeploymentError> {
     let payload = request
         .to_payload()
         .map_err(|err| DeploymentError::Internal(err.to_string()))?;
@@ -89,7 +91,11 @@ pub async fn deploy_cells(
 
     match reply.recv_async().await {
         Ok(reply) => match reply.result() {
-            Ok(_sample) => Ok(()),
+            Ok(sample) => DeployResponse::from_payload(
+                sample.payload(),
+                "deser deployment response from orchestrator",
+            )
+            .map_err(|err| DeploymentError::Internal(err.to_string())),
             Err(err_reply) => {
                 if is_query_timeout(err_reply) {
                     return Err(DeploymentError::QueryTimeout);

@@ -186,8 +186,44 @@ fn process_is_alive(pid: libc::pid_t) -> bool {
     // `kill(pid, 0)` performs the permission check, doesn't actually kill anything... linux amirite
     // SAFETY: signal 0 delivers nothing; we only read the return value.
     if unsafe { libc::kill(pid, 0) } == 0 {
+        // `kill(pid, 0)` also succeeds for a zombie. A detached runtime has
+        // already exited in that state, but its reaper may not have collected
+        // it yet; treating it as running makes `runtimes delete` wait out its
+        // full timeout and fail despite a successful shutdown.
+        #[cfg(target_os = "linux")]
+        if process_is_zombie(pid) {
+            return false;
+        }
         return true;
     }
     // `ESRCH` is the only "dead" answer, `EPERM` means we're not the owner.
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+/// Linux exposes a process state in `/proc/<pid>/stat`, immediately after the
+/// final `) ` closing the command name. Command names may themselves contain
+/// parentheses, so split at the final delimiter.
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: libc::pid_t) -> bool {
+    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    process_state(&stat) == Some('Z')
+}
+
+#[cfg(target_os = "linux")]
+fn process_state(stat: &str) -> Option<char> {
+    stat.rsplit_once(") ")?.1.chars().next()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_linux_process_state_after_a_parenthesized_name() {
+        assert_eq!(process_state("42 (myrmic) Z 1 2 3"), Some('Z'));
+        assert_eq!(process_state("42 (worker (child)) S 1 2 3"), Some('S'));
+        assert_eq!(process_state("not a proc stat"), None);
+    }
 }

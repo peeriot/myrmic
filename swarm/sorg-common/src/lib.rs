@@ -62,11 +62,12 @@ pub use mqtt::{
 pub use myrmic_common::cells::{CellLost, LostReason, SYS_CELL_LOST, SYS_COMMAND_PREFIX};
 pub use records::OrchRuntimeRecord;
 pub use records::app_deployment::{
-    BodyTemplate, CellConfig, CellDeployment, DeployRequest, HttpBridgeApi, HttpBridgeConfig,
-    HttpBridgeRecord, MqttBridge, MqttBridgeConfig, MqttBridgeDef, MqttBridgeRecord,
-    RequirementTags, ResponseHeaderTemplate, RestartPolicy, RestartType, TemplateSegment,
-    TemplateSegments, WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseTemplate,
-    WireHttpResponseVariant, WireMqttEgress, WireMqttIngress, should_restart, status_variant_name,
+    BodyTemplate, CellConfig, CellDeployment, DeployRequest, DeployResponse, DeployedCell,
+    HttpBridgeApi, HttpBridgeConfig, HttpBridgeRecord, MqttBridge, MqttBridgeConfig, MqttBridgeDef,
+    MqttBridgeRecord, RequirementTags, ResponseHeaderTemplate, RestartPolicy, RestartType,
+    TemplateSegment, TemplateSegments, WireHttpEndpoint, WireHttpRequestTemplate,
+    WireHttpResponseTemplate, WireHttpResponseVariant, WireMqttEgress, WireMqttIngress,
+    should_restart, status_variant_name,
 };
 pub use records::tasks::connectors::{InputRecord, OutputRecord};
 pub use reference::identifiers::{AsDeploymentIdentifier, DeploymentIdentifier, RuntimeIdentifier};

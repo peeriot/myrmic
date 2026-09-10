@@ -59,10 +59,22 @@ async fn deploy_cell(myrmic: &Myrmic<LocalBinary>) {
     let session = myrmic.connect_session().await;
     let _sorg = SorgHandle::connect(session).await;
 
-    // create and deploy a new cell with a generated SRI (deploy waits until deployed)
+    // Create and deploy a new cell with a generated SRI. Capture the actual
+    // CLI output so this test guards the operator-facing placement report.
     let cell_spec = myrmic.new_cell(cell_name.as_str(), None).await;
-    let cell = myrmic.deploy_with_random_sri(cell_spec, &[]).await;
+    let srn = format!("e2e-{}", uuid::Uuid::new_v4().simple());
+    let (cell, output) = myrmic.deploy_with_output(cell_spec, &srn, &[]).await;
     let sri = cell.sri().to_owned();
+    let prefix = format!("deployed cell (srn = {srn}, sri = {sri}, runtime = ");
+    let runtime = output.lines().find_map(|line| {
+        line.strip_prefix("INFO  ")
+            .and_then(|line| line.strip_prefix(&prefix))
+            .and_then(|line| line.strip_suffix(')'))
+    });
+    assert!(
+        runtime.is_some_and(|runtime| !runtime.is_empty()),
+        "deploy output must report the assigned runtime; got: {output:?}"
+    );
     assert!(myrmic.is_sri_deployed(&sri).await);
 
     // delete the cell (waits until gone from status)
@@ -99,7 +111,30 @@ async fn bridge_test(myrmic: &Myrmic<LocalBinary>) {
     // and scheduler registration have completed.
     let session = myrmic.connect_session().await;
     let _sorg = SorgHandle::connect(session.clone()).await;
-    myrmic.deploy_app("assets/apps/app_spec.yml").await;
+    // Capture app deployment output to cover each result returned by the
+    // orchestrator: the two native bridges and the WASM cell.
+    let output = myrmic
+        .deploy_app_with_output("assets/apps/app_spec.yml")
+        .await;
+    for srn in ["bridge.http", "bridge.mqtt"] {
+        let sri = cell_protocol::Sri::of_path(srn).unwrap();
+        assert!(
+            output.lines().any(|line| line
+                == format!("INFO  deployed cell (sri = {sri}, placement = orchestrator)")),
+            "app deploy output must report native bridge placement for {srn}; got: {output:?}"
+        );
+    }
+    let bridge_test_sri = cell_protocol::Sri::of_path("bridge.test").unwrap();
+    let runtime = output.lines().find_map(|line| {
+        line.strip_prefix(&format!(
+            "INFO  deployed cell (sri = {bridge_test_sri}, runtime = "
+        ))
+        .and_then(|line| line.strip_suffix(')'))
+    });
+    assert!(
+        runtime.is_some_and(|runtime| !runtime.is_empty()),
+        "app deploy output must report bridge.test's runtime; got: {output:?}"
+    );
 
     // seed the DB template used by MQTT egress: ${db:e2e/test/data@topic}
     let db = DbHandle::new(&session);
