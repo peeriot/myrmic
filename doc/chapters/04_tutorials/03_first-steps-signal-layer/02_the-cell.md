@@ -23,10 +23,12 @@ including the ESP32 in Part 3 — finds it by that announcement, with no address
 ## Step 2 - Scaffold the cell
 
 ```bash
-myrmic new ~/sl-tutorial/thermometer --sdk ~/myrmic
+myrmic new ~/sl-tutorial/thermometer
 ```
 
-The scaffold is a small counter example. Replace `thermometer/src/lib.rs` entirely:
+This builds against the same `PEERIOT_MYRMIC_SDK` checkout from the
+[prerequisites](../03_first-steps-signal-layer.md) (or pass `--sdk <path>`). The scaffold is a small
+counter example. Replace `thermometer/src/lib.rs` entirely:
 
 ```rust
 //! Tutorial cell: reads the Signal Layer taps once a second and logs them.
@@ -132,20 +134,31 @@ moved.
 
 ## Step 4 - Watch it read
 
-Cell logs land in the runtime's log file:
+The runtime records what every cell logs in its built-in telemetry database, and the `myrmic
+telemetry` CLI reads it back, with no log files and no Grafana. The database keeps entries only
+within a retention window, and none is set by default, so turn one on first:
 
 ```bash
-tail -f ~/.local/share/myrmic/*/logs/runtime.$(date +%F).log
+myrmic telemetry set-db-retention 1h
 ```
 
-Expected output, one line per second:
+Then read the logs:
+
+```bash
+myrmic telemetry logs
+```
+
+It prints the stored entries oldest-first, colour-coded by severity, each with a timestamp, its
+trace id, and the line the cell logged. It is a snapshot, not a live stream: run it again to see the
+lines added since. Retention takes effect from the moment you set it, so what you see is what the
+cell has logged since, one reading per second:
 
 ```text
-INFO wasm_log: ... t=18500 value=40 avg=25 ...
-INFO wasm_log: ... t=19500 value=60 avg=45 ...
-INFO wasm_log: ... t=20500 value=80 avg=65 ...
-INFO wasm_log: ... t=21500 value=100 avg=85 ...
-INFO wasm_log: ... t=22500 value=10 avg=50 ...
+INFO  [2026-09-10T14:07:18.500+02:00] | trace_id = 25975cd9... | t=18500 value=40 avg=25
+INFO  [2026-09-10T14:07:19.500+02:00] | trace_id = 3bcc1f04... | t=19500 value=60 avg=45
+INFO  [2026-09-10T14:07:20.500+02:00] | trace_id = e566233f... | t=20500 value=80 avg=65
+INFO  [2026-09-10T14:07:21.500+02:00] | trace_id = d74e864c... | t=21500 value=100 avg=85
+INFO  [2026-09-10T14:07:22.500+02:00] | trace_id = e0560768... | t=22500 value=10 avg=50
 ```
 
 The value climbs (that is the simulated sensor) and the average trails it by the four-sample

@@ -7,6 +7,8 @@ ESP32 with one command, without changing a line of it.
 You write two small YAML files and about thirty lines of Rust. `myrmic new` scaffolds the rest,
 and everything else is generated at build time.
 
+![The Signal Layer runs drivers and steps as native code on the target machine; a cell in the WebAssembly runtime reads sensor values through a tap and drives actuators through an outlet. This tutorial builds the tap (read) side.](../../images/signal-layer-tap-outlet.png)
+
 ## What you build
 
 A simulated sensor publishes a climbing value twice a second. A `moving-average` step smooths it.
@@ -19,14 +21,30 @@ the physical machine, differs between the two.
 
 ## What you need
 
+Every `myrmic new` in this tutorial builds the project it scaffolds against a checkout of the
+Myrmic repository. Point the CLI at yours **before you scaffold anything**, and every command below
+picks it up with no `--sdk` flag to repeat:
+
+```bash
+export PEERIOT_MYRMIC_SDK=~/myrmic   # the checkout Install from source left you; use your own path
+```
+
+Set it once, in the shell you run the tutorial from, before the first `myrmic new`. Setting it
+afterwards does not repair an already-scaffolded project: it is read only while a project is
+created. You can pass `--sdk <path>` on any single command instead, and it wins when both are set.
+
+Without a checkout to point at, a source-built CLI writes an SDK dependency your machine cannot
+fetch, and the next build fails with `revspec '...' not found`. Set the variable (or pass `--sdk`)
+and the generated project builds against your checkout.
+
 **Part 1 and 2, the Linux half:**
 
 - A Linux machine. The simulated sensor is synthetic and never touches the I²C bus, so this
   tutorial needs no I²C hardware and no `/dev/i2c-*` node. (A Raspberry Pi works too — it is where
   the real-sensor follow-ups in *What's next* would run.)
 - The `myrmic` CLI and the Rust toolchain it builds cells with, per
-  [Installation](../01_quickstart/01_installation.md). Take the *Install from source* path — it also
-  leaves you the repository checkout this tutorial points `--sdk` at (called `~/myrmic` below).
+  [Installation](../01_quickstart/01_installation.md). The *Install from source* path also leaves
+  you the checkout referenced above (called `~/myrmic` here).
 
 **Part 3, the ESP32 half:**
 
