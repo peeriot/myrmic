@@ -199,7 +199,10 @@ pub(crate) async fn collect(
 
 #[cfg(test)]
 mod test {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use opentelemetry::{InstrumentationScope, global};
     use opentelemetry_sdk::metrics::{
@@ -315,9 +318,26 @@ mod test {
             updown_counter(named_metric(&exported, "process.memory.virtual")).value()
         );
 
-        // Refresh from sysinfo, publish the live values, and flush a second batch.
-        metrics.refresh().unwrap();
-        metrics.publish();
+        // sysinfo derives CPU usage from the delta between two refreshes and skips its CPU
+        // bookkeeping entirely when they fall closer together than
+        // `MINIMUM_CPU_UPDATE_INTERVAL`, 200ms on Linux. Two spaced refreshes are needed
+        // rather than one: the constructor's own refresh is not a dependable baseline for
+        // the process share, and with a single one this asserted zero in seven runs out of
+        // ten. The wait is spent on the CPU rather than asleep, because an idle process
+        // reports zero legitimately, and zero is what the assertions below reject.
+        for _ in 0..2 {
+            let busy_until = Instant::now() + sysinfo::MINIMUM_CPU_UPDATE_INTERVAL;
+            while Instant::now() < busy_until {
+                std::hint::spin_loop();
+            }
+            metrics.refresh().unwrap();
+            // Each refresh has to be published. The cumulative counters are fed the offset
+            // to the previous sample, so a refresh that is never published drops its offset
+            // and the counter ends up holding only the last, small one.
+            metrics.publish();
+        }
+
+        // One flush, so this is still the second batch.
         provider.force_flush().unwrap();
 
         let exported = exporter.get_finished_metrics().unwrap();

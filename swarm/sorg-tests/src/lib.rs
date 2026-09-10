@@ -41,7 +41,12 @@ pub use wasm::{build_and_register_cell_class, build_cell};
 
 pub use tracing_subscriber;
 
-const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
+/// The sorg client's own default. Shortening it here asserted that a deploy is
+/// fast on whichever machine runs the tests, and a two-core runner loses that:
+/// loading, instantiating and initialising a cell takes longer than the 3s this
+/// allowed. Catching a hang is nextest's job, through the `terminate-after`
+/// budgets in `.config/nextest.toml`.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const WAIT_TIME: Duration = Duration::from_millis(10);
 
 type SharedMap<T> = Arc<Mutex<HashMap<T, Vec<Vec<u8>>>>>;

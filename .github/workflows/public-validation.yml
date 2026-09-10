@@ -60,6 +60,19 @@ jobs:
       group: tests-${{ github.ref }}
       cancel-in-progress: true
     steps:
+      # Frees ~17 GB, because this build needs more than the ~14 GB a hosted
+      # runner guarantees and nothing here is built against Android or .NET.
+      #
+      # The tool cache and the preinstalled apt packages would add another 11 GB
+      # but hold interpreters a build script may reach for. The swap file would
+      # add 4 GB and is deliberately left alone: this job gets 8 GB of RAM in a
+      # private repository, and linkers are the memory-hungry part, so trading
+      # memory for disk here only moves the failure.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+
       - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
@@ -73,7 +86,34 @@ jobs:
       - name: Install cargo-nextest
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
+      # This job has run out of disk twice. Reported on both sides of the build,
+      # and after it even when it failed, so a next time comes with the numbers
+      # rather than an estimate of them.
+      - name: Disk space before the build
+        run: df -h
+
       - name: Test
         run: .ci/check/check
         env:
           SKIP_CHECKS: "true"
+          # A hosted runner has ~14 GB, and this workspace does not fit twice.
+          # The binaries and the tests resolve features differently, so cargo
+          # keeps two artifact sets whatever the order, and measured on this
+          # workspace two thirds of an artifact is debug info. Line tables are
+          # the part a failure backtrace needs, so they stay. The `test` profile
+          # inherits this from `dev`.
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          # nextest defaults to one test per core. Several integration tests
+          # compile a cell fixture at test runtime, optimized, which is seconds
+          # of rustc inside the test's own clock, and the deploy that follows it
+          # gives up after 15s. Two of those on the two cores a private
+          # repository gets starve each other past that deadline; the mirror's
+          # four cores hide it. Serial trades a few minutes of a job that
+          # already spends twenty on compiling for a result that means something.
+          NEXTEST_TEST_THREADS: "1"
+
+      - name: Disk space after the build
+        if: always()
+        run: |
+          df -h
+          du -sh target 2>/dev/null || true

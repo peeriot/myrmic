@@ -1,10 +1,20 @@
-use std::{thread::JoinHandle, time::Duration};
+use std::{
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 
 use config::{File, FileFormat};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Outgoing, Packet};
 use rumqttd::{Broker, Config};
+use tokio::net::TcpStream;
 
 use crate::{TestApp, WAIT_TIME};
+
+const BROKER_HOST: &str = "localhost";
+const BROKER_PORT: u16 = 1883;
+
+/// How long the broker gets to accept its first connection.
+const BROKER_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl TestApp {
     /// Sets up an MQTT broker which acts like an "external" broker in tests, in the sense
@@ -24,7 +34,7 @@ impl TestApp {
             let mut broker = Broker::new(config);
             broker.start().expect("failed to start broker");
         });
-        tokio::time::sleep(WAIT_TIME).await;
+        wait_for_broker().await;
 
         // start up a tokio task to receive messages we may subscribe to during tests
         let received_msgs = self.received_mqtt_msgs.clone();
@@ -77,8 +87,27 @@ impl TestApp {
 }
 
 fn connect_to_test_broker(client_id: &str) -> (AsyncClient, EventLoop) {
-    let mqtt_options = MqttOptions::new(client_id, "localhost", 1883);
+    let mqtt_options = MqttOptions::new(client_id, BROKER_HOST, BROKER_PORT);
     AsyncClient::new(mqtt_options, 10)
+}
+
+/// The broker binds on a thread of its own, so there is no handle to await and
+/// no readiness signal to subscribe to. Probing the port is the signal: until it
+/// accepts, a client's first poll fails outright with `ConnectionRefused`, and
+/// the subscribe that follows fails with it.
+async fn wait_for_broker() {
+    let deadline = Instant::now() + BROKER_START_TIMEOUT;
+    loop {
+        if TcpStream::connect((BROKER_HOST, BROKER_PORT)).await.is_ok() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the test broker did not accept a connection within \
+             {BROKER_START_TIMEOUT:?}"
+        );
+        tokio::time::sleep(WAIT_TIME).await;
+    }
 }
 
 async fn poll_until_publish_goes_out(event_loop: &mut EventLoop) {
