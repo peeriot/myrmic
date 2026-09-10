@@ -88,7 +88,7 @@ impl<'a> CryptoReadWrapper<'a> {
     }
 }
 
-impl<'a> ReadWrapper for CryptoReadWrapper<'a> {
+impl ReadWrapper for CryptoReadWrapper<'_> {
     type Reader<'t, R>
         = CryptoReader<'t, R>
     where
@@ -122,7 +122,7 @@ impl<'a, C> CryptoWriteWrapper<'a, C> {
     }
 }
 
-impl<'a, C> WriteWrapper for CryptoWriteWrapper<'a, C>
+impl<C> WriteWrapper for CryptoWriteWrapper<'_, C>
 where
     C: RngCore,
 {
@@ -142,7 +142,7 @@ where
 /// NOTE:
 /// The `Read::read` implementation this type provides is NOT cancel-safe.
 ///
-/// TODO: Generify to any AesGcm
+/// TODO: Generify to any `AesGcm`
 pub struct CryptoReader<'a, R> {
     /// The cypher to use for decryption
     cypher: &'a mut Aes256Gcm,
@@ -268,7 +268,7 @@ where
 /// NOTE:
 /// The `Write::write` implementation this type provides is NOT cancel-safe.
 ///
-/// TODO: Generify to any AesGcm
+/// TODO: Generify to any `AesGcm`
 pub struct CryptWriter<'a, C, W> {
     /// The cypher to use for encryption.
     cypher: &'a mut Aes256Gcm,
@@ -327,13 +327,15 @@ where
             &mut self.buf[..self.filled]
         ));
 
+        let filled = u16::try_from(self.filled).map_err(|_| ErrorKind::InvalidData)?;
+
         self.write.write_all(&nonce).await.map_err(Self::map_err)?;
         self.write
             .write_all(tag.as_ref())
             .await
             .map_err(Self::map_err)?;
         self.write
-            .write_all(&(self.filled as u16).to_le_bytes())
+            .write_all(&filled.to_le_bytes())
             .await
             .map_err(Self::map_err)?;
         self.write
@@ -346,6 +348,8 @@ where
         Ok(())
     }
 
+    // Takes the error by value so it can be used point-free as `.map_err(Self::map_err)`.
+    #[allow(clippy::needless_pass_by_value)]
     fn map_err<E: Error>(e: E) -> ErrorKind {
         e.kind()
     }

@@ -145,9 +145,8 @@ where
             if res? {
                 info!("Successfully consumed data on topic: {}", topic);
                 break Ok(());
-            } else {
-                Timer::after(retry_timeout).await;
             }
+            Timer::after(retry_timeout).await;
         }
     }
 }

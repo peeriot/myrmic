@@ -59,8 +59,8 @@ oxrdf = { workspace = true, features = [] }
 spareval = { workspace = true, features = ["sep-0002", "calendar-ext", "sparql-12"] }
 spargebra = { workspace = true, features = [] }
 
-siphasher = { version = "1.0.1" }
-rustc-hash = "2.1.1"
+siphasher = { workspace = true }
+rustc-hash = { workspace = true }
 
 educe = "0.6.0"
 tokio-util.workspace = true

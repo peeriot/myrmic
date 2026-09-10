@@ -19,12 +19,12 @@ const L2CAP_IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// Recommended L2CAP channel configuration for Swarm's mTLS channel.
 pub fn swarm_l2cap_config() -> L2capChannelConfig {
     L2capChannelConfig {
-        mtu: Some(SDU_MTU as u16),
+        mtu: Some(u16::try_from(SDU_MTU).expect("SDU_MTU exceeds u16")),
         ..Default::default()
     }
 }
 
-/// Byte-stream adapter over a BLE L2CAP CoC channel.
+/// Byte-stream adapter over a BLE L2CAP `CoC` channel.
 pub struct L2capStream<'d, 's, C, P = DefaultPacketPool>
 where
     C: Controller,
@@ -45,7 +45,7 @@ where
     C: Controller,
     P: PacketPool,
 {
-    /// Create a new adapter from an already-established L2CAP CoC channel.
+    /// Create a new adapter from an already-established L2CAP `CoC` channel.
     pub fn new(channel: L2capChannel<'d, P>, stack: &'s Stack<'s, C, P>) -> Self {
         Self {
             channel,
@@ -80,7 +80,7 @@ impl core::fmt::Display for L2capStreamError {
 
 impl core::error::Error for L2capStreamError {}
 
-impl<'d, 's, C, P> ErrorType for L2capStream<'d, 's, C, P>
+impl<C, P> ErrorType for L2capStream<'_, '_, C, P>
 where
     C: Controller,
     P: PacketPool,
@@ -88,7 +88,7 @@ where
     type Error = L2capStreamError;
 }
 
-impl<'d, 's, C, P> Read for L2capStream<'d, 's, C, P>
+impl<C, P> Read for L2capStream<'_, '_, C, P>
 where
     C: Controller,
     P: PacketPool,
@@ -132,7 +132,7 @@ where
     }
 }
 
-impl<'d, 's, C, P> Write for L2capStream<'d, 's, C, P>
+impl<C, P> Write for L2capStream<'_, '_, C, P>
 where
     C: Controller,
     P: PacketPool,

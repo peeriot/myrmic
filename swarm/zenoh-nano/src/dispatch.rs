@@ -86,7 +86,7 @@ pub enum Routed {
     Query {
         /// Original request id, to be echoed in the reply.
         request_id: RequestId,
-        /// QoS of the request, to be echoed in the reply.
+        /// `QoS` of the request, to be echoed in the reply.
         qos: RequestQoSType,
         /// Optional request body.
         body: Option<ZBuf>,

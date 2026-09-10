@@ -4,8 +4,6 @@
 #![deny(missing_docs)]
 #![allow(clippy::uninlined_format_args)] // For `defmt`
 
-extern crate alloc;
-
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::join::join;
 use embassy_time::{Duration, Timer};
@@ -42,12 +40,6 @@ fn main() {
 }
 
 macro_rules! mk_static {
-    ($t:ty) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit();
-        x
-    }};
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
@@ -172,7 +164,7 @@ async fn run_session(
     mut runner: SessionRunner<'static>,
     network: Network<'static, PipeLinkReceive<'static>, PipeLinkSend<'static>>,
 ) {
-    runner.run(network).await.unwrap()
+    runner.run(network).await.unwrap();
 }
 
 struct LocalRng;

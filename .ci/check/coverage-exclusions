@@ -5,6 +5,5 @@
 # A line without a reason is an error, so an exclusion cannot be added silently.
 # Every line names what has to change for the member to rejoin its bucket.
 
-lint examples-esp two of its eight bins do not typecheck - six include_bytes of certificate fixtures that are not in the tree - and the other six carry denied-lint findings, so the crate cannot join the chip aliases until the bins build; its lib target lints clean
 test e2e-tests needs a Docker daemon, container image builds and a release test-sidecar binary; the myrmic_e2e workflow job runs what can run without them
 test hil-tests opens a serial port and drives a flashed board; the hardware-tests workflow runs it against physical boards

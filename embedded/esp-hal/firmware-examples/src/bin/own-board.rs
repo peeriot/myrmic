@@ -7,7 +7,7 @@
 //! have.
 //!
 //! For a spare peripheral on an otherwise stock board you do not need this:
-//! ask for `Peripherals` next to `&mut Board` instead — see `rmt_led`.
+//! ask for `Peripherals` next to `&mut Board` instead — see `rmt-led`.
 
 #![no_std]
 #![no_main]

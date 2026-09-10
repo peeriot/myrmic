@@ -31,7 +31,7 @@ where
     /// - `stack`: The stack to use for advertising and accepting connections.
     ///
     /// # Returns
-    /// - A tuple containing the GattLinkRunner, GattLinkSend, and GattLinkReceive.
+    /// - A tuple containing the `GattLinkRunner`, `GattLinkSend`, and `GattLinkReceive`.
     pub async fn accept<'s, C>(
         &mut self,
         stack: &'s Stack<'s, C, DefaultPacketPool>,

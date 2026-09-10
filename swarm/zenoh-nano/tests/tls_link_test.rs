@@ -21,7 +21,7 @@ fn tls_link_halves_implement_traits() {
     assert_link_send::<TlsLinkSend<'_>>();
 }
 
-/// TLS_LINK_MTU + 2-byte framing header must fit inside TLS_BUF_SIZE.
+/// `TLS_LINK_MTU` + 2-byte framing header must fit inside `TLS_BUF_SIZE`.
 #[test]
 fn tls_link_mtu_value() {
     use zenoh_nano::link::tls::{TLS_BUF_SIZE, TLS_LINK_MTU};
@@ -34,7 +34,7 @@ fn tls_link_mtu_value() {
     );
 }
 
-/// MaxFragmentLength::Bits9 allows 512 B plaintext; minus 2-byte frame header = 510.
+/// `MaxFragmentLength::Bits9` allows 512 B plaintext; minus 2-byte frame header = 510.
 #[test]
 fn tls_link_mtu_matches_bits9_plaintext_limit() {
     use zenoh_nano::link::tls::TLS_LINK_MTU;

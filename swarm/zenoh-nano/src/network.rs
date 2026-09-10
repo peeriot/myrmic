@@ -100,15 +100,15 @@ impl<R: LinkReceive> NetworkReceive<R> {
     ) -> Result<IncomingMessage, NetworkError> {
         loop {
             if let ReceiveState::Frame { payload } = &mut self.state {
-                if !payload.is_empty() {
+                if payload.is_empty() {
+                    self.state = ReceiveState::None;
+                } else {
                     let message = IncomingMessage::Message(payload.remove(0));
                     if payload.is_empty() {
                         self.state = ReceiveState::None;
                     }
 
                     break Ok(message);
-                } else {
-                    self.state = ReceiveState::None;
                 }
             }
 
@@ -151,21 +151,21 @@ impl<R: LinkReceive> NetworkReceive<R> {
                         fragments.push_zslice(payload);
                     }
 
-                    if !more {
-                        let mut reader = fragments.reader();
-                        let codec = Zenoh080::new();
-                        match codec.read(&mut reader) {
-                            Ok(network_message) => {
-                                break Ok(IncomingMessage::Message(network_message));
-                            }
-                            Err(e) => {
-                                warn!("Attempt to reassemble fragmented message failed: {:?}", e);
-                                continue;
-                            }
-                        }
-                    } else {
+                    if more {
                         self.state = ReceiveState::Fragments { fragments };
                         continue;
+                    }
+
+                    let mut reader = fragments.reader();
+                    let codec = Zenoh080::new();
+                    match codec.read(&mut reader) {
+                        Ok(network_message) => {
+                            break Ok(IncomingMessage::Message(network_message));
+                        }
+                        Err(e) => {
+                            warn!("Attempt to reassemble fragmented message failed: {:?}", e);
+                            continue;
+                        }
                     }
                 }
                 TransportBody::Close(close) => {

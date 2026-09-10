@@ -52,8 +52,6 @@ use zenoh_nano::rng::RandomSource;
 use zenoh_nano::scout::ZenohIdProto;
 use zenoh_nano::session::{Session, SessionResources, SessionRunner};
 
-extern crate alloc;
-
 // Topics
 const PING_TOPIC: &str = "test/ping";
 const PONG_TOPIC: &str = "test/pong";
@@ -73,12 +71,6 @@ fn main() {
 }
 
 macro_rules! mk_static {
-    ($t:ty) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit();
-        x
-    }};
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
@@ -122,7 +114,7 @@ async fn main_task_tokio(spawner: Spawner) {
     info!("GATT address = {:?}", address);
 
     let stack = mk_static!(
-        Stack<'static, PingController, DefaultPacketPool>,
+        Stack<'static, PingController<'_>, DefaultPacketPool>,
         trouble_host::new(controller, stack_resources).build() //.set_random_address(address)
     );
 
@@ -175,13 +167,13 @@ async fn main_task_tokio(spawner: Spawner) {
 /// Also listen to events so that we can discover Zenoh nodes advertising over BLE
 #[embassy_executor::task]
 async fn ble_task(mut runner: Runner<'static, PingController<'static>, DefaultPacketPool>) {
-    runner.run().await.unwrap()
+    runner.run().await.unwrap();
 }
 
-/// Run the GattLink connection
+/// Run the `GattLink` connection
 #[embassy_executor::task]
 async fn gatt_link_task(runner: GattLinkAcceptRunner<'static, 'static, NoopRawMutex>) {
-    runner.run().await.unwrap()
+    runner.run().await.unwrap();
 }
 
 /// Pong task: waits for pings and replies with pongs
@@ -208,7 +200,7 @@ async fn run_session(
     mut runner: SessionRunner<'static>,
     network: Network<'static, GattLinkReceive<'static>, GattLinkSend<'static>>,
 ) {
-    runner.run(network).await.unwrap()
+    runner.run(network).await.unwrap();
 }
 
 struct LocalRng;

@@ -102,7 +102,7 @@ impl<'a> OnboardedDevice<'a> {
     ///
     /// The device ID is a UTF-8 string that uniquely identifies the device.
     ///
-    /// Depending on the provided device credentials, the device ID might be the EC NistP256 public key
+    /// Depending on the provided device credentials, the device ID might be the EC `NistP256` public key
     /// or a simple identifier.
     ///
     /// # Arguments
@@ -193,9 +193,9 @@ impl<'a> OnboardedDevice<'a> {
 pub enum DeviceKeys<'a> {
     /// The device uses a public-private key pair for channel privacy during onboarding.
     PKI {
-        /// The device EC NistP256 public key.
+        /// The device EC `NistP256` public key.
         pub_key: &'a [u8],
-        /// The device EC NistP256 private key in PKCS-8 DER format.
+        /// The device EC `NistP256` private key in PKCS-8 DER format.
         priv_key: &'a [u8],
     },
     /// The device uses a simple identifier and an insecure onboarding process.
@@ -274,7 +274,7 @@ impl<'a> From<DeviceKeys<'a>> for DeviceCreds<'a> {
 pub enum DeviceCreds<'a> {
     /// The device uses a public-private key pair for channel privacy during onboarding.
     PKI {
-        /// The device EC NistP256 public key.
+        /// The device EC `NistP256` public key.
         pub_key: &'a [u8],
     },
     /// Insecure credentials, containing a simple device identifier.
@@ -480,7 +480,7 @@ impl ChannelKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InstallerMeta<'a> {
-    /// The _ephemeral_ EC NistP526 public key of the installer, in a BASE64-encoded format.
+    /// The _ephemeral_ EC `NistP526` public key of the installer, in a BASE64-encoded format.
     ///
     /// Necessary so as to establish an encrypted and authenticated channel between
     /// the installer and the device.
@@ -528,16 +528,18 @@ pub enum DeviceError<P, C> {
     /// An I/O error occurred.
     #[error("IO error: {0:?}")]
     Io(ErrorKind),
-    /// An error occured when producing the DeviceAttestation message stream.
+    /// An error occured when producing the `DeviceAttestation` message stream.
     #[error("attestation error: {0:?}")]
     Attestation(P),
-    /// An error occured when consuming the OnboardingData message stream.
+    /// An error occured when consuming the `OnboardingData` message stream.
     #[error("obboarding data error: {0:?}")]
     Data(C),
 }
 
 impl<P, C> DeviceError<P, C> {
     /// Create a new `DeviceError` from an I/O error.
+    // Takes the error by value so it can be used point-free as `.map_err(DeviceError::io)`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn io<E: embedded_io_async::Error>(error: E) -> Self {
         Self::Io(error.kind())
     }
@@ -571,16 +573,18 @@ pub enum InstallerError<C, P> {
     /// An I/O error occurred.
     #[error("IO error: {0:?}")]
     Io(ErrorKind),
-    /// An error occured when consuming the DeviceAttestation message stream.
+    /// An error occured when consuming the `DeviceAttestation` message stream.
     #[error("attestation error: {0:?}")]
     Attestation(C),
-    /// An error occured when producing the OnboardingData message stream.
+    /// An error occured when producing the `OnboardingData` message stream.
     #[error("obboarding data error: {0:?}")]
     Data(P),
 }
 
 impl<C, P> InstallerError<C, P> {
     /// Create a new `InstallerError::Io` from an I/O error.
+    // Takes the error by value so it can be used point-free as `.map_err(InstallerError::io)`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn io<E: embedded_io_async::Error>(error: E) -> Self {
         Self::Io(error.kind())
     }

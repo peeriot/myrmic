@@ -25,8 +25,6 @@
 #![deny(missing_docs)]
 #![allow(clippy::uninlined_format_args)] // For `defmt`
 
-extern crate alloc;
-
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use edge_nal::{TcpConnect, TcpSplit, UdpBind, UdpReceive, UdpSend, UdpSplit};
@@ -78,12 +76,6 @@ fn main() {
 }
 
 macro_rules! mk_static {
-    ($t:ty) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit();
-        x
-    }};
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
@@ -142,9 +134,8 @@ async fn main_task(spawner: Spawner, our_ip: Option<Ipv4Addr>) {
     spawner.spawn(ping(ping_s).unwrap());
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 async fn scout(stack: &'static edge_nal_std::Stack, our_ip: Ipv4Addr) -> SocketAddr {
-    info!("Scouting for Zenoh nodes...");
-
     // Adapt the `edge-nal` UDP socket to the ScoutLink traits of `zenoh-nano`
     struct UdpScoutLink<T>(T);
 
@@ -180,6 +171,8 @@ async fn scout(stack: &'static edge_nal_std::Stack, our_ip: Ipv4Addr) -> SocketA
             Ok(())
         }
     }
+
+    info!("Scouting for Zenoh nodes...");
 
     let mut udp_socket = UdpBind::bind(
         stack,
@@ -261,7 +254,7 @@ async fn run_session(
         StreamingLinkSend<&'static TcpSocket>,
     >,
 ) {
-    runner.run(network).await.unwrap()
+    runner.run(network).await.unwrap();
 }
 
 struct LocalRng;

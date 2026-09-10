@@ -5,8 +5,6 @@
 #![deny(missing_docs)]
 #![allow(clippy::uninlined_format_args)] // For `defmt`
 
-extern crate alloc;
-
 use embedded_io_async::{ErrorKind, ErrorType, Read};
 
 use embassy_executor::{Executor, Spawner};
@@ -57,12 +55,6 @@ fn main() {
 }
 
 macro_rules! mk_static {
-    ($t:ty) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit();
-        x
-    }};
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
@@ -72,6 +64,8 @@ macro_rules! mk_static {
 }
 
 /// Main task
+// `#[embassy_executor::task]` requires an async fn even when it never awaits directly.
+#[allow(clippy::unused_async)]
 #[embassy_executor::task]
 async fn main_task(spawner: Spawner) {
     info!("Starting...");
@@ -197,6 +191,8 @@ async fn device(
 /// - Then provide the onboarding meta-data and bundle and wait for the device to signal that
 ///   it has processed those and completed its onboarding.
 #[embassy_executor::task]
+// The `CertConsumer` helper is defined next to its single use inside this function.
+#[allow(clippy::items_after_statements)]
 async fn installer(
     read: PipeRead<'static>,
     write: PipeWrite<'static>,

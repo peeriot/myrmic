@@ -6,7 +6,6 @@ authors           = ["Peeriot GmbH <info@peeriot.io>"]
 license           = "MIT OR Apache-2.0"
 description       = "Wire types shared across the Myrmic WASM host/guest boundary (db, cells, BLE, web), plus the host-only code generator behind myrmic-sdk-macros and the cell build tooling."
 repository        = "https://github.com/peeriot/myrmic"
-readme            = "README.md"
 keywords          = ["myrmic", "wasm", "no-std", "embedded"]
 categories        = ["embedded", "no-std", "wasm"]
 publish           = true

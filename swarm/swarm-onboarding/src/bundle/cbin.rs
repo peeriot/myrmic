@@ -25,7 +25,7 @@ const EOF: u8 = 0xf4;
 /// The maximum length of a BLOB name
 const MAX_NAME_LEN: usize = 255;
 
-/// Errors that can occur during CBin reading or writing.
+/// Errors that can occur during `CBin` reading or writing.
 #[derive(thiserror::Error, Debug, Copy, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CBinError {
@@ -45,6 +45,8 @@ pub enum CBinError {
 
 impl CBinError {
     /// Create a new `CBinError::Io` from an I/O error.
+    // Takes the error by value so it can be used point-free as `.map_err(CBinError::io)`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn io<E: Error>(error: E) -> Self {
         Self::Io(error.kind())
     }
@@ -230,10 +232,8 @@ impl<W: Write> BundleWrite for CBinWrite<W> {
             return Err(CBinError::NameTooLong);
         }
 
-        self.write
-            .write(&[name.len() as u8])
-            .await
-            .map_err(CBinError::io)?;
+        let name_len = u8::try_from(name.len()).map_err(|_| CBinError::NameTooLong)?;
+        self.write.write(&[name_len]).await.map_err(CBinError::io)?;
         self.write
             .write(name.as_bytes())
             .await

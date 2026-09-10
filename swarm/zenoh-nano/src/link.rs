@@ -205,12 +205,12 @@ impl<W: embedded_io_async::Write> LinkSend for StreamingLinkSend<W> {
     }
 
     async fn send(&mut self, payload: ZSlice) -> Result<(), LinkError> {
-        let len = payload.len();
-        if len > self.mtu() as usize {
+        let len = u16::try_from(payload.len()).map_err(|_| LinkError::PayloadTooLarge)?;
+        if len > self.mtu() {
             return Err(LinkError::PayloadTooLarge);
         }
 
-        let len_buf = (len as u16).to_le_bytes();
+        let len_buf = len.to_le_bytes();
         self.0
             .write_all(&len_buf)
             .await
@@ -249,7 +249,7 @@ pub struct PipeRead<'a, M: RawMutex = NoopRawMutex>(
 );
 
 impl<'a, M: RawMutex> PipeRead<'a, M> {
-    /// Construct a new PipeRead
+    /// Construct a new `PipeRead`
     pub fn new(reader: embassy_sync::pipe::Reader<'a, M, PIPE_LINK_BUF_SIZE>) -> Self {
         Self(reader)
     }
@@ -273,7 +273,7 @@ pub struct PipeWrite<'a, M: RawMutex = NoopRawMutex>(
 );
 
 impl<'a, M: RawMutex> PipeWrite<'a, M> {
-    /// Construct a new PipeWrite
+    /// Construct a new `PipeWrite`
     pub fn new(writer: embassy_sync::pipe::Writer<'a, M, PIPE_LINK_BUF_SIZE>) -> Self {
         Self(writer)
     }
@@ -288,7 +288,7 @@ impl<M: RawMutex> Write for PipeWrite<'_, M> {
         Ok(self.0.write(buf).await)
     }
 
-    async fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+    fn flush(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+        core::future::ready(Ok(()))
     }
 }

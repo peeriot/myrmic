@@ -29,7 +29,7 @@ mod accept;
 #[cfg(feature = "trouble-connect")]
 mod connect;
 
-/// The resources required to create a GattLink.
+/// The resources required to create a `GattLink`.
 pub struct GattLinkResources {
     incoming_buffer: [Payload; 1],
     outgoing_buffer: [Payload; 1],
@@ -37,7 +37,6 @@ pub struct GattLinkResources {
 
 impl GattLinkResources {
     /// Create a new instance.
-    #[inline(always)]
     pub const fn new() -> Self {
         Self {
             incoming_buffer: [Payload::new()],
@@ -47,7 +46,6 @@ impl GattLinkResources {
 }
 
 impl Default for GattLinkResources {
-    #[inline(always)]
     fn default() -> Self {
         Self::new()
     }
@@ -75,7 +73,7 @@ where
     /// Create a new instance.
     ///
     /// # Arguments
-    /// - `resources`: The resources required to create the GattLink.
+    /// - `resources`: The resources required to create the `GattLink`.
     pub fn new(resources: &'a mut GattLinkResources) -> Self {
         Self {
             incoming: Channel::new(&mut resources.incoming_buffer),
@@ -161,7 +159,6 @@ struct Payload {
 
 impl Payload {
     /// Create a new instance.
-    #[inline(always)]
     const fn new() -> Self {
         Self {
             data: [0; DefaultPacketPool::MTU],
@@ -195,7 +192,7 @@ const TX_CHAR_UUID: u128 = 0xF47EA3E5_4D04_4EEE_9ACA_E397C4408952;
 /// We use `0x10`, because `trouble` does not decode that value as the standard `Flags` AD type.
 const AD_TYPE_ZENOH_ROLE: u8 = 0x10;
 
-/// A newtype allowing to use a bt_hci `&Controller` as a `Controller`
+/// A newtype allowing to use a `bt_hci` `&Controller` as a `Controller`
 /// A workaround for:
 /// <https://github.com/embassy-rs/bt-hci/issues/32>
 pub struct ControllerRef<'a, C>(&'a C);
@@ -218,18 +215,24 @@ impl<C> bt_hci::controller::Controller for ControllerRef<'_, C>
 where
     C: bt_hci::controller::Controller,
 {
-    fn write_acl_data(&self, packet: &AclPacket) -> impl Future<Output = Result<(), Self::Error>> {
+    fn write_acl_data(
+        &self,
+        packet: &AclPacket<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         self.0.write_acl_data(packet)
     }
 
     fn write_sync_data(
         &self,
-        packet: &SyncPacket,
+        packet: &SyncPacket<'_>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         self.0.write_sync_data(packet)
     }
 
-    fn write_iso_data(&self, packet: &IsoPacket) -> impl Future<Output = Result<(), Self::Error>> {
+    fn write_iso_data(
+        &self,
+        packet: &IsoPacket<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         self.0.write_iso_data(packet)
     }
 
@@ -245,35 +248,35 @@ impl<C> bt_hci::controller::blocking::Controller for ControllerRef<'_, C>
 where
     C: bt_hci::controller::blocking::Controller,
 {
-    fn write_acl_data(&self, packet: &AclPacket) -> Result<(), Self::Error> {
+    fn write_acl_data(&self, packet: &AclPacket<'_>) -> Result<(), Self::Error> {
         self.0.write_acl_data(packet)
     }
 
-    fn write_sync_data(&self, packet: &SyncPacket) -> Result<(), Self::Error> {
+    fn write_sync_data(&self, packet: &SyncPacket<'_>) -> Result<(), Self::Error> {
         self.0.write_sync_data(packet)
     }
 
-    fn write_iso_data(&self, packet: &IsoPacket) -> Result<(), Self::Error> {
+    fn write_iso_data(&self, packet: &IsoPacket<'_>) -> Result<(), Self::Error> {
         self.0.write_iso_data(packet)
     }
 
     fn try_write_acl_data(
         &self,
-        packet: &AclPacket,
+        packet: &AclPacket<'_>,
     ) -> Result<(), bt_hci::controller::blocking::TryError<Self::Error>> {
         self.0.try_write_acl_data(packet)
     }
 
     fn try_write_sync_data(
         &self,
-        packet: &SyncPacket,
+        packet: &SyncPacket<'_>,
     ) -> Result<(), bt_hci::controller::blocking::TryError<Self::Error>> {
         self.0.try_write_sync_data(packet)
     }
 
     fn try_write_iso_data(
         &self,
-        packet: &IsoPacket,
+        packet: &IsoPacket<'_>,
     ) -> Result<(), bt_hci::controller::blocking::TryError<Self::Error>> {
         self.0.try_write_iso_data(packet)
     }
