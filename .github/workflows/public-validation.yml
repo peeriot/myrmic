@@ -42,9 +42,13 @@ jobs:
   guidelines:
     name: Guidelines
     runs-on: ubuntu-latest
-    if: inputs.called
-        || github.event_name == 'workflow_dispatch'
-        || github.repository == 'peeriot/myrmic'
+    if: (
+        ( inputs.called ) ||
+        ( github.event_name == 'workflow_dispatch' ) ||
+        ( github.repository == 'peeriot/myrmic' && github.event_name == 'push' ) ||
+        ( github.repository == 'peeriot/myrmic' && github.event_name == 'pull_request'
+          && github.event.pull_request.draft == false )
+      )
     permissions:
       contents: read
     concurrency:
@@ -66,9 +70,13 @@ jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
-    if: inputs.called
-        || github.event_name == 'workflow_dispatch'
-        || github.repository == 'peeriot/myrmic'
+    if: (
+        ( inputs.called ) ||
+        ( github.event_name == 'workflow_dispatch' ) ||
+        ( github.repository == 'peeriot/myrmic' && github.event_name == 'push' ) ||
+        ( github.repository == 'peeriot/myrmic' && github.event_name == 'pull_request'
+          && github.event.pull_request.draft == false )
+      )
     permissions:
       contents: read
     concurrency:
