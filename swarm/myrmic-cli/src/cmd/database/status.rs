@@ -77,7 +77,7 @@ pub async fn handle(ctx: Ctx, cmd: Status) -> Result<()> {
     let excludes = monitor::parse(&cmd.exclude)?;
 
     let session = ctx.session().await?;
-    let filter = monitor::resolve(ctx, &session, &selectors, &excludes).await?;
+    let filter = monitor::resolve(ctx.clone(), &session, &selectors, &excludes).await?;
 
     if !selectors.is_empty() && filter.include.is_empty() {
         anyhow::bail!("nothing to inspect: the given identifiers name no cells");
@@ -104,7 +104,7 @@ pub async fn handle(ctx: Ctx, cmd: Status) -> Result<()> {
     }
 
     let deadline = tokio::time::Instant::now() + window;
-    let scopes = collect_announces(ctx, &filter, &mut receiver, cmd.active, deadline).await;
+    let scopes = collect_announces(ctx.clone(), &filter, &mut receiver, cmd.active, deadline).await;
 
     drop(subscribers);
 

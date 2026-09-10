@@ -112,27 +112,27 @@ fn main() -> std::process::ExitCode {
 
     let result = match command {
         // Project
-        args::Command::New(cmd) => cmd::new::handle(ctx, cmd),
-        args::Command::Build(cmd) => cmd::build::handle(ctx, cmd),
-        args::Command::Flash(cmd) => cmd::flash::handle(ctx, cmd),
-        args::Command::Monitor(cmd) => cmd::monitor::handle(ctx, cmd),
+        args::Command::New(cmd) => cmd::new::handle(&ctx, cmd),
+        args::Command::Build(cmd) => cmd::build::handle(&ctx, cmd),
+        args::Command::Flash(cmd) => cmd::flash::handle(&ctx, cmd),
+        args::Command::Monitor(cmd) => cmd::monitor::handle(ctx.clone(), cmd),
         // Management
-        args::Command::Send(cmd) => block_on(cmd::send::handle(ctx, cmd)),
-        args::Command::Publish(cmd) => block_on(cmd::publish::handle(ctx, cmd)),
-        args::Command::Subscribe(cmd) => block_on(cmd::subscribe::handle(ctx, cmd)),
-        args::Command::Delete(cmd) => block_on(cmd::delete::handle(ctx, cmd)),
-        args::Command::Deploy(cmd) => block_on(cmd::deploy::handle(ctx, cmd)),
-        args::Command::Gateway(cmd) => block_on(cmd::gateway::handle(ctx, cmd)),
-        args::Command::Cells(cmd) => block_on(cmd::cells::handle(ctx, cmd)),
-        args::Command::Network(cmd) => block_on(cmd::network::handle(ctx, cmd)),
+        args::Command::Send(cmd) => block_on(cmd::send::handle(ctx.clone(), cmd)),
+        args::Command::Publish(cmd) => block_on(cmd::publish::handle(ctx.clone(), cmd)),
+        args::Command::Subscribe(cmd) => block_on(cmd::subscribe::handle(ctx.clone(), cmd)),
+        args::Command::Delete(cmd) => block_on(cmd::delete::handle(ctx.clone(), cmd)),
+        args::Command::Deploy(cmd) => block_on(cmd::deploy::handle(ctx.clone(), cmd)),
+        args::Command::Gateway(cmd) => block_on(cmd::gateway::handle(ctx.clone(), cmd)),
+        args::Command::Cells(cmd) => block_on(cmd::cells::handle(ctx.clone(), cmd)),
+        args::Command::Network(cmd) => block_on(cmd::network::handle(ctx.clone(), cmd)),
         #[cfg(feature = "telemetry")]
-        args::Command::Telemetry(cmd) => block_on(cmd::telemetry::handle(ctx, cmd)),
-        args::Command::Runtimes(cmd) => cmd::runtimes::handle(ctx, cmd),
-        args::Command::Database(cmd) => block_on(cmd::database::handle(ctx, cmd)),
-        args::Command::Replicate(cmd) => block_on(cmd::replicate::handle(ctx, cmd)),
-        args::Command::Tags(cmd) => block_on(cmd::tags::handle(ctx, cmd)),
+        args::Command::Telemetry(cmd) => block_on(cmd::telemetry::handle(ctx.clone(), cmd)),
+        args::Command::Runtimes(cmd) => cmd::runtimes::handle(ctx.clone(), cmd),
+        args::Command::Database(cmd) => block_on(cmd::database::handle(ctx.clone(), cmd)),
+        args::Command::Replicate(cmd) => block_on(cmd::replicate::handle(ctx.clone(), cmd)),
+        args::Command::Tags(cmd) => block_on(cmd::tags::handle(ctx.clone(), cmd)),
         // Custom
-        args::Command::Platforms(cmd) => cmd::platforms::handle(ctx, cmd),
+        args::Command::Platforms(cmd) => cmd::platforms::handle(ctx.clone(), cmd),
     };
 
     if let Err(ref err) = result {

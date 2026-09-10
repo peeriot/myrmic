@@ -10,7 +10,7 @@ use sha2::Digest;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub fn write(ctx: Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result<()> {
+pub fn write(ctx: &Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result<()> {
     let path = path.as_ref();
 
     let mut entries = vec![];
@@ -109,7 +109,7 @@ pub fn write(ctx: Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result<
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn read(ctx: Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
+pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
     use std::io::Read;
 
     let path = path.as_ref();

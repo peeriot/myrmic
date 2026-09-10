@@ -82,7 +82,7 @@ pub async fn handle(ctx: Ctx, cmd: Monitor) -> Result<()> {
     let excludes = parse(&cmd.exclude)?;
 
     let session = ctx.session().await?;
-    let filter = resolve(ctx, &session, &selectors, &excludes).await?;
+    let filter = resolve(ctx.clone(), &session, &selectors, &excludes).await?;
 
     if !selectors.is_empty() && filter.include.is_empty() {
         anyhow::bail!("nothing to monitor: the given identifiers name no cells");

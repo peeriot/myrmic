@@ -15,7 +15,7 @@ pub struct List {
     pub name: Option<String>,
 }
 
-pub fn handle(ctx: Ctx, cmd: List) -> anyhow::Result<()> {
+pub fn handle(ctx: &Ctx, cmd: List) -> anyhow::Result<()> {
     let List { pid_path, name } = cmd;
 
     let custom_path = pid_path.is_some();

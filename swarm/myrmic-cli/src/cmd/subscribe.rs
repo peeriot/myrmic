@@ -96,7 +96,7 @@ pub async fn handle(ctx: Ctx, cmd: Subscribe) -> anyhow::Result<()> {
         };
 
         for scope in scopes {
-            if let Err(err) = drain_scope(ctx, &db, &mut cursors, scope).await {
+            if let Err(err) = drain_scope(ctx.clone(), &db, &mut cursors, scope).await {
                 warn!(ctx, "{err:#}");
             }
         }

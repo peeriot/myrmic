@@ -66,7 +66,7 @@ pub async fn deploy_toml(
     mut root: RootConfig,
 ) -> anyhow::Result<()> {
     // A firmware is flashed, never deployed, so no deploy names a runtime.
-    let classes = build::build_toml(ctx, path, platforms, cargo_target, None)?;
+    let classes = build::build_toml(&ctx, path, platforms, cargo_target, None)?;
 
     let session = ctx.session().await?;
 
@@ -83,7 +83,7 @@ pub async fn deploy_toml(
     // like the app path — a lone crate/`.wasm` deploy used to skip this.
     let mut classes: HashMap<String, build::CellClass> =
         classes.into_iter().map(|c| (c.name.clone(), c)).collect();
-    crate::spawn_patch::patch_spawn_refs(ctx, &session, &mut classes).await?;
+    crate::spawn_patch::patch_spawn_refs(ctx.clone(), &session, &mut classes).await?;
 
     // Only a single-class deploy can carry init arguments (guarded above), so
     // `take` hands the buffer to the sole class and leaves `None` otherwise.
@@ -107,7 +107,7 @@ pub async fn deploy_toml(
             arguments: root.arguments.take(),
             restart: root.restart.clone(),
         };
-        deploy_cell(ctx, &session, sri, &class, tags.clone(), class_root).await?;
+        deploy_cell(ctx.clone(), &session, sri, &class, tags.clone(), class_root).await?;
     }
 
     Ok(())
@@ -119,7 +119,7 @@ pub async fn deploy_app(
     app: models::App,
     restart: Option<RestartPolicy>,
 ) -> anyhow::Result<()> {
-    let info = build::build_app(ctx, path, app, None)?;
+    let info = build::build_app(&ctx, path, app, None)?;
 
     deploy_app_info(ctx, info, restart).await
 }
@@ -139,7 +139,7 @@ fn describe_restart(policy: &RestartPolicy) -> String {
 
 /// Replaces every instance's restart policy with `restart`, reporting each
 /// instance whose app spec asked for something else.
-fn override_restart(ctx: Ctx, info: &mut build::AppInfo, restart: &RestartPolicy) {
+fn override_restart(ctx: &Ctx, info: &mut build::AppInfo, restart: &RestartPolicy) {
     for instance in &mut info.instances {
         if let Some(declared) = &instance.restart
             && declared != restart
@@ -162,7 +162,7 @@ async fn deploy_app_info(
     restart: Option<RestartPolicy>,
 ) -> anyhow::Result<()> {
     if let Some(restart) = &restart {
-        override_restart(ctx, &mut info, restart);
+        override_restart(&ctx, &mut info, restart);
     }
 
     let mut errors = false;
@@ -190,12 +190,12 @@ async fn deploy_app_info(
 
     let session = ctx.session().await?;
 
-    crate::spawn_patch::patch_spawn_refs(ctx, &session, &mut info.classes).await?;
+    crate::spawn_patch::patch_spawn_refs(ctx.clone(), &session, &mut info.classes).await?;
 
     let sorg = ctx.sorg(session.clone());
 
     for class in info.classes.values() {
-        upload_class_artifacts(ctx, &sorg, &class.name, class).await?;
+        upload_class_artifacts(ctx.clone(), &sorg, &class.name, class).await?;
     }
 
     let request = build_deploy_request(&info)?;
@@ -231,7 +231,7 @@ pub async fn deploy_nest(
     path: &std::path::Path,
     restart: Option<RestartPolicy>,
 ) -> anyhow::Result<()> {
-    let info = nest::read(ctx, path)?;
+    let info = nest::read(&ctx, path)?;
     if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
         && stem != info.name
     {
@@ -306,7 +306,7 @@ pub async fn deploy_wasm(
         },
     )]);
 
-    crate::spawn_patch::patch_spawn_refs(ctx, session, &mut classes).await?;
+    crate::spawn_patch::patch_spawn_refs(ctx.clone(), session, &mut classes).await?;
 
     deploy_cell(ctx, session, sri, &classes[sri], tags, root).await
 }
@@ -348,7 +348,7 @@ pub async fn deploy_cell(
     let cell_sri = cell_protocol::Sri::of_path(sri)
         .map_err(|e| anyhow::anyhow!("invalid cell name '{sri}': {e}"))?;
 
-    upload_class_artifacts(ctx, &sorg, sri, class).await?;
+    upload_class_artifacts(ctx.clone(), &sorg, sri, class).await?;
 
     crate::info!(ctx, "deploying cell (srn = {sri}, sri = {cell_sri})");
 

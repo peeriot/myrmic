@@ -165,7 +165,7 @@ const REAPPEAR_TIMEOUT: Duration = Duration::from_secs(10);
 /// interrupted, reopening the port whenever it drops. Addresses in a panic
 /// backtrace are resolved against `elfs`: the firmware, and the chip's ROM
 /// when espflash ships it.
-pub fn monitor(ctx: Ctx, port_name: &str, elfs: Vec<&[u8]>) -> anyhow::Result<()> {
+pub fn monitor(ctx: &Ctx, port_name: &str, elfs: Vec<&[u8]>) -> anyhow::Result<()> {
     crate::info!(ctx, "Monitoring {port_name} (Ctrl-C to stop)");
     let mut out = ResolvingPrinter::new(elfs, std::io::stdout().lock(), false);
     let mut buf = [0u8; 1024];

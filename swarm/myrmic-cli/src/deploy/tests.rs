@@ -201,7 +201,7 @@ fn override_restart_replaces_every_instance_policy() {
     };
 
     let policy = RestartTypeName::Always.to_policy();
-    super::override_restart(Ctx::default(), &mut info, &policy);
+    super::override_restart(&Ctx::default(), &mut info, &policy);
 
     for instance in &info.instances {
         assert_eq!(instance.restart.as_ref(), Some(&policy));

@@ -46,7 +46,7 @@ fn resolve_app_name(explicit: Option<&str>, path: &Path) -> anyhow::Result<Strin
 
 #[allow(clippy::too_many_lines)]
 pub fn build_app(
-    ctx: Ctx,
+    ctx: &Ctx,
     path: &Path,
     app: models::App,
     name_override: Option<&str>,
@@ -218,7 +218,7 @@ pub(crate) fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build
 /// `runtime_name` only means something to a firmware crate, which bakes it in
 /// as the device's name.
 pub fn build_toml(
-    ctx: Ctx,
+    ctx: &Ctx,
     manifest_path: &Path,
     platforms: &[Platform],
     cargo_target: models::CargoTarget,
@@ -264,7 +264,7 @@ pub fn build_toml(
 /// Builds one crate of a `myrmic build <path>` run. A firmware crate yields an
 /// ELF and no cell class; anything else is a cell.
 fn build_member(
-    ctx: Ctx,
+    ctx: &Ctx,
     path: &Path,
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
@@ -280,7 +280,7 @@ fn build_member(
 }
 
 fn build_firmware(
-    ctx: Ctx,
+    ctx: &Ctx,
     path: &Path,
     chip: firmware::Chip,
     platforms: &[Platform],
@@ -315,7 +315,7 @@ fn build_firmware(
 /// Announces a firmware build, naming the runtime it is built for when one was
 /// given.
 pub(crate) fn report_building(
-    ctx: Ctx,
+    ctx: &Ctx,
     chip: firmware::Chip,
     manifest_path: &Path,
     runtime_name: Option<&str>,
@@ -332,7 +332,7 @@ pub(crate) fn report_building(
 
 /// Logs where a firmware build's partition layout came from, and warns when
 /// nothing tells espflash which table to flash it with.
-pub(crate) fn report_layout(ctx: Ctx, built: &firmware::FirmwareBuild) {
+pub(crate) fn report_layout(ctx: &Ctx, built: &firmware::FirmwareBuild) {
     if let Some(partitions) = &built.default_partitions {
         crate::info!(
             ctx,
@@ -360,7 +360,7 @@ fn build_platforms(platforms: &[Platform]) -> Vec<myrmic_build::Platform> {
 }
 
 fn build_cell(
-    ctx: Ctx,
+    ctx: &Ctx,
     path: &Path,
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,

@@ -23,7 +23,7 @@ pub struct Logs {
     pub name: Option<String>,
 }
 
-pub fn handle(ctx: Ctx, cmd: Logs) -> anyhow::Result<()> {
+pub fn handle(ctx: &Ctx, cmd: Logs) -> anyhow::Result<()> {
     let Logs {
         follow,
         pid_path,

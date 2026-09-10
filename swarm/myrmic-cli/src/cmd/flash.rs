@@ -31,7 +31,7 @@ pub struct Flash {
     monitor: bool,
 }
 
-pub fn handle(ctx: Ctx, cmd: Flash) -> anyhow::Result<()> {
+pub fn handle(ctx: &Ctx, cmd: Flash) -> anyhow::Result<()> {
     let Flash {
         path,
         mut connect,
@@ -53,7 +53,7 @@ pub fn handle(ctx: Ctx, cmd: Flash) -> anyhow::Result<()> {
         )
     })?;
 
-    crate::log::adopt_log_crate(ctx);
+    crate::log::adopt_log_crate(ctx.clone());
     // With nobody to ask, espflash refuses a choice of ports and points at --port.
     if !std::io::stdin().is_terminal() {
         connect.non_interactive = true;

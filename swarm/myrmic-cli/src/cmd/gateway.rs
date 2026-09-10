@@ -52,7 +52,7 @@ pub async fn handle(ctx: Ctx, cmd: Gateway) -> anyhow::Result<()> {
         name: utils::command_path(),
         origin: utils::origin(),
     });
-    config.telemetry.logs.env_filter = utils::build_filter(ctx);
+    config.telemetry.logs.env_filter = utils::build_filter(&ctx);
 
     let spawned = Swarm::new(config).wait_in_place().await?;
 
