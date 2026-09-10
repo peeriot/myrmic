@@ -14,7 +14,7 @@ pub struct New {
 
     /// Scaffold a firmware crate for this chip (`esp32c5`, `esp32c6`, `esp32c61`)
     /// instead of a cell.
-    #[clap(short, long, require_equals = true, num_args = 0..=1, default_missing_value = "esp32c6")]
+    #[clap(short, long, num_args = 0..=1, default_missing_value = "esp32c6")]
     firmware: Option<Chip>,
 
     /// Also scaffold a Signal Layer pipeline (board.yml + pipeline.yml). With
