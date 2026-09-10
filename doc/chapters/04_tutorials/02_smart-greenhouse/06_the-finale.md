@@ -125,7 +125,7 @@ myrmic cells
   pump              4e9b...  wasm  [8]30d3436  20s  never   pump              pump
 ```
 
-The five cells are grouped under one application name now. Refresh the browser: the dashboard is back, the readings tick, and within a couple of minutes the agent waters the bed - the whole machine, from one file.
+Press Ctrl-C to leave the live view. The five cells are grouped under one application name now. Refresh the browser: the dashboard is back, the readings tick, and within a couple of minutes the agent waters the bed - the whole machine, from one file.
 
 And because the swarm knows the five belong together, they also leave together:
 

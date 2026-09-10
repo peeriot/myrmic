@@ -145,6 +145,8 @@ myrmic cells
 
 The sensor cell appears, addressed by two identifiers: the `srn` (its human-readable name, derived from the crate name) and the `sri` (the unique id the runtime uses internally, derived from the srn). Right now the sensor cell is already measuring - once per second, into the void, because nobody is listening yet.
 
+In a terminal `myrmic cells` is a live view: it redraws every couple of seconds until you press Ctrl-C. Add `--once` for a single listing instead - which is also what you get when the output is piped or redirected.
+
 So let us listen. Open Terminal 3 and subscribe to the `moisture` event:
 
 ```bash

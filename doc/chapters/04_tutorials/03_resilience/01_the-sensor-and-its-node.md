@@ -69,6 +69,8 @@ myrmic cells
   moisture-sensor  365d6cfe-e9c2-5914-bfed-3a17d4ecd6da  wasm  [1]12a7f3f  14s  always  moisture-sensor  moisture-sensor
 ```
 
+In a terminal `myrmic cells` is a live view that redraws every couple of seconds until you press Ctrl-C; add `--once` for a single listing instead - which is also what you get when the output is piped or redirected.
+
 The `runtime` column says `[1]12a7f3f` - `node1`, as it must. Open Terminal 2 and listen to it:
 
 ```bash
