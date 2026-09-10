@@ -25,7 +25,7 @@ jobs:
 
   deploy-book:
     name: Deploy Book
-    runs-on: general
+    runs-on: docu
     if: |
       github.repository == 'peeriot/swarm' &&
       (
@@ -64,7 +64,7 @@ jobs:
 
   deploy-docs:
     name: Deploy Docs
-    runs-on: general
+    runs-on: docu
     if: |
       github.repository == 'peeriot/swarm' &&
       (

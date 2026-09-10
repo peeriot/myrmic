@@ -14,7 +14,7 @@ name: Black Duck Security Scan
 # What: Black Duck SCA scan.
 # Where: swarm only, GitHub-hosted. Needs the organisation's BLACKDUCKSCA_URL, which
 #        the public mirror cannot see.
-# When: push, pull request, manual dispatch.
+# When: push to master, non-draft pull requests, manual dispatch.
 on:
   push:
     branches:
@@ -22,11 +22,17 @@ on:
   pull_request:
     branches:
       - master
+    types: [ 'opened', 'reopened', 'synchronize', 'ready_for_review' ]
   workflow_dispatch: {}
 jobs:
   blackducksca:
     runs-on: ubuntu-latest
-    if: github.repository == 'peeriot/swarm'
+    if: github.repository == 'peeriot/swarm' &&
+      (
+        ( github.event_name == 'push' ) ||
+        ( github.event_name == 'workflow_dispatch' ) ||
+        ( github.event_name == 'pull_request' && github.event.pull_request.draft == false )
+      )
     steps:
       - name: Checkout Source
         uses: actions/checkout@v6

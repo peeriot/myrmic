@@ -141,15 +141,39 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
         exit 1
     fi
 
+    # The integration tests compile their cell fixtures at test runtime, with the
+    # pinned nightly `myrmic-build` invokes and the `rust-src` its `-Z build-std`
+    # needs. The CI image ships that toolchain, so nothing here ever had to
+    # install it, and a runner without it fails deep inside the tests with a
+    # rustup error instead of failing here with a reason.
+    #
+    # Reading the channel out of the constant keeps this from drifting from it.
+    printf "\n\n--== Ensure Cell Toolchain ==--\n\n"
+    CELL_TOOLCHAIN="$(sed -nE 's/^pub const TOOLCHAIN: &str = "(.+)";$/\1/p' \
+        "$SCRIPT_DIR/../../swarm/myrmic-build/src/compile.rs")"
+    if [ -z "$CELL_TOOLCHAIN" ]; then
+        printf 'could not read the cell toolchain pin from myrmic-build\n' >&2
+        exit 1
+    fi
+    rustup toolchain list | grep -q "^${CELL_TOOLCHAIN}" \
+        || rustup toolchain install "$CELL_TOOLCHAIN" --profile minimal
+    rustup component add rust-src --toolchain "$CELL_TOOLCHAIN"
+
+    # Set before anything is compiled, not just before the tests. RUSTFLAGS are
+    # part of a unit's fingerprint, so adding them between two cargo invocations
+    # makes the second one rebuild every crate the first one already built and
+    # keep both copies in `target/`. That fits on a runner with a persistent
+    # volume and fills the disk on one without.
+    HOST_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
+    HOST_RUSTFLAGS_VAR="CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
+    export "$HOST_RUSTFLAGS_VAR=-D warnings"
+
     # The tests in `sorg-tests` are integration tests that require the `swarm`
     # binary to be built, so we build it first before running the tests.
     printf "\n\n--== Build Swarm ==--\n\n"
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX" --bin swarm --bin myrmic
 
     printf "\n\n--== Run Unit Tests ==--\n\n"
-    HOST_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
-    HOST_RUSTFLAGS_VAR="CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
-    export "$HOST_RUSTFLAGS_VAR=-D warnings"
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
         "${PACKAGE_ARGS[@]}"
 
