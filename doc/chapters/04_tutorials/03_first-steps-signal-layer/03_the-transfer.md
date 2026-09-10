@@ -102,12 +102,12 @@ and offered itself as a place to run cells.
 ## Step 3 - Move the cell
 
 The cell is still on the Linux runtime, and a cell exists in one place at a time. Deploy it again
-under the same name, this time for the device platform — `riscv32imac` (the ESP32-C6). That
-rebuilds it, ahead-of-time compiles it with `wamrc`, and the swarm places it on the only node that
-can run it, the C6:
+under the same name, this time for the device platform `riscv32imac` (the ESP32-C6): that rebuilds
+it and ahead-of-time compiles it with `wamrc`. The Linux runtime is still in the swarm and could
+host the cell too, so `--tag esp32c6` pins the placement to the C6 and moves the cell onto it:
 
 ```bash
-myrmic deploy ~/sl-tutorial/thermometer --name thermometer --platform riscv32imac
+myrmic deploy ~/sl-tutorial/thermometer --name thermometer --platform riscv32imac --tag esp32c6
 ```
 
 Nothing in `thermometer/src/lib.rs` changed. Look at where it landed now:
