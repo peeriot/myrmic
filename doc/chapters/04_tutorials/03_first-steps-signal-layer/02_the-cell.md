@@ -35,7 +35,12 @@ The scaffold is a small counter example. Replace `thermometer/src/lib.rs` entire
 use core::time::Duration;
 
 use myrmic_sdk::tap::Tap;
-use myrmic_sdk::{Callback, Metadata, Result};
+use myrmic_sdk::{ApiError, Callback, InMemory, Metadata, Result};
+
+// Resolve each tap once and reuse the handle. `InMemory` is cell-local state
+// that outlives a single handler call but is never persisted.
+static VALUE_TAP: InMemory<Option<Tap>> = InMemory::empty();
+static AVG_TAP: InMemory<Option<Tap>> = InMemory::empty();
 
 #[myrmic_sdk::init]
 fn init(_md: Metadata) -> Result<()> {
@@ -49,34 +54,49 @@ fn init(_md: Metadata) -> Result<()> {
     Ok(())
 }
 
+/// Read a tap through its cached handle: resolve it the first time, reuse it
+/// after, and drop it if the pipeline reconnected so the next tick re-resolves.
+fn read(cache: &InMemory<Option<Tap>>, name: &str) -> Result<Option<(u64, f32)>> {
+    let mut slot = cache.try_borrow_mut()?;
+    if slot.is_none() {
+        *slot = Tap::resolve(name)?;
+    }
+    let result = match slot.as_ref() {
+        Some(tap) => tap.read_typed::<f32>(),
+        None => return Ok(None), // not offered on this node
+    };
+    match result {
+        Ok(reading) => Ok(reading),
+        Err(ApiError::Unavailable) => {
+            *slot = None; // stale handle after a reconnect; re-resolve next tick
+            Ok(None)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// Timer target: read both taps and log what the pipeline is publishing.
 #[myrmic_sdk::cmd]
 fn sample(_md: Metadata) -> Result<()> {
-    let Some(value_tap) = Tap::resolve("sim_value")? else {
-        myrmic_sdk::info!("sim_value not offered here (yet)").ok();
-        return Ok(());
-    };
-    let Some(avg_tap) = Tap::resolve("sim_avg")? else {
-        myrmic_sdk::info!("sim_avg not offered here (yet)").ok();
-        return Ok(());
-    };
-
-    match (value_tap.read_typed::<f32>()?, avg_tap.read_typed::<f32>()?) {
+    match (read(&VALUE_TAP, "sim_value")?, read(&AVG_TAP, "sim_avg")?) {
         (Some((ts, value)), Some((_, avg))) => {
             myrmic_sdk::info!("t={} value={} avg={}", ts, value, avg).ok();
         }
         _ => {
-            myrmic_sdk::info!("taps exist but hold no value yet").ok();
+            myrmic_sdk::info!("taps not ready yet").ok();
         }
     }
     Ok(())
 }
 ```
 
-The whole cell is: a timer firing once a second, two tap resolves, two typed reads, one log line.
-`resolve` answers with nothing when a tap is not offered on this node, and `read_typed` answers
-with nothing when the tap exists but holds no value yet; the
-[reading guide](../../05_guides/11_signal-layer/03_read-values.md) explains the different kinds of
+The cell resolves each tap once and reuses the handle. Since `Tap::resolve` is a host call, the
+`read` helper caches the handle in an `InMemory` slot (cell-local state that lives as long as the
+cell instance but is never persisted) and only resolves again when the slot is empty. `read`
+answers with nothing in three cases: the tap is not offered on this node (`resolve` found nothing),
+it holds no value yet (`read_typed` found nothing), or a pipeline reconnect left the handle stale
+(`ApiError::Unavailable`), in which case it drops the handle so the next tick resolves a fresh one.
+The [reading guide](../../05_guides/11_signal-layer/03_read-values.md) explains the kinds of
 nothing. The scaffold pins `myrmic-sdk` to your checkout, so the cell and the runtime cannot drift
 apart.
 
