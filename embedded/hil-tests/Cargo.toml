@@ -24,6 +24,7 @@ zenoh      = { workspace = true, features = ["unstable", "default"] }
 cell-protocol          = { workspace = true }
 module-examples-common = { workspace = true }
 myrmic-build           = { workspace = true }
+myrmic-flash           = { workspace = true }
 postcard               = { workspace = true }
 signal-layer-types     = { workspace = true }
 sorg-common            = { workspace = true }

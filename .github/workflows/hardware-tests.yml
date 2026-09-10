@@ -175,9 +175,14 @@ jobs:
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline
           cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
+          # Copy this build's generated partition table next to the production ELF, so the flasher
+          # picks the table matched to this exact firmware (see generated_partition_table()).
+          cp "$(find target/riscv32imac-unknown-none-elf/release/build -path '*modem-esp32*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" target/partitions.generated.csv
       - name: Build embedded firmware (C61)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline,wdt-selftest
+          # Same, next to the default ELF the rest of the suite flashes.
+          cp "$(find target/riscv32imac-unknown-none-elf/release/build -path '*modem-esp32*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" target/riscv32imac-unknown-none-elf/release/partitions.generated.csv
       - name: Build swarm (host binary)
         run: |
           CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
