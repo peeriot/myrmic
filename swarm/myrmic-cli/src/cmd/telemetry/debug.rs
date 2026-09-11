@@ -7,6 +7,7 @@ use crate::cmd::telemetry::debug::stream::DebugStream;
 mod data;
 mod events;
 mod logs;
+mod mailbox;
 mod messages;
 mod stream;
 

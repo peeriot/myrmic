@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use cell_protocol::{EVENTS_TABLE, MailboxEvent, NAMESPACE_CELLS};
 use db_client::v1::Subscription;
-use db_commons::models::{Cursor, Scope, Subject, events, tb_count, tb_list};
+use db_commons::models::{Cursor, Scope, Subject, events};
 use uuid::Uuid;
 
 use crate::args::Ctx;
 use crate::cmd::telemetry::debug::data::{DebugEvent, DebugItem, DebugPayload, insertion_time};
+use crate::cmd::telemetry::debug::mailbox;
 
 pub(crate) struct EventSubscriber {
     _subscription: Subscription,
@@ -66,29 +67,9 @@ async fn data_collection(
     while let Some((scope, table)) = receiver.recv().await {
         // One failed read says nothing about the other scopes this one task serves, so the
         // cursor stays where it is and the next notification retries from it.
-        let cursor = match cursors.get(&scope) {
-            Some(cursor) => cursor.clone(),
-            None => {
-                // no cursor for this scope yet, we are doing a best effort job here to not query
-                // all events from the DB but rather hope events are not firing so fast that the
-                // assumption of new 1 event per processed notification stays true for at least
-                // the first event in that scope.
-                match count(&db, scope.clone(), table.clone()).await {
-                    Ok(response) => Cursor::Skip(response.count - 1),
-                    Err(err) => {
-                        crate::warn!(
-                            &ctx,
-                            "failed to count table '{table}' of scope '{}': {err}",
-                            scope.database
-                        );
+        let cursor = cursors.get(&scope).cloned();
 
-                        continue;
-                    }
-                }
-            }
-        };
-
-        let response = match query(&db, scope.clone(), table.clone(), cursor).await {
+        let response = match mailbox::list(&db, scope.clone(), table.clone(), cursor).await {
             Ok(response) => response,
             Err(err) => {
                 crate::warn!(
@@ -141,51 +122,4 @@ async fn data_collection(
     }
 
     crate::debug!(&ctx, "event collection ends, no more notifications");
-}
-
-async fn query(
-    db: &db_client::v1::Client,
-    scope: Scope,
-    table: String,
-    cursor: Cursor,
-) -> anyhow::Result<tb_list::Response> {
-    db.read_tx_in(scope.clone(), async move |client, tx_id| {
-        let req = tb_list::Request {
-            id: tx_id,
-            op: tb_list::Op {
-                scope,
-                table,
-                cursor: Some(cursor),
-                limit: None,
-                order: None,
-            },
-        };
-
-        Ok(client
-            .send(req)
-            .await?
-            .map_err(|err| anyhow::anyhow!("{}", err.message))?)
-    })
-    .await
-    .map_err(|err| anyhow::anyhow!("{err}"))
-}
-
-async fn count(
-    db: &db_client::v1::Client,
-    scope: Scope,
-    table: String,
-) -> anyhow::Result<tb_count::Response> {
-    db.read_tx_in(scope.clone(), async move |client, tx_id| {
-        let req = tb_count::Request {
-            id: tx_id,
-            op: tb_count::Op { scope, table },
-        };
-
-        Ok(client
-            .send(req)
-            .await?
-            .map_err(|err| anyhow::anyhow!("{}", err.message))?)
-    })
-    .await
-    .map_err(|err| anyhow::anyhow!("{err}"))
 }

@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use cell_protocol::{MESSAGES_TABLE, MailboxCommand, NAMESPACE_CELLS, Sri};
 use db_client::v1::Subscription;
-use db_commons::models::{Cursor, Scope, Subject, events, tb_list};
+use db_commons::models::{Cursor, Scope, Subject, events};
 use uuid::Uuid;
 
 use crate::args::Ctx;
 use crate::cmd::telemetry::debug::data::{DebugCommand, DebugItem, DebugPayload, insertion_time};
+use crate::cmd::telemetry::debug::mailbox;
 
 pub(crate) struct MessageSubscriber {
     _subscription: Subscription,
@@ -74,7 +75,7 @@ async fn data_collection(
 
         // One failed read says nothing about the other cells this one task serves, so the
         // cursor stays where it is and the next notification retries from it.
-        let response = match query(&db, scope.clone(), table.clone(), cursor).await {
+        let response = match mailbox::list(&db, scope.clone(), table.clone(), cursor).await {
             Ok(response) => response,
             Err(err) => {
                 crate::warn!(
@@ -127,31 +128,4 @@ async fn data_collection(
     }
 
     crate::debug!(&ctx, "command collection ends, no more notifications");
-}
-
-async fn query(
-    db: &db_client::v1::Client,
-    scope: Scope,
-    table: String,
-    cursor: Option<Cursor>,
-) -> anyhow::Result<tb_list::Response> {
-    db.read_tx_in(scope.clone(), async move |client, tx_id| {
-        let req = tb_list::Request {
-            id: tx_id,
-            op: tb_list::Op {
-                scope,
-                table,
-                cursor,
-                limit: None,
-                order: None,
-            },
-        };
-
-        Ok(client
-            .send(req)
-            .await?
-            .map_err(|err| anyhow::anyhow!("{}", err.message))?)
-    })
-    .await
-    .map_err(|err| anyhow::anyhow!("{err}"))
 }
