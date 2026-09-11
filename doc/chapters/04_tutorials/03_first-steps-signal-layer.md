@@ -21,21 +21,21 @@ the physical machine, differs between the two.
 
 ## What you need
 
-Every `myrmic new` in this tutorial builds the project it scaffolds against a checkout of the
-Myrmic repository. Point the CLI at yours **before you scaffold anything**, and every command below
-picks it up with no `--sdk` flag to repeat:
+To use the Signal Layer you must clone the Myrmic repository.
+
+`myrmic new` creates the skeleton of every project in this tutorial, and it has to know where your
+clone is. Tell it once, with an environment variable:
 
 ```bash
-export PEERIOT_MYRMIC_SDK=~/myrmic   # the checkout Install from source left you; use your own path
+export PEERIOT_MYRMIC_SDK=~/myrmic   # the path to your clone
 ```
 
-Set it once, in the shell you run the tutorial from, before the first `myrmic new`. Setting it
-afterwards does not repair an already-scaffolded project: it is read only while a project is
-created. You can pass `--sdk <path>` on any single command instead, and it wins when both are set.
+Set this in the shell you run the tutorial from, before the first `myrmic new`. It is read only when
+a project is created, so setting it afterwards will not fix a project you already created. Delete
+that project and create it again.
 
-Without a checkout to point at, a source-built CLI writes an SDK dependency your machine cannot
-fetch, and the next build fails with `revspec '...' not found`. Set the variable (or pass `--sdk`)
-and the generated project builds against your checkout.
+The other option is to add `--sdk ~/myrmic` to every `myrmic new` command. If you set both, the flag
+wins.
 
 **Part 1 and 2, the Linux half:**
 
