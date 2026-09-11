@@ -31,12 +31,15 @@ the physical machine, differs between the two.
 **Part 3, the ESP32 half:**
 
 - An ESP32-C6 devkit and a machine to flash it from (that machine also needs the repo checkout).
-- The extra embedded prerequisites. A nightly toolchain and the target:
+- The extra embedded prerequisites. A firmware scaffolded by `myrmic new --firmware` ships a
+  `rust-toolchain.toml` pinning `nightly-2026-08-07`, the `rust-src` component and the
+  `riscv32imac-unknown-none-elf` target, so rustup installs all of it on the first firmware build -
+  you do not have to set the toolchain up by hand. To install it ahead of that build (e.g. for an offline environment), 
+  these steps are optional:
 
   ```bash
-  rustup toolchain install nightly --component rust-src
-  rustup target add --toolchain nightly riscv32imac-unknown-none-elf
-  cargo install espflash --locked
+  rustup toolchain install nightly-2026-08-07 --component rust-src
+  rustup target add riscv32imac-unknown-none-elf --toolchain nightly-2026-08-07
   ```
 
   And `wamrc` **2.4.4**, the ahead-of-time compiler cells are compiled with for the device. It is
