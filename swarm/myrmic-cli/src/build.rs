@@ -223,6 +223,7 @@ pub fn build_toml(
     platforms: &[Platform],
     cargo_target: models::CargoTarget,
     runtime_name: Option<&str>,
+    features: &[String],
 ) -> anyhow::Result<Vec<CellClass>> {
     let info = cargo::crate_info(manifest_path)?;
     let cargo_target = to_build_cargo_target(cargo_target);
@@ -245,7 +246,14 @@ pub fn build_toml(
 
     let mut classes = vec![];
     for member in &members {
-        if let Some(cc) = build_member(ctx, member, platforms, &cargo_target, runtime_name)? {
+        if let Some(cc) = build_member(
+            ctx,
+            member,
+            platforms,
+            &cargo_target,
+            runtime_name,
+            features,
+        )? {
             classes.push(cc);
         }
     }
@@ -269,13 +277,33 @@ fn build_member(
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
+    features: &[String],
 ) -> anyhow::Result<Option<CellClass>> {
     match firmware::chip_of(path)? {
         Some(chip) => {
-            build_firmware(ctx, path, chip, platforms, cargo_target, runtime_name)?;
+            build_firmware(
+                ctx,
+                path,
+                chip,
+                platforms,
+                cargo_target,
+                runtime_name,
+                features,
+            )?;
             Ok(None)
         }
-        None => build_cell(ctx, path, platforms, cargo_target, None),
+        None => {
+            if !features.is_empty() {
+                crate::warn!(
+                    ctx,
+                    "--features is currently only supported for firmware crates; ignoring it \
+                     for cell `{}`",
+                    path.display()
+                );
+            }
+
+            build_cell(ctx, path, platforms, cargo_target, None)
+        }
     }
 }
 
@@ -286,6 +314,7 @@ fn build_firmware(
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
+    features: &[String],
 ) -> anyhow::Result<()> {
     if platforms != Platform::DEFAULT {
         crate::warn!(
@@ -296,7 +325,7 @@ fn build_firmware(
     }
     report_building(ctx, chip, path, runtime_name);
 
-    let built = firmware::build(path, cargo_target, None, runtime_name)?;
+    let built = firmware::build(path, cargo_target, None, runtime_name, features)?;
     report_layout(ctx, &built);
 
     crate::info!(ctx, "Firmware: {}", built.elf.display());

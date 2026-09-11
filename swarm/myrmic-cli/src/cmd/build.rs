@@ -23,6 +23,11 @@ pub struct Build {
     /// image; otherwise the chip's name.
     #[clap(short = 'n', long)]
     name: Option<String>,
+
+    /// Extra cargo features to enable, comma-separated or repeated. Added on top
+    /// of the crate's default features. Currently only firmware crates use them.
+    #[clap(long, value_delimiter = ',')]
+    features: Vec<String>,
 }
 
 pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
@@ -31,6 +36,7 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
         platform,
         target,
         name,
+        features,
     } = cmd;
 
     let path = determine_wd(ctx, path)?;
@@ -47,6 +53,12 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
                         "--target was provided, but will be ignored (set `target:` per cell_class)"
                     );
                 }
+                if !features.is_empty() {
+                    crate::warn!(
+                        ctx,
+                        "--features was provided, but will be ignored for an app"
+                    );
+                }
 
                 let info = build::build_app(ctx, &path, app, name.as_deref())?;
 
@@ -58,8 +70,14 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
             let cargo_target = target.unwrap_or(models::CargoTarget::Auto);
             let platforms = Platform::parse_list(platform.as_deref())?;
 
-            let _classes =
-                build::build_toml(ctx, &path, &platforms, cargo_target, name.as_deref())?;
+            let _classes = build::build_toml(
+                ctx,
+                &path,
+                &platforms,
+                cargo_target,
+                name.as_deref(),
+                &features,
+            )?;
         }
         (_path, PathType::Nest | PathType::Wasm) => {
             anyhow::bail!("not a valid build target: {}", path.display());
@@ -78,5 +96,22 @@ mod tests {
     fn n_is_short_for_the_name() {
         let build = Build::try_parse_from(["build", "-n", "kitchen"]).unwrap();
         assert_eq!(build.name.as_deref(), Some("kitchen"));
+    }
+
+    #[test]
+    fn features_split_on_commas_and_repeat() {
+        let build =
+            Build::try_parse_from(["build", "--features", "pipeline,wdt-selftest"]).unwrap();
+        assert_eq!(build.features, ["pipeline", "wdt-selftest"]);
+
+        let build = Build::try_parse_from([
+            "build",
+            "--features",
+            "pipeline",
+            "--features",
+            "wdt-selftest",
+        ])
+        .unwrap();
+        assert_eq!(build.features, ["pipeline", "wdt-selftest"]);
     }
 }

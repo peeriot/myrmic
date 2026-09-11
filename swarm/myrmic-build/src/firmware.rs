@@ -105,11 +105,13 @@ pub struct FirmwareBuild {
 /// hand: it sizes the default partition layout, and a `partitions.toml` that
 /// claims more flash than that is rejected. `runtime_name` names the device on
 /// the network; given, it overrides a [`RUNTIME_NAME_ENV`] in the environment.
+/// `features` are extra cargo features to enable on top of the crate's defaults.
 pub fn build(
     manifest_path: &Path,
     cargo_target: &CargoTarget,
     flash_size: Option<u64>,
     runtime_name: Option<&str>,
+    features: &[String],
 ) -> anyhow::Result<FirmwareBuild> {
     let manifest_dir = manifest_path.parent().with_context(|| {
         format!(
@@ -140,6 +142,9 @@ pub fn build(
     ])
     .arg(manifest_path)
     .args(["--bin", &bin]);
+    if !features.is_empty() {
+        cmd.args(["--features", &features.join(",")]);
+    }
     let default_partitions = configure(&mut cmd, manifest_dir, flash_size, runtime_name, |key| {
         std::env::var_os(key).is_some()
     })?;
