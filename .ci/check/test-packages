@@ -18,6 +18,7 @@ sorg-common
 sorg-tests
 introspection-client
 myrmic-build
+myrmic-flash
 swarm-telemetry
 myrmic-cli
 myrmic-sdk

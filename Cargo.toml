@@ -9,6 +9,7 @@ members = [
     "swarm/db-cli",
     "swarm/myrmic-cli",
     "swarm/myrmic-build",
+    "swarm/myrmic-flash",
     "swarm/myrmic-tags",
     "swarm/swarm-gateway",
     "swarm/skey",
@@ -93,6 +94,7 @@ default-members = [
     "swarm/db-cli",
     "swarm/myrmic-build",
     "swarm/myrmic-cli",
+    "swarm/myrmic-flash",
     "swarm/swarm-gateway",
     "swarm/skey",
     "swarm/skey-macros",
@@ -592,6 +594,7 @@ fan-curve = { path = "signal-modules/steps/fan-curve" }
 
 common = { path = "swarm/tutorials/sorg/code/common" }
 myrmic-build = { path = "swarm/myrmic-build" }
+myrmic-flash = { path = "swarm/myrmic-flash" }
 
 # Zenoh
 zenoh = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false, features = [

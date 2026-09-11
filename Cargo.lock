@@ -5695,6 +5695,7 @@ dependencies = [
  "espflash",
  "module-examples-common",
  "myrmic-build",
+ "myrmic-flash",
  "myrmic-signal-layer-types",
  "postcard",
  "serde",
@@ -7528,9 +7529,9 @@ dependencies = [
  "introspection-client",
  "libc",
  "log",
- "miette",
  "myrmic-build",
  "myrmic-common",
+ "myrmic-flash",
  "myrmic-tags",
  "object_store",
  "postcard",
@@ -7580,6 +7581,19 @@ dependencies = [
  "thiserror 2.0.20",
  "typify-impl",
  "uuid",
+]
+
+[[package]]
+name = "myrmic-flash"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "dialoguer",
+ "espflash",
+ "libc",
+ "miette",
+ "myrmic-build",
+ "serialport",
 ]
 
 [[package]]
