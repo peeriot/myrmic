@@ -275,7 +275,7 @@ async fn execute(
         }
         Action::Branch => {
             let sri = facts.cell.expect("branch action requires a resolved cell");
-            undeploy_descendants(ctx, client, facts).await?;
+            undeploy_descendants(ctx.clone(), client, facts).await?;
             client.undeploy_cell(sri).await?;
             crate::info!(
                 ctx,
@@ -284,7 +284,7 @@ async fn execute(
             );
         }
         Action::Children => {
-            undeploy_descendants(ctx, client, facts).await?;
+            undeploy_descendants(ctx.clone(), client, facts).await?;
             crate::info!(
                 ctx,
                 "undeployed {} child cell(s) of '{target}'",

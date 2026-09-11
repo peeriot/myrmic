@@ -10,7 +10,7 @@ pub struct Args {
     pub command: Command,
 }
 
-#[derive(clap::Parser, Default, Clone, Copy)]
+#[derive(clap::Parser, Default, Clone)]
 pub struct Ctx {
     /// Increase logging verbosity.
     #[clap(short = 'v', long, action = clap::ArgAction::Count, global = true)]
@@ -19,11 +19,16 @@ pub struct Ctx {
     /// Defines how long we should wait before giving up, e.g. `2s`, `500ms`, `1m30s`.
     #[clap(long, alias = "network_timeout", global = true)]
     pub timeout: Option<humantime::Duration>,
+
+    /// Connect directly to a runtime endpoint instead of using multicast
+    /// discovery. May be supplied more than once for fallback endpoints.
+    #[clap(long, value_name = "ENDPOINT", global = true)]
+    pub connect: Vec<String>,
 }
 
 impl Ctx {
     /// Returns true if the given level should be emitted at this verbosity.
-    pub fn is_enabled(self, level: crate::log::Level) -> bool {
+    pub fn is_enabled(&self, level: crate::log::Level) -> bool {
         use crate::log::Level;
         match level {
             Level::Error | Level::Warn | Level::Info => true,
@@ -32,7 +37,7 @@ impl Ctx {
         }
     }
 
-    pub fn sorg(self, session: zenoh::Session) -> sorg_client::Client {
+    pub fn sorg(&self, session: zenoh::Session) -> sorg_client::Client {
         let mut config = sorg_client::Config::default();
 
         if let Some(timeout) = self.timeout {
@@ -42,8 +47,33 @@ impl Ctx {
         sorg_client::Client::new_with_config(session, config)
     }
 
-    pub async fn introspection(self, session: zenoh::Session) -> introspection_client::v1::Client {
+    pub async fn introspection(&self, session: zenoh::Session) -> introspection_client::v1::Client {
         introspection_client::v1::Client::new(session).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::Args;
+
+    #[test]
+    fn parses_multiple_explicit_connect_endpoints() {
+        let args = Args::try_parse_from([
+            "myrmic",
+            "--connect",
+            "tcp/192.0.2.10:7447",
+            "--connect",
+            "tcp/192.0.2.11:7447",
+            "network",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            args.ctx.connect,
+            ["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]
+        );
     }
 }
 

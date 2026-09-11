@@ -25,7 +25,7 @@ pub struct Build {
     name: Option<String>,
 }
 
-pub fn handle(ctx: Ctx, cmd: Build) -> anyhow::Result<()> {
+pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
     let Build {
         path,
         platform,

@@ -20,6 +20,14 @@ From another terminal, `myrmic runtimes list` confirms it independently: a runti
 
 Runtimes find each other on their own. Every runtime that can reach the others on the network joins one swarm, with no explicit join step, so two machines on the same segment form a swarm whether or not you intended it. `myrmic network status` shows the nodes a runtime currently sees. See the [`myrmic network status` reference](../10_reference/02_myrmic-cli/07_network/01_status.md) for synopsis, options and examples.
 
+On a host where multicast is blocked, point the CLI at a Zenoh listener on a runtime instead. This skips multicast discovery for that invocation; repeat `--connect` to provide fallback endpoints:
+
+```bash
+myrmic --connect tcp/192.0.2.10:7447 cells status
+```
+
+The runtime must be configured to listen on that reachable endpoint under its `zenoh` configuration.
+
 A cell's SRN is swarm-wide. The same SRN names the same cell everywhere, so deploying a name that already exists addresses the existing cell rather than creating a second copy. Give distinct cells distinct names.
 
 When you deploy, the swarm places the cell on a node that can run it, which is not necessarily the machine you ran the CLI on. `myrmic cells status` shows each deployed cell and the runtime it runs on, so you can see where a deploy landed. See the [`myrmic cells status` reference](../10_reference/02_myrmic-cli/06_cells/01_status.md) for synopsis, options and examples.

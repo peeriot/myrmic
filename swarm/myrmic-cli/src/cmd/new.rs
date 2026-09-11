@@ -64,7 +64,7 @@ struct TemplateNewLinuxPipeline<'a> {
     linux_codegen: models::CargoDep,
 }
 
-pub fn handle(ctx: Ctx, cmd: New) -> anyhow::Result<()> {
+pub fn handle(ctx: &Ctx, cmd: New) -> anyhow::Result<()> {
     let New {
         path,
         name,

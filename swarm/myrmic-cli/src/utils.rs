@@ -26,7 +26,7 @@ macro_rules! split {
     }};
 }
 
-pub fn resolve_repo(ctx: Ctx, sdk: Option<&str>) -> anyhow::Result<models::Repo> {
+pub fn resolve_repo(ctx: &Ctx, sdk: Option<&str>) -> anyhow::Result<models::Repo> {
     let sdk: std::borrow::Cow<'_, str> = if let Some(sdk) = sdk {
         std::borrow::Cow::Borrowed(sdk)
     } else if let Ok(sdk) = std::env::var(crate::MYRMIC_SDK_OVERRIDE) {
@@ -76,11 +76,25 @@ pub fn determine_name<'a>(
 }
 
 impl Ctx {
-    pub async fn session(self) -> anyhow::Result<zenoh::Session> {
+    pub async fn session(&self) -> anyhow::Result<zenoh::Session> {
         let mut zenoh_config = zenoh::Config::default();
         zenoh_config
             .set_mode(Some(zenoh::config::WhatAmI::Peer))
             .expect("setting mode cannot fail here");
+
+        if !self.connect.is_empty() {
+            let endpoints = serde_json::to_string(&self.connect)
+                .expect("serializing CLI connect endpoints cannot fail");
+            zenoh_config
+                .insert_json5("connect/endpoints", &endpoints)
+                .map_err(|err| anyhow::anyhow!("invalid --connect endpoint: {err}"))?;
+            zenoh_config
+                .insert_json5("scouting/multicast/enabled", "false")
+                .expect("disabling multicast scouting cannot fail");
+            zenoh_config
+                .insert_json5("open/return_conditions/connect_scouted", "true")
+                .expect("setting explicit connect return condition cannot fail");
+        }
 
         let session = zenoh::open(zenoh_config)
             .await
@@ -194,7 +208,7 @@ fn ping_window(timeout: std::time::Duration) -> std::time::Duration {
 /// sent before the first node is discovered silently misses it. Blocks until a
 /// node answers a ping — a connected transport isn't proof enough, since a
 /// peer can also be a gateway or another CLI.
-async fn wait_for_nodes(ctx: Ctx, session: &zenoh::Session) -> anyhow::Result<()> {
+async fn wait_for_nodes(ctx: &Ctx, session: &zenoh::Session) -> anyhow::Result<()> {
     let timeout = ctx.timeout.map_or(SCOUT_TIMEOUT, Into::into);
     let window = ping_window(timeout);
     let db = db_client::v1::Client::new(session);
@@ -219,7 +233,7 @@ async fn wait_for_nodes(ctx: Ctx, session: &zenoh::Session) -> anyhow::Result<()
 }
 
 pub fn determine_wd(
-    ctx: Ctx,
+    ctx: &Ctx,
     path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<std::path::PathBuf> {
     let path = if let Some(path) = path {
@@ -284,7 +298,7 @@ impl PathType {
     }
 }
 
-pub(crate) fn build_filter(ctx: Ctx) -> Option<String> {
+pub(crate) fn build_filter(ctx: &Ctx) -> Option<String> {
     if std::env::var_os("RUST_LOG").is_some() {
         return None;
     }

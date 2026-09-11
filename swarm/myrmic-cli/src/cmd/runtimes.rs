@@ -69,7 +69,7 @@ pub fn handle(ctx: Ctx, cmd: Runtimes) -> anyhow::Result<()> {
     match cmd {
         Cmd::List(mut cmd) => {
             cmd.name = merge_names(name, cmd.name.take())?;
-            list::handle(ctx, cmd)
+            list::handle(&ctx, cmd)
         }
         Cmd::Start(mut cmd) => {
             cmd.name = merge_names(name, cmd.name.take())?;
@@ -77,11 +77,11 @@ pub fn handle(ctx: Ctx, cmd: Runtimes) -> anyhow::Result<()> {
         }
         Cmd::Delete(mut cmd) => {
             cmd.name.extend(name);
-            delete::handle(ctx, cmd)
+            delete::handle(&ctx, cmd)
         }
         Cmd::Logs(mut cmd) => {
             cmd.name = merge_names(name, cmd.name.take())?;
-            logs::handle(ctx, cmd)
+            logs::handle(&ctx, cmd)
         }
         Cmd::Info(mut cmd) => {
             cmd.name = merge_names(name, cmd.name.take())?;

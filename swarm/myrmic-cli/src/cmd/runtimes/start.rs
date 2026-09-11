@@ -137,7 +137,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
     }
 
     if config.telemetry.logs.env_filter.is_none() {
-        config.telemetry.logs.env_filter = build_filter(ctx);
+        config.telemetry.logs.env_filter = build_filter(&ctx);
     }
 
     // Logs roll into the runtime's data folder unless the config says otherwise.

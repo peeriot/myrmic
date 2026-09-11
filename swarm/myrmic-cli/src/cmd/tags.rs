@@ -152,7 +152,7 @@ async fn load(
     let (statuses, execs, overlays) = tokio::join!(
         introspection.swarm_status(),
         sorg_common::exec_registry::list_registered_execs(session),
-        read_overlays(ctx, db),
+        read_overlays(ctx.clone(), db),
     );
 
     let execs =

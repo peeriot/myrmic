@@ -72,7 +72,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
         );
     }
 
-    let path = determine_wd(ctx, path)?;
+    let path = determine_wd(&ctx, path)?;
     let tags = sorg_common::RequirementTags::new(tags);
     let init = resolve_init(init, init_file)?;
     let restart = policy.map(models::RestartTypeName::to_policy);

@@ -26,7 +26,7 @@ pub struct Delete {
     pub name: Vec<String>,
 }
 
-pub fn handle(ctx: Ctx, cmd: Delete) -> anyhow::Result<()> {
+pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
     let Delete {
         pid_path,
         yes: _,
