@@ -80,7 +80,7 @@ scope:tele                                          @ca157d28d8cf44689a97832a303
 
 `myrmic replicate` is the command that decides which nodes hold copies of which data. You have not used it yet, so every row is marked `(provisional)`: the swarm had to put the data *somewhere* and picked a node on its own.
 
-The rows are keyed by the cell's `sri`, so first look up the grow-bed's:
+The rows are keyed by the cell's `sri`, so first look up the grow-bed's. Piping the listing prints it once instead of opening the live view, so `grep` gets a single listing to filter:
 
 ```bash
 myrmic cells | grep grow-bed
