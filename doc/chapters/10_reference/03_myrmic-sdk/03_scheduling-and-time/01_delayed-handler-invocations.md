@@ -82,4 +82,4 @@ Dropping the handle does not cancel the invocation, and once it has run there is
 
 ## API documentation
 
-For exact signatures and the handle's methods, see [`delay`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.delay.html) and [`TimerHandle`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.TimerHandle.html).
+For exact signatures and the handle's methods, see [`delay`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.delay.html) and [`TimerHandle`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.TimerHandle.html).

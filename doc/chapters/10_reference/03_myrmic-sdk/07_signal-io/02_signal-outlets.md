@@ -97,4 +97,4 @@ A cell that uses an outlet cannot start on a Linux node. It fails while being lo
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::outlet`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/outlet/index.html), which covers both write operations and the discovery helpers.
+See the API documentation for [`myrmic_sdk::outlet`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/outlet/index.html), which covers both write operations and the discovery helpers.

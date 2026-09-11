@@ -76,4 +76,4 @@ Metadata carries those two SRIs and nothing else: not the cell's SRN, not the na
 
 ## API documentation
 
-For every constructor and conversion, see [`Metadata`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.Metadata.html) and [`Sri`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.Sri.html).
+For every constructor and conversion, see [`Metadata`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.Metadata.html) and [`Sri`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.Sri.html).

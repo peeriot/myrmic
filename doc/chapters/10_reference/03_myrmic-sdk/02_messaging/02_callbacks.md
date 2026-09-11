@@ -80,4 +80,4 @@ A callback carries no request identifier, so a cell with several requests in fli
 
 ## API documentation
 
-For both ways to build a callback and the invoke signature, see [`Callback`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.Callback.html).
+For both ways to build a callback and the invoke signature, see [`Callback`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.Callback.html).

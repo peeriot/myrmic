@@ -83,4 +83,4 @@ The type's name is not sent, so a mismatch between the two sides is not detected
 
 ## API documentation
 
-For the derive's options and the traits behind it, see [`Message`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/derive.Message.html), [`Codec`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/trait.Codec.html), [`Encoder`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/trait.Encoder.html) and [`Decoder`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/trait.Decoder.html).
+For the derive's options and the traits behind it, see [`Message`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/derive.Message.html), [`Codec`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/trait.Codec.html), [`Encoder`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/trait.Encoder.html) and [`Decoder`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/trait.Decoder.html).

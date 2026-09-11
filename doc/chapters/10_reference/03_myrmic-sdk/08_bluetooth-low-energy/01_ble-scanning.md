@@ -97,4 +97,4 @@ A handle does not identify its scan. Stopping with an old handle stops whichever
 
 ## API documentation
 
-For the filter and scan mode type, see [`scan`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/fn.scan.html), [`ScanHandle`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.ScanHandle.html), [`DiscoveryFilter`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.DiscoveryFilter.html) and [`ScanMode`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/enum.ScanMode.html).
+For the filter and scan mode type, see [`scan`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/fn.scan.html), [`ScanHandle`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.ScanHandle.html), [`DiscoveryFilter`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.DiscoveryFilter.html) and [`ScanMode`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/enum.ScanMode.html).

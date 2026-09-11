@@ -68,4 +68,4 @@ Electrical limits, pull resistors, drive strength, and safe pin use depend on th
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::gpio`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/gpio/index.html), which covers the pin types and the blocking wait trait.
+See the API documentation for [`myrmic_sdk::gpio`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/gpio/index.html), which covers the pin types and the blocking wait trait.

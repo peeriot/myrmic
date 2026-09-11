@@ -70,4 +70,4 @@ For now an update can insert triples, delete them, do both at once, and create, 
 
 ## API documentation
 
-For exact signatures and the response type, see [`sem_update`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/fn.sem_update.html), [`sem_select`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/fn.sem_select.html) and [`SelectResponse`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/struct.SelectResponse.html).
+For exact signatures and the response type, see [`sem_update`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/fn.sem_update.html), [`sem_select`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/fn.sem_select.html) and [`SelectResponse`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/struct.SelectResponse.html).

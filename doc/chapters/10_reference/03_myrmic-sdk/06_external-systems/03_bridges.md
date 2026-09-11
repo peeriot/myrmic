@@ -81,4 +81,4 @@ A client is bound to one bridge instance, named when the client is built. A wron
 
 ## API documentation
 
-For the macro, see [`import!`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/macro.import.html). For the reply handle an HTTP call takes, see [`Callback`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.Callback.html).
+For the macro, see [`import!`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/macro.import.html). For the reply handle an HTTP call takes, see [`Callback`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.Callback.html).

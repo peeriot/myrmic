@@ -53,4 +53,4 @@ Initialization fails when the data passed at deployment does not match the decla
 
 ## API documentation
 
-See [`init`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/attr.init.html) in the API documentation.
+See [`init`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/attr.init.html) in the API documentation.

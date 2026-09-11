@@ -81,4 +81,4 @@ Each value is read through a fixed buffer of 8 KiB, and a listing of keys throug
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::db::tree`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/tree/index.html), which covers every store operation and its iterator.
+See the API documentation for [`myrmic_sdk::db::tree`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/tree/index.html), which covers every store operation and its iterator.

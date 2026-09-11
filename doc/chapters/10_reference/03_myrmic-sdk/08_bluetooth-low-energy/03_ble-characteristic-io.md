@@ -89,4 +89,4 @@ A characteristic belongs to the connection it was looked up on. Once that connec
 
 ## API documentation
 
-For read and write signature, see [`Connection`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Connection.html) and [`Characteristic`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Characteristic.html).
+For read and write signature, see [`Connection`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Connection.html) and [`Characteristic`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Characteristic.html).

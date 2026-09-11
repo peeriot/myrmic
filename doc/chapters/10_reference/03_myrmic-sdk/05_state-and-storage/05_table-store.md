@@ -96,4 +96,4 @@ Letting the runtime generate a key does not tell the caller what it generated, s
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::db::table`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/table/index.html), which covers every table operation and its iterators.
+See the API documentation for [`myrmic_sdk::db::table`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/table/index.html), which covers every table operation and its iterators.

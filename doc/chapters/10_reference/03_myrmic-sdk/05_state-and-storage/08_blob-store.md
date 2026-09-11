@@ -85,4 +85,4 @@ Nothing ever deletes stored content. Once its last path is gone it cannot be rea
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::db::store`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/store/index.html), which covers every blob store operation.
+See the API documentation for [`myrmic_sdk::db::store`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/store/index.html), which covers every blob store operation.

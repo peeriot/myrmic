@@ -59,4 +59,4 @@ On the Linux runtime one passkey is stored for the whole node. Any cell that set
 
 ## API documentation
 
-For the pairing function, see [`set_pair_passkey`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/fn.set_pair_passkey.html).
+For the pairing function, see [`set_pair_passkey`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/fn.set_pair_passkey.html).

@@ -60,4 +60,4 @@ A cell that stops itself is not removed on the spot. The call returns at once an
 
 ## API documentation
 
-For exact signatures and every error, see [`terminate_cell`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.terminate_cell.html), [`stop_self`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.stop_self.html) and [`TerminateError`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/enum.TerminateError.html).
+For exact signatures and every error, see [`terminate_cell`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.terminate_cell.html), [`stop_self`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.stop_self.html) and [`TerminateError`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/enum.TerminateError.html).

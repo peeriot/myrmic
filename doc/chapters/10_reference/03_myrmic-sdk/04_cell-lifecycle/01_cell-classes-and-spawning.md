@@ -86,4 +86,4 @@ Spawning fails when:
 
 ## API documentation
 
-For every builder option and spawn error, see [`declare`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/macro.declare.html), [`ClassHandle`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.ClassHandle.html), [`SpawnBuilder`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.SpawnBuilder.html) and [`SpawnError`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/enum.SpawnError.html).
+For every builder option and spawn error, see [`declare`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/macro.declare.html), [`ClassHandle`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.ClassHandle.html), [`SpawnBuilder`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.SpawnBuilder.html) and [`SpawnError`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/enum.SpawnError.html).

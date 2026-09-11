@@ -65,4 +65,4 @@ A cell that uses the gateway does not start on an embedded node. It fails to loa
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::gateway`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/gateway/index.html), which covers every route option.
+See the API documentation for [`myrmic_sdk::gateway`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/gateway/index.html), which covers every route option.

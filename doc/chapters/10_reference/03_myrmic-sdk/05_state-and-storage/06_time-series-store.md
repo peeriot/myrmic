@@ -79,4 +79,4 @@ Nothing deletes a sample. There is no delete operation, and a cell's data carrie
 
 ## API documentation
 
-For exact signatures, and the measurement and field types, see [`publish_measurement`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/fn.publish_measurement.html), [`find_measurement`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/fn.find_measurement.html), [`Measurement`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/struct.Measurement.html) and [`FieldValue`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/enum.FieldValue.html).
+For exact signatures, and the measurement and field types, see [`publish_measurement`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/fn.publish_measurement.html), [`find_measurement`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/fn.find_measurement.html), [`Measurement`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/struct.Measurement.html) and [`FieldValue`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/enum.FieldValue.html).

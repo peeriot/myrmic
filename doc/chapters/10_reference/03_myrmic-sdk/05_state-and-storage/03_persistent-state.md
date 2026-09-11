@@ -76,4 +76,4 @@ Reading uses a fixed buffer of 8 KiB, so a value larger than that cannot be read
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::db::state`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/state/index.html), which covers every operation on a state handle, and its guard.
+See the API documentation for [`myrmic_sdk::db::state`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/state/index.html), which covers every operation on a state handle, and its guard.

@@ -84,4 +84,4 @@ Afterwards, what happens to the invocation depends on what it was:
 
 ## API documentation
 
-For every error variant, see [`ApiError`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/enum.ApiError.html). For the handler's result type, see [`Result`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/type.Result.html).
+For every error variant, see [`ApiError`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/enum.ApiError.html). For the handler's result type, see [`Result`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/type.Result.html).

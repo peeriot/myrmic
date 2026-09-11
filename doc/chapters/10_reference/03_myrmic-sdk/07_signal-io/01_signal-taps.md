@@ -98,4 +98,4 @@ An event tap holds 8 values. Past that, a new value drops the oldest.
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::tap`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/tap/index.html), which covers every read operation and the tap kinds.
+See the API documentation for [`myrmic_sdk::tap`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/tap/index.html), which covers every read operation and the tap kinds.

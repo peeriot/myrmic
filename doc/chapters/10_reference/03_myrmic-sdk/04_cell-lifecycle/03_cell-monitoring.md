@@ -76,4 +76,4 @@ The notification carries no sender; the lost cell is named in the payload.
 
 ## API documentation
 
-See the API documentation for [`myrmic_sdk::monitor`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/monitor/index.html), which covers the notification type and every loss reason.
+See the API documentation for [`myrmic_sdk::monitor`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/monitor/index.html), which covers the notification type and every loss reason.

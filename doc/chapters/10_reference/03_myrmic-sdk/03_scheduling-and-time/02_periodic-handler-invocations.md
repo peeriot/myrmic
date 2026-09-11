@@ -97,4 +97,4 @@ Dropping the handle does not cancel the schedule, and once a counted schedule ha
 
 ## API documentation
 
-For exact signatures and the handle's methods, see [`interval`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.interval.html), [`interval_at`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.interval_at.html) and [`TimerHandle`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.TimerHandle.html).
+For exact signatures and the handle's methods, see [`interval`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.interval.html), [`interval_at`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.interval_at.html) and [`TimerHandle`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.TimerHandle.html).

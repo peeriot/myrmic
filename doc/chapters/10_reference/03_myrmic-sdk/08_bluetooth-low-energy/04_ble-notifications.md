@@ -92,4 +92,4 @@ Unsubscribing does not discard values already queued, so the notification handle
 
 ## API documentation
 
-For the subscribe function signature and the notification type, see [`Connection`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Connection.html), [`Subscription`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Subscription.html) and [`Notification`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Notification.html).
+For the subscribe function signature and the notification type, see [`Connection`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Connection.html), [`Subscription`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Subscription.html) and [`Notification`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Notification.html).

@@ -89,7 +89,7 @@
 //!
 //! # Further reading
 //!
-//! The [Myrmic book](https://book.myrmic.intra/) carries the quickstart,
+//! The [Myrmic book](https://book.myrmic.dev/) carries the quickstart,
 //! tutorials (observability, BLE), and architecture chapters; this crate's
 //! docs are the API reference.
 

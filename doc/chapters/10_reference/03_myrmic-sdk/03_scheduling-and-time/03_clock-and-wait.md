@@ -57,4 +57,4 @@ Pausing fails only when the duration is malformed.
 
 ## API documentation
 
-See [`now`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.now.html), [`uptime`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.uptime.html) and [`wait`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.wait.html) in the API documentation.
+See [`now`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.now.html), [`uptime`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.uptime.html) and [`wait`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.wait.html) in the API documentation.

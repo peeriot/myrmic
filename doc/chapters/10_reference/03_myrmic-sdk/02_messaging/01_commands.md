@@ -63,4 +63,4 @@ A command name may contain only ASCII letters, digits, and underscores, and may 
 
 ## API documentation
 
-See [`cmd`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/attr.cmd.html) and [`send`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.send.html) in the API documentation.
+See [`cmd`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/attr.cmd.html) and [`send`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.send.html) in the API documentation.

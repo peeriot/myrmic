@@ -60,4 +60,4 @@ The value is gone whenever the cell starts again.
 
 ## API documentation
 
-For every method on the handle, see [`InMemory`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/struct.InMemory.html).
+For every method on the handle, see [`InMemory`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/struct.InMemory.html).

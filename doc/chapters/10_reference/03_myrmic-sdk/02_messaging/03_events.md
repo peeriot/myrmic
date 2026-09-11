@@ -65,4 +65,4 @@ An event whose payload does not match the type a handler declares is skipped and
 
 ## API documentation
 
-See [`evt`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/attr.evt.html) and [`publish`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/fn.publish.html) in the API documentation.
+See [`evt`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/attr.evt.html) and [`publish`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/fn.publish.html) in the API documentation.

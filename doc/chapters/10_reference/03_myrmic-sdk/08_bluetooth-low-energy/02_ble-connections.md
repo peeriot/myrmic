@@ -110,4 +110,4 @@ Some runtimes require a scan before a connection, and refuse a direct attempt. S
 
 ## API documentation
 
-For every connection method and disconnect reason, see [`connect`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/fn.connect.html), [`ConnectBuilder`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.ConnectBuilder.html), [`Connection`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Connection.html) and [`Disconnect`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/ble/struct.Disconnect.html).
+For every connection method and disconnect reason, see [`connect`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/fn.connect.html), [`ConnectBuilder`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.ConnectBuilder.html), [`Connection`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Connection.html) and [`Disconnect`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/ble/struct.Disconnect.html).

@@ -61,4 +61,4 @@ A public scope separates data; it does not protect it. Two cells using the same 
 
 ## API documentation
 
-For every constructor, see [`Scope`](https://docs.myrmic.intra/myrmic_sdk/git/myrmic_sdk/db/struct.Scope.html).
+For every constructor, see [`Scope`](https://docs.myrmic.dev/myrmic_sdk/git/myrmic_sdk/db/struct.Scope.html).
