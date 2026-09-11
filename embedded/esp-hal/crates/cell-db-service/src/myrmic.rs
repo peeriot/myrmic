@@ -62,6 +62,14 @@ fn intrinsic_tags(zid: ZenohIdProto) -> Vec<String> {
     tags
 }
 
+/// This device's tags with no overlay applied, resolved the same way
+/// registration resolves them. Seeds the runtime-tags cache so a cell that asks
+/// before the first registration round has read the overlay still sees the
+/// hardware and platform tags.
+pub(crate) fn intrinsic_effective_tags(zid: ZenohIdProto) -> Vec<String> {
+    node_tags::effective(None, &[], &intrinsic_tags(zid))
+}
+
 /// Creates the Runtime info for this device, including any tags added to it
 /// since it booted.
 ///

@@ -31,6 +31,7 @@ Each page covers one topic: what it is for, the operations it offers, an example
 - [Cell classes and spawning](03_myrmic-sdk/04_cell-lifecycle/01_cell-classes-and-spawning.md) - Declare child classes and create supervised or detached cells at runtime.
 - [Cell termination](03_myrmic-sdk/04_cell-lifecycle/02_cell-termination.md) - Terminate another cell or deliberately stop the current cell.
 - [Cell monitoring](03_myrmic-sdk/04_cell-lifecycle/03_cell-monitoring.md) - Receive structured notifications when a supervised child cell is lost.
+- [Runtime environment](03_myrmic-sdk/04_cell-lifecycle/04_runtime-environment.md) - Read the effective tag set and id of the runtime hosting the cell.
 
 ## State and storage
 

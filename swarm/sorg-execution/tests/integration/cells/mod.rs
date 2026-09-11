@@ -2,6 +2,7 @@ mod events;
 mod init;
 mod macros;
 mod periodic;
+mod runtime;
 mod sorg_client;
 mod spawning;
 mod telemetry;

@@ -17,6 +17,7 @@ mod error;
 pub(crate) mod gpio;
 mod logging;
 pub(crate) mod outlet;
+pub(crate) mod runtime;
 #[cfg(feature = "wdt-selftest")]
 pub(crate) mod selftest;
 pub(crate) mod tap;
@@ -40,6 +41,7 @@ pub(crate) struct Imports {
     pub _gpio: Pin<Box<Vec<NativeSymbol>>>,
     pub _logging: Pin<Box<Vec<NativeSymbol>>>,
     pub _outlet: Pin<Box<Vec<NativeSymbol>>>,
+    pub _runtime: Pin<Box<Vec<NativeSymbol>>>,
     #[cfg(feature = "wdt-selftest")]
     pub _selftest: Pin<Box<Vec<NativeSymbol>>>,
     pub _tap: Pin<Box<Vec<NativeSymbol>>>,
@@ -58,6 +60,7 @@ pub(crate) fn setup() -> Result<Imports, Error> {
         _gpio: gpio::setup()?,
         _logging: logging::setup()?,
         _outlet: outlet::setup()?,
+        _runtime: runtime::setup()?,
         #[cfg(feature = "wdt-selftest")]
         _selftest: selftest::setup()?,
         _tap: tap::setup()?,

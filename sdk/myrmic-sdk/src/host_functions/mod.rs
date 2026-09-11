@@ -22,6 +22,8 @@ mod arguments;
 pub mod gpio;
 mod logging;
 pub mod outlet;
+#[cfg(feature = "alloc")]
+mod runtime;
 pub mod tap;
 mod time;
 
@@ -43,6 +45,8 @@ pub use in_memory::InMemory;
 pub use errors::report_error;
 pub use logging::{LogLevel, debug_str, error_str, info_str, log, log_buffer, trace_str, warn_str};
 pub use outlet::Outlet;
+#[cfg(feature = "alloc")]
+pub use runtime::{runtime_id, runtime_tags};
 pub use tap::{Tap, TapKind, list_entry, list_len};
 pub use time::{now, uptime, wait};
 

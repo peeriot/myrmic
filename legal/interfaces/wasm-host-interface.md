@@ -18,10 +18,11 @@ An Application interacts with Covered Code through this interface when its WebAs
 | `gpio` | 5 | `is_pin_supported`, `read`, `set`, `wait_for_edge`, `wait_for_level` |
 | `logging` | 1 | `log_host` |
 | `outlet` | 5 | `outlet_list_entry`, `outlet_list_len`, `outlet_resolve`, `outlet_type_id`, `outlet_write_retained` |
+| `runtime` | 3 | `runtime_id_host`, `runtime_tags_host`, `runtime_tags_len_host` |
 | `tap` | 6 | `tap_list_entry`, `tap_list_len`, `tap_read_retained`, `tap_resolve`, `tap_take_event`, `tap_type_id` |
 | `time` | 3 | `now_host`, `uptime_host`, `wait_host` |
 
-**Total:** 11 namespaces, 61 functions.
+**Total:** 12 namespaces, 64 functions.
 <!-- END GENERATED: namespaces -->
 
 ## Generation
@@ -47,6 +48,7 @@ The declarations live in:
 - `sdk/myrmic-sdk/src/host_functions/gpio.rs`
 - `sdk/myrmic-sdk/src/host_functions/logging.rs`
 - `sdk/myrmic-sdk/src/host_functions/outlet.rs`
+- `sdk/myrmic-sdk/src/host_functions/runtime.rs`
 - `sdk/myrmic-sdk/src/host_functions/tap.rs`
 - `sdk/myrmic-sdk/src/host_functions/time.rs`
 <!-- END GENERATED: sources -->

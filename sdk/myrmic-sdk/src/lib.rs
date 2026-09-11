@@ -237,6 +237,8 @@ pub use host_functions::{
     list_entry, list_len, log, log_buffer, now, outlet, report_error, tap, trace_str, uptime, wait,
     warn_str,
 };
+#[cfg(feature = "alloc")]
+pub use host_functions::{runtime_id, runtime_tags};
 pub use signal_layer_types::WireType;
 
 pub use error::{ApiError, ApiResult, Result};

@@ -47,8 +47,10 @@ pub async fn spawn(
 
     // the senders are not actively used, but will poison the other side as soon as we leave the scope
     let (_poison_snd_event_loop, poison_rcv_event_loop) = poison_channel();
+    // The live tag set is handed to the event loop, which captures it in the
+    // cell linker's `runtime` host functions so each cell reads this node's tags.
     let (client, handle_event_loop) =
-        set_up_event_loop(session.clone(), config, poison_rcv_event_loop);
+        set_up_event_loop(session.clone(), config, tags.clone(), poison_rcv_event_loop);
 
     let (handle_capas, _poison_snd_capas) =
         set_up_queryable(session.clone(), client.handle(), Queryable::Capabilities);

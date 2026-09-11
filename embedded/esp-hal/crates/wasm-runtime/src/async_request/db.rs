@@ -49,6 +49,7 @@ requests! {
     ReadIn { scope: Scope, op: TxOp } => Result<TxOpResponse, ApplyError>,
     Commit => Result<(), ApplyError>,
     Rollback => (),
+    RuntimeTags => Vec<String>,
     ConfirmDeployment { sri: Sri, available_commands: Vec<Command>, failure: Option<String> } => (),
     ConfirmDeletion => (),
     SendCommand { dest_sri: Sri, command: MailboxCommand } => ResponseResult,

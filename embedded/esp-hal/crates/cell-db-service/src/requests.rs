@@ -82,6 +82,7 @@ pub(crate) async fn handle(
     awaiting_deletion_confirmation: &mut bool,
     watched: &mut Option<cell_protocol::supervision::WatchedCell>,
     application: &mut Option<Application>,
+    runtime_tags: &[String],
 ) {
     match db_client_req {
         DbClientRequest::ConfirmDeployment {
@@ -185,6 +186,11 @@ pub(crate) async fn handle(
             }
 
             db_responses.send(DbClientResponse::Rollback).await;
+        }
+        DbClientRequest::RuntimeTags => {
+            db_responses
+                .send(DbClientResponse::RuntimeTags(runtime_tags.to_vec()))
+                .await;
         }
         DbClientRequest::SendCommand { dest_sri, command } => {
             // Reserved system names are host-emitted only, so a guest cannot
