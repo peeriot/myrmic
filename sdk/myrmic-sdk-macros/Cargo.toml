@@ -25,7 +25,7 @@ syn = { workspace = true, features = ["full", "parsing"] }
 base64 = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
-myrmic-common = { path = "../myrmic-common", version = "0.6.0", default-features = false, features = ["codegen"] }
+myrmic-common = { path = "../myrmic-common", version = "0.6.1", default-features = false, features = ["codegen"] }
 
 [dev-dependencies]
 insta = "1.46.3"

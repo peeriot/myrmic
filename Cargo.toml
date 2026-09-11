@@ -177,7 +177,7 @@ default-members = [
 [workspace.package]
 # The release version. A release-prep commit sets this to the version about to be
 # cut, and a release tag that disagrees with it is rejected.
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 # Floored by the cranelift/pulley (wasmtime) stack.
 rust-version = "1.94"
@@ -535,9 +535,9 @@ swarm-api = { path = "swarm/swarm-api", default-features = false }
 bluer = "0.17.4"
 
 aot-compiler = { path = "sdk/tools/aot-compiler" }
-myrmic-common = { path = "sdk/myrmic-common", version = "0.6.0" }
+myrmic-common = { path = "sdk/myrmic-common", version = "0.6.1" }
 myrmic-sdk = { path = "sdk/myrmic-sdk" }
-myrmic-sdk-macros = { path = "sdk/myrmic-sdk-macros", version = "0.6.0" }
+myrmic-sdk-macros = { path = "sdk/myrmic-sdk-macros", version = "0.6.1" }
 wasm-runtime-macros = { path = "embedded/esp-hal/crates/wasm-runtime-macros" }
 wasm-runtime = { path = "embedded/esp-hal/crates/wasm-runtime" }
 wasm-storage = { path = "embedded/esp-hal/crates/wasm-storage", default-features = false }
@@ -555,7 +555,7 @@ esp-firmware-macros = { path = "embedded/esp-hal/crates/esp-firmware-macros" }
 esp-firmware-build = { path = "embedded/esp-hal/crates/esp-firmware-build" }
 
 # Signal Layer core
-signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.6.0", default-features = false }
+signal-layer-types = { path = "sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types", version = "0.6.1", default-features = false }
 signal-layer-core = { path = "sdk/signal-layer/signal-layer-core" }
 pipeline-codegen = { path = "sdk/signal-layer/pipeline-codegen" }
 pipeline-backend-api = { path = "sdk/signal-layer/pipeline-backend-api" }
