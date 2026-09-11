@@ -1,27 +1,34 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use db_commons::models::{Cursor, Id};
 
-use super::data::DebugItem;
+use super::data::{DebugItem, insertion_time};
 
 /// The debug stream's ordering state: where the next log read starts, and the command and
 /// event items waiting for a log row to place them against. Carries no I/O.
 pub(crate) struct DebugStream {
-    queue: BTreeSet<DebugItem>,
+    /// Keyed by insertion time plus arrival order, because two rows can share a millisecond
+    /// and a set keyed on the timestamp alone would keep only one of them.
+    queue: BTreeMap<(SystemTime, u64), DebugItem>,
+    arrived: u64,
     log_cursor: Option<Cursor>,
 }
 
 impl DebugStream {
     pub(crate) fn new(log_cursor: Option<Cursor>) -> Self {
         Self {
-            queue: BTreeSet::new(),
+            queue: BTreeMap::new(),
+            arrived: 0,
             log_cursor,
         }
     }
 
     pub(crate) fn push(&mut self, item: DebugItem) {
-        self.queue.insert(item);
+        let key = (*item.timestamp(), self.arrived);
+        self.arrived += 1;
+
+        self.queue.insert(key, item);
     }
 
     /// Where the next log read starts. `None` reads the table from the beginning.
@@ -34,13 +41,14 @@ impl DebugStream {
         self.log_cursor = Some(Cursor::After(id.clone()));
     }
 
-    /// Takes the queued items a log row emitted at `emitted_at` releases, oldest first.
-    pub(crate) fn flush_before(
-        &mut self,
-        emitted_at: SystemTime,
-        sri_filter: Option<&str>,
-    ) -> Vec<DebugItem> {
-        self.take(Some(emitted_at), sri_filter)
+    /// Takes the queued items a log row releases, oldest first. The row's own insertion time is
+    /// the boundary, so both sides of the comparison come from the database's clock.
+    pub(crate) fn flush_before(&mut self, row_id: &Id, sri_filter: Option<&str>) -> Vec<DebugItem> {
+        let Some(boundary) = insertion_time(row_id) else {
+            return Vec::new();
+        };
+
+        self.take(Some(boundary), sri_filter)
     }
 
     /// Takes every queued item the cell filter admits, oldest first.
@@ -53,10 +61,10 @@ impl DebugStream {
 
         while self
             .queue
-            .first()
-            .is_some_and(|item| boundary.is_none_or(|boundary| *item.timestamp() <= boundary))
+            .first_key_value()
+            .is_some_and(|((at, _), _)| boundary.is_none_or(|boundary| *at <= boundary))
         {
-            let Some(item) = self.queue.pop_first() else {
+            let Some((_, item)) = self.queue.pop_first() else {
                 break;
             };
 
@@ -71,8 +79,6 @@ impl DebugStream {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
     use cell_protocol::Sri;
     use uuid::{Builder, Uuid};
 
@@ -120,7 +126,7 @@ mod tests {
         stream.push(DebugItem::command_at(2_000, sri(1)));
         stream.push(DebugItem::command_at(3_000, sri(1)));
 
-        let released = stream.flush_before(at(2_000), None);
+        let released = stream.flush_before(&row_id(2_000), None);
 
         assert_eq!(
             released,
@@ -158,7 +164,7 @@ mod tests {
         stream.push(DebugItem::command_at(1_000, sri(1)));
         stream.push(DebugItem::command_at(1_500, sri(2)));
 
-        let released = stream.flush_before(at(2_000), Some(&sri(1).to_string()));
+        let released = stream.flush_before(&row_id(2_000), Some(&sri(1).to_string()));
 
         assert_eq!(released, vec![DebugItem::command_at(1_000, sri(1))]);
         assert_eq!(stream.drain_all(None), Vec::new());
@@ -176,12 +182,34 @@ mod tests {
         assert_eq!(drained, vec![DebugItem::command_at(3_000, sri(1))]);
     }
 
-    fn sri(n: u128) -> Sri {
-        Sri::from_uuid(Uuid::from_u128(n))
+    #[test]
+    fn two_items_in_the_same_millisecond_both_survive() {
+        let mut stream = DebugStream::new(None);
+        stream.push(DebugItem::command_at(1_000, sri(1)));
+        stream.push(DebugItem::command_at(1_000, sri(2)));
+
+        assert_eq!(
+            stream.drain_all(None),
+            vec![
+                DebugItem::command_at(1_000, sri(1)),
+                DebugItem::command_at(1_000, sri(2)),
+            ]
+        );
     }
 
-    fn at(millis: u64) -> SystemTime {
-        UNIX_EPOCH + Duration::from_millis(millis)
+    #[test]
+    fn a_late_written_log_row_still_releases_the_items_before_it() {
+        let mut stream = DebugStream::new(None);
+        stream.push(DebugItem::command_at(2_000, sri(1)));
+
+        // the batch processor held this record for a second before it was written
+        let released = stream.flush_before(&row_id(2_500), None);
+
+        assert_eq!(released, vec![DebugItem::command_at(2_000, sri(1))]);
+    }
+
+    fn sri(n: u128) -> Sri {
+        Sri::from_uuid(Uuid::from_u128(n))
     }
 
     fn row_id(millis: u64) -> Id {

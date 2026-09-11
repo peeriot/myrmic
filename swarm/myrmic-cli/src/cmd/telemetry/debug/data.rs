@@ -64,18 +64,6 @@ impl DebugItem {
     }
 }
 
-impl Ord for DebugItem {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.timestamp().cmp(other.timestamp())
-    }
-}
-
-impl PartialOrd for DebugItem {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl Display for DebugItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

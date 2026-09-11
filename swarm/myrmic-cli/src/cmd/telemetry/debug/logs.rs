@@ -120,9 +120,8 @@ pub(crate) fn parse(payload: &[u8]) -> Option<(Option<String>, LogRecord)> {
         .map(|entry| (entry.scope_name, entry.data))
 }
 
-/// The record's own emission time (falls back to the observed time if the
-/// original timestamp wasn't set), used to decide when it's safe to flush a
-/// queued `DebugItem` — not to be confused with the row's insertion time.
+/// The record's own emission time (falls back to the observed time if the original timestamp
+/// wasn't set), as shown in the printed line - not the row's insertion time.
 pub(crate) fn time(record: &LogRecord) -> SystemTime {
     let ts_ns = record.observed_time_unix_nano.max(record.time_unix_nano);
     UNIX_EPOCH + Duration::from_nanos(ts_ns)

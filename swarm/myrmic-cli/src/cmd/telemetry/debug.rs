@@ -59,8 +59,9 @@ pub async fn handle(ctx: Ctx, cmd: Debug) -> anyhow::Result<()> {
         None => None,
     };
 
-    let _message_subscriber = messages::MessageSubscriber::new(db.clone(), tx_debug.clone()).await;
-    let _event_subscriber = events::EventSubscriber::new(db.clone(), tx_debug).await;
+    let _message_subscriber =
+        messages::MessageSubscriber::new(ctx.clone(), db.clone(), tx_debug.clone()).await?;
+    let _event_subscriber = events::EventSubscriber::new(ctx.clone(), db.clone(), tx_debug).await?;
 
     // Anchored before the log subscription so a row inserted in between is still greater than
     // the anchor and still comes back on the first query; the other order would drop it.
@@ -76,7 +77,7 @@ pub async fn handle(ctx: Ctx, cmd: Debug) -> anyhow::Result<()> {
         }
     };
 
-    let _log_subscriber = logs::LogSubscriber::new(db.clone(), tx_log).await;
+    let _log_subscriber = logs::LogSubscriber::new(db.clone(), tx_log).await?;
 
     let writer = debug_writer(
         db,
@@ -231,8 +232,6 @@ async fn debug_writer(
                         continue;
                     }
 
-                    let record_time = logs::time(&record);
-
                     // filter log for SRI
                     let sri = logs::sri(&record);
                     match (sri, sri_filter) {
@@ -243,7 +242,7 @@ async fn debug_writer(
                     // logs come back in chronological (id) order, so once we've reached one at
                     // or after a queued item's own timestamp, that item's window is closed -
                     // print it now, before the log line.
-                    for item in stream.flush_before(record_time, sri_filter) {
+                    for item in stream.flush_before(&id, sri_filter) {
                         print_item(&item, json)?;
                     }
 
