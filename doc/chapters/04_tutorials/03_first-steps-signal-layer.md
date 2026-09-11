@@ -7,6 +7,8 @@ ESP32 with one command, without changing a line of it.
 You write two small YAML files and about thirty lines of Rust. `myrmic new` scaffolds the rest,
 and everything else is generated at build time.
 
+![The Signal Layer runs drivers and steps as native code on the target machine; a cell in the WebAssembly runtime reads sensor values through a tap and drives actuators through an outlet. This tutorial builds the tap (read) side.](../../images/signal-layer-tap-outlet.png)
+
 ## What you build
 
 A simulated sensor publishes a climbing value twice a second. A `moving-average` step smooths it.
@@ -19,14 +21,30 @@ the physical machine, differs between the two.
 
 ## What you need
 
+To use the Signal Layer you must clone the Myrmic repository.
+
+`myrmic new` creates the skeleton of every project in this tutorial, and it has to know where your
+clone is. Tell it once, with an environment variable:
+
+```bash
+export PEERIOT_MYRMIC_SDK=~/myrmic   # the path to your clone
+```
+
+Set this in the shell you run the tutorial from, before the first `myrmic new`. It is read only when
+a project is created, so setting it afterwards will not fix a project you already created. Delete
+that project and create it again.
+
+The other option is to add `--sdk ~/myrmic` to every `myrmic new` command. If you set both, the flag
+wins.
+
 **Part 1 and 2, the Linux half:**
 
 - A Linux machine. The simulated sensor is synthetic and never touches the I²C bus, so this
   tutorial needs no I²C hardware and no `/dev/i2c-*` node. (A Raspberry Pi works too — it is where
   the real-sensor follow-ups in *What's next* would run.)
 - The `myrmic` CLI and the Rust toolchain it builds cells with, per
-  [Installation](../01_quickstart/01_installation.md). Take the *Install from source* path — it also
-  leaves you the repository checkout this tutorial points `--sdk` at (called `~/myrmic` below).
+  [Installation](../01_quickstart/01_installation.md). The *Install from source* path also leaves
+  you the checkout referenced above (called `~/myrmic` here).
 
 **Part 3, the ESP32 half:**
 

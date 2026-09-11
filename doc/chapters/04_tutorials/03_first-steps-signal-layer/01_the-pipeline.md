@@ -9,17 +9,19 @@ them, and watch it come alive. Everything happens on the Linux machine.
 ## Step 1 - Scaffold the project
 
 `myrmic new --pipeline` creates a standalone Linux pipeline project — the two YAML files you will
-edit, and a `build.rs` that generates the pipeline from them at build time. Point `--sdk` at your
-repository checkout so the project builds against your local code:
+edit, and a `build.rs` that generates the pipeline from them at build time:
 
 ```bash
-myrmic new --pipeline ~/sl-tutorial/first-steps --sdk ~/myrmic
+myrmic new --pipeline ~/sl-tutorial/first-steps
 cd ~/sl-tutorial/first-steps
 ```
 
 ```text
 INFO  Creating Linux pipeline 'first-steps'
 ```
+
+This builds against the `PEERIOT_MYRMIC_SDK` checkout from the
+[prerequisites](../03_first-steps-signal-layer.md); add `--sdk <path>` here if you did not set it.
 
 ## Step 2 - The board file
 
@@ -106,25 +108,34 @@ unchanged.
 ## Step 4 - Build and run it
 
 The generated project is an ordinary Cargo binary — `build.rs` turns `board.yml` + `pipeline.yml`
-into the pipeline at compile time:
+into the pipeline at compile time. Build it:
 
 ```bash
-cargo run
+cargo build
 ```
 
 ```text
    Compiling first-steps v0.1.0 (~/sl-tutorial/first-steps)
     Finished `dev` profile [unoptimized + debuginfo] target(s)
-     Running `target/debug/first-steps`
+```
+
+That leaves a self-contained binary at `target/debug/first-steps`. It is an ordinary program;
+running it needs nothing from Cargo. Start it:
+
+```bash
+./target/debug/first-steps
+```
+
+```text
 Pipeline `first-steps` running. Press Ctrl-C to stop.
 [INFO  sim_source_driver] [sim-source] init OK (synthetic)
 ```
 
-If instead `cargo run` panics with `no socket path available`, your shell has no
-`XDG_RUNTIME_DIR`. It is set on a desktop login but often unset over SSH or on a headless box (a
-Raspberry Pi included). Set it and re-run — and because the runtime in Part 2 reaches the pipeline
-over the same socket, set it the same in every terminal you use here (or add the line to your shell
-profile):
+If instead the pipeline panics on start with `no socket path available`, your shell has no
+`XDG_RUNTIME_DIR`. On a normal desktop login it is set for you and you will not see this; it is
+often unset over SSH or on a headless box (a Raspberry Pi included). Set it and re-run — and
+because the runtime in Part 2 reaches the pipeline over the same socket, set it the same in every
+terminal you use here (or add the line to your shell profile):
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/$(id -u)

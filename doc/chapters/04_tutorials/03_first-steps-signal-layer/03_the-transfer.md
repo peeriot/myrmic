@@ -17,9 +17,12 @@ On embedded, the pipeline is compiled *into the firmware* rather than run as its
 `myrmic new --firmware` scaffolds that firmware, and `--pipeline` gives it a Signal Layer pipeline:
 
 ```bash
-myrmic new --firmware=esp32c6 --pipeline ~/sl-tutorial/first-steps-c6 --sdk ~/myrmic
+myrmic new --firmware=esp32c6 --pipeline ~/sl-tutorial/first-steps-c6
 cd ~/sl-tutorial/first-steps-c6
 ```
+
+As in Parts 1 and 2, this uses the `PEERIOT_MYRMIC_SDK` checkout from the
+[prerequisites](../03_first-steps-signal-layer.md); add `--sdk <path>` if you did not set it.
 
 The scaffold writes a `board.yml` for the C6 — pins instead of a device path:
 
