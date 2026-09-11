@@ -213,7 +213,7 @@ async fn debug_writer(
                 if response.entities.is_empty() {
                     // the batch that triggered this notification didn't contain any logs at all.
                     // print everything already queued.
-                    for item in stream.drain_all() {
+                    for item in stream.drain_all(sri_filter) {
                         print_item(&item, json)?;
                     }
                 }

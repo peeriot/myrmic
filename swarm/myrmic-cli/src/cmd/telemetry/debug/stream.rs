@@ -43,9 +43,9 @@ impl DebugStream {
         self.take(Some(emitted_at), sri_filter)
     }
 
-    /// Takes every queued item, oldest first, without applying the cell filter.
-    pub(crate) fn drain_all(&mut self) -> Vec<DebugItem> {
-        self.take(None, None)
+    /// Takes every queued item the cell filter admits, oldest first.
+    pub(crate) fn drain_all(&mut self, sri_filter: Option<&str>) -> Vec<DebugItem> {
+        self.take(None, sri_filter)
     }
 
     fn take(&mut self, boundary: Option<SystemTime>, sri_filter: Option<&str>) -> Vec<DebugItem> {
@@ -98,7 +98,7 @@ mod tests {
         let mut stream = DebugStream::new(None);
         stream.push(DebugItem::command_at(1_000, sri(1)));
         // the read that followed came back empty, so the queue was printed and emptied
-        stream.drain_all();
+        stream.drain_all(None);
 
         assert_eq!(stream.log_cursor(), None);
     }
@@ -130,7 +130,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            stream.drain_all(),
+            stream.drain_all(None),
             vec![DebugItem::command_at(3_000, sri(1))]
         );
     }
@@ -161,7 +161,19 @@ mod tests {
         let released = stream.flush_before(at(2_000), Some(&sri(1).to_string()));
 
         assert_eq!(released, vec![DebugItem::command_at(1_000, sri(1))]);
-        assert_eq!(stream.drain_all(), Vec::new());
+        assert_eq!(stream.drain_all(None), Vec::new());
+    }
+
+    #[test]
+    fn a_drain_with_no_new_log_rows_still_honours_the_cell_filter() {
+        let mut stream = DebugStream::new(None);
+        stream.push(DebugItem::event_at(1_000));
+        stream.push(DebugItem::command_at(2_000, sri(2)));
+        stream.push(DebugItem::command_at(3_000, sri(1)));
+
+        let drained = stream.drain_all(Some(&sri(1).to_string()));
+
+        assert_eq!(drained, vec![DebugItem::command_at(3_000, sri(1))]);
     }
 
     fn sri(n: u128) -> Sri {

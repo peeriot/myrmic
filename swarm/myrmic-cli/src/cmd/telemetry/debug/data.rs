@@ -52,6 +52,16 @@ impl DebugItem {
             payload: None,
         })
     }
+
+    /// An event recorded as inserted at `millis` since the epoch.
+    pub(crate) fn event_at(millis: u64) -> Self {
+        DebugItem::Event(DebugEvent {
+            trace_id: None,
+            inserted_at: SystemTime::UNIX_EPOCH + Duration::from_millis(millis),
+            event_name: Event::try_from("rain").expect("a valid event name"),
+            payload: DebugPayload::String("20".to_owned()),
+        })
+    }
 }
 
 impl Ord for DebugItem {
