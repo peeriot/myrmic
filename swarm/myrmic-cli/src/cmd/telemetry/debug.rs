@@ -1,13 +1,12 @@
-use std::collections::BTreeSet;
-
-use db_commons::models::Cursor;
-
-use crate::{args::Ctx, cmd::telemetry::debug::data::DebugItem};
+use crate::args::Ctx;
+use crate::cmd::telemetry::debug::data::DebugItem;
+use crate::cmd::telemetry::debug::stream::{DebugStream, LogRead};
 
 mod data;
 mod events;
 mod logs;
 mod messages;
+mod stream;
 
 #[derive(clap::Parser)]
 pub struct Debug {
@@ -158,10 +157,9 @@ async fn debug_writer(
     json: bool,
     sri_filter: Option<&str>,
 ) -> anyhow::Result<()> {
-    let mut queue = BTreeSet::<DebugItem>::new();
-    let mut log_cursor: Option<Cursor> = None;
+    let mut stream = DebugStream::new(None);
 
-    // zenoh pub/sub gives no signal when the swarm goes away — the subscribers above just fall
+    // zenoh pub/sub gives no signal when the swarm goes away - the subscribers above just fall
     // silent forever. Periodically ping the swarm so a lost connection actually ends this loop
     // instead of hanging.
     let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -177,7 +175,7 @@ async fn debug_writer(
             item = rx_dbg.recv() => {
                 match item {
                     Some(item) => {
-                        queue.insert(item);
+                        stream.push(item);
                     }
                     None => break,
                 }
@@ -185,43 +183,28 @@ async fn debug_writer(
             // once a new log batch was inserted we are collecting relevant logs for each debug
             // item (trace ID) and bring the data in timely order to actually print it
             _ = rx_log.recv() => {
-                // we read logs from the last cursor, if we have one. otherwise we are faking
-                // a cursor by building a UUIDv7 from the timestamp of the first payload to
-                // debug
-                let query_cursor = match &log_cursor {
-                    Some(log_cursor) => log_cursor.clone(),
-                    None => {
-                        if let Some(first) = queue.first() {
-                            let millis: u64 = first
-                                .timestamp()
-                                .duration_since(std::time::UNIX_EPOCH)?
-                                .as_millis()
-                                .try_into()?;
-                            let id = uuid::Builder::from_unix_timestamp_millis(millis, &[0u8; 10]).into_uuid();
-                            Cursor::After(id.as_bytes().to_vec())
-                        } else {
-                            continue;
-                        }
-                    }
+                let LogRead::From(query_cursor) = stream.next_log_read()? else {
+                    continue;
                 };
 
-                let response = logs::query(&db, Some(query_cursor)).await?;
+                let response = logs::query(&db, query_cursor).await?;
 
                 if response.entities.is_empty() {
                     // the batch that triggered this notification didn't contain any logs at all.
                     // print everything already queued.
-                    while let Some(item) = queue.pop_first() {
+                    for item in stream.drain_all() {
                         print_item(&item, json)?;
                     }
                 }
+
                 for (id, payload) in response.entities {
-                    log_cursor = Some(Cursor::After(id));
+                    stream.advance(&id);
 
                     let Some((target, record)) = logs::parse(&payload) else {
                         continue;
                     };
 
-                    // debug is about cell logs specifically — drop anything else client-side,
+                    // debug is about cell logs specifically - drop anything else client-side,
                     // regardless of what the remote EnvFilter let through
                     if !logs::is_cell_target(target.as_deref()) {
                         continue;
@@ -236,16 +219,11 @@ async fn debug_writer(
                         _ => {}
                     }
 
-
-                    // logs come back in chronological (id) order, so once we've
-                    // reached one at or after a queued item's own timestamp,
-                    // that item's window is closed — print it now, before the
-                    // log line, instead of in a separate pass over `queue`.
-                    while queue.first().is_some_and(|item| *item.timestamp() <= record_time) {
-                        let item = queue.pop_first().expect("just checked non-empty");
-                        if item.filter_sri(sri_filter) {
-                            print_item(&item, json)?;
-                        }
+                    // logs come back in chronological (id) order, so once we've reached one at
+                    // or after a queued item's own timestamp, that item's window is closed -
+                    // print it now, before the log line.
+                    for item in stream.flush_before(record_time, sri_filter) {
+                        print_item(&item, json)?;
                     }
 
                     if json {

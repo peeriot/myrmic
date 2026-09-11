@@ -40,6 +40,20 @@ impl DebugItem {
     }
 }
 
+#[cfg(test)]
+impl DebugItem {
+    /// A command addressed to `receiver`, recorded as inserted at `millis` since the epoch.
+    pub(crate) fn command_at(millis: u64, receiver: Sri) -> Self {
+        DebugItem::Command(DebugCommand {
+            trace_id: None,
+            inserted_at: SystemTime::UNIX_EPOCH + Duration::from_millis(millis),
+            receiver_sri: receiver,
+            cmd: Command::try_from("increment").expect("a valid command name"),
+            payload: None,
+        })
+    }
+}
+
 impl Ord for DebugItem {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.timestamp().cmp(other.timestamp())
