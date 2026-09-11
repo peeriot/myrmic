@@ -85,13 +85,6 @@ mod tests {
     use super::{Cursor, DebugItem, DebugStream, Id};
 
     #[test]
-    fn a_notification_is_answered_even_with_nothing_queued() {
-        let stream = DebugStream::new(None);
-
-        assert_eq!(stream.log_cursor(), None);
-    }
-
-    #[test]
     fn a_queued_item_never_becomes_the_log_cursor() {
         let mut stream = DebugStream::new(None);
         stream.push(DebugItem::command_at(1_000, sri(1)));
@@ -101,12 +94,13 @@ mod tests {
 
     #[test]
     fn a_log_read_that_returned_nothing_leaves_the_next_read_alone() {
-        let mut stream = DebugStream::new(None);
+        let anchor = row_id(1_000);
+        let mut stream = DebugStream::new(Some(Cursor::After(anchor.clone())));
         stream.push(DebugItem::command_at(1_000, sri(1)));
         // the read that followed came back empty, so the queue was printed and emptied
         stream.drain_all(None);
 
-        assert_eq!(stream.log_cursor(), None);
+        assert_eq!(stream.log_cursor(), Some(Cursor::After(anchor)));
     }
 
     #[test]
@@ -135,10 +129,12 @@ mod tests {
                 DebugItem::command_at(2_000, sri(1)),
             ]
         );
+        // a row written after the item, rather than in the same instant, releases it too
         assert_eq!(
-            stream.drain_all(None),
+            stream.flush_before(&row_id(3_500), None),
             vec![DebugItem::command_at(3_000, sri(1))]
         );
+        assert_eq!(stream.drain_all(None), Vec::new());
     }
 
     #[test]
@@ -150,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_only_moves_forward() {
+    fn a_later_log_row_replaces_the_cursor() {
         let mut stream = DebugStream::new(Some(Cursor::After(row_id(1_000))));
         stream.advance(&row_id(2_000));
         stream.advance(&row_id(3_000));
@@ -195,17 +191,6 @@ mod tests {
                 DebugItem::command_at(1_000, sri(2)),
             ]
         );
-    }
-
-    #[test]
-    fn a_late_written_log_row_still_releases_the_items_before_it() {
-        let mut stream = DebugStream::new(None);
-        stream.push(DebugItem::command_at(2_000, sri(1)));
-
-        // the batch processor held this record for a second before it was written
-        let released = stream.flush_before(&row_id(2_500), None);
-
-        assert_eq!(released, vec![DebugItem::command_at(2_000, sri(1))]);
     }
 
     fn sri(n: u128) -> Sri {
