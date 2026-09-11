@@ -208,30 +208,29 @@ The commands so far inspect data that has already been recorded. `myrmic telemet
 myrmic telemetry debug --timeout 60s
 ```
 
-The stream shows two things, in timestamp order: **events**, as an `EVENT=<name> payload=<payload>, trace_id=<id>` line, and the **log lines of cells**, as `[time] LEVEL message`. From Terminal 2, publish an event first, then send a command:
+The stream shows three things, in timestamp order: **events**, as an `EVENT=<name> payload=<payload>, trace_id=<id>` line, the **commands** sent to a cell, as a `COMMAND=<name> receiver_sri=<sri>, trace_id=<id>` line, and the **log lines of cells**, as `[time] LEVEL message`. From Terminal 2, publish an event and send a command:
 
 ```bash
 myrmic publish rain 20
 myrmic send counter increment
 ```
 
-Terminal 3 shows the event - no cell handles `rain`, an event is shown regardless - and then the counter's log line, the moment its handler runs:
+Terminal 3 shows the event - no cell handles `rain`, an event is shown regardless - then the command, and then the counter's log line, the moment its handler runs:
 
 ```text
 INFO  starting debug stream
-[2026-09-09T07:17:05.173000000Z] EVENT=rain payload=20, trace_id=23f54ecc-65f2-6b5a-9e68-617d74c58b02
-[2026-09-09T07:17:12.161237086Z] INFO Incremented count to 4 (sender=Sri(00000000-0000-0000-0000-000000000000))
+[2026-09-11T12:54:53.870000000Z] EVENT=rain payload=20, trace_id=25aa6a45-b026-0521-8be4-7a3e2c7bc3c7
+[2026-09-11T12:55:00.904000000Z] COMMAND=increment receiver_sri=5d883103-6382-5d16-9a0c-d70fd0565cb6, trace_id=6921abc0-aeb1-2bf7-94f7-f2ab55788df1
+[2026-09-11T12:55:00.907105589Z] INFO Incremented count to 1 (sender=Sri(00000000-0000-0000-0000-000000000000))
 INFO  debugging ends after timeout
 ```
 
-> **Publish first.** In Myrmic 0.5.0 the stream prints no log lines until it has seen its first event - it uses the event's timestamp to know from where to read the log table. A stream that only ever sees `myrmic send` stays silent. Publishing any event, handled or not, unblocks it; every cell log line from then on is shown.
-
-Unlike `myrmic telemetry logs`, the stream is not gated by `-v`: every severity a cell emits is shown. Payloads are printed as JSON if they parse as JSON, otherwise as a string, otherwise as raw hex bytes. The [reference page](../../10_reference/02_myrmic-cli/12_telemetry/07_debug.md) also lists a `COMMAND` item for commands sent to a cell; in Myrmic 0.5.0 that item does not appear - a command shows up through the log lines its handler emits, as above.
+Unlike `myrmic telemetry logs`, the stream is not gated by `-v`: every severity a cell emits is shown. Payloads are printed as JSON if they parse as JSON, otherwise as a string, otherwise as raw hex bytes. A `COMMAND` line is shown while the command's row is still in the target cell's mailbox, so a command whose handler has already consumed it appears through that handler's log lines instead; the [reference page](../../10_reference/02_myrmic-cli/12_telemetry/07_debug.md) has the full record layout.
 
 Useful flags:
 
 ```bash
-# Only the log lines of one cell (SRI or SRN); events are not shown in this mode
+# Only the commands and log lines of one cell (SRI or SRN); events are not shown in this mode
 myrmic telemetry debug --id counter --timeout 30s
 
 # One JSON object per line, e.g. to pipe into jq
@@ -268,9 +267,6 @@ This is usually the fastest way to answer "what is my swarm doing right now" whi
 **Too much noise in logs**
 : Use `myrmic telemetry set-filter "info,zenoh=off"` at runtime to quieten the transport library without restarting. Avoid a bare `debug` - it stores hundreds of rows per second.
 
-**`myrmic telemetry debug` prints nothing, although `myrmic send` works and `myrmic telemetry logs` shows the lines**
-: In 0.5.0 the stream needs one event before it prints any log line (Step 6). Run `myrmic publish rain 20` - or any other event - while the stream is running; the cell log lines of every command sent afterwards appear.
-
 ---
 
 ## What Have You Learned
@@ -280,7 +276,7 @@ This is usually the fastest way to answer "what is my swarm doing right now" whi
 - `myrmic send` prints a trace ID; `myrmic telemetry logs --trace-id` and `myrmic telemetry traces --trace-id` follow that one command through the swarm.
 - `logs` hides `DEBUG`/`TRACE` unless you pass `-v`/`-vv`; `traces` exports everything in the Trace Event Format; `metrics` shows the latest snapshot and needs about a minute after start.
 - `set-filter` and `set-db-retention` reach all connected nodes within a few seconds, without a restart.
-- `myrmic telemetry debug` streams events and cell log lines live - after it has seen its first event; `--level` raises the cells' log level for the duration of the stream.
+- `myrmic telemetry debug` streams events and cell log lines live; `--level` raises the cells' log level for the duration of the stream.
 
 ## Next Step
 

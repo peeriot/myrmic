@@ -1,13 +1,18 @@
-use std::collections::BTreeSet;
+use std::future::Future;
+use std::io::{Write, stdout};
 
 use db_commons::models::Cursor;
 
-use crate::{args::Ctx, cmd::telemetry::debug::data::DebugItem};
+use crate::args::Ctx;
+use crate::cmd::telemetry::debug::data::DebugItem;
+use crate::cmd::telemetry::debug::stream::DebugStream;
 
 mod data;
 mod events;
 mod logs;
+mod mailbox;
 mod messages;
+mod stream;
 
 #[derive(clap::Parser)]
 pub struct Debug {
@@ -58,32 +63,91 @@ pub async fn handle(ctx: Ctx, cmd: Debug) -> anyhow::Result<()> {
         None => None,
     };
 
-    let _message_subscriber = messages::MessageSubscriber::new(db.clone(), tx_debug.clone()).await;
-    let _event_subscriber = events::EventSubscriber::new(db.clone(), tx_debug).await;
-    let _log_subscriber = logs::LogSubscriber::new(db.clone(), tx_log).await;
+    let stream = async {
+        // the types are spelled out so that dropping a `?` below is a compile error rather than
+        // a binding that silently holds an unchecked `Result` and drops the subscription
+        let _message_subscriber: messages::MessageSubscriber =
+            messages::MessageSubscriber::new(ctx.clone(), db.clone(), tx_debug.clone()).await?;
+        let _event_subscriber: events::EventSubscriber =
+            events::EventSubscriber::new(ctx.clone(), db.clone(), tx_debug).await?;
 
-    let writer = debug_writer(db, rx_debug, rx_log, cmd.json, sri_filter.as_deref());
-    tokio::select! {
-        _ = abort => {
-            crate::info!(&ctx, "ctrl-c received");
-        }
-        () = timeout => {
-            crate::info!(&ctx, "debugging ends after timeout");
-        }
-        res = writer => {
-            if let Err(err) = res {
-                crate::error!(&ctx, "debug writer exited unexpectedly: {err}");
+        // Anchored before the log subscription so a row inserted in between is still greater than
+        // the anchor and still comes back on the first query; the other order would drop it.
+        let log_cursor = match logs::newest_row_id(&db).await? {
+            Some(id) => Some(Cursor::After(id)),
+            None => {
+                crate::warn!(
+                    &ctx,
+                    "No log records stored yet; did you set a retention period? (ie `myrmic telemetry set-db-retention 1h`)"
+                );
+
+                None
             }
-        }
+        };
+
+        let _log_subscriber: logs::LogSubscriber =
+            logs::LogSubscriber::new(ctx.clone(), db.clone(), tx_log).await?;
+
+        let writer = debug_writer(
+            &ctx,
+            db,
+            rx_debug,
+            rx_log,
+            cmd.json,
+            sri_filter.as_deref(),
+            log_cursor,
+        );
+        tokio::select! {
+            _ = abort => {
+                crate::info!(&ctx, "ctrl-c received");
+            }
+            () = timeout => {
+                crate::info!(&ctx, "debugging ends after timeout");
+            }
+            res = writer => {
+                if let Err(err) = res {
+                    crate::error!(&ctx, "debug writer exited unexpectedly: {err}");
+                }
+            }
+        };
+
+        anyhow::Ok(())
     };
 
-    if let Some(filter) = restore_filter {
-        session
-            .put(swarm_telemetry::TOPIC_ENV_FILTER, &filter)
-            .await
-            .map_err(|err| anyhow::anyhow!("failed to restore env_filter: {err}"))?;
-        crate::info!(&ctx, "restored filter to '{filter}'");
-    }
+    run_then_restore(
+        stream,
+        restore_cell_log_level(&ctx, &session, restore_filter),
+    )
+    .await
+}
+
+/// Awaits `restore` whatever `stream` ended with - nothing else puts a filter raised by
+/// `--level` back on the connected nodes.
+async fn run_then_restore(
+    stream: impl Future<Output = anyhow::Result<()>>,
+    restore: impl Future<Output = anyhow::Result<()>>,
+) -> anyhow::Result<()> {
+    let streamed = stream.await;
+    let restored = restore.await;
+
+    streamed.and(restored)
+}
+
+/// Puts `filter` back on all connected nodes. `None` means the level was never raised.
+async fn restore_cell_log_level(
+    ctx: &Ctx,
+    session: &zenoh::Session,
+    filter: Option<String>,
+) -> anyhow::Result<()> {
+    let Some(filter) = filter else {
+        return Ok(());
+    };
+
+    session
+        .put(swarm_telemetry::TOPIC_ENV_FILTER, &filter)
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to restore env_filter: {err}"))?;
+    crate::info!(ctx, "restored filter to '{filter}'");
 
     Ok(())
 }
@@ -141,27 +205,29 @@ async fn raise_cell_log_level(
     Ok(baseline)
 }
 
-fn print_item(item: &DebugItem, json: bool) -> anyhow::Result<()> {
+fn print_item(out: &mut impl Write, item: &DebugItem, json: bool) -> anyhow::Result<()> {
     if json {
-        println!("{}", serde_json::to_string(item)?);
+        writeln!(out, "{}", serde_json::to_string(item)?)?;
     } else {
-        println!("{item}");
+        writeln!(out, "{item}")?;
     }
 
     Ok(())
 }
 
 async fn debug_writer(
+    ctx: &Ctx,
     db: db_client::v1::Client,
     mut rx_dbg: tokio::sync::mpsc::Receiver<DebugItem>,
     mut rx_log: tokio::sync::mpsc::Receiver<()>,
     json: bool,
     sri_filter: Option<&str>,
+    log_cursor: Option<Cursor>,
 ) -> anyhow::Result<()> {
-    let mut queue = BTreeSet::<DebugItem>::new();
-    let mut log_cursor: Option<Cursor> = None;
+    let mut stream = DebugStream::new(log_cursor);
+    let mut out = stdout();
 
-    // zenoh pub/sub gives no signal when the swarm goes away — the subscribers above just fall
+    // zenoh pub/sub gives no signal when the swarm goes away - the subscribers above just fall
     // silent forever. Periodically ping the swarm so a lost connection actually ends this loop
     // instead of hanging.
     let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -177,7 +243,7 @@ async fn debug_writer(
             item = rx_dbg.recv() => {
                 match item {
                     Some(item) => {
-                        queue.insert(item);
+                        stream.push(item);
                     }
                     None => break,
                 }
@@ -185,49 +251,38 @@ async fn debug_writer(
             // once a new log batch was inserted we are collecting relevant logs for each debug
             // item (trace ID) and bring the data in timely order to actually print it
             _ = rx_log.recv() => {
-                // we read logs from the last cursor, if we have one. otherwise we are faking
-                // a cursor by building a UUIDv7 from the timestamp of the first payload to
-                // debug
-                let query_cursor = match &log_cursor {
-                    Some(log_cursor) => log_cursor.clone(),
-                    None => {
-                        if let Some(first) = queue.first() {
-                            let millis: u64 = first
-                                .timestamp()
-                                .duration_since(std::time::UNIX_EPOCH)?
-                                .as_millis()
-                                .try_into()?;
-                            let id = uuid::Builder::from_unix_timestamp_millis(millis, &[0u8; 10]).into_uuid();
-                            Cursor::After(id.as_bytes().to_vec())
-                        } else {
-                            continue;
-                        }
+                // One failed read says nothing about the next notification, and the cursor stays
+                // where it is, so the rows this one missed come back on the following read. The
+                // ping above is what ends the loop when the swarm is really gone.
+                let response = match logs::query(&db, stream.log_cursor()).await {
+                    Ok(response) => response,
+                    Err(err) => {
+                        crate::warn!(ctx, "failed to read the log table: {err}");
+
+                        continue;
                     }
                 };
-
-                let response = logs::query(&db, Some(query_cursor)).await?;
 
                 if response.entities.is_empty() {
                     // the batch that triggered this notification didn't contain any logs at all.
                     // print everything already queued.
-                    while let Some(item) = queue.pop_first() {
-                        print_item(&item, json)?;
+                    for item in stream.drain_all(sri_filter) {
+                        print_item(&mut out, &item, json)?;
                     }
                 }
-                for (id, payload) in response.entities {
-                    log_cursor = Some(Cursor::After(id));
 
-                    let Some((target, record)) = logs::parse(&payload) else {
+                for (id, payload) in response.entities {
+                    stream.advance(&id);
+
+                    let Some((target, record)) = logs::parse(ctx, &payload) else {
                         continue;
                     };
 
-                    // debug is about cell logs specifically — drop anything else client-side,
+                    // debug is about cell logs specifically - drop anything else client-side,
                     // regardless of what the remote EnvFilter let through
                     if !logs::is_cell_target(target.as_deref()) {
                         continue;
                     }
-
-                    let record_time = logs::time(&record);
 
                     // filter log for SRI
                     let sri = logs::sri(&record);
@@ -236,16 +291,11 @@ async fn debug_writer(
                         _ => {}
                     }
 
-
-                    // logs come back in chronological (id) order, so once we've
-                    // reached one at or after a queued item's own timestamp,
-                    // that item's window is closed — print it now, before the
-                    // log line, instead of in a separate pass over `queue`.
-                    while queue.first().is_some_and(|item| *item.timestamp() <= record_time) {
-                        let item = queue.pop_first().expect("just checked non-empty");
-                        if item.filter_sri(sri_filter) {
-                            print_item(&item, json)?;
-                        }
+                    // logs come back in chronological (id) order, so once we've reached one at
+                    // or after a queued item's own timestamp, that item's window is closed -
+                    // print it now, before the log line.
+                    for item in stream.flush_before(&id, sri_filter) {
+                        print_item(&mut out, &item, json)?;
                     }
 
                     if json {
@@ -253,9 +303,9 @@ async fn debug_writer(
                         if let (Some(target), Some(obj)) = (&target, value.as_object_mut()) {
                             obj.insert("target".into(), serde_json::Value::String(target.clone()));
                         }
-                        println!("{value}");
+                        writeln!(out, "{value}")?;
                     } else {
-                        println!("{}", logs::format(&record));
+                        writeln!(out, "{}", logs::format(&record))?;
                     }
                 }
             }
@@ -263,4 +313,74 @@ async fn debug_writer(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind, Result as IoResult, Write};
+
+    use super::{DebugItem, print_item, run_then_restore};
+
+    #[test]
+    fn a_write_that_failed_is_reported_instead_of_panicking() {
+        for json in [false, true] {
+            let err = print_item(&mut ClosedPipe, &DebugItem::event_at(3_000), json)
+                .expect_err("a closed stdout ends the stream, it does not panic");
+
+            assert_eq!(
+                err.downcast::<Error>()
+                    .expect("the writer's own error")
+                    .kind(),
+                ErrorKind::BrokenPipe
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_failed_is_still_followed_by_the_restore() {
+        let mut restored = false;
+
+        let result = run_then_restore(async { anyhow::bail!("failed to subscribe") }, async {
+            restored = true;
+
+            Ok(())
+        })
+        .await;
+
+        assert_eq!(
+            result
+                .expect_err("the stream's failure ends the command")
+                .to_string(),
+            "failed to subscribe"
+        );
+        assert!(restored);
+    }
+
+    #[tokio::test]
+    async fn a_restore_that_failed_ends_the_command_with_its_error() {
+        let result = run_then_restore(async { Ok(()) }, async {
+            anyhow::bail!("failed to restore env_filter")
+        })
+        .await;
+
+        assert_eq!(
+            result
+                .expect_err("a filter left raised is reported")
+                .to_string(),
+            "failed to restore env_filter"
+        );
+    }
+
+    /// Stands in for a stdout whose reader has gone away.
+    struct ClosedPipe;
+
+    impl Write for ClosedPipe {
+        fn write(&mut self, _buf: &[u8]) -> IoResult<usize> {
+            Err(Error::from(ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
 }

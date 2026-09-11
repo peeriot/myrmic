@@ -18,7 +18,7 @@ Use it during development to get live visibility into what is happening inside t
 Each record is one of three types:
 
 - **Event** - it holds the event event name, a payload, and a trace ID.
-- **Command** - it holds the command name, the receiving cell identifier , a payload, and a trace ID.
+- **Command** - it holds the command name, the receiving cell identifier, a payload, and a trace ID. A command is shown while its row is still in the target cell's mailbox; once the cell's handler has consumed it, the command appears through the log lines that handler emits instead.
 - **Log** - it hold the log level and message.
 
 Command and event payloads are decoded as JSON if possible, then as a string, then as raw bytes.

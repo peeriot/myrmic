@@ -1,10 +1,12 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use db_client::v1::Subscription;
-use db_commons::models::{Cursor, Subject, events, tb_list};
+use db_commons::models::{Cursor, Id, Subject, TbOrderBy, events, tb_list};
 use swarm_telemetry::db::opentelemetry_proto::tonic::common::v1::any_value::Value;
 use swarm_telemetry::db::opentelemetry_proto::tonic::logs::v1::LogRecord;
 use swarm_telemetry::db::{ScopedEntry, TABLE_LOGS};
+
+use crate::args::Ctx;
 
 /// The tracing targets that carry cell log output — the WASM host-function logger on edge
 /// devices, and the hardcoded target the host re-emits embedded-cell logs under. `debug` only
@@ -35,6 +37,7 @@ pub(crate) struct LogSubscriber {
 
 impl LogSubscriber {
     pub(crate) async fn new(
+        ctx: Ctx,
         db: db_client::v1::Client,
         tx: tokio::sync::mpsc::Sender<()>,
     ) -> anyhow::Result<Self> {
@@ -45,7 +48,7 @@ impl LogSubscriber {
                 Subject::Database(tele_scope.namespace, tele_scope.database),
                 TABLE_LOGS,
                 move |event| {
-                    tokio::spawn(notification_handler(event, tx.clone()));
+                    tokio::spawn(notification_handler(ctx.clone(), event, tx.clone()));
                 },
             )
             .await
@@ -58,18 +61,35 @@ impl LogSubscriber {
 }
 
 async fn notification_handler(
+    ctx: Ctx,
     _notification: events::Notification,
     sender: tokio::sync::mpsc::Sender<()>,
 ) {
     // we are just interested in the fact that a new log batch has been inserted
-    if let Err(err) = sender.send(()).await {
-        eprintln!("{err}");
+    if sender.send(()).await.is_err() {
+        crate::debug!(&ctx, "dropping a log notification, the stream has ended");
     }
+}
+
+/// The id of the newest row in the log table, or `None` when nothing is stored.
+pub(crate) async fn newest_row_id(db: &db_client::v1::Client) -> anyhow::Result<Option<Id>> {
+    let response = list(db, None, Some(1), Some(TbOrderBy::KeyDesc)).await?;
+
+    Ok(response.entities.into_iter().next().map(|(id, _)| id))
 }
 
 pub(crate) async fn query(
     db: &db_client::v1::Client,
     cursor: Option<Cursor>,
+) -> anyhow::Result<tb_list::Response> {
+    list(db, cursor, None, None).await
+}
+
+async fn list(
+    db: &db_client::v1::Client,
+    cursor: Option<Cursor>,
+    limit: Option<usize>,
+    order: Option<TbOrderBy>,
 ) -> anyhow::Result<tb_list::Response> {
     db.read_tx_in(swarm_telemetry::db::scope(), async move |client, tx_id| {
         let req = tb_list::Request {
@@ -78,8 +98,8 @@ pub(crate) async fn query(
                 scope: swarm_telemetry::db::scope(),
                 table: TABLE_LOGS.into(),
                 cursor,
-                limit: None,
-                order: None,
+                limit,
+                order,
             },
         };
 
@@ -97,16 +117,15 @@ pub(crate) async fn query(
 /// along with its `scope_name` (the tracing `target`, e.g. a module path) —
 /// the OTLP `LogRecord` proto has no `target` field of its own, so the
 /// exporter carries it alongside the record instead.
-pub(crate) fn parse(payload: &[u8]) -> Option<(Option<String>, LogRecord)> {
+pub(crate) fn parse(ctx: &Ctx, payload: &[u8]) -> Option<(Option<String>, LogRecord)> {
     serde_json::from_slice::<ScopedEntry<LogRecord>>(payload)
-        .inspect_err(|err| eprintln!("Failed to parse log record: {err}"))
+        .inspect_err(|err| crate::warn!(ctx, "failed to parse a log record: {err}"))
         .ok()
         .map(|entry| (entry.scope_name, entry.data))
 }
 
-/// The record's own emission time (falls back to the observed time if the
-/// original timestamp wasn't set), used to decide when it's safe to flush a
-/// queued `DebugItem` — not to be confused with the row's insertion time.
+/// The record's own emission time (falls back to the observed time if the original timestamp
+/// wasn't set), as shown in the printed line - not the row's insertion time.
 pub(crate) fn time(record: &LogRecord) -> SystemTime {
     let ts_ns = record.observed_time_unix_nano.max(record.time_unix_nano);
     UNIX_EPOCH + Duration::from_nanos(ts_ns)

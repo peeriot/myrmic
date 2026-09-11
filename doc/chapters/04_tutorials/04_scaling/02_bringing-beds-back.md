@@ -136,7 +136,9 @@ For about a minute nothing happens; `myrmic cells` still shows `bed-4` on `node3
 [2026-09-08T15:06:54.300313464Z] WARN bed-4 lost; respawning in 'sectorB'
 ```
 
-and in Terminal 1:
+The command's row is still in `bed-root`'s mailbox while the stream reads it, which is why the `COMMAND` line shows up here. A command a handler has already consumed appears through that handler's log lines instead.
+
+In Terminal 1:
 
 ```bash
 myrmic cells

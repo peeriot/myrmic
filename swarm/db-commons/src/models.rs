@@ -36,7 +36,7 @@ pub type Id = Vec<u8>;
 pub type Value = Vec<u8>;
 
 /// Where to start a listing from.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Cursor {
     /// start with the entry just past the given id.
     After(Id),

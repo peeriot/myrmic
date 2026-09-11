@@ -40,15 +40,27 @@ impl DebugItem {
     }
 }
 
-impl Ord for DebugItem {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.timestamp().cmp(other.timestamp())
+#[cfg(test)]
+impl DebugItem {
+    /// A command addressed to `receiver`, recorded as inserted at `millis` since the epoch.
+    pub(crate) fn command_at(millis: u64, receiver: Sri) -> Self {
+        DebugItem::Command(DebugCommand {
+            trace_id: None,
+            inserted_at: SystemTime::UNIX_EPOCH + Duration::from_millis(millis),
+            receiver_sri: receiver,
+            cmd: Command::try_from("increment").expect("a valid command name"),
+            payload: None,
+        })
     }
-}
 
-impl PartialOrd for DebugItem {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+    /// An event recorded as inserted at `millis` since the epoch.
+    pub(crate) fn event_at(millis: u64) -> Self {
+        DebugItem::Event(DebugEvent {
+            trace_id: None,
+            inserted_at: SystemTime::UNIX_EPOCH + Duration::from_millis(millis),
+            event_name: Event::try_from("rain").expect("a valid event name"),
+            payload: DebugPayload::String("20".to_owned()),
+        })
     }
 }
 
