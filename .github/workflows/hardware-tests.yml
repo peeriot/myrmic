@@ -4,17 +4,57 @@ name: Hardware Tests
 #       are chained rather than parallel: the runner drives one at a time.
 # Where: swarm only, self-hosted `hardware`.
 # When: weekdays at 01:44, or manual dispatch.
+#
+# The tested firmware is scaffolded and built through the public myrmic flow
+# (`myrmic new --firmware <chip> --pipeline` then `myrmic build`) rather than the
+# internal cargo aliases, so CI exercises the same path a user runs. `myrmic new
+# --sdk <checkout>` points the scaffold's dependencies at this checkout, so the
+# image under test is this revision's code.
 on:
   workflow_dispatch:
   schedule:
     - cron: '44 1 * * 1-5'
 
-env:
-  RUST_NIGHTLY: "nightly-2026-08-07"
-
 jobs:
+  # The three HIL jobs run in fresh containers with a wiped target dir, so each
+  # would otherwise rebuild the host binaries (the myrmic CLI and the swarm
+  # runtime the tests spawn) from scratch. Build them once here and hand them to
+  # the boards as an artifact. `retention-days: 1` keeps the stored copy
+  # short-lived (it is only needed for this run's hand-off).
+  build-host-binaries:
+    runs-on: hardware
+    if: github.repository == 'peeriot/swarm'
+    container:
+      image: "ghcr.io/peeriot/rust:1.97.0"
+      env:
+        HOST_UID: ${{ vars.ACTIONS_RUNNER_UID }}
+        HOST_GID: ${{ vars.ACTIONS_RUNNER_GID }}
+    steps:
+      - name: Clear target directory
+        run: |
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          git config --global --add safe.directory /__w/swarm/swarm
+      - name: Setup
+        uses: "peeriot/actions/setup@f1de69144739ce6bb25250bbb9096d3632574163"
+        id: setup
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          access-private-key: ${{ secrets.CI_APP_SECRET }}
+      - name: Build host binaries
+        run: |
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --release --bin myrmic --bin swarm
+      - name: Upload host binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-binaries
+          path: |
+            target/release/myrmic
+            target/release/swarm
+          retention-days: 1
+
   hil-esp32c5:
     runs-on: hardware
+    needs: build-host-binaries
     if: github.repository == 'peeriot/swarm'
     container:
       image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
@@ -37,24 +77,46 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           access-private-key: ${{ secrets.CI_APP_SECRET }}
-      # The signal-layer suite needs the pipeline compiled into the firmware; the
-      # firmware's build.rs generates it from the board manifest and pipeline YAML
-      # named by SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE (relative to the
-      # modem-esp32 crate). Without the `pipeline` feature the taps do not exist and
-      # those tests cannot pass, whatever the rig is wired to.
+      - name: Fetch the shared host binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: host-binaries
+          path: host-bin
+      # download-artifact does not preserve the executable bit.
+      - name: Make host binaries executable
+        run: chmod +x host-bin/myrmic host-bin/swarm
+      # Scaffold the firmware with `myrmic new` and overwrite the starter board
+      # manifest and pipeline it emits with the HIL pair: the signal-layer suite
+      # needs the `hil-tests` taps compiled in, and without them those tests
+      # cannot pass whatever the rig is wired to. The scaffold lives beside the
+      # checkout so it is its own cargo workspace; `--sdk` still resolves its
+      # dependencies (as absolute path deps) into this checkout.
+      - name: Scaffold HIL firmware (C5)
+        run: |
+          "$PWD/host-bin/myrmic" new "$GITHUB_WORKSPACE-hil-firmware" \
+            --firmware esp32c5 --pipeline --name hil_firmware --sdk "$GITHUB_WORKSPACE"
+          cp embedded/esp-hal/signal-layer/boards/esp32c5-hil.yaml "$GITHUB_WORKSPACE-hil-firmware/board.yml"
+          cp embedded/esp-hal/signal-layer/pipelines/hil-tests.yaml "$GITHUB_WORKSPACE-hil-firmware/pipeline.yml"
       # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
       # without the test features. Built first and copied aside, so the wdt-selftest build below
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C5, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c5 --features pipeline
-          cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 "$PWD/host-bin/myrmic" build "$GITHUB_WORKSPACE-hil-firmware"
+          # Copy the production ELF and the partition table this build generated into their own
+          # directory, so the flasher picks the table matched to this exact firmware and matches how
+          # `myrmic build` flashes (see generated_partition_table()).
+          mkdir -p "$GITHUB_WORKSPACE-hil-firmware-production"
+          cp "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/hil_firmware" "$GITHUB_WORKSPACE-hil-firmware-production/hil_firmware"
+          cp "$(find "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/build" -path '*hil_firmware*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" "$GITHUB_WORKSPACE-hil-firmware-production/partitions.generated.csv"
+      # The suite's default image adds `wdt-selftest` so the watchdog tests can trigger a liveness
+      # stall. `esp-firmware/wdt-selftest` enables the feature on the dependency directly, so the
+      # scaffold needs no test-only feature of its own.
       - name: Build embedded firmware (C5)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c5-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c5 --features pipeline,wdt-selftest
-      - name: Build swarm (host binary)
-        run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 "$PWD/host-bin/myrmic" build "$GITHUB_WORKSPACE-hil-firmware" --features esp-firmware/wdt-selftest
+          # Same, next to the default ELF the rest of the suite flashes.
+          cp "$(find "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/build" -path '*hil_firmware*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/partitions.generated.csv"
       # We don't have isolation between boards/execs/tests. So make sure that no other board can be accidentally be
       # picked up.
       - name: Silence sibling boards
@@ -71,15 +133,16 @@ jobs:
       #   HIL_SENSORS=1 CARGO_NET_GIT_FETCH_WITH_CLI=true ... cargo nextest run -p hil-tests ...
       - name: Run tests
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 EMBEDDED_TARGET=ESP32C5 EMBEDDED_ELF_PRODUCTION="$PWD/target/modem-esp32-production" cargo nextest run -p hil-tests --no-fail-fast --no-capture
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 EMBEDDED_TARGET=ESP32C5 EMBEDDED_ELF="$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/hil_firmware" EMBEDDED_ELF_PRODUCTION="$GITHUB_WORKSPACE-hil-firmware-production/hil_firmware" SWARM_BINARY="$PWD/host-bin/swarm" cargo nextest run -p hil-tests --no-fail-fast --no-capture
 
   hil-esp32c6:
     runs-on: hardware
     # The hardware runner cannot execute HIL jobs in parallel, so chain the boards to
     # run sequentially. `!cancelled()` keeps the next board running even if a prior one
-    # failed, matching the suite's --no-fail-fast intent.
-    needs: hil-esp32c5
-    if: ${{ github.repository == 'peeriot/swarm' && (!cancelled()) }}
+    # failed, matching the suite's --no-fail-fast intent; the explicit build-host-binaries
+    # success check still skips the board cleanly when the shared binaries never built.
+    needs: [build-host-binaries, hil-esp32c5]
+    if: ${{ github.repository == 'peeriot/swarm' && needs.build-host-binaries.result == 'success' && (!cancelled()) }}
     container:
       image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
@@ -101,24 +164,46 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           access-private-key: ${{ secrets.CI_APP_SECRET }}
-      # The signal-layer suite needs the pipeline compiled into the firmware; the
-      # firmware's build.rs generates it from the board manifest and pipeline YAML
-      # named by SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE (relative to the
-      # modem-esp32 crate). Without the `pipeline` feature the taps do not exist and
-      # those tests cannot pass, whatever the rig is wired to.
+      - name: Fetch the shared host binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: host-binaries
+          path: host-bin
+      # download-artifact does not preserve the executable bit.
+      - name: Make host binaries executable
+        run: chmod +x host-bin/myrmic host-bin/swarm
+      # Scaffold the firmware with `myrmic new` and overwrite the starter board
+      # manifest and pipeline it emits with the HIL pair: the signal-layer suite
+      # needs the `hil-tests` taps compiled in, and without them those tests
+      # cannot pass whatever the rig is wired to. The scaffold lives beside the
+      # checkout so it is its own cargo workspace; `--sdk` still resolves its
+      # dependencies (as absolute path deps) into this checkout.
+      - name: Scaffold HIL firmware (C6)
+        run: |
+          "$PWD/host-bin/myrmic" new "$GITHUB_WORKSPACE-hil-firmware" \
+            --firmware esp32c6 --pipeline --name hil_firmware --sdk "$GITHUB_WORKSPACE"
+          cp embedded/esp-hal/signal-layer/boards/esp32c6-hil.yaml "$GITHUB_WORKSPACE-hil-firmware/board.yml"
+          cp embedded/esp-hal/signal-layer/pipelines/hil-tests.yaml "$GITHUB_WORKSPACE-hil-firmware/pipeline.yml"
       # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
       # without the test features. Built first and copied aside, so the wdt-selftest build below
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C6, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c6 --features pipeline
-          cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 "$PWD/host-bin/myrmic" build "$GITHUB_WORKSPACE-hil-firmware"
+          # Copy the production ELF and the partition table this build generated into their own
+          # directory, so the flasher picks the table matched to this exact firmware and matches how
+          # `myrmic build` flashes (see generated_partition_table()).
+          mkdir -p "$GITHUB_WORKSPACE-hil-firmware-production"
+          cp "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/hil_firmware" "$GITHUB_WORKSPACE-hil-firmware-production/hil_firmware"
+          cp "$(find "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/build" -path '*hil_firmware*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" "$GITHUB_WORKSPACE-hil-firmware-production/partitions.generated.csv"
+      # The suite's default image adds `wdt-selftest` so the watchdog tests can trigger a liveness
+      # stall. `esp-firmware/wdt-selftest` enables the feature on the dependency directly, so the
+      # scaffold needs no test-only feature of its own.
       - name: Build embedded firmware (C6)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c6 --features pipeline,wdt-selftest
-      - name: Build swarm (host binary)
-        run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 "$PWD/host-bin/myrmic" build "$GITHUB_WORKSPACE-hil-firmware" --features esp-firmware/wdt-selftest
+          # Same, next to the default ELF the rest of the suite flashes.
+          cp "$(find "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/build" -path '*hil_firmware*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/partitions.generated.csv"
       # We don't have isolation between boards/execs/tests. So make sure that no other board can be accidentally be
       # picked up.
       - name: Silence sibling boards
@@ -135,13 +220,13 @@ jobs:
       #   HIL_SENSORS=1 CARGO_NET_GIT_FETCH_WITH_CLI=true ... cargo nextest run -p hil-tests ...
       - name: Run tests
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 EMBEDDED_TARGET=ESP32C6 EMBEDDED_ELF_PRODUCTION="$PWD/target/modem-esp32-production" cargo nextest run -p hil-tests --no-fail-fast --no-capture
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 EMBEDDED_TARGET=ESP32C6 EMBEDDED_ELF="$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/hil_firmware" EMBEDDED_ELF_PRODUCTION="$GITHUB_WORKSPACE-hil-firmware-production/hil_firmware" SWARM_BINARY="$PWD/host-bin/swarm" cargo nextest run -p hil-tests --no-fail-fast --no-capture
 
   hil-esp32c61:
     runs-on: hardware
     # Runs after the C6 board so only one HIL job uses the hardware runner at a time.
-    needs: hil-esp32c6
-    if: ${{ github.repository == 'peeriot/swarm' && (!cancelled()) }}
+    needs: [build-host-binaries, hil-esp32c6]
+    if: ${{ github.repository == 'peeriot/swarm' && needs.build-host-binaries.result == 'success' && (!cancelled()) }}
     container:
       image: "ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.97.0"
       env:
@@ -163,29 +248,46 @@ jobs:
         with:
           app-id: ${{ vars.CI_APP_ID }}
           access-private-key: ${{ secrets.CI_APP_SECRET }}
-      # The signal-layer suite needs the pipeline compiled into the firmware; the
-      # firmware's build.rs generates it from the board manifest and pipeline YAML
-      # named by SIGNAL_LAYER_BOARD / SIGNAL_LAYER_PIPELINE (relative to the
-      # modem-esp32 crate). Without the `pipeline` feature the taps do not exist and
-      # those tests cannot pass, whatever the rig is wired to.
+      - name: Fetch the shared host binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: host-binaries
+          path: host-bin
+      # download-artifact does not preserve the executable bit.
+      - name: Make host binaries executable
+        run: chmod +x host-bin/myrmic host-bin/swarm
+      # Scaffold the firmware with `myrmic new` and overwrite the starter board
+      # manifest and pipeline it emits with the HIL pair: the signal-layer suite
+      # needs the `hil-tests` taps compiled in, and without them those tests
+      # cannot pass whatever the rig is wired to. The scaffold lives beside the
+      # checkout so it is its own cargo workspace; `--sdk` still resolves its
+      # dependencies (as absolute path deps) into this checkout.
+      - name: Scaffold HIL firmware (C61)
+        run: |
+          "$PWD/host-bin/myrmic" new "$GITHUB_WORKSPACE-hil-firmware" \
+            --firmware esp32c61 --pipeline --name hil_firmware --sdk "$GITHUB_WORKSPACE"
+          cp embedded/esp-hal/signal-layer/boards/esp32c61-hil.yaml "$GITHUB_WORKSPACE-hil-firmware/board.yml"
+          cp embedded/esp-hal/signal-layer/pipelines/hil-tests.yaml "$GITHUB_WORKSPACE-hil-firmware/pipeline.yml"
       # REQ-FEAT-2026-HWD-SEC-002 asserts what a *shipped* build does, so its test needs an image
       # without the test features. Built first and copied aside, so the wdt-selftest build below
       # leaves the default ELF path holding the image the rest of the suite flashes.
       - name: Build embedded firmware (C61, production profile)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline
-          cp target/riscv32imac-unknown-none-elf/release/modem-esp32 target/modem-esp32-production
-          # Copy this build's generated partition table next to the production ELF, so the flasher
-          # picks the table matched to this exact firmware (see generated_partition_table()).
-          cp "$(find target/riscv32imac-unknown-none-elf/release/build -path '*modem-esp32*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" target/partitions.generated.csv
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 "$PWD/host-bin/myrmic" build "$GITHUB_WORKSPACE-hil-firmware"
+          # Copy the production ELF and the partition table this build generated into their own
+          # directory, so the flasher picks the table matched to this exact firmware and matches how
+          # `myrmic build` flashes (see generated_partition_table()).
+          mkdir -p "$GITHUB_WORKSPACE-hil-firmware-production"
+          cp "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/hil_firmware" "$GITHUB_WORKSPACE-hil-firmware-production/hil_firmware"
+          cp "$(find "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/build" -path '*hil_firmware*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" "$GITHUB_WORKSPACE-hil-firmware-production/partitions.generated.csv"
+      # The suite's default image adds `wdt-selftest` so the watchdog tests can trigger a liveness
+      # stall. `esp-firmware/wdt-selftest` enables the feature on the dependency directly, so the
+      # scaffold needs no test-only feature of its own.
       - name: Build embedded firmware (C61)
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c61-hil.yaml SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/hil-tests.yaml cargo +$RUST_NIGHTLY build-c61 --features pipeline,wdt-selftest
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 WIFI_SSID="${{ secrets.HARDWARE_TESTS_WIFI_SSID }}" WIFI_PASS="${{ secrets.HARDWARE_TESTS_WIFI_PASS }}" ESP_LOG=info TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 "$PWD/host-bin/myrmic" build "$GITHUB_WORKSPACE-hil-firmware" --features esp-firmware/wdt-selftest
           # Same, next to the default ELF the rest of the suite flashes.
-          cp "$(find target/riscv32imac-unknown-none-elf/release/build -path '*modem-esp32*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" target/riscv32imac-unknown-none-elf/release/partitions.generated.csv
-      - name: Build swarm (host binary)
-        run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 cargo build --bin swarm
+          cp "$(find "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/build" -path '*hil_firmware*/out/partitions.generated.csv' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)" "$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/partitions.generated.csv"
       # We don't have isolation between boards/execs/tests. So make sure that no other board can be accidentally be
       # picked up.
       - name: Silence sibling boards
@@ -202,4 +304,4 @@ jobs:
       #   HIL_SENSORS=1 CARGO_NET_GIT_FETCH_WITH_CLI=true ... cargo nextest run -p hil-tests ...
       - name: Run tests
         run: |
-          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 EMBEDDED_TARGET=ESP32C61 EMBEDDED_ELF_PRODUCTION="$PWD/target/modem-esp32-production" cargo nextest run -p hil-tests --no-fail-fast --no-capture
+          CARGO_NET_GIT_FETCH_WITH_CLI=true CARGO_BUILD_JOBS=8 TCP_DIRECT_ADDR="${{ secrets.HARDWARE_TESTS_RUNNER_IP }}":7557 EMBEDDED_TARGET=ESP32C61 EMBEDDED_ELF="$GITHUB_WORKSPACE-hil-firmware/target/riscv32imac-unknown-none-elf/release/hil_firmware" EMBEDDED_ELF_PRODUCTION="$GITHUB_WORKSPACE-hil-firmware-production/hil_firmware" SWARM_BINARY="$PWD/host-bin/swarm" cargo nextest run -p hil-tests --no-fail-fast --no-capture

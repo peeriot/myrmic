@@ -72,7 +72,13 @@ pub fn handle(ctx: &Ctx, cmd: Flash) -> anyhow::Result<()> {
     let cargo_target = build::to_build_cargo_target(target.unwrap_or(models::CargoTarget::Auto));
     build::report_building(ctx, chip, &manifest, name.as_deref());
     let flash_size = u64::from(info.flash_size.size());
-    let built = firmware::build(&manifest, &cargo_target, Some(flash_size), name.as_deref())?;
+    let built = firmware::build(
+        &manifest,
+        &cargo_target,
+        Some(flash_size),
+        name.as_deref(),
+        &[],
+    )?;
     build::report_layout(ctx, &built);
 
     crate::info!(ctx, "Flashing {}...", built.elf.display());

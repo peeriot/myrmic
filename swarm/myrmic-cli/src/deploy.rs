@@ -66,7 +66,7 @@ pub async fn deploy_toml(
     mut root: RootConfig,
 ) -> anyhow::Result<()> {
     // A firmware is flashed, never deployed, so no deploy names a runtime.
-    let classes = build::build_toml(&ctx, path, platforms, cargo_target, None)?;
+    let classes = build::build_toml(&ctx, path, platforms, cargo_target, None, &[])?;
 
     let session = ctx.session().await?;
 
