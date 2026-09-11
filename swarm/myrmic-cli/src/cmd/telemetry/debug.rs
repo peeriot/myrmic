@@ -1,6 +1,8 @@
+use db_commons::models::Cursor;
+
 use crate::args::Ctx;
 use crate::cmd::telemetry::debug::data::DebugItem;
-use crate::cmd::telemetry::debug::stream::{DebugStream, LogRead};
+use crate::cmd::telemetry::debug::stream::DebugStream;
 
 mod data;
 mod events;
@@ -59,9 +61,31 @@ pub async fn handle(ctx: Ctx, cmd: Debug) -> anyhow::Result<()> {
 
     let _message_subscriber = messages::MessageSubscriber::new(db.clone(), tx_debug.clone()).await;
     let _event_subscriber = events::EventSubscriber::new(db.clone(), tx_debug).await;
+
+    // Anchored before the log subscription so a row inserted in between is still greater than
+    // the anchor and still comes back on the first query; the other order would drop it.
+    let log_cursor = match logs::newest_row_id(&db).await? {
+        Some(id) => Some(Cursor::After(id)),
+        None => {
+            crate::warn!(
+                &ctx,
+                "No log records stored yet; did you set a retention period? (ie `myrmic telemetry set-db-retention 1h`)"
+            );
+
+            None
+        }
+    };
+
     let _log_subscriber = logs::LogSubscriber::new(db.clone(), tx_log).await;
 
-    let writer = debug_writer(db, rx_debug, rx_log, cmd.json, sri_filter.as_deref());
+    let writer = debug_writer(
+        db,
+        rx_debug,
+        rx_log,
+        cmd.json,
+        sri_filter.as_deref(),
+        log_cursor,
+    );
     tokio::select! {
         _ = abort => {
             crate::info!(&ctx, "ctrl-c received");
@@ -156,8 +180,9 @@ async fn debug_writer(
     mut rx_log: tokio::sync::mpsc::Receiver<()>,
     json: bool,
     sri_filter: Option<&str>,
+    log_cursor: Option<Cursor>,
 ) -> anyhow::Result<()> {
-    let mut stream = DebugStream::new(None);
+    let mut stream = DebugStream::new(log_cursor);
 
     // zenoh pub/sub gives no signal when the swarm goes away - the subscribers above just fall
     // silent forever. Periodically ping the swarm so a lost connection actually ends this loop
@@ -183,11 +208,7 @@ async fn debug_writer(
             // once a new log batch was inserted we are collecting relevant logs for each debug
             // item (trace ID) and bring the data in timely order to actually print it
             _ = rx_log.recv() => {
-                let LogRead::From(query_cursor) = stream.next_log_read()? else {
-                    continue;
-                };
-
-                let response = logs::query(&db, query_cursor).await?;
+                let response = logs::query(&db, stream.log_cursor()).await?;
 
                 if response.entities.is_empty() {
                     // the batch that triggered this notification didn't contain any logs at all.

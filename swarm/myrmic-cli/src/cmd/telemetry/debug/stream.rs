@@ -1,19 +1,9 @@
 use std::collections::BTreeSet;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use db_commons::models::{Cursor, Id};
-use uuid::Builder;
 
 use super::data::DebugItem;
-
-/// What a log notification asks of the log table.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum LogRead {
-    /// List the table from this cursor; `None` lists it from the beginning.
-    From(Option<Cursor>),
-    /// Nothing to anchor a read to, so the notification is dropped.
-    Skip,
-}
 
 /// The debug stream's ordering state: where the next log read starts, and the command and
 /// event items waiting for a log row to place them against. Carries no I/O.
@@ -34,25 +24,9 @@ impl DebugStream {
         self.queue.insert(item);
     }
 
-    /// Where the next log read starts. Without a cursor the oldest queued item's timestamp
-    /// stands in for one, and with nothing queued there is nothing to read against.
-    pub(crate) fn next_log_read(&self) -> anyhow::Result<LogRead> {
-        if let Some(cursor) = &self.log_cursor {
-            return Ok(LogRead::From(Some(cursor.clone())));
-        }
-
-        let Some(first) = self.queue.first() else {
-            return Ok(LogRead::Skip);
-        };
-
-        let millis: u64 = first
-            .timestamp()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis()
-            .try_into()?;
-        let id = Builder::from_unix_timestamp_millis(millis, &[0u8; 10]).into_uuid();
-
-        Ok(LogRead::From(Some(Cursor::After(id.as_bytes().to_vec()))))
+    /// Where the next log read starts. `None` reads the table from the beginning.
+    pub(crate) fn log_cursor(&self) -> Option<Cursor> {
+        self.log_cursor.clone()
     }
 
     /// Continues the next read past this log row.
@@ -102,7 +76,32 @@ mod tests {
     use cell_protocol::Sri;
     use uuid::{Builder, Uuid};
 
-    use super::{Cursor, DebugItem, DebugStream, Id, LogRead};
+    use super::{Cursor, DebugItem, DebugStream, Id};
+
+    #[test]
+    fn a_notification_is_answered_even_with_nothing_queued() {
+        let stream = DebugStream::new(None);
+
+        assert_eq!(stream.log_cursor(), None);
+    }
+
+    #[test]
+    fn a_queued_item_never_becomes_the_log_cursor() {
+        let mut stream = DebugStream::new(None);
+        stream.push(DebugItem::command_at(1_000, sri(1)));
+
+        assert_eq!(stream.log_cursor(), None);
+    }
+
+    #[test]
+    fn a_log_read_that_returned_nothing_leaves_the_next_read_alone() {
+        let mut stream = DebugStream::new(None);
+        stream.push(DebugItem::command_at(1_000, sri(1)));
+        // the read that followed came back empty, so the queue was printed and emptied
+        stream.drain_all();
+
+        assert_eq!(stream.log_cursor(), None);
+    }
 
     #[test]
     fn a_log_row_moves_the_next_read_past_it() {
@@ -111,10 +110,7 @@ mod tests {
 
         stream.advance(&row);
 
-        assert_eq!(
-            stream.next_log_read().unwrap(),
-            LogRead::From(Some(Cursor::After(row)))
-        );
+        assert_eq!(stream.log_cursor(), Some(Cursor::After(row)));
     }
 
     #[test]
@@ -144,10 +140,7 @@ mod tests {
         let anchor = row_id(1_000);
         let stream = DebugStream::new(Some(Cursor::After(anchor.clone())));
 
-        assert_eq!(
-            stream.next_log_read().unwrap(),
-            LogRead::From(Some(Cursor::After(anchor)))
-        );
+        assert_eq!(stream.log_cursor(), Some(Cursor::After(anchor)));
     }
 
     #[test]
@@ -156,10 +149,7 @@ mod tests {
         stream.advance(&row_id(2_000));
         stream.advance(&row_id(3_000));
 
-        assert_eq!(
-            stream.next_log_read().unwrap(),
-            LogRead::From(Some(Cursor::After(row_id(3_000))))
-        );
+        assert_eq!(stream.log_cursor(), Some(Cursor::After(row_id(3_000))));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use db_client::v1::Subscription;
-use db_commons::models::{Cursor, Subject, events, tb_list};
+use db_commons::models::{Cursor, Id, Subject, TbOrderBy, events, tb_list};
 use swarm_telemetry::db::opentelemetry_proto::tonic::common::v1::any_value::Value;
 use swarm_telemetry::db::opentelemetry_proto::tonic::logs::v1::LogRecord;
 use swarm_telemetry::db::{ScopedEntry, TABLE_LOGS};
@@ -67,9 +67,25 @@ async fn notification_handler(
     }
 }
 
+/// The id of the newest row in the log table, or `None` when nothing is stored.
+pub(crate) async fn newest_row_id(db: &db_client::v1::Client) -> anyhow::Result<Option<Id>> {
+    let response = list(db, None, Some(1), Some(TbOrderBy::KeyDesc)).await?;
+
+    Ok(response.entities.into_iter().next().map(|(id, _)| id))
+}
+
 pub(crate) async fn query(
     db: &db_client::v1::Client,
     cursor: Option<Cursor>,
+) -> anyhow::Result<tb_list::Response> {
+    list(db, cursor, None, None).await
+}
+
+async fn list(
+    db: &db_client::v1::Client,
+    cursor: Option<Cursor>,
+    limit: Option<usize>,
+    order: Option<TbOrderBy>,
 ) -> anyhow::Result<tb_list::Response> {
     db.read_tx_in(swarm_telemetry::db::scope(), async move |client, tx_id| {
         let req = tb_list::Request {
@@ -78,8 +94,8 @@ pub(crate) async fn query(
                 scope: swarm_telemetry::db::scope(),
                 table: TABLE_LOGS.into(),
                 cursor,
-                limit: None,
-                order: None,
+                limit,
+                order,
             },
         };
 
