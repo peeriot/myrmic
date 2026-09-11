@@ -112,6 +112,7 @@ cell-no-init-logic
 cell-periodic-fixed-delay-logic
 cell-periodic-macro-logic
 cell-room-logic
+cell-runtime-tags-logic
 cell-seq-helper-logic
 cell-seq-main-logic
 cell-spawn-child
