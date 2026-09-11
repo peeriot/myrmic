@@ -65,10 +65,10 @@ async fn data_collection(
     let mut cursors = HashMap::<Scope, Cursor>::new();
 
     while let Some((scope, table)) = receiver.recv().await {
-        // One failed read says nothing about the other scopes this one task serves, so the
-        // cursor stays where it is and the next notification retries from it.
         let cursor = cursors.get(&scope).cloned();
 
+        // One failed read says nothing about the other scopes this one task serves, so the
+        // cursor stays where it is and the next notification retries from it.
         let response = match mailbox::list(&db, scope.clone(), table.clone(), cursor).await {
             Ok(response) => response,
             Err(err) => {

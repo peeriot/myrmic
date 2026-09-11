@@ -6,6 +6,8 @@ use swarm_telemetry::db::opentelemetry_proto::tonic::common::v1::any_value::Valu
 use swarm_telemetry::db::opentelemetry_proto::tonic::logs::v1::LogRecord;
 use swarm_telemetry::db::{ScopedEntry, TABLE_LOGS};
 
+use crate::args::Ctx;
+
 /// The tracing targets that carry cell log output — the WASM host-function logger on edge
 /// devices, and the hardcoded target the host re-emits embedded-cell logs under. `debug` only
 /// cares about cell logs, so it filters everything else out client-side rather than relying on
@@ -35,6 +37,7 @@ pub(crate) struct LogSubscriber {
 
 impl LogSubscriber {
     pub(crate) async fn new(
+        ctx: Ctx,
         db: db_client::v1::Client,
         tx: tokio::sync::mpsc::Sender<()>,
     ) -> anyhow::Result<Self> {
@@ -45,7 +48,7 @@ impl LogSubscriber {
                 Subject::Database(tele_scope.namespace, tele_scope.database),
                 TABLE_LOGS,
                 move |event| {
-                    tokio::spawn(notification_handler(event, tx.clone()));
+                    tokio::spawn(notification_handler(ctx.clone(), event, tx.clone()));
                 },
             )
             .await
@@ -58,12 +61,13 @@ impl LogSubscriber {
 }
 
 async fn notification_handler(
+    ctx: Ctx,
     _notification: events::Notification,
     sender: tokio::sync::mpsc::Sender<()>,
 ) {
     // we are just interested in the fact that a new log batch has been inserted
-    if let Err(err) = sender.send(()).await {
-        eprintln!("{err}");
+    if sender.send(()).await.is_err() {
+        crate::debug!(&ctx, "dropping a log notification, the stream has ended");
     }
 }
 
@@ -113,9 +117,9 @@ async fn list(
 /// along with its `scope_name` (the tracing `target`, e.g. a module path) —
 /// the OTLP `LogRecord` proto has no `target` field of its own, so the
 /// exporter carries it alongside the record instead.
-pub(crate) fn parse(payload: &[u8]) -> Option<(Option<String>, LogRecord)> {
+pub(crate) fn parse(ctx: &Ctx, payload: &[u8]) -> Option<(Option<String>, LogRecord)> {
     serde_json::from_slice::<ScopedEntry<LogRecord>>(payload)
-        .inspect_err(|err| eprintln!("Failed to parse log record: {err}"))
+        .inspect_err(|err| crate::warn!(ctx, "failed to parse a log record: {err}"))
         .ok()
         .map(|entry| (entry.scope_name, entry.data))
 }
