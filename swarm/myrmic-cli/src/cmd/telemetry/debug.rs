@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::io::{Write, stdout};
 
 use db_commons::models::Cursor;
 
@@ -204,11 +205,11 @@ async fn raise_cell_log_level(
     Ok(baseline)
 }
 
-fn print_item(item: &DebugItem, json: bool) -> anyhow::Result<()> {
+fn print_item(out: &mut impl Write, item: &DebugItem, json: bool) -> anyhow::Result<()> {
     if json {
-        println!("{}", serde_json::to_string(item)?);
+        writeln!(out, "{}", serde_json::to_string(item)?)?;
     } else {
-        println!("{item}");
+        writeln!(out, "{item}")?;
     }
 
     Ok(())
@@ -224,6 +225,7 @@ async fn debug_writer(
     log_cursor: Option<Cursor>,
 ) -> anyhow::Result<()> {
     let mut stream = DebugStream::new(log_cursor);
+    let mut out = stdout();
 
     // zenoh pub/sub gives no signal when the swarm goes away - the subscribers above just fall
     // silent forever. Periodically ping the swarm so a lost connection actually ends this loop
@@ -265,7 +267,7 @@ async fn debug_writer(
                     // the batch that triggered this notification didn't contain any logs at all.
                     // print everything already queued.
                     for item in stream.drain_all(sri_filter) {
-                        print_item(&item, json)?;
+                        print_item(&mut out, &item, json)?;
                     }
                 }
 
@@ -293,7 +295,7 @@ async fn debug_writer(
                     // or after a queued item's own timestamp, that item's window is closed -
                     // print it now, before the log line.
                     for item in stream.flush_before(&id, sri_filter) {
-                        print_item(&item, json)?;
+                        print_item(&mut out, &item, json)?;
                     }
 
                     if json {
@@ -301,9 +303,9 @@ async fn debug_writer(
                         if let (Some(target), Some(obj)) = (&target, value.as_object_mut()) {
                             obj.insert("target".into(), serde_json::Value::String(target.clone()));
                         }
-                        println!("{value}");
+                        writeln!(out, "{value}")?;
                     } else {
-                        println!("{}", logs::format(&record));
+                        writeln!(out, "{}", logs::format(&record))?;
                     }
                 }
             }
@@ -315,7 +317,24 @@ async fn debug_writer(
 
 #[cfg(test)]
 mod tests {
-    use super::run_then_restore;
+    use std::io::{Error, ErrorKind, Result as IoResult, Write};
+
+    use super::{DebugItem, print_item, run_then_restore};
+
+    #[test]
+    fn a_write_that_failed_is_reported_instead_of_panicking() {
+        for json in [false, true] {
+            let err = print_item(&mut ClosedPipe, &DebugItem::event_at(3_000), json)
+                .expect_err("a closed stdout ends the stream, it does not panic");
+
+            assert_eq!(
+                err.downcast::<Error>()
+                    .expect("the writer's own error")
+                    .kind(),
+                ErrorKind::BrokenPipe
+            );
+        }
+    }
 
     #[tokio::test]
     async fn a_stream_that_failed_is_still_followed_by_the_restore() {
@@ -350,5 +369,18 @@ mod tests {
                 .to_string(),
             "failed to restore env_filter"
         );
+    }
+
+    /// Stands in for a stdout whose reader has gone away.
+    struct ClosedPipe;
+
+    impl Write for ClosedPipe {
+        fn write(&mut self, _buf: &[u8]) -> IoResult<usize> {
+            Err(Error::from(ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
     }
 }
