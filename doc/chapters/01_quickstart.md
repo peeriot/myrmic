@@ -111,10 +111,20 @@ fn init(md: Metadata) -> myrmic_sdk::Result {
 }
 
 #[myrmic_sdk::cmd]
-fn count(md: Metadata, callback: Callback<JsonValue>) -> myrmic_sdk::Result {
-    let _ = myrmic_sdk::info!("returning count to (sender={:?})", md.sender).ok();
+fn count(md: Metadata, callback: Option<Callback<JsonValue>>) -> myrmic_sdk::Result {
     let value = STATE.load()?.unwrap_or_default();
-    callback.invoke(md.sender, &JsonValue::from(value))?;
+
+    // `myrmic send` carries no callback, and a nil sender that could not be
+    // answered even if it did.
+    if let Some(callback) = callback
+        && !md.sender.is_nil()
+    {
+        let _ = myrmic_sdk::info!("Returning count {} to (sender={:?})", value, md.sender).ok();
+        callback.invoke(md.sender, &JsonValue::from(value))?;
+    } else {
+        let _ = myrmic_sdk::info!("Count is {} (no caller to answer)", value).ok();
+    }
+
     Ok(())
 }
 
@@ -123,7 +133,9 @@ fn increment(md: Metadata) -> myrmic_sdk::Result {
     let count = STATE.upsert_with(|count| {
         *count = *count + 1;
     })?;
+
     let _ = myrmic_sdk::info!("Incremented count to {} (sender={:?})", count, md.sender).ok();
+
     Ok(())
 }
 
@@ -132,7 +144,9 @@ fn decrement(md: Metadata) -> myrmic_sdk::Result {
     let count = STATE.upsert_with(|count| {
         *count = *count - 1;
     })?;
+
     let _ = myrmic_sdk::info!("Decremented count to {} (sender={:?})", count, md.sender).ok();
+
     Ok(())
 }
 ```
@@ -151,7 +165,7 @@ A few things to note about the code:
 
 This cell exposes three commands:
 
-- `count` - returns the current count to the caller.
+- `count` - answers the caller with the current count when one sent a callback, and logs it otherwise.
 - `increment` - increments the count by 1 and logs the result.
 - `decrement` - decrements the count by 1 and logs the result.
 
@@ -269,19 +283,22 @@ In a terminal this is a live view: it redraws every couple of seconds until you 
 
 `counter` is deployed on the local runtime, which the `runtime` column shows by id, and waiting for commands.
 
-### 7. Call `increment`.
+### 7. Call the commands.
 
-`myrmic send` sends a command to a cell - it takes the cell identifier and the command name. Call `increment` three times:
+`myrmic send` sends a command to a cell - it takes the cell identifier and the command name. Call `increment` three times, then ask for the count:
 
 ```bash
 myrmic send counter increment
 myrmic send counter increment
 myrmic send counter increment
+myrmic send counter count
 ```
+
+`count` answers its caller with a callback when a cell sent one. A send from the terminal carries no callback and nobody to answer, so the cell logs the value instead - which is what the next step looks at.
 
 ### 8. Check the logs.
 
-The cell logs its state after every increment. Check what happened:
+The cell logs its state after every command. Check what happened:
 
 ```bash
 myrmic telemetry logs
@@ -293,6 +310,7 @@ Look for these lines in the output:
 Incremented count to 1 (sender=...)
 Incremented count to 2 (sender=...)
 Incremented count to 3 (sender=...)
+Count is 3 (no caller to answer)
 ```
 
 If the output is empty, retention was not set before the commands were sent (see step 4). Set it and send a few more `increment` commands. To confirm the cell itself logged, print the runtime's own log instead - it is written regardless of retention:

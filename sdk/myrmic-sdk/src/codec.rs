@@ -243,9 +243,10 @@ json_int!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128,);
 #[cfg(test)]
 mod tests {
     use super::{Decoder, Encoder};
-    use crate::{Bytes, Result};
+    use crate::{Bytes, Callback, JsonValue, Result};
     use alloc::string::String;
     use alloc::vec::Vec;
+    use myrmic_common::cells::Command;
 
     fn dec<T: Decoder>(bytes: &[u8]) -> Result<T> {
         T::from_bytes(Bytes::from(bytes))
@@ -324,5 +325,44 @@ mod tests {
         // A bareword the gateway wraps as a JSON string.
         assert_eq!(enc_str(&String::from("jsontest")), "\"jsontest\"");
         assert_eq!(dec::<String>(b"\"jsontest\"").unwrap(), "jsontest");
+    }
+
+    #[test]
+    fn optional_callback_absorbs_only_the_empty_buffer() {
+        // What `myrmic send <cell> count` puts on the wire.
+        assert!(dec::<Option<Callback<JsonValue>>>(b"").unwrap().is_none());
+
+        let decoded = dec::<Option<Callback<JsonValue>>>(b"on_reply").unwrap();
+        assert_eq!(Command::from(decoded.unwrap()).as_ref(), "on_reply");
+
+        // A non-empty buffer that is not a command name still fails: the
+        // optional form absorbs absence, never malformedness. `on_reply`
+        // without `--raw` arrives JSON-quoted, which is what this is.
+        assert!(dec::<Option<Callback<JsonValue>>>(b"\"on_reply\"").is_err());
+
+        // The bare form still rejects the empty buffer.
+        assert!(dec::<Callback<JsonValue>>(b"").is_err());
+    }
+
+    #[test]
+    fn zero_length_from_args_never_touches_the_inner_decoder() {
+        // `Probe` panics from both of its methods, so a branch that delegated
+        // to `T` would fail loudly instead of returning `None`. These come
+        // first so that failure is the one a broken branch reports.
+        assert!(<Option<Probe>>::from_args(0).unwrap().is_none());
+        assert!(<Option<Probe>>::from_bytes(Bytes::new()).unwrap().is_none());
+    }
+
+    /// A decoder that fails loudly if it is ever reached.
+    struct Probe;
+
+    impl Decoder for Probe {
+        fn from_args(_length: usize) -> Result<Self> {
+            panic!("a zero-length argument buffer was delegated to the inner decoder");
+        }
+
+        fn from_bytes(_bytes: Bytes) -> Result<Self> {
+            panic!("an empty byte buffer was delegated to the inner decoder");
+        }
     }
 }

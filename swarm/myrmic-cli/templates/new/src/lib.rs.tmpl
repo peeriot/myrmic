@@ -12,14 +12,18 @@ fn init(md: Metadata) -> myrmic_sdk::Result {
 }
 
 #[myrmic_sdk::cmd]
-fn count(md: Metadata, callback: Callback<JsonValue>) -> myrmic_sdk::Result {
-    let _ = myrmic_sdk::info!("returning count to (sender={:?})", md.sender).ok();
-
+fn count(md: Metadata, callback: Option<Callback<JsonValue>>) -> myrmic_sdk::Result {
     let value = STATE.load()?.unwrap_or_default();
 
-    // We can't send a response to a CLI.
-    if !md.sender.is_nil() {
+    // `myrmic send` carries no callback, and a nil sender that could not be
+    // answered even if it did.
+    if let Some(callback) = callback
+        && !md.sender.is_nil()
+    {
+        let _ = myrmic_sdk::info!("Returning count {} to (sender={:?})", value, md.sender).ok();
         callback.invoke(md.sender, &JsonValue::from(value))?;
+    } else {
+        let _ = myrmic_sdk::info!("Count is {} (no caller to answer)", value).ok();
     }
 
     Ok(())
