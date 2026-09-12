@@ -1461,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "cell-runtime-tags-logic"
-version = "0.2.1"
+version = "0.6.1"
 dependencies = [
  "myrmic-sdk",
 ]
