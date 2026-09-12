@@ -74,7 +74,15 @@ impl<T> Encoder for Callback<T> {
 
 impl<T> Decoder for Callback<T> {
     fn from_bytes(bytes: Bytes) -> Result<Self> {
+        if bytes.is_empty() {
+            return Err(
+                "no callback was sent; declare the payload as `Option<Callback<_>>` \
+                 to accept a command sent without one",
+            );
+        }
+
         let name = core::str::from_utf8(&bytes).map_err(|_| "callback name is not valid utf-8")?;
+
         Self::to(name)
     }
 }
@@ -111,4 +119,30 @@ mod serde_json {
     json_codec!(Value, "value");
     json_codec!(Number, "number");
     json_codec!(Map<String, Value>, "object");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Callback;
+    use crate::{Bytes, Decoder, JsonValue};
+    use myrmic_common::cells::Command;
+
+    #[test]
+    fn an_empty_payload_is_rejected_with_advice() {
+        assert_eq!(
+            Callback::<JsonValue>::from_bytes(Bytes::new()).unwrap_err(),
+            "no callback was sent; declare the payload as `Option<Callback<_>>` \
+             to accept a command sent without one"
+        );
+
+        // Only the empty buffer is intercepted. Everything else still goes
+        // through command-name validation.
+        assert_eq!(
+            Callback::<JsonValue>::from_bytes(Bytes::from(b"on reply".as_slice())).unwrap_err(),
+            "name cannot contain whitespace"
+        );
+
+        let decoded = Callback::<JsonValue>::from_bytes(Bytes::from(b"on_reply".as_slice()));
+        assert_eq!(Command::from(decoded.unwrap()).as_ref(), "on_reply");
+    }
 }
