@@ -87,6 +87,31 @@ From the CLI:
 myrmic send my-cell ping
 ```
 
+## Optional payload
+
+A command can be sent both by another cell, with a payload, and from the CLI, without one. Wrap the handler's payload type in `Option` and both callers work:
+
+```rust
+#[myrmic_sdk::cmd]
+fn set_threshold(_md: myrmic_sdk::Metadata, value: Option<u32>) -> myrmic_sdk::Result {
+    Ok(())
+}
+```
+
+Sending from another cell:
+
+```rust
+myrmic_sdk::send(target, "set_threshold", &42u32)?;
+```
+
+From the CLI, with no payload at all:
+
+```bash
+myrmic send my-cell set_threshold
+```
+
+`Option` absorbs the empty payload, and nothing else. A non-empty payload is still decoded by the inner type, so a malformed one is rejected rather than quietly treated as absent. This matters most for a `Callback`, whose name has to pass command-name validation: declare it as `Option<Callback<T>>` and a command sent without one still reaches the handler, which then has no caller to answer.
+
 ## Custom types
 
 In production, payloads are rarely a single value. Cells exchange structured data - sensor readings, device states, commands with multiple parameters. For these, the payload needs to be described with custom types.

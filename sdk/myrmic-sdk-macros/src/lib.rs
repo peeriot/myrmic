@@ -34,8 +34,10 @@ mod message;
 /// The function takes a leading `myrmic_sdk::Metadata` argument - the invocation
 /// context (the cell's own identity and the sender's) - optionally followed by
 /// a `Decoder` for the payload: a message type deriving `myrmic_sdk::Message`,
-/// or `myrmic_sdk::Bytes` for a raw payload. When the payload argument is omitted
-/// it defaults to `myrmic_sdk::Void`, which rejects any non-empty payload.
+/// or `myrmic_sdk::Bytes` for a raw payload. Wrapping that type in `Option`
+/// also accepts a command sent without a payload, which decodes as `None`.
+/// When the payload argument is omitted it defaults to `myrmic_sdk::Void`,
+/// which rejects any non-empty payload.
 /// The macro emits a `command_<name>` FFI export that recombines the identity
 /// halves the host passes into a `Metadata`, decodes the argument buffer via the
 /// `Decoder` impl, and forwards both:
@@ -50,6 +52,12 @@ mod message;
 /// #[myrmic_sdk::cmd] // no payload - rejects any argument bytes
 /// fn ping(md: myrmic_sdk::Metadata) -> myrmic_sdk::Result<()> {
 ///     myrmic_sdk::info!("ping from {}", md.sender);
+///     Ok(())
+/// }
+///
+/// #[myrmic_sdk::cmd] // optional payload - an absent one decodes as None
+/// fn set_threshold(_md: myrmic_sdk::Metadata, threshold: Option<u32>) -> myrmic_sdk::Result<()> {
+///     myrmic_sdk::info!("{threshold:?}");
 ///     Ok(())
 /// }
 /// ```
@@ -76,8 +84,10 @@ pub fn cmd(
 /// function name selects the event subscribed to. It takes a leading
 /// `myrmic_sdk::Metadata` carrying the publisher's identity, optionally followed
 /// by a `Decoder` for the event payload (a message type deriving
-/// `myrmic_sdk::Message`). When the payload argument is omitted it defaults to
-/// `myrmic_sdk::Void`, which rejects any non-empty payload.
+/// `myrmic_sdk::Message`). Wrapping that type in `Option` also accepts an event
+/// published without a payload, which decodes as `None`. When the payload
+/// argument is omitted it defaults to `myrmic_sdk::Void`, which rejects any
+/// non-empty payload.
 ///
 /// Unlike [`cmd`], `#[evt]` generates no `Callback` marker type: events are
 /// pub/sub and can never be callback targets.
