@@ -242,6 +242,17 @@ pub fn report_boot() {
         });
     }
 
+    // wdt-selftest builds only: clear the retained counter on any boot that did
+    // not follow a watchdog reset (a reflash, a manual reset, a power cycle), so
+    // a HIL run starts from zero. The counter deliberately saturates (u8 on the
+    // C61) and the always-on domain survives a reflash, so on a board that is
+    // never power-cycled the count would otherwise stay pinned and the
+    // accumulation test could never observe an increment.
+    #[cfg(feature = "wdt-selftest")]
+    if wd_reason.is_none() {
+        record.reset_count = 0;
+    }
+
     // Evidence is consumed (or stale from an interrupted escalation, e.g. a
     // reflash between stage 0 and stage 1) — clear it either way.
     record.evidence = 0;
