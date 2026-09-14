@@ -55,12 +55,16 @@ impl Runtime {
         )
         .await?;
         // The watcher owns the cell task's handle and reports its exit; the
-        // event loop classifies it (still in the map = crash).
+        // event loop classifies it (this incarnation still in the map = crash).
         let events = self.events.clone();
+        let gen_id = request.gen_id;
         let watcher = tokio::spawn(async move {
             let _ = handle.await;
-            let _ = events.send(Event::CellExited(sri)).await;
+            let _ = events.send(Event::CellExited(sri, gen_id)).await;
         });
+        // Replaces any previous incarnation still hosted here: dropping its
+        // handle poisons it, and its exit is then reported under its own
+        // generation, so it is not mistaken for this one crashing.
         self.cells.insert(sri, CellHandle::new(poison_snd, watcher));
         self.meta.insert(
             sri,

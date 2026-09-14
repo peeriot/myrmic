@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use cell_protocol::{RuntimeId, Sri};
+use cell_protocol::{Gen, RuntimeId, Sri};
 use sorg_common::supervision::ClockSkewWatch;
 use sorg_common::{LostReason, node_lease, report_cell_death};
 use tracing::{debug, warn};
@@ -12,18 +12,32 @@ use tracing::{debug, warn};
 use crate::event_loop::{CleanupAction, Runtime};
 use crate::supervision::fencing::{Evidence, RowFacts, RowRead, Verdict, WatchedCell};
 
+/// Whether a cell task's exit is a crash of the incarnation this exec hosts
+/// under its sri. A deploy over a still-hosted sri replaces the map entry
+/// with the successor's, so the predecessor's exit arrives while the sri is
+/// registered — but for a different generation.
+fn exit_is_crash(hosted: Option<Gen>, exited: Gen) -> bool {
+    hosted.is_none_or(|hosted| hosted == exited)
+}
+
 impl Runtime {
     /// A hosted cell's task ended. Deliberate kills remove the map entry
-    /// before the task terminates, so a still-registered sri is a crash: the
-    /// cell is reaped, its rows are queued for release, and its death is
-    /// reported — a `cell_lost` to its parent, or (for a root) a root-death
-    /// signal that drives its restart policy. Detached edges report nothing.
-    pub(in crate::event_loop) fn handle_cell_exited(&mut self, sri: Sri) {
+    /// before the task terminates, so a still-registered sri at this
+    /// generation is a crash: the cell is reaped, its rows are queued for
+    /// release, and its death is reported — a `cell_lost` to its parent, or
+    /// (for a root) a root-death signal that drives its restart policy.
+    /// Detached edges report nothing.
+    pub(in crate::event_loop) fn handle_cell_exited(&mut self, sri: Sri, gen_id: Gen) {
         if !self.cells.contains_key(&sri) {
             return;
         }
         let meta = self.meta.get(&sri).cloned();
-        warn!(sri = %sri, instance = ?meta.as_ref().map(|m| m.gen_id), "cell crashed");
+        let hosted = meta.as_ref().map(|m| m.gen_id);
+        if !exit_is_crash(hosted, gen_id) {
+            debug!(sri = %sri, exited = ?gen_id, hosted = ?hosted, "replaced incarnation exited");
+            return;
+        }
+        warn!(sri = %sri, instance = ?hosted, "cell crashed");
         self.kill_local(&sri);
 
         let Some(meta) = meta else { return };
@@ -272,5 +286,29 @@ impl Runtime {
         };
         cache.insert(*sri, read);
         read
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn g(time: u64) -> Gen {
+        Gen::from_parts(time, 1)
+    }
+
+    #[test]
+    fn exit_of_the_hosted_incarnation_is_a_crash() {
+        assert!(exit_is_crash(Some(g(2)), g(2)));
+    }
+
+    #[test]
+    fn exit_of_a_replaced_incarnation_is_ignored() {
+        assert!(!exit_is_crash(Some(g(3)), g(2)));
+    }
+
+    #[test]
+    fn exit_without_a_watched_incarnation_is_a_crash() {
+        assert!(exit_is_crash(None, g(2)));
     }
 }
