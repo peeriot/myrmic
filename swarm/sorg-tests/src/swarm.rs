@@ -118,7 +118,11 @@ impl Drop for KillableProcess {
 
 /// Sets up a swarm config defined by the provided config file (in the ``tests/data`` dir)
 /// returns a handle to the process so that it is killed when we leave the scope
-/// of the test
+/// of the test.
+///
+/// Returns once the process exists, not once its node is up and discovered -
+/// that takes a few hundred milliseconds more, and longer on a loaded machine.
+/// Assertions about that node have to wait for it rather than sleep a fixed time.
 pub async fn set_up_killable_swarm(swarm_file: &str, config_file: &str) -> KillableProcess {
     // The subprocess can't inherit the in-process multicast override.
     // So just work around that by passing the config directly.

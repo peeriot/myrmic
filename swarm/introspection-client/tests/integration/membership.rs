@@ -1,18 +1,13 @@
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
-use claims::{assert_none, assert_ok, assert_some};
+use claims::assert_ok;
 use introspection_client::v1::Client;
 use introspection_common::v1::NodeStatus;
 use sorg_tests::{enable_test_logging, killable_swarm_config, swarm_config};
 use tokio::sync::Mutex;
 use zenoh::config::ZenohId;
 
-use crate::integration::assert_plugin_configured;
+use crate::integration::{assert_plugin_configured, wait_for, wait_for_current_node};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn membership_callbacks_are_called() {
@@ -47,10 +42,13 @@ async fn membership_callbacks_are_called() {
 
     // Act I - simulate a node joining
     let node_handle = killable_swarm_config!("one_node.jsonnet");
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Assert I - verify that we now have the expected node in our state
-    let status = assert_some!(known_nodes.lock().await.get(&expected_id()).cloned());
+    let status = wait_for("the joining node to reach on_join", || {
+        let known_nodes = known_nodes.clone();
+        async move { known_nodes.lock().await.get(&expected_id()).cloned() }
+    })
+    .await;
     let plugins = status.plugins;
     assert_plugin_configured(&plugins, "introspection");
     assert_plugin_configured(&plugins, "orchestration");
@@ -60,10 +58,20 @@ async fn membership_callbacks_are_called() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     drop(node_handle);
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Assert II - verify that we no longer have the expected node in our state
-    assert_none!(known_nodes.lock().await.get(&expected_id()));
+    wait_for("the leaving node to reach on_leave", || {
+        let known_nodes = known_nodes.clone();
+        async move {
+            known_nodes
+                .lock()
+                .await
+                .get(&expected_id())
+                .is_none()
+                .then_some(())
+        }
+    })
+    .await;
 }
 
 /// Verifies that `current_nodes()` returns a node that was already in the network
@@ -78,11 +86,8 @@ async fn current_nodes_finds_pre_existing_node() {
 
     let client = Client::new(node.session().clone()).await;
 
-    // Act
-    let nodes = client.current_nodes().await.unwrap();
-
-    // Assert - we see the node that was there before us
-    assert_some!(nodes.iter().find(|ns| ns.id == expected_id()));
+    // Act + Assert - we see the node that was there before us
+    wait_for_current_node(&client, expected_id()).await;
 }
 
 /// Verifies that `current_nodes()` also returns a node that joined after us.
@@ -96,22 +101,8 @@ async fn current_nodes_finds_later_joining_node() {
 
     let client = Client::new(node.session().clone()).await;
 
-    // Assert - we eventually see the node that joined after us. Poll rather than
-    // sleep a fixed time: the later node is a freshly-spawned subprocess swarm,
-    // which takes a few hundred ms to start and be discovered (longer under load).
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let nodes = client.current_nodes().await.unwrap();
-        if nodes.iter().any(|ns| ns.id == expected_id()) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "later-joining node {} never appeared in current_nodes()",
-            expected_id()
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    // Act + Assert - we eventually see the node that joined after us
+    wait_for_current_node(&client, expected_id()).await;
 }
 
 /// Verifies that `current_nodes()` provides catch-up for already-present nodes
@@ -127,9 +118,8 @@ async fn current_nodes_and_on_join_combined() {
     let session = node.session().clone();
     let client = Client::new(session).await;
 
-    // Act I - get current nodes (catch-up for the pre-existing node)
-    let nodes = client.current_nodes().await.unwrap();
-    assert_some!(nodes.iter().find(|ns| ns.id == expected_id()));
+    // Act I + Assert I - current nodes catches the pre-existing node up
+    wait_for_current_node(&client, expected_id()).await;
 
     // Arrange II - register on_join for future events
     let joined_nodes: Arc<Mutex<Vec<NodeStatus>>> = Arc::new(Mutex::new(Vec::new()));
@@ -144,13 +134,20 @@ async fn current_nodes_and_on_join_combined() {
 
     // Act II - a third node joins after on_join is registered
     let _new_node = killable_swarm_config!("third_node.jsonnet");
-    // 500ms: external processes take longer to announce under full-suite load
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Assert II - on_join fired for the new node
-    let joined = joined_nodes.lock().await;
-    let third_node_id = expected_id_third();
-    assert_some!(joined.iter().find(|ns| ns.id == third_node_id));
+    wait_for("the third node to reach on_join", || {
+        let joined_nodes = joined_nodes.clone();
+        async move {
+            joined_nodes
+                .lock()
+                .await
+                .iter()
+                .find(|node| node.id == expected_id_third())
+                .cloned()
+        }
+    })
+    .await;
 }
 
 fn expected_id() -> ZenohId {
