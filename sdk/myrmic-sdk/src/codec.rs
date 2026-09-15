@@ -14,11 +14,24 @@ pub trait Decoder: Sized {
     /// Reads this invocation's `length`-byte payload from the host (via
     /// [`get_arguments`](crate::get_arguments)) and decodes it with
     /// [`from_bytes`](Self::from_bytes).
+    ///
+    /// A failure on an empty buffer is reported as a missing payload instead: a
+    /// decoder for a mandatory payload can only describe absence as malformed
+    /// input, which points at nothing the handler's author can act on.
     fn from_args(length: usize) -> Result<Self> {
         let mut bytes = alloc::vec![0u8; length];
         let n = crate::get_arguments(&mut bytes).map_err(|_| "failed to read arguments")?;
         bytes.truncate(n);
-        Self::from_bytes(bytes)
+        let absent = bytes.is_empty();
+
+        Self::from_bytes(bytes).map_err(|err| {
+            if absent {
+                "no payload was sent; declare the handler's payload as `Option<_>` \
+                 to accept an invocation sent without one"
+            } else {
+                err
+            }
+        })
     }
 
     /// Decodes `Self` from the raw payload buffer.
@@ -242,10 +255,15 @@ json_int!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128,);
 
 #[cfg(test)]
 mod tests {
+    use core::ffi::c_int;
+
+    use spin::Mutex;
+
     use super::{Decoder, Encoder};
-    use crate::{Bytes, Result};
+    use crate::{Bytes, Callback, JsonValue, Result};
     use alloc::string::String;
     use alloc::vec::Vec;
+    use myrmic_common::cells::Command;
 
     fn dec<T: Decoder>(bytes: &[u8]) -> Result<T> {
         T::from_bytes(Bytes::from(bytes))
@@ -324,5 +342,100 @@ mod tests {
         // A bareword the gateway wraps as a JSON string.
         assert_eq!(enc_str(&String::from("jsontest")), "\"jsontest\"");
         assert_eq!(dec::<String>(b"\"jsontest\"").unwrap(), "jsontest");
+    }
+
+    #[test]
+    fn optional_callback_absorbs_only_the_empty_buffer() {
+        // What `myrmic send <cell> count` puts on the wire.
+        assert!(dec::<Option<Callback<JsonValue>>>(b"").unwrap().is_none());
+
+        let decoded = dec::<Option<Callback<JsonValue>>>(b"on_reply").unwrap();
+        assert_eq!(Command::from(decoded.unwrap()).as_ref(), "on_reply");
+
+        // A non-empty buffer that is not a command name still fails: the
+        // optional form absorbs absence, never malformedness. `on_reply`
+        // without `--raw` arrives JSON-quoted, which is what this is.
+        assert!(dec::<Option<Callback<JsonValue>>>(b"\"on_reply\"").is_err());
+
+        // The bare form still rejects the empty buffer.
+        assert!(dec::<Callback<JsonValue>>(b"").is_err());
+    }
+
+    #[test]
+    fn zero_length_from_args_never_touches_the_inner_decoder() {
+        // `Probe` panics from both of its methods, so a branch that delegated
+        // to `T` would fail loudly instead of returning `None`. These come
+        // first so that failure is the one a broken branch reports.
+        assert!(<Option<Probe>>::from_args(0).unwrap().is_none());
+        assert!(<Option<Probe>>::from_bytes(Bytes::new()).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_absent_payload_is_reported_with_advice() {
+        // An invocation carrying nothing, which is what `myrmic send <cell>
+        // <cmd>` puts on the wire. No mandatory payload can decode that,
+        // whatever its type, so the failure names the fix instead.
+        assert_eq!(
+            from_args_with::<u32>(b"").unwrap_err(),
+            "no payload was sent; declare the handler's payload as `Option<_>` \
+             to accept an invocation sent without one"
+        );
+        assert_eq!(
+            from_args_with::<Callback<JsonValue>>(b"").unwrap_err(),
+            "no payload was sent; declare the handler's payload as `Option<_>` \
+             to accept an invocation sent without one"
+        );
+
+        // The optional form absorbs absence, and stays silent about it.
+        assert!(from_args_with::<Option<u32>>(b"").unwrap().is_none());
+        assert_eq!(from_args_with::<Option<u32>>(b"42").unwrap(), Some(42));
+
+        // A payload that did arrive keeps its decoder's own error: the advice
+        // is about absence, not about malformedness.
+        assert_eq!(
+            from_args_with::<u32>(b"42.5").unwrap_err(),
+            "number is not a whole value in range for the target type"
+        );
+        assert_eq!(
+            from_args_with::<Callback<JsonValue>>(b"\"on_reply\"").unwrap_err(),
+            "name can only contain ASCII alphanumeric characters and underscores"
+        );
+    }
+
+    /// A decoder that fails loudly if it is ever reached.
+    struct Probe;
+
+    impl Decoder for Probe {
+        fn from_args(_length: usize) -> Result<Self> {
+            panic!("a zero-length argument buffer was delegated to the inner decoder");
+        }
+
+        fn from_bytes(_bytes: Bytes) -> Result<Self> {
+            panic!("an empty byte buffer was delegated to the inner decoder");
+        }
+    }
+
+    /// Decodes `payload` through the real [`Decoder::from_args`] path, as a host
+    /// invocation carrying it would.
+    fn from_args_with<T: Decoder>(payload: &[u8]) -> Result<T> {
+        *ARGUMENTS.lock() = payload.to_vec();
+
+        T::from_args(payload.len())
+    }
+
+    /// What the stubbed `get_arguments` below hands back.
+    static ARGUMENTS: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+    /// Stands in for the host's `arguments` import, which a test binary has no
+    /// other definition of.
+    #[unsafe(no_mangle)]
+    extern "C" fn get_arguments(buffer: *mut u8, length: c_int) -> c_int {
+        let payload = ARGUMENTS.lock();
+        let n = payload.len().min(length as usize);
+        // SAFETY: the caller guarantees `buffer` is writable for `length`
+        // bytes, and `n` is capped at `length`.
+        unsafe { core::ptr::copy_nonoverlapping(payload.as_ptr(), buffer, n) };
+
+        n as c_int
     }
 }

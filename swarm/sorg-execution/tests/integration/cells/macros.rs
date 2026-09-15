@@ -11,6 +11,8 @@
 //! `#[codec(Postcard)]` (e.g. `CountChanged`) still use postcard, and the
 //! `Temperature` payload carries its own explicit postcard framing.
 
+use std::time::Duration;
+
 use claims::assert_ok;
 use module_examples_common::Temperature;
 use serde::Deserialize;
@@ -444,6 +446,52 @@ pub async fn cb_macro_no_args_void_return() {
     let msg3 = assert_ok!(event_queue.receive().await);
     let msg3: String = serde_json::from_slice(&msg3).expect("deser cb_echo");
     assert_eq!(msg3, "ping_done");
+}
+
+/// `myrmic send <cell> <cmd>` carries no callback and no identity to answer.
+/// An optional callback payload has to let the handler run anyway.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+pub async fn cb_macro_optional_callback_from_a_non_cell_caller() {
+    let swarm = swarm_config!("cells/macros/swarm.jsonnet");
+    build_and_register_cell_class(
+        "../../tests/fixtures/cell-cb-receiver-logic",
+        "cb_receiver",
+        &swarm,
+    )
+    .await;
+
+    let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    let mut event_queue = test_app.subscribe_cell_event("cb_echo").await;
+
+    test_app
+        .deploy_wasm_cell("cb_receiver.wasm".to_owned(), CB_RECEIVER_SRI.to_owned())
+        .await;
+
+    // No payload at all: the argument buffer reaching the guest is empty.
+    test_app.command_send(CB_RECEIVER_SRI, "ping", None).await;
+
+    let msg1 = assert_ok!(
+        tokio::time::timeout(Duration::from_secs(10), event_queue.receive())
+            .await
+            .expect("timed out waiting for cb_echo from the no-payload send")
+    );
+    let msg1: String = serde_json::from_slice(&msg1).expect("deser cb_echo");
+    assert_eq!(msg1, "pong");
+
+    // A valid callback name with a nil sender: it decodes, but there is nobody
+    // to invoke it on. `myrmic send <cell> ping 6f6e5f70696e67 --raw` sends
+    // exactly these bytes.
+    test_app
+        .command_send(CB_RECEIVER_SRI, "ping", Some(b"on_ping".to_vec()))
+        .await;
+
+    let msg2 = assert_ok!(
+        tokio::time::timeout(Duration::from_secs(10), event_queue.receive())
+            .await
+            .expect("timed out waiting for cb_echo from the raw-callback send")
+    );
+    let msg2: String = serde_json::from_slice(&msg2).expect("deser cb_echo");
+    assert_eq!(msg2, "pong");
 }
 
 // --- PARKED / DELETED (new-model) ---

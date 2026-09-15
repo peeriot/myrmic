@@ -75,6 +75,7 @@ impl<T> Encoder for Callback<T> {
 impl<T> Decoder for Callback<T> {
     fn from_bytes(bytes: Bytes) -> Result<Self> {
         let name = core::str::from_utf8(&bytes).map_err(|_| "callback name is not valid utf-8")?;
+
         Self::to(name)
     }
 }

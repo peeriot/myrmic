@@ -1,7 +1,8 @@
 //! Receiver cell for callback command tests.
 //!
-//! Each command publishes an observable `cb_echo` event and then invokes the
-//! caller's callback (on `md.sender`) with a reply payload.
+//! Each command publishes an observable `cb_echo` event. `accept` then always
+//! invokes the caller's callback; `ping` takes an optional one and invokes it
+//! only when there is a callback and a sender to answer.
 
 #![no_std]
 
@@ -26,8 +27,16 @@ fn accept(md: Metadata, cb: Callback<CbResp>) -> Result<()> {
 }
 
 #[myrmic_sdk::cmd]
-fn ping(md: Metadata, cb: Callback<Unit>) -> Result<()> {
+fn ping(md: Metadata, cb: Option<Callback<Unit>>) -> Result<()> {
     publish("cb_echo", &String::from("pong"))?;
-    cb.invoke(md.sender, &Unit {})?;
+
+    // `myrmic send` carries no callback, and a nil sender that could not be
+    // invoked even if it did.
+    if let Some(cb) = cb
+        && !md.sender.is_nil()
+    {
+        cb.invoke(md.sender, &Unit {})?;
+    }
+
     Ok(())
 }

@@ -14,6 +14,7 @@ Both sides must use the same format, and the same shape of data. With JSON the f
 - Send a payload whose shape is not fixed.
 - Send bytes with no encoding applied.
 - Send no payload at all.
+- Accept a payload that may be absent.
 
 ## Example
 
@@ -57,6 +58,14 @@ fn on_image(_md: Metadata, image: Bytes) -> myrmic_sdk::Result {
 fn on_ping(_md: Metadata) -> myrmic_sdk::Result {
     Ok(())
 }
+
+// A handler with an optional payload accepts an empty payload as None.
+#[myrmic_sdk::cmd]
+fn on_threshold(_md: Metadata, threshold: Option<u32>) -> myrmic_sdk::Result {
+    myrmic_sdk::info!("{threshold:?}")?;
+
+    Ok(())
+}
 ```
 
 ## Behavior
@@ -70,6 +79,8 @@ Sending and receiving encode and decode for you, so most code never does either 
 Bytes pass through unchanged, which suits content the application already has in its final form, such as an image.
 
 A handler that takes no payload accepts an empty one only. Sending it a payload is rejected rather than quietly ignored.
+
+A handler whose payload type is wrapped in `Option` accepts an empty payload as `None`. Only the empty payload is absorbed: a non-empty one is still decoded by the inner type, so a malformed payload is rejected rather than treated as absent.
 
 ### Errors
 

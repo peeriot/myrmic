@@ -72,7 +72,7 @@ Everything a command handler does commits atomically when it completes, includin
 
 Creating a callback from a name fails when the name is invalid. Invoking a callback fails when the answer cannot be encoded, when no cell exists at the caller's identity, or when the runtime rejects the request.
 
-An invocation that did not come from a cell carries an empty sender, so there is nothing to answer. Check for it before invoking.
+An invocation from the CLI carries a nil sender, so there is nothing to answer; one through the gateway carries the session's SRI and can be answered. Check for it before invoking. A handler that declares a bare `Callback<T>` payload never gets that far when the command arrives without a payload, which is what `myrmic send <cell> <cmd>` puts on the wire: the decode fails before the handler body runs. Declare the payload as `Option<Callback<T>>` to handle both kinds of caller. See [Message encoding](../../../05_guides/04_message-encoding.md#optional-payload).
 
 ### Limits
 
