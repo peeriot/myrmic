@@ -12,7 +12,9 @@ This page covers configuration through the YAML file. It is structured as top-le
 
 ## `zenoh` *(advanced)*
 
-Since Myrmic uses Zenoh as its transport layer. Configure it directly under the `zenoh` key - mode, peer discovery, transport, and connectivity. For all available fields, see the [Zenoh default config reference](https://github.com/eclipse-zenoh/zenoh/blob/main/DEFAULT_CONFIG.json5).
+Since Myrmic uses Zenoh as its transport layer. Configure it directly under the `zenoh` key - mode, peer discovery, transport, and connectivity. For the fields Zenoh itself documents, see the [Zenoh default config reference](https://github.com/eclipse-zenoh/zenoh/blob/main/DEFAULT_CONFIG.json5). Myrmic runs a fork of Zenoh, so that document does not list every key a runtime accepts. The fork-only keys are documented here:
+
+- `scouting/interface_poll_interval` *(optional)* - How often the runtime re-reads the host's network interfaces, in milliseconds. This is what lets a runtime notice that its own IP address changed and re-announce itself without a restart - see [Operating a swarm](../../05_guides/09_operating-a-swarm.md#discovery-identity-and-placement) for what it does and which nodes it does not help. Defaults to `10000`. `0` turns the poll off for the life of the process, and a later change to a running runtime cannot turn it back on. The value must be a non-negative whole number: a float or a negative number is rejected at parse time, so a runtime started with one does not come up, and a write of one to a running runtime is refused.
 
 ## `execution`
 

@@ -21,6 +21,7 @@ telemetry:
     #   "info"                    - info and above from every target (cells included)
     #   "info,zenoh=off"          - the same, without the transport library
     #   "debug,h2=warn,zenoh=off" - debug overall, quieter libraries
+    # A bare "zenoh=off" also silences the address-change reporting - see the note below.
     # If omitted, the RUST_LOG environment variable is used instead.
     env_filter: "info"
 
@@ -35,6 +36,8 @@ telemetry:
 The [Runtime Configuration reference](../../10_reference/01_configuration/01_runtime-configuration.md#telemetry) lists the remaining keys; Part 2 adds three of them.
 
 > **Why `info` and not `swarm=info,warn`?** A target filter such as `swarm=info,warn` keeps the runtime's own `swarm::…` lines and drops everything else at INFO. Cells log under the target `sorg_execution::wasm::host_functions::logging`, and the spans of your command handlers live outside the `swarm` crate too - so with that filter the DB receives the runtime's chatter but **no cell log lines and no traces**. Start with `info`; if the transport library is too noisy, use `info,zenoh=off`.
+
+> **Silencing `zenoh` also silences an address change.** A node reports that its own IP address moved under `zenoh::net::runtime::interface_monitor` and `zenoh::net::runtime::orchestrator`, so any filter carrying a plain `zenoh=off` drops it. Keep the carve-out after it - `info,zenoh=off,zenoh::net::runtime::interface_monitor=debug,zenoh::net::runtime::orchestrator=info` - on nodes whose address can move. The filter in `swarm/configs/myrmic.jsonnet` and the one `myrmic runtimes start` builds already do. See [Addresses that change](../../11_security.md#addresses-that-change).
 
 > **Note:** the runtime only checks the *top level* of the file. A misspelt key inside `telemetry` - `filter` instead of `env_filter`, say - is ignored without any message.
 
@@ -163,8 +166,8 @@ Both settings from Step 1 can be changed **without restarting any node**. The ne
 ### The log filter
 
 ```bash
-# Everything at DEBUG, except the transport library
-myrmic telemetry set-filter "debug,zenoh=off"
+# Everything at DEBUG, except the transport library - but keeping address-change reporting
+myrmic telemetry set-filter "debug,zenoh=off,zenoh::net::runtime::interface_monitor=debug,zenoh::net::runtime::orchestrator=info"
 
 # Back to normal
 myrmic telemetry set-filter "info"
@@ -172,7 +175,7 @@ myrmic telemetry set-filter "info"
 
 Filter syntax follows the `tracing` crate's [`EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) format, and the filter decides what is stored *and* which spans are recorded. Two things to know before you type `debug`:
 
-- A bare `debug` floods the DB - the runtime's internal DEBUG lines arrive at hundreds of rows per second. Exclude the transport (`zenoh=off`) as above, or raise only the cells' level with `myrmic telemetry debug --level DEBUG` (Step 6), which restores the filter when it exits.
+- A bare `debug` floods the DB - the runtime's internal DEBUG lines arrive at hundreds of rows per second. Exclude the transport (`zenoh=off` plus the carve-out) as above, or raise only the cells' level with `myrmic telemetry debug --level DEBUG` (Step 6), which restores the filter when it exits.
 - `swarm=debug,warn` does **not** show you more of your cells. Cell log lines are emitted under the target `sorg_execution::wasm::host_functions::logging`, so a target filter on `swarm` leaves them - and their traces - out. If you need a target filter, include both: `swarm=info,sorg_execution=info,warn`.
 
 ### The DB retention
@@ -256,7 +259,7 @@ This is usually the fastest way to answer "what is my swarm doing right now" whi
 : Nothing is stored by default. Set `db_retention` in the configuration file or run `myrmic telemetry set-db-retention "1h"`, then generate new activity - only records emitted after the retention is set are kept. A retention set with the command is lost when the runtime restarts; the configuration file's value is not.
 
 **Logs are there, but no cell log lines, and `myrmic telemetry traces` prints `[]`**
-: The filter is too narrow. A target filter such as `swarm=info,warn` keeps only the runtime's own crate; cells log under `sorg_execution::wasm::host_functions::logging` and the handler spans are outside `swarm` too, so neither is recorded. Use `info` (or `info,zenoh=off`).
+: The filter is too narrow. A target filter such as `swarm=info,warn` keeps only the runtime's own crate; cells log under `sorg_execution::wasm::host_functions::logging` and the handler spans are outside `swarm` too, so neither is recorded. Use `info` (or `info,zenoh=off,zenoh::net::runtime::interface_monitor=debug,zenoh::net::runtime::orchestrator=info`).
 
 **`myrmic telemetry metrics` prints nothing**
 : Metrics are exported in intervals; the first snapshot appears about a minute after the runtime started. If it stays empty, the retention is not set (see above).
@@ -265,7 +268,7 @@ This is usually the fastest way to answer "what is my swarm doing right now" whi
 : Two independent filters are in play. First, the runtime's `env_filter` (or `myrmic telemetry set-filter`) controls what is recorded at all - at `"info"`, `DEBUG`/`TRACE` records are never stored. Second, `myrmic telemetry logs` hides `DEBUG`/`TRACE` severities by default - pass `-v` (`DEBUG`) or `-vv` (`TRACE`) to the command itself, e.g. `myrmic telemetry logs -v --trace-id <id>`. `myrmic telemetry debug --level DEBUG` handles both at once for cell logs.
 
 **Too much noise in logs**
-: Use `myrmic telemetry set-filter "info,zenoh=off"` at runtime to quieten the transport library without restarting. Avoid a bare `debug` - it stores hundreds of rows per second.
+: Use `myrmic telemetry set-filter "info,zenoh=off,zenoh::net::runtime::interface_monitor=debug,zenoh::net::runtime::orchestrator=info"` at runtime to quieten the transport library without restarting, keeping the targets that report an address change. Avoid a bare `debug` - it stores hundreds of rows per second.
 
 ---
 
