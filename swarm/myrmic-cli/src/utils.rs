@@ -310,8 +310,9 @@ pub(crate) fn build_filter(ctx: &Ctx) -> Option<String> {
     };
 
     // don't @ me
+    // zenoh stays off apart from the two modules that report a node moving to a new address
     let filter = format!(
-        "{0},h2=warn,sorg_execution=warn,sorg_execution::wasm::host_functions::logging={0},sorg_common=warn,db=warn,db_client=warn,wasmtime=off,cranelift_codegen=off,zenoh=off,swarm_telemetry=off,opentelemetry_sdk=off,hyper_util=off,rustls=off",
+        "{0},h2=warn,sorg_execution=warn,sorg_execution::wasm::host_functions::logging={0},sorg_common=warn,db=warn,db_client=warn,wasmtime=off,cranelift_codegen=off,zenoh=off,zenoh::net::runtime::interface_monitor=debug,zenoh::net::runtime::orchestrator=info,swarm_telemetry=off,opentelemetry_sdk=off,hyper_util=off,rustls=off",
         level,
     );
     Some(filter)
