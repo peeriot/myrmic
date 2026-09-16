@@ -42,6 +42,10 @@ impl ConnectedContainer {
     }
 
     /// return the IP of this container in the specified network
+    ///
+    /// This is the address docker handed out, read back from its inspect API. A test that
+    /// changes the address inside the container's network namespace keeps seeing the old
+    /// one here, so capture the address before such a change instead of asking afterwards.
     pub async fn container_ip(&self, network: &str) -> String {
         let inspect = self
             .docker
@@ -97,16 +101,48 @@ impl ConnectedContainer {
         .await
     }
 
-    /// Streams container logs starting `lookback` before now, following new output as it
-    /// arrives, and returns the first value for which `extract` returns `Some`.
-    /// Panics if `timeout` elapses or the log stream ends first.
+    /// Waits for a log line containing `needle`, considering output from `lookback` before
+    /// now, and reports whether it arrived before `timeout` elapsed.
+    pub async fn wait_for_log_line(
+        &self,
+        needle: &str,
+        timeout: Duration,
+        lookback: Duration,
+    ) -> bool {
+        self.try_find_in_logs(timeout, lookback, |line| {
+            line.contains(needle).then_some(())
+        })
+        .await
+        .is_some()
+    }
+
+    /// [`Self::try_find_in_logs`], panicking with `what` when nothing was found.
     async fn find_in_logs<T>(
         &self,
         what: &str,
         timeout: Duration,
         lookback: Duration,
-        mut extract: impl FnMut(&str) -> Option<T>,
+        extract: impl FnMut(&str) -> Option<T>,
     ) -> T {
+        self.try_find_in_logs(timeout, lookback, extract)
+            .await
+            .unwrap_or_else(|| {
+                panic!(
+                    "{what} not found in logs for container `{}` after {timeout:?}",
+                    self.container_id
+                )
+            })
+    }
+
+    /// Streams container logs starting `lookback` before now, following new output as it
+    /// arrives, and returns the first value for which `extract` returns `Some`.
+    /// Returns `None` if `timeout` elapses or the log stream ends first.
+    async fn try_find_in_logs<T>(
+        &self,
+        timeout: Duration,
+        lookback: Duration,
+        mut extract: impl FnMut(&str) -> Option<T>,
+    ) -> Option<T> {
         let since = SystemTime::now()
             .checked_sub(lookback)
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -132,25 +168,20 @@ impl ConnectedContainer {
                 let chunk = logs
                     .try_next()
                     .await
-                    .expect("failed to read container logs")
-                    .expect("log stream ended before a match was found");
+                    .expect("failed to read container logs")?;
                 buf.push_str(&String::from_utf8_lossy(chunk.as_ref()));
                 while let Some(idx) = buf.find('\n') {
                     let line = buf[..idx].to_owned();
                     buf.drain(..=idx);
                     if let Some(value) = extract(&line) {
-                        return value;
+                        return Some(value);
                     }
                 }
             }
         })
         .await
-        .unwrap_or_else(|_| {
-            panic!(
-                "{what} not found in logs for container `{}` after {timeout:?}",
-                self.container_id
-            )
-        })
+        .ok()
+        .flatten()
     }
 
     /// execute a command in this container
@@ -213,6 +244,11 @@ impl ConnectedContainer {
     }
 
     /// return the network interface that is used by the container for the specified network
+    ///
+    /// The interface is looked up by the address [`Self::container_ip`] reports, so this
+    /// inherits that method's blindness to an address changed inside the network namespace:
+    /// once the address no longer matches, the lookup finds nothing and returns an empty
+    /// name. Capture the interface before such a change.
     pub async fn network_interface(&self, network: &str) -> String {
         let ip = self.container_ip(network).await;
         let output = self
@@ -325,6 +361,30 @@ impl ConnectedContainer {
         assert_command_success(
             &output,
             format_args!("failed to allow remote `{remote}` on network `{network}`"),
+        );
+    }
+
+    /// move `interface` from `old_address` to `new_address`, both in `<ip>/<prefix>` form
+    ///
+    /// Docker learns nothing about this, so every later lookup that goes through its inspect
+    /// API - [`Self::container_ip`] and [`Self::network_interface`] - keeps reporting the old
+    /// address. Dropping the address also drops the on-link route the default route needs, so
+    /// the default route is captured first and put back afterwards.
+    pub async fn change_address(&self, interface: &str, old_address: &str, new_address: &str) {
+        // The captured route is re-split into words on purpose: it is a whole route
+        // specification (`default via <gateway> dev <interface>`), not a single argument.
+        let output = self
+            .shell(&format!(
+                "set -eu; \
+                 default_route=$(ip -4 route show default | head -n 1); \
+                 ip addr del {old_address} dev {interface}; \
+                 ip addr add {new_address} dev {interface}; \
+                 [ -z \"$default_route\" ] || ip -4 route replace $default_route"
+            ))
+            .await;
+        assert_command_success(
+            &output,
+            format_args!("failed to move `{interface}` from `{old_address}` to `{new_address}`"),
         );
     }
 
