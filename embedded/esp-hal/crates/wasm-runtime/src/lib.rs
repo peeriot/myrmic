@@ -19,6 +19,7 @@ mod macros;
 pub mod async_request;
 mod exports;
 mod imports;
+mod linking;
 mod service;
 
 pub use service::{
@@ -130,6 +131,11 @@ pub enum Error {
     Command { command: String, err_msg: String },
     #[error("Error of cell while handling event {event}: {err_msg}")]
     Event { event: String, err_msg: String },
+    #[error(
+        "cell imports unresolved host function '{module}::{name}'; this firmware build does not \
+         provide it (feature not enabled?)"
+    )]
+    UnlinkedImport { module: String, name: String },
 }
 
 /// Signals the runtime that it should terminate the WASM module as soon as possible.
@@ -215,6 +221,11 @@ impl<'buf> WamrRuntime<'buf> {
             )
         };
         log::info!("WASM Module loaded");
+
+        // Fail closed on a missing host import: WAMR would otherwise link it as a deferred stub
+        // and only trap when the guest calls it, long after deploy. Rejecting here surfaces a
+        // wrong firmware profile as an immediate, named deploy failure.
+        linking::ensure_imports_linked(&module)?;
 
         // Instantiate the module. Instance::new_with_args ties the instance to the module's phantom
         // lifetime. Drop ordering (instance before _module) enforces the C-side invariant, so we
