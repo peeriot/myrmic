@@ -140,6 +140,7 @@ default-members = [
     "signal-modules/drivers/bme280",
     "signal-modules/drivers/bmp180",
     "signal-modules/drivers/ccs811",
+    "signal-modules/drivers/lsm6dso32",
     "signal-modules/drivers/gpio-output",
     "signal-modules/drivers/gpio-output-feedback",
     "signal-modules/drivers/pwm-output",

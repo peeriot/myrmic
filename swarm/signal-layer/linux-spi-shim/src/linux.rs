@@ -46,9 +46,31 @@ impl LinuxSpidev {
             &SpidevOptions::new()
                 .bits_per_word(8)
                 .max_speed_hz(freq_hz)
-                .mode(mode_flags | SpiModeFlags::SPI_NO_CS)
-                .build(),
-        )?;
+                .mode(mode_flags | extra)
+                .build()
+        };
+
+        // Prefer disabling the kernel chip-select. A controller whose driver does not advertise
+        // `SPI_NO_CS` in its `mode_bits` rejects that bit with `EINVAL`; since each device owns its
+        // CS as a GPIO line, retry without it and let the kernel CS toggle a pin no device is wired
+        // to. An `EINVAL` raised for an unrelated reason (an unsupported mode or clock) also fails
+        // the retry, which keeps the same mode and clock, so it surfaces there instead of being
+        // masked as missing `SPI_NO_CS` support.
+        if let Err(e) = dev.configure(&options(SpiModeFlags::SPI_NO_CS)) {
+            if e.raw_os_error() == Some(EINVAL) {
+                dev.configure(&options(SpiModeFlags::empty())).map_err(|retry_err| {
+                    io::Error::new(
+                        retry_err.kind(),
+                        format!(
+                            "SPI configuration rejected (mode {mode}, {freq_hz} Hz): {retry_err}"
+                        ),
+                    )
+                })?;
+            } else {
+                return Err(e);
+            }
+        }
+
         Ok(Self { dev })
     }
 }
