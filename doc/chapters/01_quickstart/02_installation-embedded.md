@@ -163,4 +163,5 @@ ERROR No serial ports could be detected (Make sure you have connected a device t
 ## Next
 
 - [`myrmic new`](../10_reference/02_myrmic-cli/01_new.md), [`myrmic build`](../10_reference/02_myrmic-cli/03_build.md) - the full command reference, including `--firmware --pipeline` to scaffold a firmware with a Signal Layer pipeline.
+- [First Steps on an ESP32](../04_tutorials/03_first-steps-embedded.md) - flash this firmware to a board and deploy your first cell onto it.
 - [First Steps with the Signal Layer](../04_tutorials/03_first-steps-signal-layer.md) - scaffold a pipeline, a cell, and a firmware, and run them together.
