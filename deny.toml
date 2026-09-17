@@ -76,14 +76,13 @@ ignore = [
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
 
     # Ignored for now, but should be fixed in the future!
-    { id = "RUSTSEC-2023-0071", reason = "No solution yet, but should be definitely fixed beore we have an official release!" },                                                                                       # TODO!
+    { id = "RUSTSEC-2023-0071", reason = "No solution yet, but should be definitely fixed beore we have an official release!" }, # TODO!
 
     # Rated high but cannot be influenced by us. We pull in quick-xml via object_store and spareval
     # https://github.com/apache/arrow-rs-object-store/issues/786
     # https://github.com/oxigraph/oxigraph/issues/1793
     { id = "RUSTSEC-2026-0194", reason = "Requires update of spareval and object_store." },
     { id = "RUSTSEC-2026-0195", reason = "Requires update of spareval and object_store." },
-
     # Both pulled in transitively via typst/typst-pdf/krilla/usvg/fontdb, used only by the
     # warehouse benchmark's PDF report rendering (benchmarks/report). No safe upgrade is
     # available for either — typst itself would need to migrate to harfrust/skrifa upstream.
@@ -91,7 +90,6 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2026-0192
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; transitive dep of typst, no safe upgrade available." },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; transitive dep of typst, no safe upgrade available." },
-
     # Uncritical
     { id = "RUSTSEC-2024-0388", reason = "The derivative crate is unmaintained, but needed by jrsonnet and zenoh-plugin-mqtt. Should be uncritical, because it only adds compile time helpers." },
     { id = "RUSTSEC-2024-0436", reason = "The paste crate is unmaintained, but needed by zenoh. Should be uncritical, because it only adds compile time helpers." },
@@ -150,14 +148,12 @@ exceptions = [
     { allow = ["EPL-2.0"], crate = "token-cell" },
     { allow = ["EPL-2.0"], crate = "validated_struct" },
     { allow = ["EPL-2.0"], crate = "validated_struct_macros" },
-
     # MPL-2.0
 
     { allow = ["MPL-2.0"], crate = "option-ext" },
     { allow = ["MPL-2.0"], crate = "sized-chunks" },
     { allow = ["MPL-2.0"], crate = "im-rc" },
     { allow = ["MPL-2.0"], crate = "bitmaps" },
-
     #########################
     # espflash dependencies #
     #########################
@@ -168,7 +164,6 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "serialport" },
     { allow = ["MPL-2.0"], crate = "colored" },
     { allow = ["MPL-2.0"], crate = "alterable_logger" },
-
     { allow = ["BlueOak-1.0.0"], crate = "tinyrlibc" },
 ]
 
@@ -244,6 +239,12 @@ deny = [
     # Wrapper crates can optionally be specified to allow the crate when it
     # is a direct dependency of the otherwise banned crate
     #{ crate = "ansi_term@0.11.0", wrappers = ["this-crate-directly-depends-on-ansi_term"] },
+    # esp-mmu depends on these PAC crates directly (for CLIC/MMU registers esp-hal does not re-export), pinned in the
+    # workspace, while esp-hal pulls its own copy. If there are 2 PACs conflicting, they can silently produce faulty
+    # firmware.
+    { crate = "esp32c5", deny-multiple-versions = true, reason = "keep the PAC unified with the esp-hal fork" },
+    { crate = "esp32c6", deny-multiple-versions = true, reason = "keep the PAC unified with the esp-hal fork" },
+    { crate = "esp32c61", deny-multiple-versions = true, reason = "keep the PAC unified with the esp-hal fork" },
 ]
 
 # List of features to allow/deny

@@ -4062,9 +4062,9 @@ dependencies = [
  "esp32",
  "esp32c2",
  "esp32c3",
- "esp32c5 0.3.0",
+ "esp32c5",
  "esp32c6",
- "esp32c61 0.4.0",
+ "esp32c61",
  "esp32h2",
  "esp32p4",
  "esp32s2",
@@ -4143,8 +4143,8 @@ dependencies = [
  "embassy-sync 0.8.0",
  "esp-hal",
  "esp-mmu-consts",
- "esp32c5 0.2.2",
- "esp32c61 0.3.2",
+ "esp32c5",
+ "esp32c61",
  "log",
 ]
 
@@ -4215,9 +4215,9 @@ dependencies = [
  "esp-wifi-sys-esp32c5",
  "esp-wifi-sys-esp32c6",
  "esp-wifi-sys-esp32c61",
- "esp32c5 0.3.0",
+ "esp32c5",
  "esp32c6",
- "esp32c61 0.4.0",
+ "esp32c61",
  "log",
 ]
 
@@ -4268,9 +4268,9 @@ dependencies = [
  "esp-wifi-sys-esp32h2",
  "esp-wifi-sys-esp32s2",
  "esp-wifi-sys-esp32s3",
- "esp32c5 0.3.0",
+ "esp32c5",
  "esp32c6",
- "esp32c61 0.4.0",
+ "esp32c61",
  "heapless 0.9.3",
  "instability",
  "log",
@@ -4306,9 +4306,9 @@ source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-n
 dependencies = [
  "document-features",
  "esp-metadata-generated",
- "esp32c5 0.3.0",
+ "esp32c5",
  "esp32c6",
- "esp32c61 0.4.0",
+ "esp32c61",
 ]
 
 [[package]]
@@ -4347,9 +4347,9 @@ dependencies = [
  "esp-metadata-generated",
  "esp-rom-sys",
  "esp-sync",
- "esp32c5 0.3.0",
+ "esp32c5",
  "esp32c6",
- "esp32c61 0.4.0",
+ "esp32c61",
 ]
 
 [[package]]
@@ -4474,15 +4474,6 @@ dependencies = [
 
 [[package]]
 name = "esp32c5"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6f8ba56195df10224263c60ceb93b4578450019ee838b7338039a281117cb02"
-dependencies = [
- "vcell",
-]
-
-[[package]]
-name = "esp32c5"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97afa80d8110c7234f840252baa8ee8de28f78e8dc233d2d430c0ccfbe59a2b5"
@@ -4495,15 +4486,6 @@ name = "esp32c6"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a207a5d6886ca89b4f220606dcf3779ca869803df192508314939186ae8de1ee"
-dependencies = [
- "vcell",
-]
-
-[[package]]
-name = "esp32c61"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a926616351b1edfdb50b7ea6451a8dff0c7515c6ceb687063af7d32b117ec0d"
 dependencies = [
  "vcell",
 ]

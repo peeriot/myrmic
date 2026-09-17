@@ -317,8 +317,8 @@ embedded-storage = "0.3.1"
 edge-nal-embassy = { version = "0.9", features = ["all"] }
 embassy-net = "0.9"
 riscv = "0.15.0"
-esp32c5 = "0.2.2"
-esp32c61 = "0.3.2"
+esp32c5 = "0.3"
+esp32c61 = "0.4"
 esp-alloc = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-backtrace = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
 esp-bootloader-esp-idf = { git = "https://github.com/peeriot/esp-hal.git", branch = "feature/ble-host-npl-upstream" }
