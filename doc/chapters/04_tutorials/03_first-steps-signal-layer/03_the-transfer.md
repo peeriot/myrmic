@@ -121,12 +121,11 @@ myrmic cells status
 
 ```text
   cell         sri           kind  runtime     age  policy  class        srn
-  thermometer  e6f23498-...  aot   [7]96d60de  4s   never   thermometer  thermometer
+  thermometer  e6f23498-...  wasm  [7]96d60de  4s   never   thermometer  thermometer
 ```
 
-Two things moved from the Part 2 row: the `kind` is now `aot` (ahead-of-time compiled for the
-device, not `wasm`), and the `runtime` column is the ESP32's id, not the Linux machine's. That
-column is the proof — the same cell is now running on the microcontroller.
+The `runtime` column moved from the Part 2 row: it is the ESP32's id now, not the Linux machine's.
+That column is the proof - the same cell is running on the microcontroller.
 
 Watch it read the device's own taps in the serial monitor:
 
