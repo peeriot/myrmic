@@ -58,11 +58,11 @@ wins.
 
 ## The parts
 
-1. [The pipeline](03_first-steps-signal-layer/01_the-pipeline.md): describe the machine and the
+1. [The pipeline](04_first-steps-signal-layer/01_the-pipeline.md): describe the machine and the
    dataflow, scaffold the pipeline, and watch it run.
-2. [The cell](03_first-steps-signal-layer/02_the-cell.md): start a runtime, write a thermometer
+2. [The cell](04_first-steps-signal-layer/02_the-cell.md): start a runtime, write a thermometer
    cell, and read the taps.
-3. [The transfer](03_first-steps-signal-layer/03_the-transfer.md): put the same pipeline onto an
+3. [The transfer](04_first-steps-signal-layer/03_the-transfer.md): put the same pipeline onto an
    ESP32-C6 and move the same cell onto it.
 
 Along the way, the [Signal Layer guide](../05_guides/11_signal-layer.md) explains every concept

@@ -21,7 +21,7 @@ and read its logs.
 - WiFi credentials for the network that machine is on. The board discovers the swarm by multicast;
   a fallback for networks that block it is in Step 2.
 
-Unlike the [Signal Layer tutorial](./03_first-steps-signal-layer.md), nothing here needs a clone of
+Unlike the [Signal Layer tutorial](./04_first-steps-signal-layer.md), nothing here needs a clone of
 the Myrmic repository: the scaffolded cell and firmware pin their dependencies to git revisions and
 fetch them on the first build.
 
@@ -296,7 +296,7 @@ your keyboard, without wiring a single pin.
 
 ## Next Step
 
-- [First Steps with the Signal Layer](./03_first-steps-signal-layer.md) - give the board sensors and
+- [First Steps with the Signal Layer](./04_first-steps-signal-layer.md) - give the board sensors and
   actuators, and read them from a cell over named taps and outlets.
 - [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md) and
   [`myrmic new`](../10_reference/02_myrmic-cli/01_new.md) - the full command reference.

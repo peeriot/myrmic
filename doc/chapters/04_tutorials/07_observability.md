@@ -47,5 +47,5 @@ Terminals used throughout:
 
 ## Tutorial Parts
 
-1. [The CLI](./06_observability/01_the-cli.md) - turn telemetry storage on, generate activity with the counter, and inspect logs, traces and metrics from the command line - **learning how the runtime records telemetry and how the `myrmic telemetry` commands read it.**
-2. [The Grafana Stack](./06_observability/02_the-grafana-stack.md) - rebuild the CLI with OpenTelemetry support, start the Grafana stack, and export the same signals to it - **learning how OTel export is configured per runtime and how to find your data in Loki, Tempo and Prometheus.**
+1. [The CLI](./07_observability/01_the-cli.md) - turn telemetry storage on, generate activity with the counter, and inspect logs, traces and metrics from the command line - **learning how the runtime records telemetry and how the `myrmic telemetry` commands read it.**
+2. [The Grafana Stack](./07_observability/02_the-grafana-stack.md) - rebuild the CLI with OpenTelemetry support, start the Grafana stack, and export the same signals to it - **learning how OTel export is configured per runtime and how to find your data in Loki, Tempo and Prometheus.**

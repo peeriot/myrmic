@@ -170,7 +170,7 @@ The binary is at `target/release/myrmic`. Put it on your `PATH`, or install it d
 cargo install --path swarm/myrmic-cli/
 ```
 
-To export logs, traces and metrics to tools such as Grafana or Jaeger over OTLP, add `--features open-telemetry` to either command. See the [Observability tutorial](../04_tutorials/06_observability.md).
+To export logs, traces and metrics to tools such as Grafana or Jaeger over OTLP, add `--features open-telemetry` to either command. See the [Observability tutorial](../04_tutorials/07_observability.md).
 
 ## Verify the installation
 

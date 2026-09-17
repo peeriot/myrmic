@@ -1,6 +1,6 @@
 # Observability
 
-In complex use cases, Myrmic applications span hundreds of nodes - cells are distributed across runtimes, extensively communicating with each other, processing data, reading from hardware, and writing to storage. All of this happens concurrently across the swarm - but what if something goes wrong? What if you want to understand what is happening inside at any given moment? Observability is a critical part of running a swarm at this scale - it gives you the tools to answer exactly those questions. This guide covers what Myrmic offers out of the box to give you that visibility. For a hands-on walkthrough, see the [Observability tutorial](../04_tutorials/06_observability.md).
+In complex use cases, Myrmic applications span hundreds of nodes - cells are distributed across runtimes, extensively communicating with each other, processing data, reading from hardware, and writing to storage. All of this happens concurrently across the swarm - but what if something goes wrong? What if you want to understand what is happening inside at any given moment? Observability is a critical part of running a swarm at this scale - it gives you the tools to answer exactly those questions. This guide covers what Myrmic offers out of the box to give you that visibility. For a hands-on walkthrough, see the [Observability tutorial](../04_tutorials/07_observability.md).
 
 ## Check what's running
 
@@ -97,7 +97,7 @@ Once configured, each runtime pushes its own telemetry to the collector automati
 
 ## See also
 
-- [Observability tutorial](../04_tutorials/06_observability.md)
+- [Observability tutorial](../04_tutorials/07_observability.md)
 - [Myrmic CLI reference](../10_reference/02_myrmic-cli.md)
 - [Runtime configuration reference](../10_reference/01_configuration/01_runtime-configuration.md)
 

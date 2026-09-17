@@ -1,6 +1,6 @@
 # Part 1 - The CLI
 
-This is Part 1 of the [Observability](../06_observability.md) tutorial. You configure a runtime to keep its telemetry, produce some activity with the Quickstart's `counter` cell, and read logs, traces and metrics with the `myrmic telemetry` commands. Everything here works with the `myrmic` you already have.
+This is Part 1 of the [Observability](../07_observability.md) tutorial. You configure a runtime to keep its telemetry, produce some activity with the Quickstart's `counter` cell, and read logs, traces and metrics with the `myrmic telemetry` commands. Everything here works with the `myrmic` you already have.
 
 ---
 

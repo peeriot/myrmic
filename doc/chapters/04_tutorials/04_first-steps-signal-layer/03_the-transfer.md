@@ -1,6 +1,6 @@
 # Part 3 - The Transfer
 
-This is Part 3 of [First Steps with the Signal Layer](../03_first-steps-signal-layer.md), and the
+This is Part 3 of [First Steps with the Signal Layer](../04_first-steps-signal-layer.md), and the
 reason the first two exist. The pipeline and the cell are running on the Linux machine. Now the
 same pipeline goes onto an ESP32-C6, and the same cell moves onto it, unchanged.
 
@@ -21,7 +21,7 @@ cd ~/sl-tutorial/first-steps-c6
 ```
 
 As in Parts 1 and 2, this uses the `PEERIOT_MYRMIC_SDK` checkout from the
-[prerequisites](../03_first-steps-signal-layer.md); add `--sdk <path>` if you did not set it.
+[prerequisites](../04_first-steps-signal-layer.md); add `--sdk <path>` if you did not set it.
 
 The scaffold writes a `board.yml` for the C6 — pins instead of a device path:
 

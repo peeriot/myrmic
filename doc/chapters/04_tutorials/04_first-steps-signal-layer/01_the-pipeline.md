@@ -1,6 +1,6 @@
 # Part 1 - The Pipeline
 
-This is Part 1 of [First Steps with the Signal Layer](../03_first-steps-signal-layer.md). You
+This is Part 1 of [First Steps with the Signal Layer](../04_first-steps-signal-layer.md). You
 describe your machine and your dataflow in two small files, scaffold a pipeline process from
 them, and watch it come alive. Everything happens on the Linux machine.
 
@@ -21,7 +21,7 @@ INFO  Creating Linux pipeline 'first-steps'
 ```
 
 This builds against the `PEERIOT_MYRMIC_SDK` checkout from the
-[prerequisites](../03_first-steps-signal-layer.md); add `--sdk <path>` here if you did not set it.
+[prerequisites](../04_first-steps-signal-layer.md); add `--sdk <path>` here if you did not set it.
 
 ## Step 2 - The board file
 

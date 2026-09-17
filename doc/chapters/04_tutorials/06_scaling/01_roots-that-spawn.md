@@ -1,6 +1,6 @@
 # Part 1 - A Root That Spawns
 
-This is Part 1 of the [Scaling Your Application](../04_scaling.md) tutorial. You build a grow-bed that knows nothing but its own state, and a **bed root** that creates grow-beds on request, in the sector of the greenhouse you name. You spawn three beds from the CLI and see them as a tree in `myrmic cells` - **learning how one cell creates another, and where the new cell runs.**
+This is Part 1 of the [Scaling Your Application](../06_scaling.md) tutorial. You build a grow-bed that knows nothing but its own state, and a **bed root** that creates grow-beds on request, in the sector of the greenhouse you name. You spawn three beds from the CLI and see them as a tree in `myrmic cells` - **learning how one cell creates another, and where the new cell runs.**
 
 ---
 

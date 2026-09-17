@@ -85,7 +85,7 @@ myrmic new --firmware=esp32c6 --pipeline my-node --sdk ~/myrmic
 ```
 
 ## See also
-- [First Steps with the Signal Layer](../../04_tutorials/03_first-steps-signal-layer.md) - a
+- [First Steps with the Signal Layer](../../04_tutorials/04_first-steps-signal-layer.md) - a
   tutorial that scaffolds a pipeline, a cell, and a firmware.
 - [`myrmic build`](03_build.md), [`myrmic deploy`](05_deploy.md)
 - [Signal Layer reference](../04_signal-layer.md) - the `board.yml` and `pipeline.yml` formats.
