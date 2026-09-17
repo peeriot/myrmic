@@ -615,10 +615,10 @@ pub(crate) fn gpio_ty(pin: u8) -> TokenStream {
 
 pub(crate) fn spi_mode_variant(mode: u8) -> TokenStream {
     match mode {
-        1 => quote!(SpiMode::Mode1),
-        2 => quote!(SpiMode::Mode2),
-        3 => quote!(SpiMode::Mode3),
-        _ => quote!(SpiMode::Mode0),
+        1 => quote!(Mode::_1),
+        2 => quote!(Mode::_2),
+        3 => quote!(Mode::_3),
+        _ => quote!(Mode::_0),
     }
 }
 
