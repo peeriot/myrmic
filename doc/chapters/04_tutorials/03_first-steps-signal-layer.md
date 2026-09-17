@@ -49,32 +49,10 @@ wins.
 **Part 3, the ESP32 half:**
 
 - An ESP32-C6 devkit and a machine to flash it from (that machine also needs the repo checkout).
-- The extra embedded prerequisites. A firmware scaffolded by `myrmic new --firmware` ships a
-  `rust-toolchain.toml` pinning `nightly-2026-08-07`, the `rust-src` component and the
-  `riscv32imac-unknown-none-elf` target, so rustup installs all of it on the first firmware build -
-  you do not have to set the toolchain up by hand. To install it ahead of that build (e.g. for an offline environment), 
-  these steps are optional:
-
-  ```bash
-  rustup toolchain install nightly-2026-08-07 --component rust-src
-  rustup target add riscv32imac-unknown-none-elf --toolchain nightly-2026-08-07
-  ```
-
-  And `wamrc` **2.4.4**, the ahead-of-time compiler cells are compiled with for the device. It is
-  built from the WAMR sources against your system LLVM (packages: `cmake`, `ninja-build`,
-  `llvm-dev`, `clang`; LLVM 18 and 19 both work):
-
-  ```bash
-  mkdir -p ~/wamr-build && cd ~/wamr-build
-  curl -fsSL https://github.com/bytecodealliance/wasm-micro-runtime/archive/refs/tags/WAMR-2.4.4.tar.gz | tar -xz
-  SRC=~/wamr-build/wasm-micro-runtime-WAMR-2.4.4
-  mkdir -p "$SRC/core/deps/llvm"
-  ln -sfn /usr/lib/llvm-19 "$SRC/core/deps/llvm/build"   # adjust to your LLVM version
-  cmake -S "$SRC/wamr-compiler" -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-  cmake --build build
-  install -m 755 "$(readlink -f build/wamrc)" ~/.cargo/bin/wamrc
-  wamrc --version   # wamrc 2.4.4
-  ```
+- The embedded toolchain: the RISC-V Rust target (auto-installed on the first firmware build) and
+  `wamrc`, the ahead-of-time compiler cells are compiled with for the device. See
+  [Installation (Embedded)](../01_quickstart/02_installation-embedded.md) for that one-time setup -
+  this tutorial needs nothing beyond it.
 - WiFi credentials for the network the Linux machine is on. The device discovers the runtime by
   multicast; a fallback for networks that block it is in Part 3.
 

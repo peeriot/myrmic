@@ -4,10 +4,9 @@ This is Part 3 of [First Steps with the Signal Layer](../03_first-steps-signal-l
 reason the first two exist. The pipeline and the cell are running on the Linux machine. Now the
 same pipeline goes onto an ESP32-C6, and the same cell moves onto it, unchanged.
 
-Make sure the embedded prerequisites from the
-[tutorial's intro](../03_first-steps-signal-layer.md) are installed: nightly Rust
-(`nightly-2026-08-07`) with `rust-src`, `riscv32imac-unknown-none-elf` target and `wamrc` 2.4.4 on
-your PATH.
+Make sure the embedded toolchain is installed - the `riscv32imac-unknown-none-elf` Rust target and
+`wamrc` 2.4.4 on your `PATH`. See [Installation (Embedded)](../../01_quickstart/02_installation-embedded.md)
+for the one-time setup.
 
 ---
 
