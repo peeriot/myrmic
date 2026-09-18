@@ -74,7 +74,7 @@ pub fn validate_manifest(manifest: &BoardManifest) -> Vec<ValidationError> {
 
     // For each device, validate:
     // 1. The bus id exists.
-    // 2. Any `pins:` values are in general_purpose.
+    // 2. No `pins:` value appears in general_purpose.
     for device in &manifest.devices {
         // An empty `bus` means a bus-less device (e.g. a GPIO/PWM actuator on a
         // bare pin); only a non-empty bus id must resolve to a declared bus.
@@ -85,10 +85,14 @@ pub fn validate_manifest(manifest: &BoardManifest) -> Vec<ValidationError> {
             )));
         }
 
+        // A pin a device claims is reserved for the signal layer, like a bus
+        // pin: it must NOT appear in general_purpose, which lists only the pins
+        // exported to cells via the GPIO host functions.
         for (pin_name, &pin) in &device.pins {
-            if !gp_set.contains(&pin) {
+            if gp_set.contains(&pin) {
                 errors.push(ValidationError::new(format!(
-                    "device `{}`: pin `{pin_name}` = GPIO{pin} is not in gpios.general_purpose",
+                    "device `{}`: pin `{pin_name}` = GPIO{pin} is claimed by the device but also \
+                     listed in gpios.general_purpose",
                     device.id
                 )));
             }
@@ -213,9 +217,40 @@ devices:
     }
 
     #[test]
-    fn device_pin_not_in_general_purpose_is_rejected() {
+    fn device_pin_in_general_purpose_is_rejected() {
         let yaml = r"
 id: bad-board
+chip: esp32c6
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 10
+      sda: 11
+    freq_khz: 400
+gpios:
+  general_purpose: [0, 1, 5]
+devices:
+  - id: sensor
+    driver: bme280
+    bus: i2c0
+    pins:
+      drdy: 5
+";
+        let m = parse_manifest(yaml).unwrap();
+        let errors = validate_manifest(&m);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("GPIO5") || e.message.contains("drdy")),
+            "expected a reserved-pin error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn device_pin_outside_general_purpose_validates() {
+        let yaml = r"
+id: good-board
 chip: esp32c6
 buses:
   i2c0:
@@ -236,10 +271,8 @@ devices:
         let m = parse_manifest(yaml).unwrap();
         let errors = validate_manifest(&m);
         assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("GPIO5") || e.message.contains("drdy")),
-            "expected pin error, got: {errors:?}"
+            errors.is_empty(),
+            "a device pin reserved outside general_purpose is valid: {errors:?}"
         );
     }
 
@@ -381,7 +414,7 @@ buses:
     pins: { scl: 10, sda: 11 }
     freq_khz: 400
 gpios:
-  general_purpose: [0, 1, 2, 3, 4, 5]
+  general_purpose: [0, 1, 2, 3, 4]
 devices:
   - id: relay1
     driver: gpio-output
@@ -405,7 +438,7 @@ buses:
     pins: { scl: 10, sda: 11 }
     freq_khz: 400
 gpios:
-  general_purpose: [0, 1, 2, 3, 4, 5]
+  general_purpose: [0, 1, 2, 3, 4]
 devices:
   - id: relay1
     driver: gpio-output

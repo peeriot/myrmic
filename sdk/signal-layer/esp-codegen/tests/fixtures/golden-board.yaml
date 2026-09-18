@@ -13,7 +13,8 @@ buses:
     freq_khz: 400
 
 gpios:
-  general_purpose: [0, 1, 2]
+  # Cell-exported pins only; relay1's `out` (GPIO2) is reserved and must not appear here.
+  general_purpose: [0, 1]
 
 devices:
   - id: bme280
