@@ -18,6 +18,7 @@ use cell_protocol::{
     WATCHDOG_RESETS_TABLE, WatchdogResetReason, WatchdogResetReport, scope_of_watchdog_resets,
 };
 use claims::assert_ok;
+use sorg_common::{CellFailureKind, DeploymentError};
 use test_framework::clients::db::DbHandle;
 use test_framework::scenario::SwarmTestCtx;
 use test_framework::swarm::SwarmProcess;
@@ -439,6 +440,60 @@ async fn production_cell_cannot_starve_the_liveness_supervisor() {
         .await;
     let alive: i32 = postcard::from_bytes(&response).expect("decode ping payload");
     assert_eq!(alive, 1, "the cell should have survived the spin");
+}
+
+/// Regression for the missing-import footgun: a cell importing a host function
+/// the firmware does not provide must be rejected at deploy, not linked as a
+/// WAMR deferred stub that instantiates fine and only traps when the guest
+/// calls it.
+///
+/// The self-test cell imports `selftest::wdt_selftest_wedge`, which exists only
+/// in a `wdt-selftest` build. Deploying it onto a production-profile image must
+/// fail immediately with a named unlinked-import error - rather than the wedge
+/// silently no-op'ing and the reporting tests timing out minutes later on an
+/// empty resets table (which reads like a report-path regression, not a wrong
+/// image). Returns the deploy error instead of panicking, so a mismatch reads
+/// as a plain test failure.
+///
+/// Runs on the production image, so it is skipped when `EMBEDDED_ELF_PRODUCTION`
+/// is unset, exactly as `production_cell_cannot_starve_the_liveness_supervisor`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn selftest_cell_on_production_image_is_rejected_at_deploy() -> anyhow::Result<()> {
+    if !device_present() {
+        return Ok(());
+    }
+    if production_firmware_elf_path().is_none() {
+        eprintln!(
+            "EMBEDDED_ELF_PRODUCTION not set - skipping the production-profile deploy-rejection test"
+        );
+        return Ok(());
+    }
+
+    let spawned = hil_swarm_test()
+        .aot_cell(build_aot_cell(SELFTEST_CELL)?, SELFTEST_SRI)
+        .spawn()
+        .await;
+    let _monitor = flash_production_device()?;
+    let mut ctx = spawned.connect_deferred().await;
+
+    match ctx.try_load_cells().await {
+        Ok(()) => anyhow::bail!(
+            "the self-test cell deployed on a production image; the unlinked-import guard did not fire"
+        ),
+        Err(DeploymentError::DeploymentFailed(failures)) => {
+            let named_selftest = failures.iter().any(|failure| {
+                matches!(&failure.kind, CellFailureKind::RuntimeReported(msg) if msg.contains("selftest"))
+            });
+            anyhow::ensure!(
+                named_selftest,
+                "deploy failed, but not with the expected unlinked `selftest` import: {failures:?}"
+            );
+            Ok(())
+        }
+        Err(other) => {
+            anyhow::bail!("expected a runtime-reported unlinked-import failure, got {other:?}")
+        }
+    }
 }
 
 /// The staged-MWDT report with the highest `reset_count`. One device upserts a
