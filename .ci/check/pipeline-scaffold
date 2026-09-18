@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # Scaffold a Signal Layer pipeline with `myrmic new --pipeline` and compile it,
-# for both the Linux and firmware targets.
+# for both the Linux and firmware targets, and scaffold + test a driver and a
+# step with `myrmic new --driver`/`--step`.
 #
 # This is the only CI gate that *builds* a generated pipeline. The myrmic-cli
 # unit tests assert the scaffold's file contents but never compile it, and the
@@ -61,4 +62,15 @@ FIRMWARE="$WORK/firmware"
 # needs; the chip comes from the scaffold manifest's default feature.
 "$MYRMIC" build "$FIRMWARE"
 
-printf "\n\n--== Pipeline scaffolds build clean ==--\n\n"
+printf "\n\n--== Signal Layer modules: scaffold + build ==--\n\n"
+MODS="$WORK/mods"
+"$MYRMIC" new demo_i2c  --driver=i2c --registry-dir "$MODS" --sdk "$REPO"
+"$MYRMIC" new demo_spi  --driver=spi --registry-dir "$MODS" --sdk "$REPO"
+"$MYRMIC" new demo_step --step        --registry-dir "$MODS" --sdk "$REPO"
+# The scaffolds are standalone crates with a stubbed test suite; `cargo test`
+# catches a template that renders non-compiling code.
+( cd "$MODS/drivers/demo_i2c" && cargo test )
+( cd "$MODS/drivers/demo_spi" && cargo test )
+( cd "$MODS/steps/demo_step" && cargo test )
+
+printf "\n\n--== Pipeline and module scaffolds build clean ==--\n\n"

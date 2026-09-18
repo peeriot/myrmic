@@ -1,0 +1,200 @@
+#![cfg_attr(not(test), no_std)]
+//! {{id}} SPI sensor driver.
+//!
+//! TODO: describe the sensor and link its datasheet. Fill in the register map,
+//! the WHO_AM_I value, and the raw-to-physical conversion in `sample`.
+
+use embedded_hal_async::spi::SpiDevice;
+
+// TODO: registers and constants from the datasheet.
+const REG_WHO_AM_I: u8 = 0x00;
+const WHO_AM_I: u8 = 0x00;
+const REG_CONFIG: u8 = 0x01;
+const REG_DATA: u8 = 0x02;
+/// Set on the address byte to mark a read; cleared for a write.
+const SPI_READ: u8 = 0x80;
+
+/// An application-scope knob, referenced from `descriptor.yaml` as
+/// `rust_type: Mode`. A pipeline picks a variant by name.
+#[derive(Clone, Copy, Default)]
+pub enum Mode {
+    #[default]
+    Fast,
+    Slow,
+}
+
+impl Mode {
+    fn reg_bits(self) -> u8 {
+        match self {
+            Self::Fast => 0x00,
+            Self::Slow => 0x01,
+        }
+    }
+}
+
+/// Driver configuration. Every field maps to a `config_schema` entry in
+/// `descriptor.yaml` (except `sample_interval_ms`, which is task-level).
+pub struct {{type_name}}Config {
+    pub mode: Mode,
+}
+
+impl Default for {{type_name}}Config {
+    fn default() -> Self {
+        Self { mode: Mode::Fast }
+    }
+}
+
+/// One reading. Field names MUST match `outputs[].name` in `descriptor.yaml`.
+#[non_exhaustive]
+pub struct {{type_name}}Readings {
+    pub value_a: f32,
+    pub value_b: f32,
+}
+
+/// Driver errors. `Bus(E)` wraps the SPI error; `From<E>` lets `?` lift bus
+/// errors, and `InvalidId` reports a failed WHO_AM_I check.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum {{type_name}}Error<E: core::fmt::Debug> {
+    Bus(E),
+    InvalidId(u8),
+}
+
+impl<E: core::fmt::Debug> From<E> for {{type_name}}Error<E> {
+    fn from(err: E) -> Self {
+        Self::Bus(err)
+    }
+}
+
+pub struct {{type_name}} {
+    cfg: {{type_name}}Config,
+}
+
+impl {{type_name}} {
+    /// Builds the driver from its configuration. Infallible and touches no bus,
+    /// so it can run before the bus exists.
+    #[must_use]
+    pub fn new(cfg: &{{type_name}}Config) -> Self {
+        Self {
+            cfg: {{type_name}}Config { mode: cfg.mode },
+        }
+    }
+
+    /// Brings the sensor up: verifies WHO_AM_I and applies the configuration.
+    /// Idempotent, so the source task re-runs it to recover after a bus glitch.
+    pub async fn init<S: SpiDevice>(
+        &mut self,
+        spi: &mut S,
+    ) -> Result<(), {{type_name}}Error<S::Error>> {
+        let id = read_reg(spi, REG_WHO_AM_I).await?;
+        if id != WHO_AM_I {
+            return Err({{type_name}}Error::InvalidId(id));
+        }
+        write_reg(spi, REG_CONFIG, self.cfg.mode.reg_bits()).await?;
+        Ok(())
+    }
+
+    /// Reads one sample.
+    pub async fn sample<S: SpiDevice>(
+        &mut self,
+        spi: &mut S,
+    ) -> Result<{{type_name}}Readings, {{type_name}}Error<S::Error>> {
+        // One leading address byte, then four data bytes; the address echo is
+        // discarded.
+        let mut rx = [0u8; 5];
+        let mut tx = [0u8; 5];
+        tx[0] = REG_DATA | SPI_READ;
+        spi.transfer(&mut rx, &tx).await?;
+        // TODO: convert the raw bytes to physical units.
+        Ok({{type_name}}Readings {
+            value_a: f32::from(i16::from_be_bytes([rx[1], rx[2]])),
+            value_b: f32::from(i16::from_be_bytes([rx[3], rx[4]])),
+        })
+    }
+}
+
+async fn read_reg<S: SpiDevice>(spi: &mut S, reg: u8) -> Result<u8, S::Error> {
+    let mut rx = [0u8; 2];
+    spi.transfer(&mut rx, &[reg | SPI_READ, 0x00]).await?;
+    Ok(rx[1])
+}
+
+async fn write_reg<S: SpiDevice>(spi: &mut S, reg: u8, val: u8) -> Result<(), S::Error> {
+    spi.write(&[reg & !SPI_READ, val]).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use embedded_hal_mock::eh1::spi::{Mock, Transaction as T};
+    use futures::executor::block_on;
+
+    fn read_reg_txns(reg: u8, val: u8) -> Vec<T<u8>> {
+        vec![
+            T::transaction_start(),
+            T::transfer(vec![reg | SPI_READ, 0x00], vec![0x00, val]),
+            T::transaction_end(),
+        ]
+    }
+
+    fn write_reg_txns(reg: u8, val: u8) -> Vec<T<u8>> {
+        vec![
+            T::transaction_start(),
+            T::write_vec(vec![reg & !SPI_READ, val]),
+            T::transaction_end(),
+        ]
+    }
+
+    fn sample_txns() -> Vec<T<u8>> {
+        vec![
+            T::transaction_start(),
+            T::transfer(
+                vec![REG_DATA | SPI_READ, 0, 0, 0, 0],
+                vec![0, 0, 1, 0, 2],
+            ),
+            T::transaction_end(),
+        ]
+    }
+
+    #[test]
+    fn init_and_sample() {
+        let mut txns = read_reg_txns(REG_WHO_AM_I, WHO_AM_I);
+        txns.extend(write_reg_txns(REG_CONFIG, 0x00));
+        txns.extend(sample_txns());
+        let mut spi = Mock::new(&txns);
+        let mut dev = {{type_name}}::new(&{{type_name}}Config::default());
+        block_on(async {
+            dev.init(&mut spi).await.unwrap();
+            let reading = dev.sample(&mut spi).await.unwrap();
+            assert_eq!(reading.value_a, 1.0);
+            assert_eq!(reading.value_b, 2.0);
+        });
+        spi.done();
+    }
+
+    #[test]
+    fn wrong_chip_id_returns_error() {
+        let mut spi = Mock::new(&read_reg_txns(REG_WHO_AM_I, 0xFF));
+        let mut dev = {{type_name}}::new(&{{type_name}}Config::default());
+        block_on(async {
+            let err = dev.init(&mut spi).await.unwrap_err();
+            assert!(matches!(err, {{type_name}}Error::InvalidId(0xFF)));
+        });
+        spi.done();
+    }
+
+    #[test]
+    fn reinit_recovers_after_first_bring_up() {
+        let mut txns = read_reg_txns(REG_WHO_AM_I, WHO_AM_I);
+        txns.extend(write_reg_txns(REG_CONFIG, 0x00));
+        txns.extend(read_reg_txns(REG_WHO_AM_I, WHO_AM_I));
+        txns.extend(write_reg_txns(REG_CONFIG, 0x00));
+        let mut spi = Mock::new(&txns);
+        let mut dev = {{type_name}}::new(&{{type_name}}Config::default());
+        block_on(async {
+            dev.init(&mut spi).await.unwrap();
+            dev.init(&mut spi).await.unwrap();
+        });
+        spi.done();
+    }
+}

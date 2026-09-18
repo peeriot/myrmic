@@ -25,6 +25,39 @@ pub struct New {
 
     #[clap(long, alias = "repo")]
     sdk: Option<String>,
+
+    /// Scaffold a Signal Layer driver for this bus. Requires a value:
+    /// `--driver=i2c` or `--driver=spi`.
+    #[clap(long, require_equals = true, conflicts_with_all = ["firmware", "pipeline", "step"])]
+    driver: Option<Transport>,
+
+    /// Scaffold a Signal Layer processing step.
+    #[clap(long, conflicts_with_all = ["firmware", "pipeline", "driver"])]
+    step: bool,
+
+    /// Base directory a scaffolded driver/step is placed under, as
+    /// `drivers/<id>` or `steps/<id>` (default: the current directory). Point a
+    /// pipeline's build.rs at this directory to enumerate the modules in it.
+    #[clap(long)]
+    registry_dir: Option<std::path::PathBuf>,
+}
+
+/// The bus a scaffolded driver talks over.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Transport {
+    I2c,
+    Spi,
+}
+
+impl std::str::FromStr for Transport {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        match s {
+            "i2c" => Ok(Self::I2c),
+            "spi" => Ok(Self::Spi),
+            other => anyhow::bail!("unknown bus `{other}`; expected `i2c` or `spi`"),
+        }
+    }
 }
 
 #[derive(textus::Template)]
@@ -66,6 +99,31 @@ struct TemplateNewLinuxPipeline<'a> {
     linux_codegen: models::CargoDep,
 }
 
+#[derive(textus::Template)]
+#[template(path = "templates/driver-i2c", strip_suffix = ".tmpl")]
+struct TemplateNewDriverI2c<'a> {
+    id: &'a str,
+    crate_name: &'a str,
+    type_name: &'a str,
+}
+
+#[derive(textus::Template)]
+#[template(path = "templates/driver-spi", strip_suffix = ".tmpl")]
+struct TemplateNewDriverSpi<'a> {
+    id: &'a str,
+    crate_name: &'a str,
+    type_name: &'a str,
+}
+
+#[derive(textus::Template)]
+#[template(path = "templates/step", strip_suffix = ".tmpl")]
+struct TemplateNewStep<'a> {
+    id: &'a str,
+    crate_name: &'a str,
+    type_name: &'a str,
+    signal_layer_core: models::CargoDep,
+}
+
 pub fn handle(ctx: &Ctx, cmd: New) -> anyhow::Result<()> {
     let New {
         path,
@@ -73,7 +131,31 @@ pub fn handle(ctx: &Ctx, cmd: New) -> anyhow::Result<()> {
         sdk: repo,
         firmware,
         pipeline,
+        driver,
+        step,
+        registry_dir,
     } = cmd;
+
+    if let Some(transport) = driver {
+        return handle_module(
+            ctx,
+            ModuleKind::Driver(transport),
+            &path,
+            name.as_deref(),
+            repo.as_deref(),
+            registry_dir.as_deref(),
+        );
+    }
+    if step {
+        return handle_module(
+            ctx,
+            ModuleKind::Step,
+            &path,
+            name.as_deref(),
+            repo.as_deref(),
+            registry_dir.as_deref(),
+        );
+    }
 
     let name = determine_name(name.as_deref(), &path)?;
 
@@ -119,6 +201,149 @@ pub fn handle(ctx: &Ctx, cmd: New) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// A Signal Layer module scaffold: a driver on a bus, or a processing step.
+#[derive(Clone, Copy)]
+enum ModuleKind {
+    Driver(Transport),
+    Step,
+}
+
+/// Scaffolds an out-of-tree Signal Layer driver or step under
+/// `<registry_dir>/<drivers|steps>/<id>` - the layout a pipeline's `build.rs`
+/// enumerates via `build_pipeline(.., Some(<registry_dir>))` / `.include(..)`.
+fn handle_module(
+    ctx: &Ctx,
+    kind: ModuleKind,
+    positional: &std::path::Path,
+    name: Option<&str>,
+    repo: Option<&str>,
+    registry_dir: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    // The positional argument is the module id, not a filesystem path.
+    if positional.components().count() != 1 {
+        anyhow::bail!(
+            "pass just the module id (e.g. `bme280`), not a path; use --registry-dir for the location"
+        );
+    }
+    let id = determine_name(name, positional)?;
+    validate_name(id)?;
+
+    let (subdir, kind_label, shipped, crate_name) = match kind {
+        ModuleKind::Driver(_) => (
+            "drivers",
+            "driver",
+            esp_codegen::driver_ids(),
+            format!("{id}-driver"),
+        ),
+        ModuleKind::Step => ("steps", "step", esp_codegen::step_ids(), id.to_owned()),
+    };
+
+    if shipped.iter().any(|s| s == id) {
+        crate::warn!(
+            ctx,
+            "a {kind_label} `{id}` already ships with myrmic; a module with the same id overlays \
+             the shipped one wherever this registry is included"
+        );
+    }
+
+    let base = match registry_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => std::env::current_dir().context("cannot determine the current directory")?,
+    };
+    let crate_dir = base.join(subdir).join(id);
+    if crate_dir.exists() {
+        anyhow::bail!("{} already exists", crate_dir.display());
+    }
+
+    let repo = crate::utils::resolve_repo(ctx, repo)?;
+
+    crate::info!(
+        ctx,
+        "Creating Signal Layer {kind_label} '{id}' in {}",
+        crate_dir.display()
+    );
+    render_module(kind, id, &crate_name, &repo, &crate_dir)?;
+
+    crate::info!(
+        ctx,
+        "Add `{crate_name} = {{ path = \"{}\" }}` to a pipeline's dependencies and point its \
+         build.rs at `{}` to build with it.",
+        crate_dir.display(),
+        base.display()
+    );
+
+    Ok(())
+}
+
+/// Renders the module template for `kind` into `crate_dir`, cleaning it up on
+/// failure.
+fn render_module(
+    kind: ModuleKind,
+    id: &str,
+    crate_name: &str,
+    repo: &models::Repo,
+    crate_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let type_name = pascal_case(id);
+
+    if let Some(parent) = crate_dir.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let result = match kind {
+        ModuleKind::Driver(Transport::I2c) => TemplateNewDriverI2c {
+            id,
+            crate_name,
+            type_name: &type_name,
+        }
+        .render_into(crate_dir),
+        ModuleKind::Driver(Transport::Spi) => TemplateNewDriverSpi {
+            id,
+            crate_name,
+            type_name: &type_name,
+        }
+        .render_into(crate_dir),
+        ModuleKind::Step => {
+            let signal_layer_core = repo
+                .clone()
+                .resolve_or_assume_correct("sdk/signal-layer/signal-layer-core");
+            TemplateNewStep {
+                id,
+                crate_name,
+                type_name: &type_name,
+                signal_layer_core,
+            }
+            .render_into(crate_dir)
+        }
+    };
+
+    if let Err(err) = result {
+        if let Err(io_err) = std::fs::remove_dir_all(crate_dir) {
+            return Err(anyhow::Error::new(io_err).context(format!(
+                "unable to cleanup after template render failure: {err}"
+            )));
+        }
+        return Err(anyhow::Error::new(err).context("failed to render template"));
+    }
+
+    Ok(())
+}
+
+/// `moving-average` -> `MovingAverage`, `bme280` -> `Bme280`.
+fn pascal_case(id: &str) -> String {
+    id.split(['-', '_'])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
 
 /// Renders the selected project template into `path`, cleaning up the directory
@@ -498,4 +723,39 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    #[test]
+    fn pascal_case_from_id() {
+        assert_eq!(pascal_case("bme280"), "Bme280");
+        assert_eq!(pascal_case("moving-average"), "MovingAverage");
+        assert_eq!(pascal_case("wsen_itds"), "WsenItds");
+    }
+
+    #[test]
+    fn transport_parses_i2c_and_spi_only() {
+        assert!("i2c".parse::<Transport>().is_ok());
+        assert!("spi".parse::<Transport>().is_ok());
+        assert!("uart".parse::<Transport>().is_err());
+    }
+
+    #[test]
+    fn driver_requires_an_explicit_bus() {
+        let cmd = New::try_parse_from(["new", "foo", "--driver=spi"]).unwrap();
+        assert!(matches!(cmd.driver, Some(Transport::Spi)));
+        // A bare `--driver` (no value) is rejected: the bus must be explicit.
+        assert!(New::try_parse_from(["new", "foo", "--driver"]).is_err());
+    }
+
+    #[test]
+    fn module_modes_conflict_with_each_other_and_project_modes() {
+        assert!(New::try_parse_from(["new", "foo", "--driver=i2c", "--step"]).is_err());
+        assert!(New::try_parse_from(["new", "foo", "--driver=i2c", "--firmware=esp32c6"]).is_err());
+        assert!(New::try_parse_from(["new", "foo", "--step", "--pipeline"]).is_err());
+    }
 }

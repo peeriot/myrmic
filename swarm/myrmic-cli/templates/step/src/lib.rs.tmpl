@@ -1,0 +1,80 @@
+#![cfg_attr(not(test), no_std)]
+//! {{id}} processing step.
+//!
+//! TODO: describe what it computes. This skeleton keeps a sliding window of the
+//! last N inputs and emits their mean once the window is full - replace the body
+//! of `step` with your own logic.
+
+use signal_layer_core::ProcessingStep;
+
+/// Upper bound on the window, so the state can be a fixed-size array in `no_std`.
+const MAX_WINDOW: usize = 64;
+
+/// Step configuration. Each field maps to a `config_schema` entry in
+/// `descriptor.yaml`; codegen builds `{{type_name}}Config` and passes it to
+/// `{{type_name}}State::new`.
+#[derive(Clone, Copy)]
+pub struct {{type_name}}Config {
+    pub window: usize,
+}
+
+impl Default for {{type_name}}Config {
+    fn default() -> Self {
+        Self { window: 4 }
+    }
+}
+
+/// The step's local state, kept across `step()` calls. Codegen instantiates
+/// `{{type_name}}State` (the `State` suffix is the naming convention).
+pub struct {{type_name}}State {
+    buf: [f32; MAX_WINDOW],
+    len: usize,
+    idx: usize,
+    window: usize,
+}
+
+impl {{type_name}}State {
+    #[must_use]
+    pub fn new(cfg: {{type_name}}Config) -> Self {
+        let window = cfg.window.clamp(1, MAX_WINDOW);
+        Self {
+            buf: [0.0; MAX_WINDOW],
+            len: 0,
+            idx: 0,
+            window,
+        }
+    }
+}
+
+impl ProcessingStep for {{type_name}}State {
+    type Input = f32;
+    type Output = f32;
+
+    fn step(&mut self, input: f32) -> Option<f32> {
+        self.buf[self.idx] = input;
+        self.idx = (self.idx + 1) % self.window;
+        if self.len < self.window {
+            self.len += 1;
+        }
+        // Conditional emission: stay quiet until the window is full.
+        if self.len < self.window {
+            return None;
+        }
+        let sum: f32 = self.buf[..self.window].iter().sum();
+        Some(sum / self.window as f32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emits_once_the_window_is_full() {
+        let mut step = {{type_name}}State::new({{type_name}}Config { window: 3 });
+        assert_eq!(step.step(3.0), None);
+        assert_eq!(step.step(6.0), None);
+        assert_eq!(step.step(9.0), Some(6.0));
+        assert_eq!(step.step(12.0), Some(9.0));
+    }
+}

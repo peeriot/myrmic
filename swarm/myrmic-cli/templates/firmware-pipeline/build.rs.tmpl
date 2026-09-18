@@ -3,8 +3,14 @@ fn main() {
 
     // Generate the Signal Layer pipeline from board.yml + pipeline.yml into
     // $OUT_DIR/pipeline.rs, which `esp_firmware::pipeline!()` includes.
+    //
+    // To use custom drivers/steps scaffolded with `myrmic new --driver=<bus>` /
+    // `--step`, add `.include("../my-modules")` (their registry directory, the
+    // one holding `drivers/` and `steps/`) and add each module crate to
+    // [dependencies].
     esp_firmware_build::pipeline()
         .board("board.yml")
         .pipeline("pipeline.yml")
+        // .include("../my-modules")
         .generate();
 }

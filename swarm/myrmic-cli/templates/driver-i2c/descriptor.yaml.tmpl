@@ -1,0 +1,37 @@
+id: {{id}}
+category: sensor-drivers
+description: >
+  TODO: one-line description of the {{id}} sensor.
+
+requires:
+  buses:
+    - transport: i2c
+
+# Each name here MUST match a field of `{{type_name}}Readings` in src/lib.rs.
+outputs:
+  - name: value_a
+    type: f32
+    unit: "TODO"
+  - name: value_b
+    type: f32
+    unit: "TODO"
+
+config_schema:
+  # `scope: hardware` values are fixed by how the sensor is wired.
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x00 # TODO: the sensor's I2C address from its datasheet
+    description: "I2C address"
+  # `scope: application` values are knobs a pipeline may set. `rust_type` names a
+  # type this crate exports (here the `Mode` enum in src/lib.rs).
+  mode:
+    scope: application
+    rust_type: Mode
+    default: Fast
+    description: "TODO: an example application-scope knob"
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 1000
+    description: Polling interval in milliseconds
