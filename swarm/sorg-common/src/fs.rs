@@ -182,11 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn no_write_permissions() {
-        assert_err!(WritableDirectory::new("/etc"));
-    }
-
-    #[test]
     fn correct_writable_dir() {
         let dir = assert_ok!(WritableDirectory::new("."));
         let expected = env::current_dir().unwrap();

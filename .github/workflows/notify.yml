@@ -1,0 +1,46 @@
+name: Notify CI
+
+# Tells another repository's CI that there is work, since it cannot see events here.
+on:
+  push:
+    branches: [master]
+    tags: ['myrmic/v*']
+  merge_group:
+  release:
+    types: [published]
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  dispatch:
+    name: Dispatch
+    # Unset in a repository not wired up yet: do nothing rather than fail.
+    if: >-
+      vars.CI_REPO != '' &&
+      (github.event_name != 'pull_request_target' || github.event.label.name == 'hil')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: token
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_SECRET }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.CI_REPO }}
+
+      - name: Tell CI there is work
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          TARGET: ${{ github.repository_owner }}/${{ vars.CI_REPO }}
+          # Post against the sha the pull request shows, not the merge result.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "/repos/${TARGET}/dispatches" \
+            -f event_type=ci \
+            -F "client_payload[repo]=${GITHUB_REPOSITORY}" \
+            -F "client_payload[event]=${GITHUB_EVENT_NAME}" \
+            -F "client_payload[ref]=${GITHUB_REF}" \
+            -F "client_payload[head_sha]=${HEAD_SHA}" \
+            -F "client_payload[pr]=${PR:-}"

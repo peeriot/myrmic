@@ -7,8 +7,12 @@ REPO_ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
 MANIFEST_PATH="$REPO_ROOT/Cargo.toml"
 
 OLD_PWD="$PWD"
+DENY_PATCHED=0
 
 finish() {
+    if [ "$DENY_PATCHED" -eq 1 ]; then
+        git -C "$REPO_ROOT" apply -R "$REPO_ROOT/deny.patch"
+    fi
     cd "$OLD_PWD"
 }
 
@@ -30,7 +34,8 @@ cargo deny --manifest-path "$MANIFEST_PATH" check bans --hide-inclusion-graph
 printf "\n\n--== Verify Licenses ==--\n\n"
 cargo deny --manifest-path "$MANIFEST_PATH" check licenses --hide-inclusion-graph
 
-git apply deny.patch
+git -C "$REPO_ROOT" apply "$REPO_ROOT/deny.patch"
+DENY_PATCHED=1
 
 printf "\n\n--== Verify Licenses (with Dev Dependencies) ==--\n\n"
 cargo deny --manifest-path "$MANIFEST_PATH" check licenses --hide-inclusion-graph

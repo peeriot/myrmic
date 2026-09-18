@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# Runs the embedded checks for one chip: clippy, doc and build against the
+# chip's cargo alias, then, for c6 only, the production host-function surface
+# verification.
+#
+# Usage:
+#   .ci/check/embedded <c5|c6|c61>
+
+set -xeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+CHIP=${1:-}
+
+case "$CHIP" in
+    c5 | c6 | c61) ;;
+    *)
+        printf 'usage: %s <c5|c6|c61>\n' "$0" >&2
+        exit 1
+        ;;
+esac
+
+OLD_PWD="$PWD"
+
+finish() {
+    cd "$OLD_PWD"
+}
+
+trap finish EXIT
+
+cd "$REPO_ROOT/embedded"
+COMMAND_SUFFIX="-$CHIP" ALL_TARGETS=false SKIP_TESTS=true ../.ci/check/check
+
+if [ "$CHIP" = "c6" ]; then
+    cd "$REPO_ROOT"
+    COMMAND_SUFFIX=-c6 .ci/verify/production-surface
+fi

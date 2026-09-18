@@ -293,6 +293,7 @@ implicit_hasher = "allow"
 cast_possible_truncation = "warn"
 uninlined_format_args = "allow"
 needless_continue = "allow"
+unused_async_trait_impl = "allow"
 
 # Zenoh does this via the dynamic plugins.
 no_mangle_with_rust_abi = "allow"

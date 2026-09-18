@@ -24,9 +24,7 @@ finish() {
 
 trap finish EXIT
 
-# Install the requested toolchain if it is not already in the (persistent) rustup
-# volume. Without this a job depends on some *other* job having seeded the volume
-# first, which is how the toolchain silently drifted in the first place.
+# Install the requested toolchain if the image does not already ship it.
 if [ -n "$CARGO_CHANNEL" ]; then
     printf "\n\n--== Ensure Toolchain ==--\n\n"
     # Install only when absent: re-running `toolchain install` over an existing
@@ -158,6 +156,9 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     rustup toolchain list | grep -q "^${CELL_TOOLCHAIN}" \
         || rustup toolchain install "$CELL_TOOLCHAIN" --profile minimal
     rustup component add rust-src --toolchain "$CELL_TOOLCHAIN"
+
+    cargo nextest --version >/dev/null 2>&1 \
+        || curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
     # Set before anything is compiled, not just before the tests. RUSTFLAGS are
     # part of a unit's fingerprint, so adding them between two cargo invocations
