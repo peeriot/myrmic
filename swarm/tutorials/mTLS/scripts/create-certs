@@ -57,14 +57,14 @@ openssl req \
     -days 36500 \
     -key root-ca-key.pem \
     -out root-ca-cert.pem \
-    -subj "/CN=swarm.peeriot.intra/O=Peeriot/OU=swarm.peeriot.intra"
+    -subj "/CN=swarm.example.com/O=Peeriot/OU=swarm.example.com"
 
 # Mesh A Intermediate CA
 echo ""
 echo "Create Mesh A CA"
-create-intermediate-ca "mesh-a-ca" "mesh-a.swarm.peeriot.intra"
+create-intermediate-ca "mesh-a-ca" "mesh-a.swarm.example.com"
 
 # Mesh B Intermediate CA
 echo ""
 echo "Create Mesh A CA"
-create-intermediate-ca "mesh-b-ca" "mesh-b.swarm.peeriot.intra"
+create-intermediate-ca "mesh-b-ca" "mesh-b.swarm.example.com"

@@ -24,7 +24,9 @@ flowchart LR
 | [`esp-hal/`](esp-hal/)             | The ESP32 firmware ecosystem and **the core of the embedded stack**: the WAMR WASM runtime that hosts cells, the `modem-esp32` firmware (myrmic + BLE transports, flash/AOT layout, memory tuning), and low-level crates (MMU, storage). **Start here.** |
 | [`signal-layer/`](signal-layer/)   | **Optional** native I/O layer: sensor **drivers**, actuator outputs, processing **steps**, and the **tap registry** cells read from. Chip-agnostic — the ESP-specific glue (board manifests, pipelines, `esp-codegen`) lives under [`esp-hal/signal-layer/`](esp-hal/signal-layer/). |
 | [`examples/`](examples/)           | Runnable example firmware binaries (onboarding and Zenoh-ping over BLE and TCP).                                                                                        |
-| [`hil-tests/`](hil-tests/)         | Hardware-in-the-loop tests that flash real boards and assert against live behaviour.                                                                                    |
+
+> The hardware-in-the-loop suite that flashes real boards and asserts against live behaviour
+> lives with the runner it needs, in a separate CI repository, not in this tree.
 
 > Cells themselves aren't here — they're WASM modules under [`../sdk/`](../sdk/). This tree
 > is the firmware that hosts them and the native layers it exposes to them.

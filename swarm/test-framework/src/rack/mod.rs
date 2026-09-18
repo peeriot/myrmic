@@ -22,7 +22,7 @@ use crate::swarm::SwarmProcess;
 /// [`crate::scenario::SwarmTestBuilder::wasm_cell_replicated_pinned_with_api`], passing each
 /// replica the `tags` of the [`HostSpec`] it should land on.
 pub struct HostSpec {
-    /// SSH destination, e.g. `peeriot@rack-node-3.peeriot.intra` (anything `ssh`/`scp` accept,
+    /// SSH destination, e.g. `user@rack-node-1.example` (anything `ssh`/`scp` accept,
     /// including `~/.ssh/config` aliases)
     pub host: String,
     /// unique `myrmic runtimes start --name` for this host
@@ -490,8 +490,8 @@ fn host_config_path(myrmic_path: &str, runtime_name: &str) -> String {
 
 /// Write a `SwarmConfig` YAML for `host` and upload it to `remote_path`, always shortening the
 /// telemetry export intervals and, when `listen_port` is given, additionally pinning the zenoh
-/// listen endpoint to that port on all interfaces (the same override the ESP32 HIL tests apply
-/// via jsonnet — `embedded/hil-tests/tests/data/swarm.jsonnet`'s `tcp/[::]:7447` — just fed to
+/// listen endpoint to that port on all interfaces (the same kind of override the ESP32
+/// hardware-in-the-loop tests apply to pin their own zenoh listen endpoint, just fed to
 /// `myrmic runtimes start <path>` in YAML instead).
 ///
 /// The `OTel` SDK's defaults (60s periodic metric export, 5s log/trace batch delay) are tuned for

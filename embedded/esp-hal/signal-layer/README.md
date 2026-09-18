@@ -26,9 +26,6 @@ setting a hardware field from a pipeline (or vice versa) fails the build.
 | `boards/esp32c5-devkit.yaml`          | ESP32-C5 DevKit.                           |
 | `boards/esp32c6-devkit.yaml`          | ESP32-C6 DevKit.                           |
 | `boards/esp32c61-devkit.yaml`         | ESP32-C61 DevKit.                          |
-| `boards/esp32c5-hil.yaml`             | The C5 hardware-in-the-loop test rig.      |
-| `boards/esp32c6-hil.yaml`             | The C6 hardware-in-the-loop test rig.      |
-| `boards/esp32c61-hil.yaml`            | The C61 hardware-in-the-loop test rig.     |
 
 ## Pipelines
 
@@ -38,7 +35,6 @@ setting a hardware field from a pipeline (or vice versa) fails the build.
 | `pipelines/actuators-demo.yaml`       | Cell-driven outlets → actuators (write side).         |
 | `pipelines/feed-forward-demo.yaml`    | Feed-forward control (e.g. fan-curve).                |
 | `pipelines/feedback-demo.yaml`        | Outlet feedback: a cell reads an actuator's real state back, not just its command. |
-| `pipelines/hil-tests.yaml`            | Pipeline used by the HIL test suite.                  |
 
 ## See also
 

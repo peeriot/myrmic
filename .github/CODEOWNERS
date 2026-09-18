@@ -40,5 +40,4 @@
 
 # .github/CODEOWNERS      @peeriot/devops-maintainers @Bergmann89
 /.github/workflows/     @peeriot/devops-maintainers @Bergmann89
-/.ci/release/           @peeriot/devops-maintainers @Bergmann89
 deny.toml               @peeriot/devops-maintainers @Bergmann89
