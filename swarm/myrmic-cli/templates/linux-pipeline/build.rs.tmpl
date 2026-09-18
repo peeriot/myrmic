@@ -1,5 +1,11 @@
 fn main() {
     // Generate the Signal Layer pipeline from board.yml + pipeline.yml into
     // $OUT_DIR/pipeline.rs, which src/main.rs includes.
+    //
+    // To use custom drivers/steps scaffolded with `myrmic new --driver=<bus>` /
+    // `--step`, pass their registry directory (the one holding `drivers/` and
+    // `steps/`) as the third argument, and add each module crate to
+    // [dependencies], e.g.:
+    //   linux_codegen::build_pipeline("board.yml", "pipeline.yml", Some("../my-modules"));
     linux_codegen::build_pipeline("board.yml", "pipeline.yml", None);
 }

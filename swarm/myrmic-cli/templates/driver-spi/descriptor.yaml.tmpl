@@ -1,0 +1,32 @@
+id: {{id}}
+category: sensor-drivers
+description: >
+  TODO: one-line description of the {{id}} sensor.
+
+requires:
+  buses:
+    - transport: spi
+
+# Each name here MUST match a field of `{{type_name}}Readings` in src/lib.rs.
+outputs:
+  - name: value_a
+    type: f32
+    unit: "TODO"
+  - name: value_b
+    type: f32
+    unit: "TODO"
+
+# SPI has no address in the config; the chip-select is bound by the board file.
+config_schema:
+  # `scope: application` values are knobs a pipeline may set. `rust_type` names a
+  # type this crate exports (here the `Mode` enum in src/lib.rs).
+  mode:
+    scope: application
+    rust_type: Mode
+    default: Fast
+    description: "TODO: an example application-scope knob"
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 1000
+    description: Polling interval in milliseconds

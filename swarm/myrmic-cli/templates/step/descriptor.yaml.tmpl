@@ -1,0 +1,19 @@
+id: {{id}}
+category: processing-steps
+description: >
+  TODO: one-line description of what the {{id}} step computes.
+
+inputs:
+  - name: value
+    type: f32
+
+outputs:
+  - name: result
+    type: f32
+
+config_schema:
+  window:
+    scope: application
+    rust_type: usize
+    default: 4
+    description: "TODO: an example knob"

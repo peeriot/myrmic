@@ -1,0 +1,175 @@
+#![cfg_attr(not(test), no_std)]
+//! {{id}} I2C sensor driver.
+//!
+//! TODO: describe the sensor and link its datasheet. Fill in the register map,
+//! the WHO_AM_I value, and the raw-to-physical conversion in `sample`.
+
+use embedded_hal_async::i2c::I2c;
+
+// TODO: registers and constants from the datasheet.
+const REG_WHO_AM_I: u8 = 0x00;
+const WHO_AM_I: u8 = 0x00;
+const REG_CONFIG: u8 = 0x01;
+const REG_DATA: u8 = 0x02;
+
+/// An application-scope knob, referenced from `descriptor.yaml` as
+/// `rust_type: Mode`. A pipeline picks a variant by name.
+#[derive(Clone, Copy, Default)]
+pub enum Mode {
+    #[default]
+    Fast,
+    Slow,
+}
+
+impl Mode {
+    fn reg_bits(self) -> u8 {
+        match self {
+            Self::Fast => 0x00,
+            Self::Slow => 0x01,
+        }
+    }
+}
+
+/// Driver configuration. Every field maps to a `config_schema` entry in
+/// `descriptor.yaml` (except `sample_interval_ms`, which is task-level).
+pub struct {{type_name}}Config {
+    pub i2c_addr: u8,
+    pub mode: Mode,
+}
+
+impl Default for {{type_name}}Config {
+    fn default() -> Self {
+        Self {
+            i2c_addr: 0x00, // TODO: the sensor's I2C address
+            mode: Mode::Fast,
+        }
+    }
+}
+
+/// One reading. Field names MUST match `outputs[].name` in `descriptor.yaml`.
+#[non_exhaustive]
+pub struct {{type_name}}Readings {
+    pub value_a: f32,
+    pub value_b: f32,
+}
+
+/// Driver errors. `Bus(E)` wraps the I2C error; `From<E>` lets `?` lift bus
+/// errors, and `InvalidId` reports a failed WHO_AM_I check.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum {{type_name}}Error<E: core::fmt::Debug> {
+    Bus(E),
+    InvalidId(u8),
+}
+
+impl<E: core::fmt::Debug> From<E> for {{type_name}}Error<E> {
+    fn from(err: E) -> Self {
+        Self::Bus(err)
+    }
+}
+
+pub struct {{type_name}} {
+    cfg: {{type_name}}Config,
+}
+
+impl {{type_name}} {
+    /// Builds the driver from its configuration. Infallible and touches no bus,
+    /// so it can run before the bus exists.
+    #[must_use]
+    pub fn new(cfg: &{{type_name}}Config) -> Self {
+        Self {
+            cfg: {{type_name}}Config {
+                i2c_addr: cfg.i2c_addr,
+                mode: cfg.mode,
+            },
+        }
+    }
+
+    /// Brings the sensor up: verifies WHO_AM_I and applies the configuration.
+    /// Idempotent, so the source task re-runs it to recover after a bus glitch.
+    pub async fn init<I: I2c>(&mut self, bus: &mut I) -> Result<(), {{type_name}}Error<I::Error>> {
+        let id = read_reg(bus, self.cfg.i2c_addr, REG_WHO_AM_I).await?;
+        if id != WHO_AM_I {
+            return Err({{type_name}}Error::InvalidId(id));
+        }
+        write_reg(bus, self.cfg.i2c_addr, REG_CONFIG, self.cfg.mode.reg_bits()).await?;
+        Ok(())
+    }
+
+    /// Reads one sample.
+    pub async fn sample<I: I2c>(
+        &mut self,
+        bus: &mut I,
+    ) -> Result<{{type_name}}Readings, {{type_name}}Error<I::Error>> {
+        let mut buf = [0u8; 4];
+        bus.write_read(self.cfg.i2c_addr, &[REG_DATA], &mut buf).await?;
+        // TODO: convert the raw bytes to physical units.
+        Ok({{type_name}}Readings {
+            value_a: f32::from(i16::from_be_bytes([buf[0], buf[1]])),
+            value_b: f32::from(i16::from_be_bytes([buf[2], buf[3]])),
+        })
+    }
+}
+
+async fn read_reg<I: I2c>(bus: &mut I, addr: u8, reg: u8) -> Result<u8, I::Error> {
+    let mut byte = [0u8; 1];
+    bus.write_read(addr, &[reg], &mut byte).await?;
+    Ok(byte[0])
+}
+
+async fn write_reg<I: I2c>(bus: &mut I, addr: u8, reg: u8, val: u8) -> Result<(), I::Error> {
+    bus.write(addr, &[reg, val]).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use embedded_hal_mock::eh1::i2c::{Mock, Transaction as T};
+    use futures::executor::block_on;
+
+    const ADDR: u8 = 0x00;
+
+    #[test]
+    fn init_and_sample() {
+        let mut mock = Mock::new(&[
+            T::write_read(ADDR, vec![REG_WHO_AM_I], vec![WHO_AM_I]),
+            T::write(ADDR, vec![REG_CONFIG, 0x00]),
+            T::write_read(ADDR, vec![REG_DATA], vec![0, 1, 0, 2]),
+        ]);
+        let mut dev = {{type_name}}::new(&{{type_name}}Config::default());
+        block_on(async {
+            dev.init(&mut mock).await.unwrap();
+            let reading = dev.sample(&mut mock).await.unwrap();
+            assert_eq!(reading.value_a, 1.0);
+            assert_eq!(reading.value_b, 2.0);
+        });
+        mock.done();
+    }
+
+    #[test]
+    fn wrong_chip_id_returns_error() {
+        let mut mock = Mock::new(&[T::write_read(ADDR, vec![REG_WHO_AM_I], vec![0xFF])]);
+        let mut dev = {{type_name}}::new(&{{type_name}}Config::default());
+        block_on(async {
+            let err = dev.init(&mut mock).await.unwrap_err();
+            assert!(matches!(err, {{type_name}}Error::InvalidId(0xFF)));
+        });
+        mock.done();
+    }
+
+    #[test]
+    fn reinit_recovers_after_first_bring_up() {
+        let mut mock = Mock::new(&[
+            T::write_read(ADDR, vec![REG_WHO_AM_I], vec![WHO_AM_I]),
+            T::write(ADDR, vec![REG_CONFIG, 0x00]),
+            T::write_read(ADDR, vec![REG_WHO_AM_I], vec![WHO_AM_I]),
+            T::write(ADDR, vec![REG_CONFIG, 0x00]),
+        ]);
+        let mut dev = {{type_name}}::new(&{{type_name}}Config::default());
+        block_on(async {
+            dev.init(&mut mock).await.unwrap();
+            dev.init(&mut mock).await.unwrap();
+        });
+        mock.done();
+    }
+}

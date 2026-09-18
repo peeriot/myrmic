@@ -1,0 +1,13 @@
+[package]
+name = "{{crate_name}}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+embedded-hal-async = "1.0"
+log = { version = "0.4", default-features = false }
+
+[dev-dependencies]
+embedded-hal-mock = { version = "0.11", features = ["embedded-hal-async"] }
+futures = { version = "0.3", features = ["executor"] }
