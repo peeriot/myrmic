@@ -14,4 +14,5 @@ mod build;
 pub mod cargo;
 mod compile;
 pub mod firmware;
+pub mod linux_pipeline;
 pub mod spawn_patch;

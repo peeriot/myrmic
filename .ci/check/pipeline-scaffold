@@ -49,9 +49,10 @@ cargo build --bin myrmic
 printf "\n\n--== Linux pipeline: scaffold + build ==--\n\n"
 LINUX="$WORK/linux"
 "$MYRMIC" new --pipeline "$LINUX" --sdk "$REPO"
-# A native tokio binary, built with cargo per the scaffold's own README. A full
-# build links it, catching missing-backend link errors a `check` would miss.
-( cd "$LINUX" && cargo build )
+# `myrmic build` recognises the scaffold's `[package.metadata.myrmic] pipeline`
+# marker and compiles the native tokio binary for the host. A full build links
+# it, catching missing-backend link errors a `check` would miss.
+"$MYRMIC" build "$LINUX"
 
 printf "\n\n--== Firmware pipeline: scaffold + build ==--\n\n"
 FIRMWARE="$WORK/firmware"
