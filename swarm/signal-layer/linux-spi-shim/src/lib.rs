@@ -4,8 +4,9 @@
 //!
 //! # Design
 //!
-//! The kernel's own chip-select is disabled (`SPI_NO_CS`); each device owns
-//! its CS line as an [`embedded_hal::digital::OutputPin`] and the shim asserts
+//! The kernel's own chip-select is disabled (`SPI_NO_CS`) where the controller
+//! supports it; each device owns its CS line as an
+//! [`embedded_hal::digital::OutputPin`] and the shim asserts
 //! it around the whole transaction — the same bus-plus-CS composition the ESP
 //! backend uses, and the software-CS `SpiDevice` pattern from
 //! `embedded-hal-bus`, made async with the two-mutex `spawn_blocking`

@@ -1,0 +1,60 @@
+id: lsm6dso32
+category: sensor-drivers
+description: >
+  STMicroelectronics LSM6DSO32 6-axis IMU over SPI. Reports 3-axis
+  acceleration (g), 3-axis angular rate (dps), and die temperature.
+requires:
+  buses:
+    - transport: spi
+outputs:
+  - name: accel_x
+    type: f32
+    unit: g
+  - name: accel_y
+    type: f32
+    unit: g
+  - name: accel_z
+    type: f32
+    unit: g
+  - name: gyro_x
+    type: f32
+    unit: dps
+  - name: gyro_y
+    type: f32
+    unit: dps
+  - name: gyro_z
+    type: f32
+    unit: dps
+  - name: temperature
+    type: f32
+    unit: "°C"
+config_schema:
+  accel_odr:
+    scope: application
+    rust_type: Odr
+    default: Hz104
+    # Variants: PowerDown | Hz12_5 | Hz26 | Hz52 | Hz104 | Hz208 | Hz416 | Hz833 | Khz1_66 | Khz3_33 | Khz6_66
+    description: "Accelerometer output data rate."
+  gyro_odr:
+    scope: application
+    rust_type: Odr
+    default: Hz104
+    # Variants: PowerDown | Hz12_5 | Hz26 | Hz52 | Hz104 | Hz208 | Hz416 | Hz833 | Khz1_66 | Khz3_33 | Khz6_66
+    description: "Gyroscope output data rate."
+  accel_scale:
+    scope: application
+    rust_type: AccelScale
+    default: G4
+    # Variants: G4 | G8 | G16 | G32
+    description: "Accelerometer full-scale range - larger range, coarser resolution."
+  gyro_scale:
+    scope: application
+    rust_type: GyroScale
+    default: Dps250
+    # Variants: Dps125 | Dps250 | Dps500 | Dps1000 | Dps2000
+    description: "Gyroscope full-scale range - larger range, coarser resolution."
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 1000
+    description: Polling interval in milliseconds

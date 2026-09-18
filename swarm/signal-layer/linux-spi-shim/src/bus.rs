@@ -14,9 +14,9 @@
 //!
 //! [`SharedSpiDevice`] adds the chip-select: CS is asserted (driven low)
 //! after the bus lock is taken and deasserted before it is released — on the
-//! error path too. The kernel's own CS is disabled (`SPI_NO_CS`), so the CS
-//! line is whatever `OutputPin` the manifest wired (a GPIO character-device
-//! line in generated pipelines).
+//! error path too. The selecting CS is whatever `OutputPin` the manifest
+//! wired (a GPIO character-device line in generated pipelines); the kernel's
+//! own CS is disabled (`SPI_NO_CS`) where the controller supports it.
 
 use std::sync::{Arc, Mutex as StdMutex};
 

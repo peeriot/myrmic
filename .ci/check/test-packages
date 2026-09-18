@@ -39,6 +39,7 @@ ads1115-driver
 ccs811-driver
 veml7700-driver
 wsen-itds-driver
+lsm6dso32-driver
 sim-source-driver
 gpio-output-driver
 gpio-output-feedback-driver
