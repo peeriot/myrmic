@@ -17,10 +17,18 @@ and serves its taps and outlets over the signal-layer IPC socket.
 The starter uses `sim-source`, a synthetic sensor, so it builds and runs with no
 hardware attached.
 
-## Run
+## Build and run
+
+Build it with `myrmic build`, the same command as for a cell or firmware:
 
 ```sh
-cargo run
+myrmic build
+```
+
+Then run the binary it reports:
+
+```sh
+./target/release/{{name}}
 ```
 
 ## Change the pipeline

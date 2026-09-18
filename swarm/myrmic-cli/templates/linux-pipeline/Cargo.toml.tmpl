@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+# Marks this crate as a standalone Linux signal-layer pipeline, so `myrmic build`
+# compiles it for the host instead of treating it as a cell.
+[package.metadata.myrmic]
+pipeline = "linux"
+
 [dependencies]
 # Linux Signal Layer runtime.
 {{runtime_deps}}

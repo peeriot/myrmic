@@ -3,7 +3,7 @@ use crate::models::{self, CellInstance};
 use crate::platforms::Platform;
 use crate::utils::PathType;
 use anyhow::Context;
-use myrmic_build::{cargo, firmware};
+use myrmic_build::{cargo, firmware, linux_pipeline};
 use sorg_common::{HttpBridgeApi, MqttBridge};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -279,31 +279,31 @@ fn build_member(
     runtime_name: Option<&str>,
     features: &[String],
 ) -> anyhow::Result<Option<CellClass>> {
-    match firmware::chip_of(path)? {
-        Some(chip) => {
-            build_firmware(
+    if let Some(chip) = firmware::chip_of(path)? {
+        build_firmware(
+            ctx,
+            path,
+            chip,
+            platforms,
+            cargo_target,
+            runtime_name,
+            features,
+        )?;
+        Ok(None)
+    } else if linux_pipeline::is_linux_pipeline(path)? {
+        build_linux_pipeline(ctx, path, platforms, cargo_target, runtime_name, features)?;
+        Ok(None)
+    } else {
+        if !features.is_empty() {
+            crate::warn!(
                 ctx,
-                path,
-                chip,
-                platforms,
-                cargo_target,
-                runtime_name,
-                features,
-            )?;
-            Ok(None)
+                "--features is currently only supported for firmware crates; ignoring it \
+                 for cell `{}`",
+                path.display()
+            );
         }
-        None => {
-            if !features.is_empty() {
-                crate::warn!(
-                    ctx,
-                    "--features is currently only supported for firmware crates; ignoring it \
-                     for cell `{}`",
-                    path.display()
-                );
-            }
 
-            build_cell(ctx, path, platforms, cargo_target, None)
-        }
+        build_cell(ctx, path, platforms, cargo_target, None)
     }
 }
 
@@ -337,6 +337,41 @@ fn build_firmware(
         "Flash with: myrmic flash {}",
         path.parent().unwrap_or(path).display()
     );
+
+    Ok(())
+}
+
+/// Builds a standalone Linux signal-layer pipeline crate: a native host binary
+/// whose own `build.rs` runs the codegen. Unlike a firmware image it is run
+/// directly, not flashed.
+fn build_linux_pipeline(
+    ctx: &Ctx,
+    path: &Path,
+    platforms: &[Platform],
+    cargo_target: &myrmic_build::CargoTarget,
+    runtime_name: Option<&str>,
+    features: &[String],
+) -> anyhow::Result<()> {
+    if platforms != Platform::DEFAULT {
+        crate::warn!(
+            ctx,
+            "--platform is ignored for a signal-layer pipeline; it builds for the host"
+        );
+    }
+    if runtime_name.is_some() {
+        crate::warn!(ctx, "--name is ignored for a signal-layer pipeline");
+    }
+    if !features.is_empty() {
+        crate::warn!(ctx, "--features is ignored for a signal-layer pipeline");
+    }
+
+    crate::info!(
+        ctx,
+        "Building Linux signal-layer pipeline: {}",
+        path.display()
+    );
+    let built = linux_pipeline::build(path, cargo_target)?;
+    crate::info!(ctx, "Pipeline: {}", built.binary.display());
 
     Ok(())
 }

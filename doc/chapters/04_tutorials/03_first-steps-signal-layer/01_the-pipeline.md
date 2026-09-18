@@ -107,23 +107,25 @@ unchanged.
 
 ## Step 4 - Build and run it
 
-The generated project is an ordinary Cargo binary — `build.rs` turns `board.yml` + `pipeline.yml`
-into the pipeline at compile time. Build it:
+Build it with `myrmic build`, the same command you use for a cell or firmware, so there is one
+build command across the whole tutorial. The generated project's `build.rs` turns `board.yml` +
+`pipeline.yml` into the pipeline at compile time.
 
 ```bash
-cargo build
+myrmic build
 ```
 
 ```text
-   Compiling first-steps v0.1.0 (~/sl-tutorial/first-steps)
-    Finished `dev` profile [unoptimized + debuginfo] target(s)
+INFO  Building Linux signal-layer pipeline: ~/sl-tutorial/first-steps
+    Finished `release` profile [optimized] target(s)
+INFO  Pipeline: ~/sl-tutorial/first-steps/target/release/first-steps
 ```
 
-That leaves a self-contained binary at `target/debug/first-steps`. It is an ordinary program;
+That leaves a self-contained binary at `target/release/first-steps`. It is an ordinary program;
 running it needs nothing from Cargo. Start it:
 
 ```bash
-./target/debug/first-steps
+./target/release/first-steps
 ```
 
 ```text
