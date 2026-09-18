@@ -12,7 +12,8 @@ buses:
     dev_path: /dev/i2c-1
 
 gpios:
-  general_purpose: [0, 17]
+  # Cell-exported pins only; relay1.out and fan1.out are reserved by their devices.
+  general_purpose: []
 
 devices:
   - id: bme280

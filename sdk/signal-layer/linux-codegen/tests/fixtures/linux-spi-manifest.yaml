@@ -12,7 +12,8 @@ buses:
     dev_path: /dev/spidev0.0
 
 gpios:
-  general_purpose: [25]
+  # Cell-exported pins only; loop1's `cs` (GPIO25) is reserved and must not appear here.
+  general_purpose: []
 
 devices:
   - id: loop1

@@ -18,7 +18,7 @@ buses:
     freq_khz: 1000
 
 gpios:
-  general_purpose: [0, 1, 2, 3, 14, 18, 22, 23]
+  general_purpose: [0, 1, 2, 3, 14, 18, 23]
 
 devices:
   - id: bme280
@@ -71,20 +71,21 @@ On Linux, a bus carries a `dev_path` instead of pins: `/dev/i2c-1` for I²C, `/d
 
 ## `gpios.general_purpose`
 
-The pins this board makes available for non-bus use.
+The pins this board exports to cells. A cell reaches these through the GPIO host functions and
+addresses them by their real GPIO number; nothing else is offered.
 
 Two rules, both enforced:
 
-- **Bus pins must not appear here.** They are declared under `buses` and reaching them through
-  this list too is an error.
-- **Every pin a device claims must appear here.** A device draws its pins from this set.
+- **Bus pins must not appear here.** They are declared under `buses` and are reserved for the bus.
+- **Device pins must not appear here.** A pin a device claims under its `pins:` is reserved for
+  that device, exactly like a bus pin.
+
+Every pin the signal layer uses is reserved and kept out of this list, so the list is only the
+pins left free for cells.
 
 Pins outside the chip's known layout are rejected. Note the layout is the set of pins the runtime
 can expose, which is narrower than the chip's full GPIO count, so some otherwise usable pins
 cannot carry a device.
-
-Anything listed here and not claimed by a device is offered to cells, which address pins by their
-real GPIO number.
 
 ## `devices`
 

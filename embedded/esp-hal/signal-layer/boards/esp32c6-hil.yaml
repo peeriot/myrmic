@@ -25,7 +25,9 @@ buses:
     freq_khz: 400
 
 gpios:
-  general_purpose: [0, 1, 2, 3, 14, 18, 19, 20, 21, 22, 23]
+  # Cell-exported pins only; reserved pins (bus pins and device `pins:`, e.g.
+  # ccs811.nint = 23) must not appear here.
+  general_purpose: [0, 1, 2, 3, 14, 18, 19, 20, 21, 22]
 
 devices:
   - id: bme280

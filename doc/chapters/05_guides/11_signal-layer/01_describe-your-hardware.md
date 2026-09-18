@@ -45,7 +45,7 @@ buses:
     freq_khz: 400
 
 gpios:
-  general_purpose: [2, 3, 18, 19, 20, 21, 22, 23]
+  general_purpose: [3, 18, 19, 20, 21, 22, 23]
 
 devices:
   - id: bme280
@@ -75,12 +75,12 @@ and then fails when the firmware is compiled. Check your chip before picking the
 knows how to talk to it, and either the `bus` it hangs off or the pins it is wired to
 directly. A device with no `bus` is driven straight from GPIO, like the relay above.
 
-`gpios.general_purpose` lists the pins available for non-bus use. The two rules around it
-pull in opposite directions, and both are checked. Bus pins are already declared under
-`buses:`, so they must not be repeated here: GPIO10 and GPIO11 are absent from the list
-above for that reason. A device's own pins are the other way round. `relay1` claims GPIO2,
-and that claim is only valid if GPIO2 appears in this list, so a device draws its pins from
-the general-purpose set rather than from outside it.
+`gpios.general_purpose` lists the pins exported to cells: a cell reaches these through the
+GPIO host functions, and nothing else. Every pin the signal layer itself uses is reserved and
+must not appear here. Bus pins are declared under `buses:` (GPIO10 and GPIO11 above), and a
+device's own pins are declared under its `pins:` (`relay1` claims GPIO2) - both are owned by
+the signal layer, so they are absent from the list above. A pin that is neither reserved nor
+listed here is simply not offered to cells.
 
 ## Where the facts come from
 
