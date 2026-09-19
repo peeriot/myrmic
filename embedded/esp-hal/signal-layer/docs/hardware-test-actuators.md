@@ -9,7 +9,7 @@ Each test uses a committed demo pipeline; regenerate + flash, then observe.
 ## Prerequisites
 
 - ESP32-C6 DevKit, USB.
-- `espflash` (the cargo runner is already `espflash flash --monitor`).
+- `espflash` (used by `myrmic flash` to flash and monitor).
 - A BME280 on I2C0 (**SCL = GPIO10, SDA = GPIO11**, addr `0x76`).
 - An oscilloscope (or LED + resistor) for the output pins; a jumper wire for the feedback test.
 
@@ -22,18 +22,16 @@ Board pin map (`../boards/esp32c6-devkit.yaml`):
 | `relay_fb` | gpio-output-feedback | out = **GPIO14**, feedback = **GPIO18** |
 | `bme280` | bme280 | I2C0 |
 
-Build + flash a pipeline (from the repo root):
+Flash a pipeline firmware and open the serial monitor:
 
 ```sh
-SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/<pipeline-name>.yaml \
-    cargo +nightly-2026-08-07 run-c6 --features pipeline    # flashes + opens the serial monitor
+myrmic flash --monitor
 ```
 
-The firmware's `build.rs` generates the pipeline into `OUT_DIR` at build time;
-`SIGNAL_LAYER_PIPELINE` (a path relative to `embedded/esp-hal/modem-esp32`, or
-absolute) selects it, and the board defaults to this chip's devkit. `run-c6` =
-`run -p modem-esp32 --release --target riscv32imac-unknown-none-elf
---no-default-features --features esp32c6 -Zbuild-std=core,alloc`.
+`myrmic flash` builds and flashes a firmware crate, owning the partition table.
+Scaffold a pipeline firmware with `myrmic new --firmware esp32c6 --pipeline`, place the
+pipeline (e.g. `<pipeline-name>.yaml`) in it, and the board defaults to this
+chip's devkit.
 
 ---
 
@@ -41,9 +39,10 @@ absolute) selects it, and the board defaults to this chip's devkit. `run-c6` =
 
 **Pipeline:** `feed-forward-demo` · **Wiring:** scope on GPIO3 (PWM) and GPIO2 (relay).
 
+Place the `feed-forward-demo` pipeline in the firmware crate, then:
+
 ```sh
-SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/feed-forward-demo.yaml \
-    cargo +nightly-2026-08-07 run-c6 --features pipeline
+myrmic flash --monitor
 ```
 
 Warm the BME280 (finger/breath). Expect:

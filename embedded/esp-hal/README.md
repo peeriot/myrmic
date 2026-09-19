@@ -44,9 +44,8 @@ hosted on the SoC. BLE can be enabled it by enabling the `"ble"`  feature in [`m
   but **not** a 2 MB one, so keep `firmware_size` above that in any
   [`partitions.toml`](modem-esp32/partitions.toml.example) you write; the build script warns when `ble` is on and
   `firmware_size` is 2 MB or less, and the link fails outright if the image overflows the partition. Flashing an
-  oversized image is refused **only if espflash is given the generated partition table** —
-  `esp-firmware-build` writes an `espflash.toml` beside your `Cargo.toml` so it is, and the cargo `runner`
-  ([`espflash-runner.sh`](espflash-runner.sh)) passes it too. Flash with neither and espflash falls back to its own
+  oversized image is refused **only if espflash is given the generated partition table** — `myrmic flash`
+  owns the partition layout and passes it. Flash without it and espflash falls back to its own
   chip-sized table, writes an image that straddles the AOT region, and the board boot-loops with
   `invalid segment length 0xffffffff`.
 
@@ -80,7 +79,7 @@ $ cargo run --manifest-path ../../sdk/tools/aot-compiler/Cargo.toml -- \
     --target esp32c6 \
     --out-dir ../../target/wasm32-unknown-unknown/release/ \
     ../../target/wasm32-unknown-unknown/release/blinky.wasm
-$ cargo run --target riscv32imac-unknown-none-elf --features esp32c6 --no-default-features
+$ myrmic flash --monitor
 ```
 
 `aot-compiler` requires `wamrc` to be on `$PATH` ([build instructions](https://wamr.gitbook.io/document/wamr-in-practice/tutorial/build-tutorial/build_wamrc))
@@ -183,12 +182,9 @@ If you reduce the WASM module's `--initial-memory` (e.g. to 64 KB instead of 128
 
 ## Debugging with serial printouts
 
-One can simply make use of `espflash` (installable via `cargo install espflash --locked`), by running one of the aliased
-commands in the `embedded/esp-hal` folder.
-
-* `cargo run-c5`: Uses `espflash --monitor` to debug the ESP32-C5 
-* `cargo run-c6`: Uses `espflash --monitor` to debug the ESP32-C6
-* `cargo run-c61`: Uses `espflash --monitor` to debug the ESP32-C61
+Flash and monitor firmware with `myrmic flash`, which owns the partition table and opens `espflash`'s serial
+monitor. It selects the chip from the scaffolded firmware, so a single command covers the ESP32-C5, ESP32-C6, and
+ESP32-C61.
 
 ## Debugging with probe-rs
 
