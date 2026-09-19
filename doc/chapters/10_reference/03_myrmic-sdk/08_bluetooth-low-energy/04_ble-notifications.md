@@ -1,6 +1,7 @@
 # BLE notifications and subscriptions
 
 > **Availability:** Linux and embedded runtimes, on a node with Bluetooth hardware
+> **Build-time requirement:** BLE support must be compiled into the runtime binary - the `ble` feature when installing the OS `myrmic-cli`, or the `ble` feature on the ESP32 firmware built with `myrmic build` (automatic on esp32c5 and esp32c61, off by default on esp32c6). The `ble` capability tag only affects placement, not whether BLE is present in the binary. See [Building with BLE support](../../../05_guides/12_ble.md#building-with-ble-support).
 
 With a subscription, a connected peripheral pushes each new value of a characteristic instead of the cell polling it. Subscribing registers a handler, and each value is delivered to it.
 
