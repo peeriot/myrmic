@@ -107,6 +107,38 @@ Verify that subscribers automatically receive updates from publishers that join 
 - Upon P3’s new publisher creation, P1 automatically receives messages from S3 without restarting subscription.
 - In total P1 receives 10 messages.
 
+## A5 - Address Change
+
+**Network Structure**
+```
+Network
+ P1 <----> P2
+```
+- Both peers on the same network.
+- All traffic allowed between P1 and P2.
+- No routers.
+
+**Goal**
+Ensure a peer that changes its IP address rejoins without being restarted.
+
+**Input**
+- Policy: `baseline`.
+- Config: `mode: peer`, multicast scouting enabled, gossip disabled.
+- Actions:
+  1. Wait for P1 and P2 to see each other.
+  2. Capture P1's interface, address and zenoh TCP port, and pick a free address on the same subnet.
+  3. Move P1 to that address inside its network namespace. Nothing is restarted.
+
+**Expected Output**
+Three checkpoints, asserted in order, each failing with its own reason:
+- P1 reports that it can be reached at the new address.
+- Inside P1: a UDP socket is bound to the new address, none is left on the old one, and the
+  scouting multicast group is still joined on the interface.
+- P1 and P2 see each other again, with P1 reached at its new address.
+
+> The group membership is device-scoped and survives an address change on its own, so it does not
+> discriminate a rebuild. The UDP socket pair is what does.
+
 ## B1 — Single-Level Wildcard
 ```
 Network

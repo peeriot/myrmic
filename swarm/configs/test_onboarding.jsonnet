@@ -9,7 +9,7 @@ z.peer()
 + {
   zenoh+: {
     listen: {
-      endpoints: { router: ['tcp/[::]:7447'], peer: ['tcp/[::]:47447'], 'bt_gatt/hci0' },
+      endpoints: { router: ['tcp/[::]:7447'], peer: ['tcp/[::]:47447', 'bt_gatt/hci0'] },
     },
   },
 }

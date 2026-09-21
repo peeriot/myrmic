@@ -1,7 +1,7 @@
 use allure_cargotest::{allure_test, step};
 use test_framework::{
     compose::ComposeProject,
-    docker::init_docker,
+    docker::{container::ConnectedContainer, init_docker},
     sidecar::{Sidecar, ZenohMode},
     swarm::SwarmImage,
 };
@@ -57,6 +57,7 @@ async fn network_tests() {
     // a2_gossip_via_router().await;
     a3_partition_and_heal_peers().await;
     a4_dynamic_publisher_discovery().await;
+    a5_address_change_peers().await;
     b1_single_level_wildcard().await;
     b2_multi_level_wildcard().await;
     c1_present_queryable().await;
@@ -479,6 +480,128 @@ async fn a4_dynamic_publisher_discovery() {
     compose.down().await;
 }
 
+/// The multicast group the peers scout on, from the scouting defaults every node config
+/// inherits (`swarm/lib/default.libsonnet`).
+const SCOUT_MULTICAST_GROUP: &str = "224.0.0.224";
+
+#[step]
+async fn a5_address_change_peers() {
+    let compose = ComposeProject::up(
+        "assets/compose/a5_address_change_peers.yml",
+        "a5_address_change_peers",
+    )
+    .await;
+
+    let sidecar = Sidecar::new("http://127.0.0.1:17457");
+    let peers = compose.service_containers("peer").await;
+    assert_eq!(peers.len(), 2, "expected exactly 2 peer containers");
+    let network_name = compose.network_name("network");
+
+    let peer_1_zid = peers[0].zenoh_zid().await;
+    let peer_2_zid = peers[1].zenoh_zid().await;
+    let peer_1_port = peers[0].zenoh_tcp_port().await;
+    let peer_2_port = peers[1].zenoh_tcp_port().await;
+
+    // Everything docker can say about peer 1 is read here, before the move. Afterwards docker
+    // still reports the address it handed out, so asking it again would answer about a state
+    // that no longer exists.
+    let peer_1_interface = peers[0].network_interface(&network_name).await;
+    let peer_1_address = peers[0].container_ip(&network_name).await;
+    let peer_2_address = peers[1].container_ip(&network_name).await;
+    let sidecar_address = compose
+        .service_container("sidecar")
+        .await
+        .container_ip(&network_name)
+        .await;
+
+    let peer_1_cidr = peers[0]
+        .shell(&format!(
+            "ip -o -4 addr show dev {peer_1_interface} | awk '{{ print $4; exit }}'"
+        ))
+        .await
+        .stdout
+        .trim()
+        .to_owned();
+    assert!(
+        peer_1_cidr.starts_with(&format!("{peer_1_address}/")),
+        "peer 1 carries `{peer_1_cidr}` on `{peer_1_interface}`, \
+         not the address docker reported (`{peer_1_address}`)"
+    );
+
+    // The test decides where peer 1 goes, and remembers it. Nothing asks for it afterwards.
+    let peer_1_new_cidr = sibling_address(&peer_1_cidr, &[&peer_2_address, &sidecar_address]);
+    let (peer_1_new_address, _) = peer_1_new_cidr
+        .split_once('/')
+        .expect("the chosen address carries a prefix length");
+
+    let peer_1_endpoint = format!("tcp/{peer_1_address}:{peer_1_port}");
+    let peer_2_endpoint = format!("tcp/{peer_2_address}:{peer_2_port}");
+
+    let result = wait_for_peer_connectivity(
+        &sidecar,
+        &peer_1_endpoint,
+        &peer_2_endpoint,
+        &peer_1_zid,
+        &peer_2_zid,
+        std::time::Duration::from_mins(1),
+    )
+    .await;
+    if let Err(message) = result {
+        panic!("peers did not connect initially: {message}");
+    }
+
+    // Move peer 1 to the address the test picked. Nothing is restarted from here on.
+    peers[0]
+        .change_address(&peer_1_interface, &peer_1_cidr, &peer_1_new_cidr)
+        .await;
+
+    // The node notices the move, recomputes the set of addresses it can be reached at and
+    // reports it. Without that, it is still announcing an address nobody can reach it on.
+    let peer_1_new_endpoint = format!("tcp/{peer_1_new_address}:{peer_1_port}");
+    let reported = peers[0]
+        .wait_for_log_line(
+            &format!("Zenoh can be reached at: {peer_1_new_endpoint}"),
+            std::time::Duration::from_mins(2),
+            std::time::Duration::from_secs(10),
+        )
+        .await;
+    assert!(
+        reported,
+        "peer 1 never reported that it can be reached at `{peer_1_new_endpoint}` \
+         after moving off `{peer_1_address}`"
+    );
+
+    // The scouting sockets followed the address, so the node can be found again. This is a
+    // property of the moved node alone and holds whether or not any peer has noticed yet.
+    let result = wait_for_scouting_on_address(
+        &peers[0],
+        &peer_1_interface,
+        peer_1_new_address,
+        &peer_1_address,
+        std::time::Duration::from_mins(2),
+    )
+    .await;
+    if let Err(message) = result {
+        panic!("peer 1's scouting did not follow the address change: {message}");
+    }
+
+    // Both peers see each other again, through a probe that cannot bridge them itself.
+    let result = wait_for_peer_connectivity(
+        &sidecar,
+        &peer_1_new_endpoint,
+        &peer_2_endpoint,
+        &peer_1_zid,
+        &peer_2_zid,
+        std::time::Duration::from_mins(2),
+    )
+    .await;
+    if let Err(message) = result {
+        panic!("peers did not see each other again after the address change: {message}");
+    }
+
+    compose.down().await;
+}
+
 #[step]
 async fn b1_single_level_wildcard() {
     let compose = ComposeProject::up(
@@ -885,6 +1008,131 @@ async fn c3_partition_then_heal_queryable() {
     compose.down().await;
 }
 
+/// The address the moved peer is sent to has to be usable without any help from docker: on the
+/// same subnet, so it stays on-link, and held by nobody else, so the move is not a collision.
+#[test]
+fn a_sibling_address_stays_on_the_subnet_and_is_free() {
+    assert_eq!(sibling_address("172.20.0.3/16", &[]), "172.20.255.254/16");
+    assert_eq!(
+        sibling_address("172.20.0.3/16", &["172.20.255.254", "172.20.255.253"]),
+        "172.20.255.252/16"
+    );
+    assert_eq!(sibling_address("10.0.0.2/24", &[]), "10.0.0.254/24");
+    assert_eq!(sibling_address("10.0.0.254/24", &[]), "10.0.0.253/24");
+}
+
+/// Retries [`scouting_on_address`] until it holds or the deadline elapses, reporting the last
+/// condition that was not met.
+async fn wait_for_scouting_on_address(
+    container: &ConnectedContainer,
+    interface: &str,
+    new_address: &str,
+    old_address: &str,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let last_reason =
+            match scouting_on_address(container, interface, new_address, old_address).await {
+                Ok(()) => return Ok(()),
+                Err(reason) => reason,
+            };
+
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for the scouting sockets to move: {last_reason}"
+            ));
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+}
+
+/// Performs a single scouting probe inside the container: a UDP socket is bound to
+/// `new_address`, none is left on `old_address`, and the scouting multicast group is joined on
+/// `interface`. Returns the first condition that does not hold.
+///
+/// The socket pair is what discriminates: a node that rebound its scouting sockets has one on
+/// the address it moved to and none on the address it left, and a node that rebound but never
+/// stopped the old tasks keeps the old one. The group membership is device-scoped and survives
+/// an address change on its own, so it confirms the group is still joined rather than that
+/// anything was rebuilt - it never carries this probe alone.
+async fn scouting_on_address(
+    container: &ConnectedContainer,
+    interface: &str,
+    new_address: &str,
+    old_address: &str,
+) -> Result<(), String> {
+    let sockets = container.shell("ss -lun").await;
+    if !sockets.success {
+        return Err(format!("`ss -lun` failed: {}", sockets.stderr));
+    }
+
+    if !sockets.stdout.contains(&format!("{new_address}:")) {
+        return Err(format!(
+            "no UDP socket is bound to the new address `{new_address}`:\n{}",
+            sockets.stdout
+        ));
+    }
+    if sockets.stdout.contains(&format!("{old_address}:")) {
+        return Err(format!(
+            "a UDP socket is still bound to the old address `{old_address}`:\n{}",
+            sockets.stdout
+        ));
+    }
+
+    let memberships = container
+        .shell(&format!("ip maddr show dev {interface}"))
+        .await;
+    if !memberships.success {
+        return Err(format!(
+            "`ip maddr show dev {interface}` failed: {}",
+            memberships.stderr
+        ));
+    }
+    if !memberships.stdout.contains(SCOUT_MULTICAST_GROUP) {
+        return Err(format!(
+            "the scouting multicast group `{SCOUT_MULTICAST_GROUP}` is not joined on `{interface}`:\n{}",
+            memberships.stdout
+        ));
+    }
+
+    Ok(())
+}
+
+/// Picks another address on the subnet of `cidr` (`<address>/<prefix>`), skipping the address
+/// itself and everything in `taken`.
+///
+/// Counting down from the top of the subnet keeps the candidate away from the low addresses
+/// docker's address management hands out, which is what makes it free in practice; `taken`
+/// carries the addresses this scenario knows are in use.
+fn sibling_address(cidr: &str, taken: &[&str]) -> String {
+    let (address, prefix) = cidr
+        .split_once('/')
+        .unwrap_or_else(|| panic!("`{cidr}` carries no prefix length"));
+    let address = address
+        .parse::<std::net::Ipv4Addr>()
+        .unwrap_or_else(|err| panic!("`{cidr}` carries no IPv4 address: {err}"));
+    let prefix = prefix
+        .parse::<u32>()
+        .unwrap_or_else(|err| panic!("`{cidr}` carries no prefix length: {err}"));
+
+    let host_mask = u32::MAX
+        .checked_shr(prefix)
+        .unwrap_or_else(|| panic!("`{cidr}` carries a prefix length beyond an IPv4 address"));
+    let network = u32::from(address) & !host_mask;
+
+    ((network + 1)..(network | host_mask))
+        .rev()
+        .map(std::net::Ipv4Addr::from)
+        .find(|candidate| *candidate != address && !taken.contains(&candidate.to_string().as_str()))
+        .map_or_else(
+            || panic!("the subnet of `{cidr}` holds no free address"),
+            |candidate| format!("{candidate}/{prefix}"),
+        )
+}
+
 /// Retry a zenoh get until at least `min_replies` are received or the deadline elapses.
 async fn retry_zenoh_get(
     sidecar: &Sidecar<'_>,
@@ -995,6 +1243,11 @@ async fn wait_for_peer_connectivity(
 /// Performs a single connectivity probe: fetches both peers' swarm status and checks whether each
 /// peer lists the other. Returns `Err` for transient failures (the status could not be fetched or
 /// a peer has not reported its own status yet) so the caller can retry.
+///
+/// The probe runs in client mode, which is what keeps it an observer. A peer-mode session carries
+/// a link-state plane and gossips what it learns, so it would discover the second peer from the
+/// first and then relay each one's locators to the other - the probe itself becomes the link the
+/// scenarios are trying to observe.
 async fn peers_connected(
     sidecar: &Sidecar<'_>,
     peer_1_endpoint: &str,
@@ -1003,11 +1256,11 @@ async fn peers_connected(
     peer_2_zid: &str,
 ) -> Result<bool, String> {
     let statuses_1 = sidecar
-        .swarm_status_with_mode(peer_1_endpoint, ZenohMode::Peer)
+        .swarm_status(peer_1_endpoint)
         .await
         .map_err(|err| format!("failed to fetch peer 1 swarm status: {err}"))?;
     let statuses_2 = sidecar
-        .swarm_status_with_mode(peer_2_endpoint, ZenohMode::Peer)
+        .swarm_status(peer_2_endpoint)
         .await
         .map_err(|err| format!("failed to fetch peer 2 swarm status: {err}"))?;
 

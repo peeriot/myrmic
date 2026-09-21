@@ -9,7 +9,6 @@ z.peer()
     },
   },
 }
-+ z.timestamping.all()
 + z.plugins.load({
   db: {},
   introspection: {},

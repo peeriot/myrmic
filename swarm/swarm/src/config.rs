@@ -90,4 +90,29 @@ mod tests {
             "the listen endpoint must survive deserialization, got:\n{round_tripped}",
         );
     }
+
+    /// The configs in `swarm/configs` are only ever parsed by an e2e run or by a
+    /// human, so a plugin key that has been removed or a section written at the
+    /// wrong nesting level survives review and turns into a runtime that exits
+    /// during startup. The e2e failure that follows reports a sidecar timeout,
+    /// not the config that caused it.
+    #[test]
+    fn every_shipped_config_parses() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs");
+        let mut checked = 0;
+
+        for entry in std::fs::read_dir(&dir).expect("the configs directory must be readable") {
+            let path = entry.expect("the directory entry must be readable").path();
+            if path.extension().is_none_or(|ext| ext != "jsonnet") {
+                continue;
+            }
+
+            if let Err(err) = crate::eval_input::<SwarmConfig>(&path) {
+                panic!("{} must parse as a SwarmConfig: {err}", path.display());
+            }
+            checked += 1;
+        }
+
+        assert!(checked > 0, "no configs found in {}", dir.display());
+    }
 }
