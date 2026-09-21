@@ -40,7 +40,7 @@ flowchart LR
   Operation** section of [`esp-hal/README.md`](esp-hal/README.md) covers compiling and loading
   one.
 - **Running on real hardware?** The **Debugging with serial printouts** section of
-  [`esp-hal/README.md`](esp-hal/README.md) flashes and monitors a board (`cargo run-c6`, …).
+  [`esp-hal/README.md`](esp-hal/README.md) flashes and monitors a board (`myrmic flash`).
 - **Need sensor or actuator I/O?** *(optional)* Start at
   [`signal-layer/README.md`](signal-layer/README.md); to add a device see
   [the driver guide](../doc/chapters/05_guides/11_signal-layer/07_write-your-own-driver.md); for the ESP

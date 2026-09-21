@@ -8,7 +8,7 @@
 #   * the PartitionLayout injected into wasm-storage (where the AOT metadata + XIP
 #     regions live in flash)
 #   * an app-only ESP-IDF partition table (CSV) handed to espflash when flashing
-#     with the cargo aliases (e.g. cargo run-c6) or `myrmic flash`
+#     with `myrmic flash`
 #
 # `modem-esp32` is one crate for three chips with different flash, so it does NOT
 # read a single `partitions.toml`; its build.rs selects a per-chip file from

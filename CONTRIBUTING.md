@@ -69,7 +69,7 @@ cargo install cargo-nextest cargo-deny
 
 Target-specific work needs extra setup:
 
-- **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Build and flash via the provided cargo aliases, e.g. `cargo build-c6` / `cargo run-c6`. See the examples under [`embedded/`](embedded/).
+- **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile in-workspace with the provided cargo aliases, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
 - **WebAssembly (Cell modules):** the `wasm32-unknown-unknown` target and a nightly toolchain (the WASM build uses `-Zbuild-std`). See [`sdk/`](sdk/) and the per-component READMEs.
 
 ## Before You Submit
