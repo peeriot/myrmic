@@ -36,9 +36,9 @@ fn main() {
 ///
 /// The board manifest and pipeline YAML are chosen by the `SIGNAL_LAYER_BOARD`
 /// and `SIGNAL_LAYER_PIPELINE` env vars, defaulting to this chip's devkit board
-/// and the `basic-sensors` starter. HIL and bench builds set them to a scenario
-/// (e.g. `SIGNAL_LAYER_PIPELINE=…/hil-tests.yaml`), which is why this crate is
-/// one firmware for every pipeline rather than one crate per pipeline.
+/// and the `basic-sensors` starter. Other builds set them to a scenario
+/// (e.g. `SIGNAL_LAYER_PIPELINE=…/actuators-demo.yaml`), which is why this
+/// crate is one firmware for every pipeline rather than one crate per pipeline.
 fn generate_pipeline() {
     // The shared Signal Layer manifests, relative to this crate root.
     const SIGNAL_LAYER: &str = "../signal-layer";

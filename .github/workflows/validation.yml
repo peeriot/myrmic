@@ -1,0 +1,132 @@
+name: Validation
+
+# Runs the full check suite against every push, pull request and merge group.
+
+on:
+  push:
+    branches:
+      - master
+  merge_group:
+  pull_request:
+    types: [ 'opened', 'reopened', 'synchronize', 'ready_for_review' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  RUSTC_WRAPPER: sccache
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_GHA_ENABLED: ${{ vars.SCCACHE_GHA_ENABLED }}
+
+jobs:
+
+  # Formatting, list coverage, lints and docs. No build, no tests.
+  guidelines:
+    name: Guidelines
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust:1.98.1
+    concurrency:
+      group: guidelines-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+
+
+      - name: Check
+        run: .ci/check/check
+        env:
+          SKIP_TESTS: "true"
+
+  # SDK doctests plus the full unit and integration suite.
+  tests:
+    name: Tests
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust:1.98.1
+    concurrency:
+      group: tests-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+
+      - name: Test
+        run: .ci/check/check
+        env:
+          SKIP_CHECKS: "true"
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          NEXTEST_TEST_THREADS: "1"
+
+  # License, advisory and source checks, the WASM host-interface doc-drift
+  # check, and the coverage-check self-test.
+  licenses:
+    name: Licenses
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust:1.98.1
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+      - run: .ci/verify/all
+
+  # Repeats the Guidelines and Tests checks pinned to the workspace's minimum
+  # supported Rust version.
+  msrv:
+    name: MSRV
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust:1.98.1
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install 1.94.0 --profile minimal --component clippy --component rustfmt
+      - run: .ci/check/check
+        env:
+          CARGO_CHANNEL: "1.94.0"
+
+  # Lints the WASM cell crates (drivers, steps, warehouse and fixture cells).
+  wasm:
+    name: WASM
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust:1.98.1
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install nightly-2026-08-07 --profile minimal --component rust-src --component clippy
+      - run: .ci/check/wasm
+        env:
+          CARGO_CHANNEL: nightly-2026-08-07
+
+  # Builds and lints the firmware for each chip, then, for c6 only, verifies
+  # the production image exposes no cell-callable watchdog control surface.
+  embedded:
+    name: Embedded ${{ matrix.chip }}
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [ c5, c6, c61 ]
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - run: .ci/check/embedded ${{ matrix.chip }}
+
+  # Scaffolds a Signal Layer pipeline with `myrmic new --pipeline` and compiles
+  # it for both the Linux and firmware targets.
+  scaffold:
+    name: Pipeline Scaffold
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1
+    steps:
+      - uses: peeriot/actions/setup-rust@435f92fa25c959b62f090616481f25165166f4ae
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - run: rustup toolchain install nightly-2026-08-07 --profile minimal --component rust-src
+      - run: rustup target add riscv32imac-unknown-none-elf --toolchain nightly-2026-08-07
+      - run: .ci/check/pipeline-scaffold
+        env:
+          CARGO_CHANNEL: nightly-2026-08-07

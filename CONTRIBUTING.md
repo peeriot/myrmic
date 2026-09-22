@@ -69,7 +69,7 @@ cargo install cargo-nextest cargo-deny
 
 Target-specific work needs extra setup:
 
-- **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile in-workspace with the provided cargo aliases, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
+- **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile with the provided cargo aliases, run from `embedded/`, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
 - **WebAssembly (Cell modules):** the `wasm32-unknown-unknown` target and a nightly toolchain (the WASM build uses `-Zbuild-std`). See [`sdk/`](sdk/) and the per-component READMEs.
 
 ## Before You Submit
@@ -96,7 +96,7 @@ cargo deny check
 For embedded and WASM changes, also run the relevant target checks, e.g.:
 
 ```bash
-cargo +nightly-2026-08-07 clippy-c6   # or clippy-c5 / clippy-c61
+cd embedded && cargo clippy-c6        # or clippy-c5 / clippy-c61
 ./.ci/check/wasm                      # builds and lints the WASM module examples
 ./.ci/check/coverage                  # asserts every member is linted and tested somewhere
 ```
@@ -108,8 +108,8 @@ Notes:
 - New dependencies must pass `cargo deny` (acceptable licenses, no banned crates or advisories). See [deny.toml](deny.toml).
 - Add or update tests for behavior you change.
 - Every workspace member must be named by a lint list and every host-testable one by the test list; `./.ci/check/coverage` fails if one is not.
-- The chip aliases pass `-Zbuild-std`, which stable rejects, so they need the dated nightly that [embedded/esp-hal/rust-toolchain.toml](embedded/esp-hal/rust-toolchain.toml) pins. Running an alias from that directory picks the channel up without naming the date.
-- `cargo citest` with no `-p` covers the default members, `hil-tests` among them, whose tests need a board. The gate instead runs the list in [.ci/check/test-packages](.ci/check/test-packages).
+- The chip aliases pass `-Zbuild-std`, which stable rejects, so they need the dated nightly that [embedded/rust-toolchain.toml](embedded/rust-toolchain.toml) pins. A cargo command run anywhere under `embedded/` picks the channel up from that file without naming the date.
+- The gate runs tests from the explicit list in [.ci/check/test-packages](.ci/check/test-packages) rather than from `cargo citest` with no `-p` (which covers only the default members); today that list matches the default members exactly, and `./.ci/check/coverage` checks every member against it.
 
 ## Pull Request Process
 
@@ -168,6 +168,19 @@ Please note that this information provides only a summary. The applicable CLA co
 ### AI-assisted contributions
 
 You may use AI-assisted tools when preparing a contribution. You remain responsible for what you submit: review generated code as you would your own, and make sure you hold the rights the CLA asks you to confirm - in particular, do not include code of unknown provenance. For contributions with substantial AI-generated parts, please say so briefly in the pull request description.
+
+## Releasing
+
+Patches land in the public repository as they come. Features are developed on branches in the private repository and merged into its master when they are ready to ship. A release joins the two, in this order:
+
+1. Merge the public master into the private one.
+2. Merge the feature branches that ship.
+3. Tag the release candidate. The tag starts the build, which produces a draft release to inspect.
+4. Publishing that draft promotes it: the packages ship, the private master is pushed to the public one, and the public release is created.
+
+The order is not a style preference. A tag on a commit that does not descend from the public master cannot be handed over as a fast-forward, and the push that does the hand-over has no `--force`, so it fails rather than losing a patch somebody merged in the meantime.
+
+A pull request that touches `embedded/` gets hardware feedback once a maintainer applies the `hil` label, and again when it enters the merge queue. Before either, no maintainer has looked at it and the boards sit on our network, so that is deliberate rather than an oversight.
 
 ---
 

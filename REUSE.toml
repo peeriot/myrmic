@@ -14,7 +14,7 @@ SPDX-PackageDownloadLocation = "https://github.com/peeriot/myrmic"
 
 [[annotations]]
 path = [
-  "swarm/**", "embedded/**", "tests/**", "benchmarks/**",
+  "swarm/**", "embedded/**", "tests/**",
   "ci/**", ".ci/**", ".github/**", ".cargo/**", ".config/**", "docker/**",
   "Cargo.toml", "Cargo.lock", "deny.toml", "deny.patch", "osv-scanner.toml",
   "rust-toolchain.toml", "rustfmt.toml", "clippy.toml",

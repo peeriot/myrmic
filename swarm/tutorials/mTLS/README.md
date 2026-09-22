@@ -47,16 +47,16 @@ cp target/release/libzenoh_plugin_rest.so <swarm-repo>/swarm/tutorials/mTLS/arti
 
 We use a structured network with multiple sub-domain certificate and sub-networks:
 
-- **Sub-Domain `swarm.peeriot.intra`**
+- **Sub-Domain `swarm.example.com`**
   - 1x Router A
   - 1x Router B
 
-  - **Sub-Domain `mesh-a.swarm.peeriot.intra`**
+  - **Sub-Domain `mesh-a.swarm.example.com`**
     - 2x Peer A (with router connection)
     - 10x Peer A (without router connection)
     - 2x Client A
 
-  - **Sub-Domain `mesh-b.swarm.peeriot.intra`**
+  - **Sub-Domain `mesh-b.swarm.example.com`**
     - 2x Peer B (with router connection)
     - 8x Peer B (without router connection)
     - 2x Client B

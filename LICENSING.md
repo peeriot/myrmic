@@ -8,7 +8,7 @@ This document explains how the Myrmic monorepo is licensed and what you may buil
 
 | Where | License | What it covers |
 |---|---|---|
-| `swarm/` (except `swarm/signal-layer/`), `embedded/`, `tests/`, `benchmarks/` | `GPL-2.0-only` together with the Myrmic Exception | The Myrmic platform: runtime, self-organization, data layer, embedded ports, firmware, the host side of all interfaces, and the project's test and benchmark infrastructure |
+| `swarm/` (except `swarm/signal-layer/`), `embedded/`, `tests/` | `GPL-2.0-only` together with the Myrmic Exception | The Myrmic platform: runtime, self-organization, data layer, embedded ports, firmware, the host side of all interfaces, and the project's test infrastructure |
 | `sdk/`, `signal-modules/`, `swarm/signal-layer/` | `MIT OR Apache-2.0` | Everything you compile into your own artifacts: the WASM SDK, interface and contract crates, the signal-layer contracts, runtime support and bus shims for generated pipelines, the code generators, and the standard drivers and steps |
 | `examples/`, `embedded/examples/`, `swarm/tutorials/` | `MIT-0` | Examples, tutorials and templates — copy freely, no attribution required |
 | `doc/` | `CC-BY-4.0` | The handbook and documentation. Code examples inside the documentation are additionally offered under `MIT-0` |

@@ -13,7 +13,7 @@ const MAX_TAPS: u32 = 32;
 fn init(_md: Metadata) -> Result<()> {
     // The log interval runs for the cell's lifetime, so the handle is dropped
     // rather than stored: nothing ever cancels this timer.
-    let _ = myrmic_sdk::interval(Callback::of::<log_taps>(), Duration::from_millis(1000))
+    let _ = myrmic_sdk::interval(Callback::of::<log_taps>(), Duration::from_secs(1))
         .build()
         .map_err(|_| "failed to create timer")?;
     Ok(())

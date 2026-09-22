@@ -14,7 +14,7 @@
 
 use myrmic_sdk::{EventPublishRequest, Metadata, Result, publish_event};
 
-/// Event the [`ping`] command answers on. Commands are fire-and-forget, so a
+/// Event the [`ping()`] command answers on. Commands are fire-and-forget, so a
 /// cell reports back by publishing rather than returning a value.
 const ALIVE_EVENT: &str = "wdt_selftest_alive";
 

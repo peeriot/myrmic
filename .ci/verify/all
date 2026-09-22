@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Runs every check the Licenses job runs, in the same order, and keeps going
+# after one fails.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+CHECKS=(
+    "Licenses:$SCRIPT_DIR/licenses"
+    "WASM Host Interface:$SCRIPT_DIR/wasm-host-interface"
+    "Coverage Self-Test:$SCRIPT_DIR/../check/coverage-self-test"
+)
+
+failed=()
+
+for entry in "${CHECKS[@]}"; do
+    name="${entry%%:*}"
+    script="${entry#*:}"
+
+    printf '\n\n--== %s ==--\n\n' "$name"
+    "$script" || failed+=("$name")
+done
+
+if [ "${#failed[@]}" -ne 0 ]; then
+    printf '\nfailed: %s\n' "${failed[*]}"
+    exit 1
+fi
+
+printf '\nall checks passed\n'

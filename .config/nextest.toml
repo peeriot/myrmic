@@ -1,8 +1,8 @@
-# `serial-integration` is for tests that genuinely cannot share the host: the
-# HIL tests drive a single physical device, `swarm-telemetry` builds its swarm
-# inline (bypassing the `sorg-tests` harness) so it stays on the default zenoh
-# multicast group, and `sorg-tests`' own mqtt tests bind a fixed broker port.
-# Every other swarm integration suite is network-isolated — `sorg-tests` gives
+# `serial-integration` is for tests that genuinely cannot share the host:
+# `swarm-telemetry` builds its swarm inline (bypassing the `sorg-tests` harness)
+# so it stays on the default zenoh multicast group, and `sorg-tests`' own mqtt
+# tests bind a fixed broker port. Every other swarm integration suite is
+# network-isolated — `sorg-tests` gives
 # each test *process* a private multicast group (`set_up_swarm_with_config` /
 # `set_up_killable_swarm` / `test_session`), and `filestore-client` disables
 # multicast outright — so they run in parallel. The per-package `slow-timeout`s
@@ -48,22 +48,6 @@ slow-timeout = { period = "5s", terminate-after = 4 }
 filter = 'package(introspection-client) & kind(test)'
 platform = 'cfg(unix)'
 slow-timeout = { period = "5s", terminate-after = 4 }
-
-# Watchdog HIL tests deliberately drive the device to a hardware reset and wait
-# out the real staged-MWDT escalation (up to the stats allowance + ~45 s reset +
-# reboot + re-registration), so they need a much longer budget than the other
-# HIL tests. Must precede the general hil-tests override so it wins for these.
-[[profile.default.overrides]]
-filter = 'package(hil-tests) & test(/watchdog::/)'
-platform = 'cfg(unix)'
-test-group = 'serial-integration'
-slow-timeout = { period = "240s", terminate-after = 2 }
-
-[[profile.default.overrides]]
-filter = 'package(hil-tests) & kind(test)'
-platform = 'cfg(unix)'
-test-group = 'serial-integration'
-slow-timeout = { period = "90s", terminate-after = 2 }
 
 [[profile.default.overrides]]
 filter = 'package(swarm-telemetry) & kind(test)'

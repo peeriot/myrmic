@@ -18,11 +18,11 @@ use core::time::Duration;
 
 use myrmic_sdk::{EventPublishRequest, Metadata, Result, publish_event};
 
-/// Answered by [`ping`] while the cell is alive. A watchdog reset boots the
+/// Answered by [`ping()`] while the cell is alive. A watchdog reset boots the
 /// node clean and drops the cell, so silence here means the device reset.
 const ALIVE_EVENT: &str = "wdt_spin_alive";
 
-/// Published by [`spin`] once the busy loop has run its full duration.
+/// Published by [`spin()`] once the busy loop has run its full duration.
 const DONE_EVENT: &str = "wdt_spin_done";
 
 /// Iterations of arithmetic between two clock reads. Large enough that the loop

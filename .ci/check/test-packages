@@ -51,8 +51,6 @@ min-value
 cadence
 fan-curve
 hysteresis
-bench-harness
-bench-report
 cell-mailbox
 cell-protocol
 db-cli
@@ -72,7 +70,6 @@ test-control
 test-control-client
 test-control-common
 test-framework
-warehouse-benchmark
 zenoh-nano
 zenoh-traits
 aot-compiler
@@ -127,15 +124,11 @@ dummy_cell
 event_publish
 event_subscribe
 event_subscribe_b
-input_fixed_camera
 module-examples-common
 outlet-bridge
 signal-layer-logger
 slow-init-cell-logic
 tap-bridge
-tier_1_object
-tier_2_zone
-tier_3_central
 trace_example_intermediate
 trace_example_sink
 

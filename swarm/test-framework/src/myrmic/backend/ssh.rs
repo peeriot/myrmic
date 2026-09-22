@@ -12,7 +12,7 @@ use super::{MyrmicBackend, parse_runtime_list, parse_status_lines};
 /// an async SSH client with a sync one for the blocking variants.
 #[derive(Clone)]
 pub struct SshBinary {
-    /// SSH destination, e.g. `peeriot@rack-node-3.peeriot.intra` — anything `ssh` itself accepts
+    /// SSH destination, e.g. `user@rack-node-1.example` - anything `ssh` itself accepts
     /// (host aliases from `~/.ssh/config` included).
     host: String,
     /// path to the myrmic binary on the remote host (defaults to `myrmic`, i.e. resolved via the
@@ -256,8 +256,8 @@ mod tests {
         let ssh = SshBinary::new("rack-node-1");
 
         assert_eq!(
-            ssh.remote_command(&["deploy", "/home/peeriot/my benchmarks/app.yml"]),
-            "'myrmic' 'deploy' '/home/peeriot/my benchmarks/app.yml'",
+            ssh.remote_command(&["deploy", "/home/user/my benchmarks/app.yml"]),
+            "'myrmic' 'deploy' '/home/user/my benchmarks/app.yml'",
         );
     }
 

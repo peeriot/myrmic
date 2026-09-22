@@ -7,9 +7,9 @@
 //! the physical pin:
 //!
 //! - **`set_gpio` command** — payload is a JSON `bool`. Writes
-//!   `DigitalState { on }` to the [`GPIO_OUTLET`] outlet.
+//!   `DigitalState { on }` to the `GPIO_OUTLET` outlet.
 //! - **`set_pwm` command** — payload is a JSON number in `0.0..=1.0`. Writes
-//!   `PwmDuty { duty }` to the [`PWM_OUTLET`] outlet.
+//!   `PwmDuty { duty }` to the `PWM_OUTLET` outlet.
 //!
 //! Commands are fire-and-forget; failures are logged on the runtime console.
 //! The pipeline deployed alongside this cell must declare cell-driven outlets

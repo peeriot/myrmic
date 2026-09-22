@@ -58,7 +58,7 @@ Much of this comes from Espressif's technical reference manual, the `esp-idf` C 
 
 Add build/run/clippy/etc. aliases for the new chip so day-to-day commands are short.
 
-**File:** [`.cargo/config.toml`](../../.cargo/config.toml)
+**File:** [`embedded/.cargo/config.toml`](../.cargo/config.toml)
 
 Copy the block of `*-c6` aliases and rename to `*-*`, adjusting the `--target` triple and the `--features` flag:
 
@@ -174,9 +174,9 @@ macro:
 **File:** [`.github/workflows/internal-validation.yml`](../../.github/workflows/internal-validation.yml)
 
 Add the chip to the `chip` list of the `check_embedded` matrix. The job derives
-`COMMAND_SUFFIX: -<chip>` from it, which selects the `*-<chip>` cargo aliases, and already sets
-`CARGO_CHANNEL` and `SKIP_TESTS: true`. Nothing else needs adding: the single `check_embedded`
-`workflow_dispatch` input covers every chip in the matrix.
+`COMMAND_SUFFIX: -<chip>` from it, which selects the `*-<chip>` cargo aliases. It sets
+`SKIP_TESTS: true` and gets its toolchain from `embedded/rust-toolchain.toml`. Nothing else needs
+adding: the single `check_embedded` `workflow_dispatch` input covers every chip in the matrix.
 
 ---
 
@@ -241,10 +241,9 @@ so the device fetches the AOT + `.meta` artifacts scoped to its own ISA class (`
 
 ### 12. HIL tests
 
-**File:** [`embedded/hil-tests/tests/integration/mod.rs`](hil-tests/tests/integration/mod.rs)
-
-Add the new target to the three helpers that switch on the `EMBEDDED_TARGET` env var (`aot_target`, `build_platform`,
-`artifact_platform`) so the hardware-in-the-loop suite can build and flash cells for the chip.
+The hardware-in-the-loop suite that flashes real boards lives in the CI repository that owns the runner wired to
+them, not in this repository. Add the new target there to the helpers that switch on the `EMBEDDED_TARGET` env var
+(`aot_target`, `build_platform`, `artifact_platform`) so the suite can build and flash cells for the chip.
 
 ---
 
@@ -252,7 +251,7 @@ Add the new target to the three helpers that switch on the `EMBEDDED_TARGET` env
 
 Firmware:
 
-- [ ] `.cargo/config.toml` — `*-*` aliases
+- [ ] `embedded/.cargo/config.toml` - `*-*` aliases
 - [ ] Per-crate `esp32*` cargo features (`modem-esp32`, `esp-common`, `wasm-runtime`, `wasm-storage`, `esp-mmu`, `esp-watchdog`, `cell-db-service`, `esp-network`)
     + workspace deps / PAC crate / fork branch pins
 - [ ] `esp-mmu` — every `cfg_match!` arm (constructor, page number/size, valid bit, bus base, interrupt save/restore,
@@ -271,10 +270,7 @@ Swarm / tooling:
 - [ ] `sorg-orchestration` deploy / undeploy / placement arms
 - [ ] `myrmic-build` + `aot-compiler` target mapping & CPU features
 - [ ] `cell-db-service` runtime identity (`myrmic.rs`, `deploy.rs`)
-- [ ] `hil-tests` target helpers
+- [ ] HIL target helpers, in the CI repository that owns the boards
 
-Finally, run the entire set of HIL tests for the new hardware target. If they pass, the port is complete:
-
-```
-$ EMBEDDED_TARGET=ESP32C61 cargo nextest run -p hil-tests --no-fail-fast --no-capture
-```
+Finally, the port isn't complete until the CI repository's HIL suite passes for the new hardware target — that
+suite lives with the runner wired to the boards, not in this repository.

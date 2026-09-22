@@ -15,7 +15,7 @@ CARGO_CHANNEL=${CARGO_CHANNEL:-nightly-2026-08-07}
 #
 # `CELL_ROOTS` is overridable so the coverage self-test can point the listing at a
 # synthetic tree. Deliberate word splitting: it is a space-separated list.
-CELL_ROOTS=${CELL_ROOTS:-"${REPO_ROOT}/tests/fixtures ${REPO_ROOT}/benchmarks/warehouse/cells"}
+CELL_ROOTS=${CELL_ROOTS:-"${REPO_ROOT}/tests/fixtures"}
 
 names=()
 for root in $CELL_ROOTS; do

@@ -22,7 +22,7 @@ REPO_ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
 CARGO_CHANNEL=${CARGO_CHANNEL:-}
 COMMAND_SUFFIX=${COMMAND_SUFFIX:-}
 
-# Every chip alias targets the same triple (see `.cargo/config.toml`).
+# Every chip alias targets the same triple (see `embedded/.cargo/config.toml`).
 ELF="$REPO_ROOT/target/riscv32imac-unknown-none-elf/release/modem-esp32"
 CONTROL_ELF="$(mktemp -t modem-esp32-control-XXXXXX)"
 
@@ -35,7 +35,7 @@ finish() {
 
 trap finish EXIT
 
-cd "$REPO_ROOT"
+cd "$REPO_ROOT/embedded"
 
 # Guest-visible names of the fault-injection surface: the import module WAMR
 # registers, and the exported host function behind it.

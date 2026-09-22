@@ -15,15 +15,15 @@ generated taps via the `signal-layer-logger` WASM cell.
   shipped `basic-sensors` pipeline uses BME280, VEML7700, and CCS811, plus a
   moving-average step on the BME280 temperature output).
 - USB-C cable for power + serial.
-- Toolchain installed:
-  - `rustup toolchain install nightly` with the `riscv32imac-unknown-none-elf`
-    target.
-  - `cargo install espflash --locked`.
+- Toolchain: nothing to install by hand. `embedded/rust-toolchain.toml` pins the
+  channel and the `riscv32imac-unknown-none-elf` target, and rustup installs both
+  on the first command run from `embedded/`.
+- `cargo install espflash --locked`.
 - `wamrc` on `$PATH` if you intend to (re)build the WASM cell that reads taps.
 
-The firmware is built and flashed with the `cargo …-c6` aliases from the repo
-root; the Signal Layer pipeline is generated into the firmware at build time by
-its `build.rs`.
+The firmware is built with the `cargo ...-c6` aliases, which are run from
+`embedded/`; the Signal Layer pipeline is generated into the firmware at
+build time by its `build.rs`.
 
 ## 1. Wire the sensor
 
@@ -46,7 +46,7 @@ stays consistent.
 ## 2. Build the firmware
 
 ```bash
-cargo +nightly build-c6 --features pipeline
+cargo build-c6 --features pipeline
 ```
 
 The firmware's `build.rs` generates the pipeline into the crate's `OUT_DIR` and
@@ -58,7 +58,7 @@ YAML path, resolved relative to `embedded/esp-hal/modem-esp32` or absolute:
 ```bash
 SIGNAL_LAYER_BOARD=../signal-layer/boards/esp32c6-devkit.yaml \
 SIGNAL_LAYER_PIPELINE=../signal-layer/pipelines/basic-sensors.yaml \
-    cargo +nightly-2026-08-07 build-c6 --features pipeline
+    cargo build-c6 --features pipeline
 ```
 
 The resulting binary is at
@@ -77,7 +77,7 @@ You should see one `TAP_*` static per tap (plus `TAP__SIGNAL_LAYER_HEALTH`), one
 `*_task` per source, and the `pipeline_pins!` macro reserving the bus pins.
 
 To build a no-pipeline firmware (useful for isolating WASM-only issues), omit the
-feature: `cargo +nightly build-c6`. The WASM runtime will then own GPIO10/11 too.
+feature: `cargo build-c6`. The WASM runtime will then own GPIO10/11 too.
 
 ## 3. Flash and open the serial monitor
 
@@ -116,13 +116,10 @@ The `signal-layer-logger` cell in `tests/fixtures/signal-layer-logger/` walks
 the tap registry every second and prints each tap's name, kind, and decoded
 value — a quick way to see what the running pipeline is producing.
 
-> **Deploying a cell.** The automated path is the HIL suite: it brings up a
-> local swarm and deploys a cell over Zenoh onto the device. The signal-layer
-> HIL tests (`embedded/hil-tests/tests/integration/signal_layer/`) do exactly
-> this against the `hil-tests` pipeline — see `embedded/hil-tests/README.md`
-> ("Signal-layer (dataplane) tests") for the build + deploy + run sequence. They
-> deploy a `tap-bridge` cell that reads taps over Zenoh so assertions are
-> automated rather than eyeballed on the serial console.
+> **Deploying a cell.** The automated path is the HIL suite, which lives in the
+> CI repository that owns the boards, not here: it brings up a local swarm and
+> deploys a `tap-bridge` cell over Zenoh onto the device, reading taps back so
+> assertions are automated rather than eyeballed on the serial console.
 
 Once the cell is running, the monitor shows lines like:
 
