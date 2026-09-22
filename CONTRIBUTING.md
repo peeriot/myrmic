@@ -180,7 +180,7 @@ Patches land in the public repository as they come. Features are developed on br
 
 The order is not a style preference. A tag on a commit that does not descend from the public master cannot be handed over as a fast-forward, and the push that does the hand-over has no `--force`, so it fails rather than losing a patch somebody merged in the meantime.
 
-A pull request that touches `embedded/` gets hardware feedback once a maintainer applies the `hil` label, and again when it enters the merge queue. Before either, no maintainer has looked at it and the boards sit on our network, so that is deliberate rather than an oversight.
+A pull request that touches `embedded/` gets hardware feedback once a maintainer applies the `hil` label. Before that, no maintainer has looked at it and the boards sit on our network, so that is deliberate rather than an oversight.
 
 ---
 
