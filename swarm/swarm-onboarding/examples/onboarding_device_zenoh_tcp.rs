@@ -5,11 +5,6 @@
 //! In the real world, this would be useful for MCU's which are already connected to the IP network via an Ethernet cable.
 //! For MCUs supporting Wifi (and BLE) - rather than using Ethernet - the BLE protocol would be more appropriate as the link
 //! layer during onboarding.
-//!
-//! To run the example, first start `swarm` with:
-//! ```sh
-//! cargo run --features test-onboarding-plugin --bin swarm ./config/test_onboarding.jsonnet
-//! ```
 
 #![deny(missing_docs)]
 #![allow(clippy::uninlined_format_args)] // For `defmt`

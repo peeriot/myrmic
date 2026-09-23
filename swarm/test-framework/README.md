@@ -73,12 +73,12 @@ Sidecar::build(
 .await;
 
 // build the swarm image
-let test_router_jsonnet = std::path::PathBuf::from("../../swarm/configs/test_router.jsonnet");
-let test_peer_jsonnet = std::path::PathBuf::from("../../swarm/configs/test_peer.jsonnet");
+let test_router_jsonnet = std::path::PathBuf::from("assets/swarm_configs/test_router.jsonnet");
+let test_peer_jsonnet = std::path::PathBuf::from("assets/swarm_configs/test_peer.jsonnet");
 SwarmImage::build(
     &docker,
     "assets/dockerfiles/swarm.dockerfile",
-    "../../target/release/swarm",
+    "../../source/target/release/swarm",
     "swarm:network_tests",
     &[
         (test_router_jsonnet.as_path(), "test_router.jsonnet"),
