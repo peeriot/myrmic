@@ -117,6 +117,12 @@ fn new_pins_sdk_to_the_build_revision() {
     let output = Command::new(env!("CARGO_BIN_EXE_myrmic"))
         .arg("new")
         .arg(&cell)
+        // `default_sdk()` (main.rs) checks this override before falling back to
+        // the git-rev pin this test exercises. A developer/CI job legitimately
+        // sets it for other purposes (e.g. `myrmic_e2e`'s job step) for the
+        // whole environment it runs in, so this test must not inherit it —
+        // otherwise it silently stops testing the no-override default.
+        .env_remove("PEERIOT_MYRMIC_SDK")
         .output()
         .expect("failed to run myrmic new");
 
