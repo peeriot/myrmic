@@ -72,6 +72,26 @@ Target-specific work needs extra setup:
 - **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile with the provided cargo aliases, run from `embedded/`, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
 - **WebAssembly (Cell modules):** the `wasm32-unknown-unknown` target and a nightly toolchain (the WASM build uses `-Zbuild-std`). See [`sdk/`](sdk/) and the per-component READMEs.
 
+### Editor Setup (rust-analyzer)
+
+Nothing here is needed to build or test - it only affects what your editor shows you. Settings are named with rust-analyzer's own keys, which every editor exposes under some name of its own (a `settings.json` object, an LSP `initializationOptions` table, a language-server config file).
+
+**Startup errors from the embedded crates.** rust-analyzer defaults to `cargo check --workspace`, which overrides the `default-members` list in [Cargo.toml](Cargo.toml) and drags `embedded/esp-hal/*` into the same resolve as the host crates. That breaks two ways: `critical-section` is offered `restore-state-u32` (esp/embassy) and, via `std`, `restore-state-bool` (host) at once and trips its own `compile_error!`; and `wamr-sys`'s build script runs for `x86_64` and panics. The embedded crates are only ever meant to be built through the cargo aliases, which pass `--target riscv32imac-unknown-none-elf --no-default-features --features esp32cN`. Point rust-analyzer at `default-members` instead, which already lists exactly the host-side crates:
+
+```json
+{ "rust-analyzer.check.workspace": false }
+```
+
+Note that `check.*` governs flycheck only. Build scripts are a separate invocation under `cargo.buildScripts.*`, so you may still see *"Failed to run build scripts of some packages"* once at startup. That one is cosmetic and can be left alone - rust-analyzer's default build-script command already passes `--keep-going`, and the host crates still get their build-script data. If you would rather not see it, override `rust-analyzer.cargo.buildScripts.overrideCommand` with the same command minus `--workspace`:
+
+```json
+{
+  "rust-analyzer.cargo.buildScripts.overrideCommand": [
+    "cargo", "check", "--quiet", "--message-format=json", "--all-targets", "--keep-going"
+  ]
+}
+```
+
 ## Before You Submit
 
 Please run the same checks CI runs, so your pull request passes on the first try. These mirror the scripts under [`.ci/`](.ci/):
