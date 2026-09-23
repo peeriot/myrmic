@@ -1,9 +1,12 @@
 **/.DS_Store
 **/.idea
 **/.vscode
+**/.helix
 **/.embuild
 **/target
 **/?
+
+
 .devcontainer
 book
 artifacts
@@ -14,6 +17,7 @@ swarm/logs
 tests/integration/certs/
 
 **/.claude
+**/.envrc
 
 **/local.jsonnet
 
