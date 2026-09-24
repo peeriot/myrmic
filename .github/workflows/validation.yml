@@ -25,7 +25,7 @@ jobs:
   guidelines:
     name: Guidelines
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1
+    container: ghcr.io/peeriot/rust:1.98.1-1
     concurrency:
       group: guidelines-${{ github.ref }}
       cancel-in-progress: true
@@ -43,7 +43,7 @@ jobs:
   tests:
     name: Tests
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1
+    container: ghcr.io/peeriot/rust:1.98.1-1
     concurrency:
       group: tests-${{ github.ref }}
       cancel-in-progress: true
@@ -63,7 +63,7 @@ jobs:
   licenses:
     name: Licenses
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1
+    container: ghcr.io/peeriot/rust:1.98.1-1
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
@@ -74,7 +74,7 @@ jobs:
   msrv:
     name: MSRV
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1
+    container: ghcr.io/peeriot/rust:1.98.1-1
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
@@ -87,7 +87,7 @@ jobs:
   wasm:
     name: WASM
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1
+    container: ghcr.io/peeriot/rust:1.98.1-1
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
@@ -101,7 +101,7 @@ jobs:
   embedded:
     name: Embedded ${{ matrix.chip }}
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1
+    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1-1
     strategy:
       fail-fast: false
       matrix:
@@ -118,7 +118,7 @@ jobs:
   scaffold:
     name: Pipeline Scaffold
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1
+    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1-1
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
