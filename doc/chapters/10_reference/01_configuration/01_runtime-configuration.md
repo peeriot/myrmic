@@ -48,7 +48,7 @@ To run the gateway as its own process independently of a runtime, use [`myrmic g
 
 ## `onboarding`
 
-When this section is present, the runtime also runs the onboarding installer, which onboards new devices from onboarding requests, one request at a time. An empty section (`onboarding: {}`) enables it with the defaults.
+When this section is present, the runtime also runs the onboarding installer, which onboards new devices from onboarding requests, one request at a time. Up to 8 requests wait while one is running; when more arrive, the oldest waiting request is dropped. An empty section (`onboarding: {}`) enables it with the defaults.
 
 - `timeout` *(optional)* - How long a single onboarding may take before the installer abandons it and serves the next request. Accepts [humantime](https://docs.rs/humantime/latest/humantime/) duration strings (e.g. `"30s"`, `"5min"`). Defaults to `"5min"`.
 

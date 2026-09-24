@@ -8,9 +8,10 @@ use tokio::time::{sleep, timeout};
 use zenoh::Session;
 use zenoh::pubsub::Publisher;
 
-use super::run_onboarding;
+use super::{REQUEST_QUEUE_CAPACITY, run_onboarding};
 
 const ONBOARDING_TIMEOUT: Duration = Duration::from_secs(3);
+const FLOOD_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The P-256 generator point, SEC1 uncompressed: a valid public key of a
 /// device that never answers.
@@ -48,6 +49,42 @@ async fn stalled_onboarding_gives_way_to_the_next_request() {
             wait_for_meta(&session, Some(&first), Duration::from_secs(15))
                 .await
                 .expect("the next request was never served");
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stalled_onboarding_drops_the_oldest_queued_requests() {
+    let queued = u32::try_from(REQUEST_QUEUE_CAPACITY).unwrap();
+    let session = open_session().await;
+
+    LocalSet::new()
+        .run_until(async {
+            tokio::task::spawn_local(run_onboarding(session.clone(), FLOOD_TIMEOUT));
+
+            let publisher = session
+                .declare_publisher(ONBOARDING_REQUEST_TOPIC)
+                .await
+                .unwrap();
+            wait_for_subscriber(&publisher).await;
+
+            publisher.put(request()).await.unwrap();
+            wait_for_meta(&session, None, FLOOD_TIMEOUT)
+                .await
+                .expect("the first request was never served");
+
+            for _ in 0..3 * queued {
+                publisher.put(request()).await.unwrap();
+            }
+
+            // Only the queued requests are left, each runs for one deadline.
+            sleep(FLOOD_TIMEOUT * (queued + 2)).await;
+            assert!(
+                wait_for_meta(&session, None, FLOOD_TIMEOUT * 2)
+                    .await
+                    .is_none(),
+                "the installer is still working off requests beyond the queue"
+            );
         })
         .await;
 }

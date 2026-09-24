@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use futures::StreamExt;
-
 use swarm_onboarding::io::{NoopConsumer, SerdeObjError, SliceProducer};
 use swarm_onboarding::qr::QrPayload;
 use swarm_onboarding::zenoh::installer::Installer;
@@ -15,6 +13,7 @@ use tokio::sync::oneshot::Receiver;
 use tracing::{debug, error, info, warn};
 
 use zenoh::Session;
+use zenoh::handlers::RingChannel;
 
 use zenoh::bytes::ZBytes;
 use zenoh_traits::ErrorKind;
@@ -24,6 +23,8 @@ use swarm_onboarding_request::{Network, ONBOARDING_REQUEST_TOPIC, OnboardingRequ
 
 #[cfg(test)]
 mod tests;
+
+const REQUEST_QUEUE_CAPACITY: usize = 8;
 
 pub(super) async fn run(session: Session, timeout: Duration, poison_rcv: Receiver<()>) {
     // NOTE:
@@ -105,11 +106,12 @@ async fn run_onboarding_until(
 }
 
 async fn run_onboarding(session: Session, timeout: Duration) -> Result<(), OnboardingError> {
-    let subscriber = session.declare_subscriber(ONBOARDING_REQUEST_TOPIC).await?;
+    let subscriber = session
+        .declare_subscriber(ONBOARDING_REQUEST_TOPIC)
+        .with(RingChannel::new(REQUEST_QUEUE_CAPACITY))
+        .await?;
 
-    let mut onboarding_pending = subscriber.stream();
-
-    while let Some(next) = onboarding_pending.next().await {
+    while let Ok(next) = subscriber.recv_async().await {
         let payload = next.payload();
 
         match tokio::time::timeout(timeout, process_onboarding_req(&session, payload)).await {
