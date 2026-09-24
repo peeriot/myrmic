@@ -1,9 +1,9 @@
 # First Steps on an ESP32
 
-In this tutorial you take a blank ESP32-C6, flash it with Myrmic *firmware* so it joins your swarm
+In this tutorial you take a blank ESP32-C6, flash it with Myrmic runtime firmware so it joins your swarm
 as a node, and then deploy a *cell* onto it - the counter cell the CLI scaffolds - and drive it from
-your keyboard. No Signal Layer, no sensors, no wiring: the shortest path from a bare board to your
-own code running on the microcontroller.
+your keyboard. No sensors, no wiring: the shortest path from a bare board to your own code running on the 
+microcontroller.
 
 Along the way you learn what firmware is and how it differs from a cell, how a board joins the
 swarm, how a cell is ahead-of-time compiled and placed onto a device, and how to send it commands
@@ -21,9 +21,8 @@ and read its logs.
 - WiFi credentials for the network that machine is on. The board discovers the swarm by multicast;
   a fallback for networks that block it is in Step 2.
 
-Unlike the [Signal Layer tutorial](./04_first-steps-signal-layer.md), nothing here needs a clone of
-the Myrmic repository: the scaffolded cell and firmware pin their dependencies to git revisions and
-fetch them on the first build.
+Nothing here needs a clone of the Myrmic repository: the scaffolded cell and firmware pin their dependencies to git 
+revisions and fetch them on the first build.
 
 You will use two terminals:
 
@@ -60,7 +59,7 @@ through it.
 
 *Firmware* is a native RISC-V binary: a node that runs on the bare-metal chip and joins the swarm.
 Unlike a cell it is not WebAssembly, and it is *flashed*, never deployed. `myrmic new --firmware`
-scaffolds a firmware crate; `=esp32c6` selects the chip:
+scaffolds a firmware crate; `=esp32c6` selects the chip. On Terminal 2:
 
 ```bash
 myrmic new --firmware=esp32c6 ~/esp-tutorial/my-node
@@ -98,9 +97,7 @@ INFO  Flashed; the board is booting
 ```
 
 The board finds the runtime the same way the CLI does: by scouting the local network. On an ordinary
-flat network (board and computer on one router) that simply works. If your network blocks multicast,
-give the firmware the runtime's address at build time instead by setting `TCP_DIRECT_ADDR` to the
-computer's address and the runtime's listen port before flashing.
+flat network (board and computer on one router) that simply works. 
 
 Expected in the serial output, in this order:
 
@@ -112,6 +109,13 @@ INFO - Using Zenoh node at 192.168.1.68:46747
 INFO - clock synced to swarm time (1789666899s since epoch)
 INFO - Registering exec runtime with info: ExecRuntimeInfo { id: RuntimeId(796d3cfa01db5110), name: Some("ESP32-C6"), capabilities: ExecutionCapabilities { tags: [CapabilityTag("esp32c6"), CapabilityTag("esp32"), CapabilityTag("riscv32imac"), CapabilityTag("embedded"), CapabilityTag("wifi-myrmic"), CapabilityTag("gpio"), ...] } }
 ```
+
+>If your network blocks multicast, give the firmware the runtime's address at build time instead by setting 
+`TCP_DIRECT_ADDR` to the computer's address and the runtime's listen port before flashing.
+>```bash
+>  export WIFI_SSID="your-network" WIFI_PASS="your-password" TCP_DIRECT_ADDR="192.168.1.68:46747"
+>  myrmic flash --monitor
+>```
 
 Read those last three lines as the board joining: it found the runtime your computer anchors, synced
 to swarm time, and registered itself as a place to run cells. Leave the monitor streaming in
