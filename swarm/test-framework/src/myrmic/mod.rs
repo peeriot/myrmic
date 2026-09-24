@@ -111,8 +111,9 @@ impl Myrmic<LocalBinary> {
         self.backend.set_db_retention(retention).await;
     }
 
-    /// Runs `myrmic telemetry debug` for as long as the returned listener lives.
-    /// See [`LocalBinary::get_debug_listener`] for the arguments.
+    /// Runs `myrmic telemetry debug --json` for as long as the returned listener lives,
+    /// optionally filtered to the cell `id` (SRI or SRN) and with the cell log level raised to
+    /// `level`.
     pub fn get_debug_listener(&self, id: Option<&str>, level: Option<&str>) -> DebugListener {
         self.backend.get_debug_listener(id, level)
     }
