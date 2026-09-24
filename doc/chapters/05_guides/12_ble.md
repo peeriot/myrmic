@@ -25,7 +25,7 @@ This also means the cell must run on the specific device that has a BLE radio. T
   myrmic runtimes start --tag ble
   ```
 
-  A runtime built with BLE support advertises the `ble` tag on its own, so for BLE this tag need not be set by hand - see [Building with BLE support](#building-with-ble-support).
+  A runtime built with BLE support advertises the `ble` tag on its own, so for BLE this tag need not be set by hand - see [Prerequisite: a BLE-enabled runtime](#prerequisite-a-ble-enabled-runtime).
 
 - **Cell** - a cell declares what it needs to fulfil its function through tags at deploy time. The distributed swarm ensures the cell lands on a device that has the required capabilities to run it, and therefore the right hardware.
 
@@ -56,48 +56,19 @@ For more details, explanations, and examples see:
 - [`myrmic runtimes start`](../10_reference/02_myrmic-cli/04_runtimes/01_start.md) - starting a runtime with capability tags
 - [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md) - deploying cells and applications with placement tags
 
-## Building with BLE support
+## Prerequisite: a BLE-enabled runtime
 
-BLE has two sides, and they are linked:
-
-- **Build-time feature** - decides *whether* BLE support is present in the runtime binary at all.
-- **Placement capability tag (`ble`)** - decides *where* the cell runs. A cell requests it at deploy time, and the swarm schedules the cell onto a runtime that advertises it.
-
-A runtime built with the feature advertises the `ble` tag automatically, so the scheduler places a BLE cell only on a runtime that can actually serve it. A runtime built without the feature does not advertise `ble` on its own.
-
-> **Note:** This trap only bites where the feature is not already selected. On Linux it is always opt-in, and on embedded it is automatic for C5 and C61, so the case to watch is a C6 firmware: BLE is off by default there even though the chip supports it, so it is easy to build a C6 without BLE support and see BLE silently do nothing.
+A cell can only use BLE on a runtime built with BLE support. Such a runtime advertises the `ble` tag automatically, while a runtime built without it does not and cannot serve BLE cells.
 
 ### OS (Linux)
 
-BLE on Linux talks to the system BlueZ stack over D-Bus, so install the D-Bus development headers first:
-
-```bash
-sudo apt install libdbus-1-dev
-```
-
-Then install the `myrmic-cli` with its `ble` feature, which builds the runtime with BLE support:
-
-```bash
-cargo install --path swarm/myrmic-cli --features ble
-```
-
-Without the feature, BLE support is compiled out of the runtime, so it does not advertise `ble` and cannot serve BLE cells.
+The release packages of the `myrmic-cli` do not include BLE support. A BLE-enabled Linux runtime requires a `myrmic-cli` built from source with its `ble` feature - see [Install with BLE support](../01_quickstart/01_installation.md#with-ble-support).
 
 ### Embedded (ESP32)
 
-A firmware scaffolded with `myrmic new --firmware <chip>` requires the `ble` feature, which enables the NimBLE host stack:
+The `ble` feature is enabled automatically for `esp32c5` and `esp32c61` firmware, but is off by default for `esp32c6`. A BLE-enabled C6 firmware requires building with the `ble` feature - see [Build a firmware with BLE support](../01_quickstart/02_installation-embedded.md#with-ble-support).
 
-- It is enabled automatically for the `esp32c5` and `esp32c61` chips - no extra flag is needed, so `myrmic build` already includes BLE.
-- It is off by default for `esp32c6`, so a C6 firmware silently skips the entire BLE path unless the feature is added explicitly.
-
-Add the feature when building a C6 firmware:
-
-```bash
-myrmic new --firmware esp32c6
-myrmic build --features ble
-```
-
-Without the feature, BLE support is compiled out of the firmware, so it does not advertise `ble` and cannot serve BLE cells.
+With a BLE-enabled runtime in place, the rest of this guide covers how a cell uses the `ble` module.
 
 ## Non-blocking by design
 

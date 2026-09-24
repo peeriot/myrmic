@@ -172,14 +172,22 @@ cargo install --path swarm/myrmic-cli/
 
 To export logs, traces and metrics to tools such as Grafana or Jaeger over OTLP, add `--features open-telemetry` to either command. See the [Observability tutorial](../04_tutorials/07_observability.md).
 
-**NOTE:** To run cells that talk to Bluetooth Low Energy peripherals, add `--features ble` to either command. The release packages are built without it, so BLE support on Linux requires building from source. It links against the system D-Bus library to reach the BlueZ stack, so install its development headers first:
+### With BLE support
+
+To run cells that talk to Bluetooth Low Energy peripherals, the CLI has to be built with its `ble` feature. The release packages are built without it, so BLE support on Linux requires building from source. It links against the system D-Bus library to reach the BlueZ stack, so install its development headers first:
 
 | Distribution family | Install |
 |---|---|
 | Debian, Ubuntu | `sudo apt install libdbus-1-dev` |
 | RHEL, AlmaLinux, Fedora | `sudo dnf install dbus-devel` |
 
-See [Work with BLE peripherals](../05_guides/12_ble.md#building-with-ble-support).
+Then install the CLI with the feature:
+
+```bash
+cargo install --path swarm/myrmic-cli/ --features ble
+```
+
+Without the feature, BLE support is compiled out of the runtime, so it does not advertise `ble` and cannot serve BLE cells. See [Work with BLE peripherals](../05_guides/12_ble.md) for how a cell uses BLE.
 
 ## Verify the installation
 

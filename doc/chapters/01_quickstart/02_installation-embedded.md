@@ -160,6 +160,23 @@ With no board connected the command stops at the connect step - which is the exp
 ERROR No serial ports could be detected (Make sure you have connected a device to the host system. If the device is connected but not listed, try using the `--list-all-ports` flag.)
 ```
 
+### With BLE support
+
+To run cells that talk to Bluetooth Low Energy peripherals, the firmware has to be built with its `ble` feature, which enables the NimBLE host stack:
+
+- It is enabled automatically for the `esp32c5` and `esp32c61` chips - no extra flag is needed, so `myrmic build` already includes BLE.
+- It is off by default for `esp32c6`, so a C6 firmware silently skips the entire BLE path unless the feature is added explicitly.
+
+Add the feature when building a C6 firmware:
+
+```bash
+myrmic new --firmware=esp32c6 my-node
+cd my-node
+myrmic build --features ble
+```
+
+Without the feature, BLE support is compiled out of the firmware, so it does not advertise `ble` and cannot serve BLE cells. See [Work with BLE peripherals](../05_guides/12_ble.md) for how a cell uses BLE.
+
 ## Next
 
 - [`myrmic new`](../10_reference/02_myrmic-cli/01_new.md), [`myrmic build`](../10_reference/02_myrmic-cli/03_build.md) - the full command reference, including `--firmware --pipeline` to scaffold a firmware with a Signal Layer pipeline.

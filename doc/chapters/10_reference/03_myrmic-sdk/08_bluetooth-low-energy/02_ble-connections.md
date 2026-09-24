@@ -1,7 +1,11 @@
 # BLE connections and service discovery
 
 > **Availability:** Linux and embedded runtimes, on a node with Bluetooth hardware
-> **Build-time requirement:** BLE support must be compiled into the runtime binary - the `ble` feature when installing the OS `myrmic-cli`, or the `ble` feature on the ESP32 firmware built with `myrmic build` (automatic on esp32c5 and esp32c61, off by default on esp32c6). The `ble` capability tag only affects placement, not whether BLE is present in the binary. See [Building with BLE support](../../../05_guides/12_ble.md#building-with-ble-support).
+> 
+> **Build-time requirement:** The Myrmic runtime has to be compiled with BLE support:
+>
+> - [Install the CLI with the `ble` feature on Linux](../../../01_quickstart/01_installation.md#with-ble-support)
+> - [Build the ESP32 firmware with the `ble` feature](../../../01_quickstart/02_installation-embedded.md#with-ble-support)
 
 A connection links a cell to a Bluetooth peripheral. It carries the peripheral's address and the GATT services and characteristics found while connecting.
 
