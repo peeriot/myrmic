@@ -39,28 +39,24 @@ fn init(_md: Metadata) -> Result<()> {
 
 #[myrmic_sdk::evt]
 fn temperature(_md: Metadata, value: f32) -> Result<()> {
-    let mut site = SITE.load()?.unwrap_or_default();
-    site.temperature = value;
-    SITE.save(&site)?;
+    let site = SITE.upsert_with(|site| site.temperature = value)?;
 
     publish("site_state", &site)
 }
 
 #[myrmic_sdk::evt]
 fn heating_state(_md: Metadata, on: bool) -> Result<()> {
-    let mut site = SITE.load()?.unwrap_or_default();
-    site.heating = on;
-    SITE.save(&site)?;
+    let site = SITE.upsert_with(|site| site.heating = on)?;
 
     publish("site_state", &site)
 }
 
 #[myrmic_sdk::cmd]
 fn set_target(_md: Metadata, range: TargetRange) -> Result<()> {
-    let mut site = SITE.load()?.unwrap_or_default();
-    site.target_low = range.low;
-    site.target_high = range.high;
-    SITE.save(&site)?;
+    let site = SITE.upsert_with(|site| {
+        site.target_low = range.low;
+        site.target_high = range.high;
+    })?;
 
     publish("site_state", &site)
 }

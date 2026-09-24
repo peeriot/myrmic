@@ -5,7 +5,7 @@ use core::time::Duration;
 use myrmic_sdk::outlet::Outlet;
 use myrmic_sdk::signal_layer::DigitalState;
 use myrmic_sdk::tap::Tap;
-use myrmic_sdk::{Callback, Metadata, Result, error, publish};
+use myrmic_sdk::{Callback, Metadata, Result, error, publish, warn};
 
 const TEMPERATURE_TAP: &str = "temperature";
 const HEAT_OUTLET: &str = "heat_relay";
@@ -20,11 +20,25 @@ fn init(_md: Metadata) -> Result<()> {
 
 #[myrmic_sdk::cmd]
 fn sample(_md: Metadata) -> Result<()> {
-    let Ok(Some(tap)) = Tap::resolve(TEMPERATURE_TAP) else {
-        return Ok(());
+    let tap = match Tap::resolve(TEMPERATURE_TAP) {
+        Ok(Some(tap)) => tap,
+        Ok(None) => {
+            let _ = warn!("tap '{TEMPERATURE_TAP}' is not registered on this node");
+            return Ok(());
+        }
+        Err(e) => {
+            let _ = error!("tap '{TEMPERATURE_TAP}': resolve failed: {e:?}");
+            return Err("tap resolve failed");
+        }
     };
-    let Ok(Some((_ts_ms, value))) = tap.read_typed::<f32>() else {
-        return Ok(());
+
+    let (_ts_ms, value) = match tap.read_typed::<f32>() {
+        Ok(Some(read)) => read,
+        Ok(None) => return Ok(()),
+        Err(e) => {
+            let _ = error!("tap '{TEMPERATURE_TAP}': read failed: {e:?}");
+            return Err("tap read failed");
+        }
     };
 
     publish("temperature", &value)

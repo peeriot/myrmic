@@ -62,18 +62,17 @@ myrmic delete site-control --app
 
 The board publishes its on-die temperature as the `temperature` tap and drives
 the relay on GPIO2. Both are declared by the firmware, so no pipeline or board
-file is needed. Build the `internal-temp` firmware example with your network:
+file is needed. Flash the `internal-temp` firmware example with your network and
+a runtime name:
 
 ```shell
 export WIFI_SSID='your-network' WIFI_PASS='your-password'
-cargo build -p firmware-examples --bin internal-temp --release \
-    --target riscv32imac-unknown-none-elf --no-default-features --features esp32c6 \
-    -Zbuild-std=core,alloc
+myrmic flash --name esp32c6-runtime embedded/esp-hal/firmware-examples \
+    --target internal-temp --monitor
 ```
 
-Flash the ELF at `target/riscv32imac-unknown-none-elf/release/internal-temp` with
-`espflash`. If the network blocks multicast scouting, set the runtime's address
-before building, and the firmware connects to it directly:
+If the network blocks multicast scouting, set the runtime's address before
+flashing, and the firmware connects to it directly:
 
 ```shell
 export TCP_DIRECT_ADDR="<linux-ip>:7447"
@@ -85,8 +84,8 @@ deploy with the Linux runtime untagged so the controller is placed on the board.
 `app_specs.yml` is Linux only, so it runs without the embedded toolchain:
 
 ```shell
-myrmic tags @<board-node> -t signal
-myrmic runtimes delete sc
+myrmic tags @esp32c6-runtime -t signal
+myrmic runtimes delete default
 myrmic runtimes start
 myrmic deploy app_specs.esp32.yml
 myrmic network

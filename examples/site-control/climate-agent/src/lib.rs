@@ -19,15 +19,17 @@ struct SiteState {
 fn site_state(_md: Metadata, site: SiteState) -> Result<()> {
     let heating = HEATING.load()?.unwrap_or_default();
 
-    if !heating && site.temperature < site.target_low {
-        controller(true)?;
-        HEATING.save(&true)?;
-        publish("heating_requested", &true)?;
-    } else if heating && site.temperature > site.target_high {
-        controller(false)?;
-        HEATING.save(&false)?;
-        publish("heating_requested", &false)?;
-    }
+    let desired = if !heating && site.temperature <= site.target_low {
+        true
+    } else if heating && site.temperature >= site.target_high {
+        false
+    } else {
+        return Ok(());
+    };
+
+    controller(desired)?;
+    HEATING.save(&desired)?;
+    publish("heating_requested", &desired)?;
 
     Ok(())
 }
