@@ -139,7 +139,7 @@ impl<'a> OnboardedDevice<'a> {
     {
         let secret = self.new_secret(rng);
         if let Some((secret, pub_key)) = secret {
-            let key = secret.compute_crypto_key(pub_key);
+            let key = secret.compute_crypto_key(pub_key)?;
 
             let (dh_installer_pub_key, buf) = secret.extract_pub_key(buf)?;
 
