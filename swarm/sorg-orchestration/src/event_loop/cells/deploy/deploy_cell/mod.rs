@@ -2,6 +2,8 @@ mod bridges;
 mod embedded;
 mod linux;
 
+pub(in crate::event_loop::cells) use bridges::terminate_bridge_cell;
+
 use cell_protocol::Gen;
 use cell_protocol::{ExecRuntimeInfo, PlacementKind, RuntimeKind, Sri};
 use sorg_common::{CellConfig, SpawnLineage, bail};

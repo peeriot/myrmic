@@ -22,7 +22,6 @@ use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::Result;
-use crate::error::deleted_element_err;
 use crate::event_loop::Runtime;
 
 /// Mirrors the exec plugin's default mailbox poll interval
@@ -47,9 +46,9 @@ fn bridge_cells() -> &'static Mutex<HashMap<Sri, BridgeKillSwitch>> {
 }
 
 /// Spawns `run` as the bridge cell's background task and registers a kill switch for it
-/// under `sri`, so a later [`Runtime::terminate_bridge_cell`] call can tear it down. Any
-/// previous entry for the same `sri` is dropped, which terminates it too — self-healing
-/// against a stale registration.
+/// under `sri`, so a later [`terminate_bridge_cell`] call can tear it down. Any previous
+/// entry for the same `sri` is dropped, which terminates it too — self-healing against a
+/// stale registration.
 fn register_bridge_cell<F>(sri: &Sri, run: F) -> PlacementKind
 where
     F: Future<Output = sorg_execution::Result<()>> + Send + 'static,
@@ -114,30 +113,26 @@ impl Runtime {
 
         Ok(register_bridge_cell(sri, async move { handle.run().await }))
     }
+}
 
-    /// Terminates a natively spawned bridge cell.
-    ///
-    /// Returns [`crate::Error::AlreadyDeleted`] if no live bridge is registered under
-    /// `sri` — it never spawned, or has already been terminated. This is a defined,
-    /// clean error rather than a panic.
-    pub(crate) fn terminate_bridge_cell(&self, sri: &Sri) -> Result<()> {
-        let removed = bridge_cells()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(sri);
+/// Terminates the bridge cell registered under `sri`, if this process runs one, and
+/// says whether it did. Entries only ever leave the registry through this function, so
+/// `false` means no bridge task for `sri` is alive in this process: it never spawned
+/// here, was already terminated, or the orchestrator has restarted since it spawned.
+pub(in crate::event_loop::cells) fn terminate_bridge_cell(sri: &Sri) -> bool {
+    let removed = bridge_cells()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(sri);
 
-        let orch_id = self.session.zid();
-        match removed {
-            Some(kill_switch) => {
-                // The receiving end may already be gone if the task ended on its own
-                // (e.g. an internal failure) — either way, the task is no longer running.
-                let _ = kill_switch.send(());
-                Ok(())
-            }
-            None => Err(deleted_element_err(format!(
-                "bridge cell '{sri}' (checked on orch '{orch_id}')"
-            ))),
+    match removed {
+        Some(kill_switch) => {
+            // The receiving end may already be gone if the task ended on its own
+            // (e.g. an internal failure) — either way, the task is no longer running.
+            let _ = kill_switch.send(());
+            true
         }
+        None => false,
     }
 }
 
@@ -191,32 +186,27 @@ fn mqtt_bridge_def(sri: &Sri, bridge: MqttBridge) -> Result<MqttBridgeDef> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sri, bridge_cells, register_bridge_cell};
-
-    // Exercises the registry mechanics `Runtime::terminate_bridge_cell` relies on:
-    // removing an sri that was never registered, and removing one a second time after
-    // it was already taken, both find nothing — the "never spawned or already
-    // terminated" edge case is a clean `None`, not a panic.
+    use super::{Sri, register_bridge_cell, terminate_bridge_cell};
 
     #[tokio::test]
-    async fn removing_a_never_registered_sri_finds_nothing() {
+    async fn terminating_a_never_registered_sri_reports_no_live_bridge() {
         let sri = Sri::from_target("unit-test-bridge-never-registered").unwrap();
-        assert!(bridge_cells().lock().unwrap().remove(&sri).is_none());
+        assert!(!terminate_bridge_cell(&sri));
     }
 
     #[tokio::test]
-    async fn removing_an_already_removed_sri_finds_nothing() {
+    async fn terminating_twice_reports_a_live_bridge_only_once() {
         let sri = Sri::from_target("unit-test-bridge-already-removed").unwrap();
         let kind = register_bridge_cell(&sri, async { Ok(()) });
         assert!(matches!(kind, super::PlacementKind::Bridge { sri: s } if s == sri));
 
         assert!(
-            bridge_cells().lock().unwrap().remove(&sri).is_some(),
+            terminate_bridge_cell(&sri),
             "the freshly registered bridge should be found once"
         );
         assert!(
-            bridge_cells().lock().unwrap().remove(&sri).is_none(),
-            "a second removal of the same sri should find nothing, not panic"
+            !terminate_bridge_cell(&sri),
+            "a second termination of the same sri should find nothing, not panic"
         );
     }
 }

@@ -6,11 +6,12 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use cell_protocol::PlacementKind;
+use cell_protocol::{Gen, PlacementEntry, PlacementKind};
 use claims::{assert_err, assert_none, assert_ok};
 use sorg_common::{
-    BodyTemplate, DeploymentError, HttpBridgeApi, MqttBridge, RequirementTags, WireHttpEndpoint,
-    WireHttpRequestTemplate, WireHttpResponseVariant, WireMqttIngress,
+    BodyTemplate, DeploymentError, FenceOutcome, HttpBridgeApi, MqttBridge, PlacementClaimOutcome,
+    RequirementTags, WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseVariant,
+    WireMqttIngress, claim_placement, commit_placement,
 };
 use sorg_tests::{HttpMockHandle, swarm_config};
 
@@ -320,4 +321,75 @@ async fn bridge_undeploy_when_absent() {
         err_msg.contains("not deployed"),
         "expected a 'not deployed' error, got: {err_msg}"
     );
+}
+
+/// Plants the placement row a bridge deploy leaves behind, with no bridge task behind
+/// it. This is the state an orchestrator restart produces: the bridge registry lives
+/// only in the process that spawned the bridge, the row outlives that process.
+async fn plant_orphaned_bridge_row(session: &zenoh::Session, name: &str) {
+    let sri = to_sri(name);
+    let gen_id = Gen::from_parts(1, 1);
+    let placeholder = PlacementEntry {
+        sri,
+        kind: PlacementKind::Placeholder,
+        app: Some(name.to_owned()),
+        gen_id,
+    };
+    assert_eq!(
+        assert_ok!(claim_placement(session, placeholder).await),
+        PlacementClaimOutcome::Claimed
+    );
+    let entry = PlacementEntry {
+        sri,
+        kind: PlacementKind::Bridge { sri },
+        app: Some(name.to_owned()),
+        gen_id,
+    };
+    assert_eq!(
+        assert_ok!(commit_placement(session, entry).await),
+        FenceOutcome::Applied
+    );
+}
+
+/// A bridge row whose bridge is no longer running anywhere must still undeploy.
+/// Releasing the row is the authoritative delete, and nothing else ever releases it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn bridge_undeploy_releases_row_with_no_bridge_behind_it() {
+    const ORPHAN_SRI: &str = "orphaned_bridge";
+    let swarm = swarm_config!("cells/orch_only.jsonnet");
+    let test_app = spawn_test_app_with_swarm(swarm).await;
+
+    plant_orphaned_bridge_row(test_app.session(), ORPHAN_SRI).await;
+    assert!(test_app.is_cell_registered(ORPHAN_SRI).await);
+
+    test_app.undeploy_cell(ORPHAN_SRI).await;
+
+    assert!(!test_app.is_cell_registered(ORPHAN_SRI).await);
+}
+
+/// The same orphan seen from the app: deleting the app must clear the row so the app
+/// name is free again, and a fresh deploy under that name must then be admitted rather
+/// than rejected as already deployed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn app_delete_clears_orphaned_bridge_row_and_frees_the_app_name() {
+    const ORPHAN_SRI: &str = "orphaned_app_bridge";
+    let swarm = swarm_config!("cells/cells.jsonnet");
+    let test_app = spawn_test_app_with_swarm(swarm).await;
+    let sorg = sorg_client::Client::new(test_app.session().clone());
+
+    plant_orphaned_bridge_row(test_app.session(), ORPHAN_SRI).await;
+
+    assert_ok!(sorg.delete_application(ORPHAN_SRI).await);
+    assert!(!test_app.is_cell_registered(ORPHAN_SRI).await);
+
+    let mock_server = HttpMockHandle::start().await;
+    assert_ok!(
+        sorg.deploy_http_bridge(
+            to_sri(ORPHAN_SRI),
+            http_bridge_api(ORPHAN_SRI, mock_server.url()),
+            RequirementTags::default(),
+        )
+        .await
+    );
+    assert!(test_app.is_cell_registered(ORPHAN_SRI).await);
 }

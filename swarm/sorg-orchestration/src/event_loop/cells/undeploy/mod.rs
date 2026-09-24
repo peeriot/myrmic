@@ -1,4 +1,3 @@
-mod bridge;
 mod embedded;
 mod linux;
 
@@ -10,6 +9,7 @@ use sorg_common::{
 use tracing::warn;
 use zenoh::query::Query;
 
+use super::deploy::terminate_bridge_cell;
 use crate::Result;
 use crate::event_loop::Runtime;
 
@@ -70,10 +70,17 @@ impl Runtime {
                 }
             }
             PlacementKind::Bridge { ref sri } => {
-                // Bridges run on the orchestrator and are not fenced, so their
-                // teardown stays strict — dropping the row on a failed teardown
-                // would leak a live bridge with nothing to reap it.
-                self.undeploy_bridge_cell(sri)?;
+                // A miss means no bridge task runs in this process — typically
+                // the orchestrator restarted and the row outlived it. The row is
+                // what blocks the SRI and the app name, so releasing it below
+                // stays the authoritative delete, as for wasm cells. A bridge
+                // still alive in another orchestrator process is not reaped here.
+                if !terminate_bridge_cell(sri) {
+                    warn!(
+                        "undeploy '{cell_sri}': no live bridge registered on this orchestrator; \
+                         releasing rows anyway"
+                    );
+                }
             }
             PlacementKind::Native { runtime } => {
                 // The node's firmware is the authority on its own cell: there is
@@ -160,7 +167,11 @@ impl Runtime {
     ) {
         let result = match kind {
             PlacementKind::Wasm { runtime } => self.undeploy_wasm_cell(sri, gen_id, runtime).await,
-            PlacementKind::Bridge { sri: bridge_sri } => self.undeploy_bridge_cell(bridge_sri),
+            // A bridge that never registered has nothing to roll back.
+            PlacementKind::Bridge { sri: bridge_sri } => {
+                terminate_bridge_cell(bridge_sri);
+                return;
+            }
             // Nothing the orchestrator deployed, so nothing for it to roll back.
             PlacementKind::Native { .. } | PlacementKind::Placeholder => return,
         };

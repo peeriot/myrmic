@@ -2,6 +2,8 @@ mod cell_deploy;
 mod deploy_cell;
 pub(crate) mod placement;
 
+pub(super) use deploy_cell::terminate_bridge_cell;
+
 use sorg_common::{CellFailureKind, DeploymentError, SorgPayload};
 use tracing::warn;
 use zenoh::query::Query;
