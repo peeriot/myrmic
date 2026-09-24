@@ -28,7 +28,6 @@ plugin-onboarding = [
     "dep:swarm-onboarding",
     "dep:swarm-onboarding-request",
     "dep:zenoh-traits",
-    "dep:futures",
     "dep:thiserror",
     "dep:rand-08",
     "dep:embassy-time",
@@ -138,7 +137,6 @@ rumqttd = { workspace = true, optional = true }
 swarm-onboarding = { workspace = true, optional = true }
 swarm-onboarding-request = { workspace = true, optional = true }
 zenoh-traits = { workspace = true, features = ["zenoh"], optional = true }
-futures = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 rand-08 = { workspace = true, features = ["getrandom"], optional = true }
 embassy-time = { version = "0.5", features = ["std", "generic-queue-8"], optional = true } # 8 because `bt-hci-linux` wrongly enables `generic-queue-8`

@@ -81,6 +81,7 @@ where
     /// - `Ok(Some(key))`: The derived AES256-GCM key if the peer public key was provided.
     /// - `Ok(None)`: If no peer public key was provided.
     /// - `Err(ErrorKind::OutOfMemory)`: The buffer was not large enough to hold the decoded public key.
+    /// - `Err(ErrorKind::InvalidData)`: The peer public key is not a valid point on the curve.
     pub fn derive_crypto_key(
         &self,
         peer_pub_key_base64: Option<&str>,
@@ -90,7 +91,7 @@ where
             let (peer_pub_key, _) =
                 base64_decode(peer_pub_key, buf).map_err(|_| ErrorKind::OutOfMemory)?;
 
-            let key = self.compute_crypto_key(peer_pub_key);
+            let key = self.compute_crypto_key(peer_pub_key)?;
 
             Ok(Some(key))
         } else {
@@ -101,14 +102,14 @@ where
     /// Compute the shared secret and derive a symmetric AES256-GCM key using HKDF-SHA256.
     ///
     /// # Arguments
-    /// - `rng`: A cryptographically secure random number generator.
-    /// - `peer_public_key`: The peer's public key in SEC1 encoded format.
+    /// - `peer_pub_key`: The peer's public key in SEC1 encoded format.
     ///
     /// # Returns
-    /// - A tuple containing the ephemeral public key in SEC1 encoded format and the derived AES256-GCM key.
-    #[allow(unused)]
-    pub fn compute_crypto_key(&self, peer_pub_key: &[u8]) -> Key<Aes256Gcm> {
-        let peer_pub_key = PublicKey::from_sec1_bytes(peer_pub_key).unwrap(); // TODO
+    /// - `Ok(key)`: The derived AES256-GCM key.
+    /// - `Err(ErrorKind::InvalidData)`: The peer public key is not a valid point on the curve.
+    pub fn compute_crypto_key(&self, peer_pub_key: &[u8]) -> Result<Key<Aes256Gcm>, ErrorKind> {
+        let peer_pub_key =
+            PublicKey::from_sec1_bytes(peer_pub_key).map_err(|_| ErrorKind::InvalidData)?;
 
         let hkdf = self
             .compute_shared_secret(&peer_pub_key)
@@ -117,7 +118,7 @@ where
         let mut okm = [0; 32];
         hkdf.expand(&[], &mut okm).unwrap();
 
-        okm.into()
+        Ok(okm.into())
     }
 
     /// Compute the shared secret using ECDH
@@ -142,5 +143,44 @@ where
             Self::Ephemeral(ephemeral_secret) => ephemeral_secret.public_key(),
             Self::SecretKey(secret_key) => secret_key.public_key(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use elliptic_curve::sec1::EncodedPoint;
+    use embedded_io_async::ErrorKind;
+    use p256::NistP256;
+
+    use super::Secret;
+    use crate::utils::base64::base64_encode;
+
+    #[test]
+    fn off_curve_peer_key_is_rejected() {
+        let mut point = [0u8; 65];
+        point[0] = 0x04;
+        let mut encoded = [0u8; 128];
+        let (peer_key, _) = base64_encode(&point, &mut encoded).unwrap();
+
+        let secret = Secret::<NistP256>::new_ephemeral(&mut rand_08::thread_rng());
+        let mut buf = [0u8; 128];
+
+        assert_eq!(
+            secret.derive_crypto_key(Some(peer_key), &mut buf),
+            Err(ErrorKind::InvalidData)
+        );
+    }
+
+    #[test]
+    fn valid_peer_key_derives_same_key() {
+        let a = Secret::<NistP256>::new_ephemeral(&mut rand_08::thread_rng());
+        let b = Secret::<NistP256>::new_ephemeral(&mut rand_08::thread_rng());
+        let a_pub = EncodedPoint::<NistP256>::from(a.public_key());
+        let b_pub = EncodedPoint::<NistP256>::from(b.public_key());
+
+        let a_key = a.compute_crypto_key(b_pub.as_bytes()).unwrap();
+        let b_key = b.compute_crypto_key(a_pub.as_bytes()).unwrap();
+
+        assert_eq!(a_key, b_key);
     }
 }

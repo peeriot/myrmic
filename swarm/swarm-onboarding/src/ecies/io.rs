@@ -8,6 +8,9 @@ use embedded_io_async::{Error, ErrorKind, ErrorType, Read, ReadExactError, Write
 
 use crate::io::{EitherWrapper, NoopWrapper, ReadWrapper, WriteWrapper};
 
+/// Size of the buffer a crypto reader or writer uses for one frame.
+const CRYPTO_BUF_LEN: usize = 512;
+
 /// Create a crypto-enabled reader wrapper if a key is provided.
 ///
 /// # Arguments
@@ -24,7 +27,7 @@ pub fn create_crypto_read_opt<'a>(
     &'a mut [u8],
 ) {
     if let Some(key) = key {
-        let (crypto_buf, buf) = buf.split_at_mut(512);
+        let (crypto_buf, buf) = buf.split_at_mut(CRYPTO_BUF_LEN);
         let crypto = Aes256Gcm::new(key);
 
         (
@@ -57,7 +60,7 @@ where
     C: RngCore,
 {
     if let Some(key) = key {
-        let (crypto_buf, buf) = buf.split_at_mut(512);
+        let (crypto_buf, buf) = buf.split_at_mut(CRYPTO_BUF_LEN);
         let crypto = Aes256Gcm::new(key);
 
         (
@@ -217,6 +220,10 @@ where
             .map_err(Self::map_err)?;
 
         let len = u16::from_le_bytes(len_bytes) as usize;
+        if len > self.buf.len() {
+            return Err(ErrorKind::InvalidData);
+        }
+
         self.read
             .read_exact(&mut self.buf[..len])
             .await
@@ -383,5 +390,54 @@ where
     async fn flush(&mut self) -> Result<(), Self::Error> {
         self.send().await?;
         self.write.flush().await.map_err(Self::map_err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aes_gcm::{Aes256Gcm, KeyInit as _};
+    use embedded_io_async::{ErrorKind, Read as _, Write as _};
+
+    use super::{CRYPTO_BUF_LEN, CryptWriter, CryptoReader};
+
+    #[test]
+    fn oversized_frame_is_rejected() {
+        let len = CRYPTO_BUF_LEN + 1;
+        let mut input = [0u8; 12 + 16 + 2 + CRYPTO_BUF_LEN + 1];
+        input[28..30].copy_from_slice(&u16::try_from(len).unwrap().to_le_bytes());
+
+        let mut cypher = Aes256Gcm::new(&[7u8; 32].into());
+        let mut buf = [0u8; CRYPTO_BUF_LEN];
+        let mut reader = CryptoReader::new(&mut cypher, &mut buf, &input[..]);
+
+        let mut out = [0u8; 16];
+        assert_eq!(
+            embassy_futures::block_on(reader.read(&mut out)),
+            Err(ErrorKind::InvalidData)
+        );
+    }
+
+    #[test]
+    fn full_frame_round_trips() {
+        let data = [0x5au8; CRYPTO_BUF_LEN];
+        let mut wire = [0u8; 12 + 16 + 2 + CRYPTO_BUF_LEN];
+        let mut cypher = Aes256Gcm::new(&[7u8; 32].into());
+
+        {
+            let mut rng = rand_08::thread_rng();
+            let mut buf = [0u8; CRYPTO_BUF_LEN];
+            let mut writer = CryptWriter::new(&mut cypher, &mut rng, &mut buf, &mut wire[..]);
+            embassy_futures::block_on(async {
+                writer.write_all(&data).await.unwrap();
+                writer.flush().await.unwrap();
+            });
+        }
+
+        let mut buf = [0u8; CRYPTO_BUF_LEN];
+        let mut reader = CryptoReader::new(&mut cypher, &mut buf, &wire[..]);
+        let mut out = [0u8; CRYPTO_BUF_LEN];
+        embassy_futures::block_on(reader.read_exact(&mut out)).unwrap();
+
+        assert_eq!(out, data);
     }
 }

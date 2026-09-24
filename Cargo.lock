@@ -10398,7 +10398,6 @@ dependencies = [
  "db-commons",
  "embassy-time",
  "flume 0.11.1",
- "futures",
  "futures-util",
  "humantime",
  "introspection-common",
