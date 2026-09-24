@@ -179,8 +179,14 @@ where
     ) -> Result<(InstallerMeta<'b>, &'b mut [u8]), DeviceError<P::Error, C::Error>> {
         info!("Waiting for onboarding meta-data on topic: {}...", topic);
 
+        if buf.len() < InstallerMeta::MAX_BUF_SIZE {
+            Err(BufferOverflowError)?;
+        }
+
+        let (meta_buf, buf) = buf.split_at_mut(InstallerMeta::MAX_BUF_SIZE);
+
         let size = {
-            let mut consumer = SliceConsumer::new(buf);
+            let mut consumer = SliceConsumer::new(meta_buf);
 
             get(
                 &self.session,
@@ -194,10 +200,8 @@ where
             consumer.size()
         };
 
-        let (data, buf) = buf.split_at_mut(unwrap!(size));
-
-        let meta =
-            InstallerMeta::deserialize(data).map_err(|_| DeviceError::InvalidInstallerMeta)?;
+        let meta = InstallerMeta::deserialize(&meta_buf[..unwrap!(size)])
+            .map_err(|_| DeviceError::InvalidInstallerMeta)?;
 
         info!(
             "Successfully received onboarding meta-data: {:?} on topic {}",
@@ -308,3 +312,203 @@ macro_rules! write_dbuf {
 }
 
 use write_dbuf;
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use embassy_executor as _;
+
+    use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
+
+    use zenoh_traits::{Close, Receiver, SendPayload, Sender, Session};
+
+    use crate::io::{SerdeObj, SliceConsumer, SliceProducer};
+    use crate::{DeviceError, InstallerMeta};
+
+    use super::DeviceOnboarding;
+
+    #[test]
+    fn oversized_meta_is_rejected() {
+        let payload = meta(1000);
+        let onboarding = DeviceOnboarding::new(
+            MetaSession(payload.as_bytes()),
+            SliceProducer::new(&[]),
+            SliceConsumer::new(&mut []),
+        );
+        let mut buf = [0u8; 4096];
+
+        let res = embassy_futures::block_on(onboarding.receive_meta("meta", &mut buf));
+
+        assert!(
+            matches!(res, Err(DeviceError::Io(ErrorKind::OutOfMemory))),
+            "{:?}",
+            res.map(|(_, rest)| rest.len())
+        );
+    }
+
+    #[test]
+    fn meta_leaves_fixed_remainder() {
+        let payload = meta(0);
+        let onboarding = DeviceOnboarding::new(
+            MetaSession(payload.as_bytes()),
+            SliceProducer::new(&[]),
+            SliceConsumer::new(&mut []),
+        );
+        let mut buf = [0u8; 4096];
+
+        let (_, rest) =
+            embassy_futures::block_on(onboarding.receive_meta("meta", &mut buf)).unwrap();
+
+        assert_eq!(rest.len(), 4096 - InstallerMeta::MAX_BUF_SIZE);
+    }
+
+    fn meta(padding: usize) -> std::string::String {
+        std::format!(
+            "{{\"dh_installer_pub_key\"{}:\"{}\"}}",
+            " ".repeat(padding),
+            "A".repeat(87)
+        )
+    }
+
+    struct MetaSession<'p>(&'p [u8]);
+
+    struct MetaGetter<'p>(Option<&'p [u8]>);
+
+    struct MetaPayload<'p>(&'p [u8]);
+
+    enum Never {}
+
+    impl Session for MetaSession<'_> {
+        type Error = ErrorKind;
+        type Getter<'a>
+            = MetaGetter<'a>
+        where
+            Self: 'a;
+        type Setter<'a>
+            = Never
+        where
+            Self: 'a;
+        type Publisher<'a>
+            = Never
+        where
+            Self: 'a;
+        type Subscriber<'a>
+            = Never
+        where
+            Self: 'a;
+
+        async fn get<'a>(&'a self, _: &'a str) -> Result<MetaGetter<'a>, ErrorKind> {
+            Ok(MetaGetter(Some(self.0)))
+        }
+
+        async fn set<'a>(&'a self, _: &'a str) -> Result<Never, ErrorKind> {
+            Err(ErrorKind::Unsupported)
+        }
+
+        async fn publish<'a>(&'a self, _: &'a str) -> Result<Never, ErrorKind> {
+            Err(ErrorKind::Unsupported)
+        }
+
+        async fn subscribe<'a>(&'a self, _: &'a str) -> Result<Never, ErrorKind> {
+            Err(ErrorKind::Unsupported)
+        }
+    }
+
+    impl ErrorType for MetaGetter<'_> {
+        type Error = ErrorKind;
+    }
+
+    impl Close for MetaGetter<'_> {
+        async fn close(&mut self) -> Result<(), ErrorKind> {
+            Ok(())
+        }
+    }
+
+    impl Receiver for MetaGetter<'_> {
+        type Read<'a>
+            = MetaPayload<'a>
+        where
+            Self: 'a;
+
+        async fn receive(&mut self) -> Result<(&str, MetaPayload<'_>), ErrorKind> {
+            self.0
+                .take()
+                .map(|payload| ("", MetaPayload(payload)))
+                .ok_or(ErrorKind::Other)
+        }
+    }
+
+    impl ErrorType for MetaPayload<'_> {
+        type Error = ErrorKind;
+    }
+
+    impl Close for MetaPayload<'_> {
+        async fn close(&mut self) -> Result<(), ErrorKind> {
+            Ok(())
+        }
+    }
+
+    impl Read for MetaPayload<'_> {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrorKind> {
+            let Ok(len) = self.0.read(buf).await;
+            Ok(len)
+        }
+    }
+
+    impl ErrorType for Never {
+        type Error = ErrorKind;
+    }
+
+    impl Close for Never {
+        async fn close(&mut self) -> Result<(), ErrorKind> {
+            match *self {}
+        }
+    }
+
+    impl Read for Never {
+        async fn read(&mut self, _: &mut [u8]) -> Result<usize, ErrorKind> {
+            match *self {}
+        }
+    }
+
+    impl Write for Never {
+        async fn write(&mut self, _: &[u8]) -> Result<usize, ErrorKind> {
+            match *self {}
+        }
+
+        async fn flush(&mut self) -> Result<(), ErrorKind> {
+            match *self {}
+        }
+    }
+
+    impl Receiver for Never {
+        type Read<'a>
+            = Never
+        where
+            Self: 'a;
+
+        async fn receive(&mut self) -> Result<(&str, Never), ErrorKind> {
+            match *self {}
+        }
+    }
+
+    impl SendPayload<'_> for Never {
+        type Write = Never;
+
+        async fn with_encoding(self, _: &str) -> Result<Never, ErrorKind> {
+            match self {}
+        }
+    }
+
+    impl Sender for Never {
+        type SendPayload<'a>
+            = Never
+        where
+            Self: 'a;
+
+        async fn send(&mut self) -> Result<Never, ErrorKind> {
+            match *self {}
+        }
+    }
+}
