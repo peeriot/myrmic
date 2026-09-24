@@ -1,10 +1,10 @@
-use std::{str::FromStr, time::Duration};
+use std::str::FromStr;
 
 use sorg_tests::enable_test_logging;
 use sorg_tests::swarm_config;
 use zenoh::config::ZenohId;
 
-use crate::integration::{assert_plugin_configured, test_client};
+use crate::integration::{assert_plugin_configured, test_client, wait_for_swarm_status};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn empty() {
@@ -27,10 +27,9 @@ async fn one_node() {
     // Arrange - one swarm node and a client
     let _swarm_handle = swarm_config!("one_node.jsonnet");
     let client = test_client().await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Act - request swarm status
-    let mut status = client.swarm_status().await.unwrap();
+    let mut status = wait_for_swarm_status(&client, 1).await;
 
     // Assert - We expect
     // - one status in the response
@@ -63,7 +62,7 @@ async fn three_nodes() {
     let client = test_client().await;
 
     // Act - request swarm status
-    let status = client.swarm_status().await.unwrap();
+    let status = wait_for_swarm_status(&client, 3).await;
 
     // Assert
     assert_eq!(3, status.len());
