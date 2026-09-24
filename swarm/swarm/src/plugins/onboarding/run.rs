@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures::StreamExt;
 
 use swarm_onboarding::io::{NoopConsumer, SerdeObjError, SliceProducer};
@@ -10,7 +12,7 @@ use swarm_onboarding::{
 use thiserror::Error;
 use tokio::sync::oneshot::Receiver;
 
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use zenoh::Session;
 
@@ -20,7 +22,10 @@ use zenoh_traits::zenoh::ZSession;
 
 use swarm_onboarding_request::{Network, ONBOARDING_REQUEST_TOPIC, OnboardingRequest};
 
-pub(super) async fn run(session: Session, poison_rcv: Receiver<()>) {
+#[cfg(test)]
+mod tests;
+
+pub(super) async fn run(session: Session, timeout: Duration, poison_rcv: Receiver<()>) {
     // NOTE:
     // The onboarding process is spawned in Tokio's LocalSet
     // because we are seemingly hitting a rustc bug where Rust cannot derive the `Send` auto-trait
@@ -58,7 +63,7 @@ pub(super) async fn run(session: Session, poison_rcv: Receiver<()>) {
     // }
 
     debug!("spawning sorg onboarding");
-    match run_onboarding_until(session, poison_rcv).await {
+    match run_onboarding_until(session, timeout, poison_rcv).await {
         Ok(()) => debug!("sorg onboarding terminated"),
         Err(err) => error!("sorg onboarding terminated with an error: {err}"),
     }
@@ -82,12 +87,13 @@ enum OnboardingError {
 
 async fn run_onboarding_until(
     session: Session,
+    timeout: Duration,
     off_rcv: Receiver<()>,
 ) -> Result<(), OnboardingError> {
     info!("Spawning swarm-onboarding");
 
     tokio::select! {
-        _ = run_onboarding(session) => {
+        _ = run_onboarding(session, timeout) => {
             info!("Onboarding task completed");
         },
         _ = off_rcv => {
@@ -98,7 +104,7 @@ async fn run_onboarding_until(
     Ok(())
 }
 
-async fn run_onboarding(session: Session) -> Result<(), OnboardingError> {
+async fn run_onboarding(session: Session, timeout: Duration) -> Result<(), OnboardingError> {
     let subscriber = session.declare_subscriber(ONBOARDING_REQUEST_TOPIC).await?;
 
     let mut onboarding_pending = subscriber.stream();
@@ -106,8 +112,10 @@ async fn run_onboarding(session: Session) -> Result<(), OnboardingError> {
     while let Some(next) = onboarding_pending.next().await {
         let payload = next.payload();
 
-        if let Err(r) = process_onboarding_req(&session, payload).await {
-            error!("Failed to process onboarding request: {r}");
+        match tokio::time::timeout(timeout, process_onboarding_req(&session, payload)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(r)) => error!("Failed to process onboarding request: {r}"),
+            Err(_) => warn!("Onboarding request timed out after {timeout:?}"),
         }
     }
 

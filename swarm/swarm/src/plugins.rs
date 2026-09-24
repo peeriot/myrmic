@@ -108,3 +108,20 @@ pub trait MyrmicPlugin {
         config: Self::Config,
     ) -> impl Future<Output = zenoh::Result<()>> + Send + 'static;
 }
+
+/// Deserializes an optional humantime duration string (e.g. `"100ms"`, `"30s"`, `"1min"`).
+#[cfg(any(feature = "plugin-db", feature = "plugin-onboarding"))]
+pub(crate) fn deserialize_optional_duration<'de, D>(
+    deserializer: D,
+) -> Result<Option<std::time::Duration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    match s {
+        None => Ok(None),
+        Some(s) => humantime::parse_duration(&s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}

@@ -46,6 +46,12 @@ When this section is present, the runtime also runs an embedded gateway - it sta
 
 To run the gateway as its own process independently of a runtime, use [`myrmic gateway`](../02_myrmic-cli/10_gateway.md) instead.
 
+## `onboarding`
+
+When this section is present, the runtime also runs the onboarding installer, which onboards new devices from onboarding requests, one request at a time. An empty section (`onboarding: {}`) enables it with the defaults.
+
+- `timeout` *(optional)* - How long a single onboarding may take before the installer abandons it and serves the next request. Accepts [humantime](https://docs.rs/humantime/latest/humantime/) duration strings (e.g. `"30s"`, `"5min"`). Defaults to `"5min"`.
+
 ## `orchestration`
 
 Configures the self-organization behavior.

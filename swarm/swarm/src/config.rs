@@ -90,4 +90,33 @@ mod tests {
             "the listen endpoint must survive deserialization, got:\n{round_tripped}",
         );
     }
+
+    #[cfg(feature = "plugin-onboarding")]
+    #[test]
+    fn the_onboarding_timeout_deserializes() {
+        use std::time::Duration;
+
+        let cases: [(&str, Option<Option<Duration>>); 4] = [
+            ("{}", None),
+            ("onboarding: {}", Some(None)),
+            (
+                "onboarding:\n  timeout: \"30s\"",
+                Some(Some(Duration::from_secs(30))),
+            ),
+            ("onboarding:\n  timeout: null", Some(None)),
+        ];
+        for (yaml, expected) in cases {
+            let config: SwarmConfig = serde_yaml::from_str(yaml)
+                .unwrap_or_else(|err| panic!("{yaml:?} must deserialize: {err}"));
+            let timeout = config
+                .plugins
+                .onboarding
+                .map(|onboarding| onboarding.timeout);
+            assert_eq!(timeout, expected, "{yaml:?}");
+        }
+
+        let err = serde_yaml::from_str::<SwarmConfig>("onboarding:\n  timeout: \"bananas\"")
+            .expect_err("an unparsable timeout must be rejected");
+        assert!(err.to_string().contains("expected number"), "{err}");
+    }
 }

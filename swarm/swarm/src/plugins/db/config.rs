@@ -1,5 +1,7 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
+
+use crate::plugins::deserialize_optional_duration;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -56,17 +58,4 @@ pub struct StoreConfig {
     /// Defaults to 30 seconds when omitted.
     #[serde(default, deserialize_with = "deserialize_optional_duration")]
     pub offload_escalation_timeout: Option<Duration>,
-}
-
-fn deserialize_optional_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-    match s {
-        None => Ok(None),
-        Some(s) => humantime::parse_duration(&s)
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-    }
 }
