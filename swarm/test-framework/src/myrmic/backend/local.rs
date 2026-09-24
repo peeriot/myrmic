@@ -1,4 +1,11 @@
 use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::Deserialize as _;
+use swarm_telemetry::db::opentelemetry_proto::tonic::logs::v1::LogRecord;
+use swarm_telemetry::debug::{DebugCommand, DebugEvent};
+use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdout};
 
 use crate::myrmic::{BuildTarget, cell::CellSpec};
 
@@ -10,6 +17,72 @@ const INFO_PREFIX: &str = "INFO  ";
 #[derive(Clone)]
 pub struct LocalBinary {
     binary: PathBuf,
+}
+
+/// A running `myrmic telemetry debug`, read line by line. Dropping it kills the process.
+pub struct DebugListener {
+    // only held so the process lives as long as the listener (spawned with `kill_on_drop`)
+    _process: Child,
+    lines: Lines<BufReader<ChildStdout>>,
+}
+
+/// One entry of `myrmic telemetry debug --json`.
+#[derive(Debug)]
+pub enum DebugEntry {
+    /// a command stored in a cell's mailbox
+    Command(DebugCommand),
+    /// an event stored in the events mailbox
+    Event(DebugEvent),
+    /// a runtime log record
+    Log(DebugLog),
+}
+
+/// A log record as the debug stream prints it: the [`LogRecord`] plus its tracing target.
+#[derive(Debug, serde::Deserialize)]
+pub struct DebugLog {
+    pub target: Option<String>,
+    #[serde(flatten)]
+    pub record: LogRecord,
+}
+
+impl DebugListener {
+    /// the next entry of the debug stream, `None` once the process has closed its stdout
+    pub async fn next_line(&mut self) -> std::io::Result<Option<String>> {
+        self.lines.next_line().await
+    }
+
+    /// Wait for the next entry of the debug stream and parse it.
+    pub async fn next_entry(&mut self) -> DebugEntry {
+        let line = self
+            .next_line()
+            .await
+            .expect("failed to read the debug stream")
+            .expect("myrmic telemetry debug exited");
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .unwrap_or_else(|err| panic!("debug stream printed invalid JSON ({err}): {line}"));
+
+        if let Ok(command) = DebugCommand::deserialize(&value) {
+            DebugEntry::Command(command)
+        } else if let Ok(event) = DebugEvent::deserialize(&value) {
+            DebugEntry::Event(event)
+        } else {
+            // `LogRecord` defaults every missing field, so it would accept any object. This key
+            // is always printed for a log record and never for a mailbox entry.
+            assert!(
+                value.get("observedTimeUnixNano").is_some(),
+                "debug stream printed neither a mailbox entry nor a log record: {line}"
+            );
+            let log = DebugLog::deserialize(value)
+                .unwrap_or_else(|err| panic!("malformed log record ({err}): {line}"));
+            DebugEntry::Log(log)
+        }
+    }
+
+    /// [`Self::next_entry`], or `None` if no entry arrives within `timeout`. A line that was
+    /// only partly read when the deadline passed is kept for the next call.
+    pub async fn next_entry_timeout(&mut self, timeout: Duration) -> Option<DebugEntry> {
+        tokio::time::timeout(timeout, self.next_entry()).await.ok()
+    }
 }
 
 impl LocalBinary {
@@ -69,6 +142,54 @@ impl LocalBinary {
         }
 
         String::from_utf8_lossy(&output.stderr).into_owned()
+    }
+
+    /// Run `myrmic telemetry set-db-retention`, so connected nodes persist their telemetry for
+    /// `retention` (humantime, e.g. `1h`).
+    pub(crate) async fn set_db_retention(&self, retention: &str) {
+        let output = tokio::process::Command::new(&self.binary)
+            .arg("telemetry")
+            .arg("set-db-retention")
+            .arg(retention)
+            .output()
+            .await
+            .unwrap();
+
+        if !output.status.success() {
+            eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+            panic!("telemetry set-db-retention failed");
+        }
+    }
+
+    /// Start `myrmic telemetry debug --json`, optionally filtered to the cell `id` (SRI or SRN)
+    /// and with the cell log level raised to `level`.
+    pub(crate) fn get_debug_listener(
+        &self,
+        id: Option<&str>,
+        level: Option<&str>,
+    ) -> DebugListener {
+        let mut cmd = tokio::process::Command::new(&self.binary);
+        cmd.arg("telemetry").arg("debug").arg("--json");
+        if let Some(id) = id {
+            cmd.arg("--id").arg(id);
+        }
+        if let Some(level) = level {
+            cmd.arg("--level").arg(level);
+        }
+        let mut process = cmd
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn myrmic telemetry debug");
+        let stdout = process
+            .stdout
+            .take()
+            .expect("stdout was configured as piped");
+
+        DebugListener {
+            _process: process,
+            lines: BufReader::new(stdout).lines(),
+        }
     }
 
     /// Drop-only best-effort helper — used by the blocking delete variants; do not use for happy-path operations.

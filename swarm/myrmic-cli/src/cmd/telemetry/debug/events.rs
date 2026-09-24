@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use cell_protocol::{EVENTS_TABLE, MailboxEvent, NAMESPACE_CELLS};
 use db_client::v1::Subscription;
 use db_commons::models::{Cursor, Scope, Subject, events};
+use swarm_telemetry::debug::{DebugEvent, DebugItem, DebugPayload};
 use uuid::Uuid;
 
 use crate::args::Ctx;
-use crate::cmd::telemetry::debug::data::{DebugEvent, DebugItem, DebugPayload, insertion_time};
+use crate::cmd::telemetry::debug::data::insertion_time;
 use crate::cmd::telemetry::debug::mailbox;
 
 pub(crate) struct EventSubscriber {

@@ -2,9 +2,9 @@ use std::future::Future;
 use std::io::{Write, stdout};
 
 use db_commons::models::Cursor;
+use swarm_telemetry::debug::DebugItem;
 
 use crate::args::Ctx;
-use crate::cmd::telemetry::debug::data::DebugItem;
 use crate::cmd::telemetry::debug::stream::DebugStream;
 
 mod data;
@@ -319,12 +319,13 @@ async fn debug_writer(
 mod tests {
     use std::io::{Error, ErrorKind, Result as IoResult, Write};
 
-    use super::{DebugItem, print_item, run_then_restore};
+    use super::data::test_items::event_at;
+    use super::{print_item, run_then_restore};
 
     #[test]
     fn a_write_that_failed_is_reported_instead_of_panicking() {
         for json in [false, true] {
-            let err = print_item(&mut ClosedPipe, &DebugItem::event_at(3_000), json)
+            let err = print_item(&mut ClosedPipe, &event_at(3_000), json)
                 .expect_err("a closed stdout ends the stream, it does not panic");
 
             assert_eq!(

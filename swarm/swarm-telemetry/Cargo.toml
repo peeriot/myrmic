@@ -18,14 +18,17 @@ export-otlp = ["dep:opentelemetry-otlp"]
 anyhow = { workspace = true }
 base32 = { workspace = true, optional = true }
 db-client = { workspace = true, features = [ "zenoh" ], optional = true }
+hex = { workspace = true }
 humantime = { workspace = true }
+myrmic-common = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-proto = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true, features = [ "experimental_metadata_attributes" ] }
+postcard = { workspace = true }
 rand = { workspace = true }
-serde = { workspace = true, features = [ "alloc" ] }
+serde = { workspace = true, features = [ "alloc", "std" ] }
 serde_json = { workspace = true, features = [ "alloc" ] }
 tracing = { workspace = true }
 tracing-core = { workspace = true }
@@ -33,7 +36,7 @@ tracing-opentelemetry = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json", "tracing-log"] }
 tracing-appender = { workspace = true }
-uuid = { workspace = true, features = ["v5"] }
+uuid = { workspace = true, features = ["serde", "v5"] }
 zenoh = { workspace = true }
 
 [dev-dependencies]
@@ -47,7 +50,6 @@ zenoh = { workspace = true, default-features = true, features = ["unstable", "in
 swarm = { workspace = true, features = ["plugin-embedded-log"] }
 swarm-telemetry-embedded = { workspace = true }
 heapless = { workspace = true }
-postcard = { workspace = true }
 
 [lints]
 workspace = true

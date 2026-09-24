@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 pub use backend::MyrmicBackend;
 use backend::docker::DockerBinary;
-pub use backend::local::LocalBinary;
+pub use backend::local::{DebugEntry, DebugListener, DebugLog, LocalBinary};
 pub use backend::ssh::SshBinary;
 use futures::FutureExt as _;
 
@@ -103,6 +103,18 @@ impl Myrmic<LocalBinary> {
     pub async fn deploy_app_with_output(&self, app_spec: impl Into<PathBuf>) -> String {
         let path = app_spec.into();
         self.backend.deploy_app_with_output(&path).await
+    }
+
+    /// Runs `myrmic telemetry set-db-retention`. Log records only reach a
+    /// [`DebugListener`] while they are persisted.
+    pub async fn set_db_retention(&self, retention: &str) {
+        self.backend.set_db_retention(retention).await;
+    }
+
+    /// Runs `myrmic telemetry debug` for as long as the returned listener lives.
+    /// See [`LocalBinary::get_debug_listener`] for the arguments.
+    pub fn get_debug_listener(&self, id: Option<&str>, level: Option<&str>) -> DebugListener {
+        self.backend.get_debug_listener(id, level)
     }
 }
 

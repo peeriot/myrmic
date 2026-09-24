@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use db_commons::models::{Cursor, Id};
+use swarm_telemetry::debug::DebugItem;
 
-use super::data::{DebugItem, insertion_time};
+use super::data::insertion_time;
 
 /// The debug stream's ordering state: where the next log read starts, and the command and
 /// event items waiting for a log row to place them against. Carries no I/O.
@@ -82,12 +83,13 @@ mod tests {
     use cell_protocol::Sri;
     use uuid::{Builder, Uuid};
 
-    use super::{Cursor, DebugItem, DebugStream, Id};
+    use super::super::data::test_items::{command_at, event_at};
+    use super::{Cursor, DebugStream, Id};
 
     #[test]
     fn a_queued_item_never_becomes_the_log_cursor() {
         let mut stream = DebugStream::new(None);
-        stream.push(DebugItem::command_at(1_000, sri(1)));
+        stream.push(command_at(1_000, sri(1)));
 
         assert_eq!(stream.log_cursor(), None);
     }
@@ -96,7 +98,7 @@ mod tests {
     fn a_log_read_that_returned_nothing_leaves_the_next_read_alone() {
         let anchor = row_id(1_000);
         let mut stream = DebugStream::new(Some(Cursor::After(anchor.clone())));
-        stream.push(DebugItem::command_at(1_000, sri(1)));
+        stream.push(command_at(1_000, sri(1)));
         // the read that followed came back empty, so the queue was printed and emptied
         stream.drain_all(None);
 
@@ -116,23 +118,20 @@ mod tests {
     #[test]
     fn a_log_row_releases_the_items_queued_before_it() {
         let mut stream = DebugStream::new(None);
-        stream.push(DebugItem::command_at(1_000, sri(1)));
-        stream.push(DebugItem::command_at(2_000, sri(1)));
-        stream.push(DebugItem::command_at(3_000, sri(1)));
+        stream.push(command_at(1_000, sri(1)));
+        stream.push(command_at(2_000, sri(1)));
+        stream.push(command_at(3_000, sri(1)));
 
         let released = stream.flush_before(&row_id(2_000), None);
 
         assert_eq!(
             released,
-            vec![
-                DebugItem::command_at(1_000, sri(1)),
-                DebugItem::command_at(2_000, sri(1)),
-            ]
+            vec![command_at(1_000, sri(1)), command_at(2_000, sri(1)),]
         );
         // a row written after the item, rather than in the same instant, releases it too
         assert_eq!(
             stream.flush_before(&row_id(3_500), None),
-            vec![DebugItem::command_at(3_000, sri(1))]
+            vec![command_at(3_000, sri(1))]
         );
         assert_eq!(stream.drain_all(None), Vec::new());
     }
@@ -157,39 +156,36 @@ mod tests {
     #[test]
     fn a_released_item_for_another_cell_is_dropped_not_printed() {
         let mut stream = DebugStream::new(None);
-        stream.push(DebugItem::command_at(1_000, sri(1)));
-        stream.push(DebugItem::command_at(1_500, sri(2)));
+        stream.push(command_at(1_000, sri(1)));
+        stream.push(command_at(1_500, sri(2)));
 
         let released = stream.flush_before(&row_id(2_000), Some(&sri(1).to_string()));
 
-        assert_eq!(released, vec![DebugItem::command_at(1_000, sri(1))]);
+        assert_eq!(released, vec![command_at(1_000, sri(1))]);
         assert_eq!(stream.drain_all(None), Vec::new());
     }
 
     #[test]
     fn a_drain_with_no_new_log_rows_still_honours_the_cell_filter() {
         let mut stream = DebugStream::new(None);
-        stream.push(DebugItem::event_at(1_000));
-        stream.push(DebugItem::command_at(2_000, sri(2)));
-        stream.push(DebugItem::command_at(3_000, sri(1)));
+        stream.push(event_at(1_000));
+        stream.push(command_at(2_000, sri(2)));
+        stream.push(command_at(3_000, sri(1)));
 
         let drained = stream.drain_all(Some(&sri(1).to_string()));
 
-        assert_eq!(drained, vec![DebugItem::command_at(3_000, sri(1))]);
+        assert_eq!(drained, vec![command_at(3_000, sri(1))]);
     }
 
     #[test]
     fn two_items_in_the_same_millisecond_both_survive() {
         let mut stream = DebugStream::new(None);
-        stream.push(DebugItem::command_at(1_000, sri(1)));
-        stream.push(DebugItem::command_at(1_000, sri(2)));
+        stream.push(command_at(1_000, sri(1)));
+        stream.push(command_at(1_000, sri(2)));
 
         assert_eq!(
             stream.drain_all(None),
-            vec![
-                DebugItem::command_at(1_000, sri(1)),
-                DebugItem::command_at(1_000, sri(2)),
-            ]
+            vec![command_at(1_000, sri(1)), command_at(1_000, sri(2)),]
         );
     }
 

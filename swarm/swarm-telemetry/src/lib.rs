@@ -6,6 +6,7 @@ use opentelemetry_sdk::{
 };
 
 pub mod config;
+pub mod debug;
 pub(crate) mod otel;
 pub(crate) mod subscribers;
 mod trace;
