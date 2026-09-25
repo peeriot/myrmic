@@ -45,6 +45,10 @@
 //!
 //! Everything still on the board when `setup` returns is started for you.
 //!
+//! To use WiFi credentials loaded from application-owned persistent storage,
+//! call [`set_wifi_credentials`] during setup, before the network service
+//! starts. The built-in `WIFI_SSID` and `WIFI_PASS` values remain the fallback.
+//!
 //! # Taps and outlets
 //!
 //! The two directions across the cell boundary. A [`Tap`] is a value the
@@ -108,6 +112,7 @@ mod ble;
 pub use board::Board;
 pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
+pub use esp_common::esp_network::{set_wifi_credentials, wifi_ssid};
 pub use outlet::Outlet;
 pub use tap::{DeclareError, EventTap, Tap};
 

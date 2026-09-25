@@ -1,6 +1,6 @@
 //! WiFi + embassy-net bring-up and the zenoh session lifecycle.
 
-use alloc::vec;
+use alloc::{string::String, vec};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use edge_nal::io::Error;
@@ -9,6 +9,7 @@ use edge_nal_embassy::{Tcp, TcpBuffers, Udp, UdpBuffers};
 use embassy_futures::select::{Either, select};
 use embassy_net::{Runner, Stack, StackResources};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::once_lock::OnceLock;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use esp_hal::peripherals::WIFI;
@@ -75,6 +76,41 @@ const WIFI_PASS: &str = if let Some(wifi_pass) = option_env!("WIFI_PASS") {
 } else {
     "test"
 };
+
+struct WifiCredentials {
+    ssid: String,
+    password: String,
+}
+
+static WIFI_CREDENTIALS: OnceLock<WifiCredentials> = OnceLock::new();
+
+/// Override the build-time WiFi credentials before starting the network service.
+///
+/// A firmware can load credentials from its own persistent storage in its
+/// `#[esp_firmware::main]` setup function, then call this before setup returns.
+/// The same credentials are used for the initial connection and reconnects.
+///
+/// # Panics
+///
+/// Panics if called more than once. Call this only during startup, before
+/// `esp_firmware::start` (or before setup returns when using its entry point).
+pub fn set_wifi_credentials(ssid: String, password: String) {
+    assert!(
+        WIFI_CREDENTIALS
+            .init(WifiCredentials { ssid, password })
+            .is_ok(),
+        "WiFi credentials already configured"
+    );
+}
+
+/// Return the runtime SSID, if one was supplied before network startup.
+///
+/// Returns `None` when using the build-time `WIFI_SSID` fallback.
+pub fn wifi_ssid() -> Option<&'static str> {
+    WIFI_CREDENTIALS
+        .try_get()
+        .map(|credentials| credentials.ssid.as_str())
+}
 
 /// Set a direct TCP address to connect to the zenoh network (bypasses scouting)
 const TCP_DIRECT_ADDR: Option<&str> = option_env!("TCP_DIRECT_ADDR");
@@ -463,16 +499,20 @@ async fn get_peer_addr(
     }
 }
 
-/// Build the station configuration from the compile-time WiFi credentials.
+/// Build the station configuration from runtime or build-time WiFi credentials.
 #[expect(
     clippy::expect_used,
-    reason = "the credentials are compile-time constants; malformed ones are unrecoverable"
+    reason = "malformed startup credentials cannot be used to initialize WiFi"
 )]
 fn station_config() -> Config {
+    let (ssid, password) = WIFI_CREDENTIALS
+        .try_get()
+        .map(|credentials| (credentials.ssid.as_str(), credentials.password.as_str()))
+        .unwrap_or((WIFI_SSID, WIFI_PASS));
     let config = StationConfig::default()
-        .with_ssid(WIFI_SSID.try_into().expect("SSID exceeds the driver limit"))
+        .with_ssid(ssid.try_into().expect("SSID exceeds the driver limit"))
         .with_authentication(AuthenticationMethodConfig::Wpa2Personal(
-            WIFI_PASS
+            password
                 .try_into()
                 .expect("password exceeds the driver limit"),
         ));
