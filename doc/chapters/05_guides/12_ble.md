@@ -11,7 +11,7 @@ It provides:
 
 This guide covers each of these in practice and shows how to use them in a cell, with code snippets throughout.
 
-> **Note:** This guide is about a cell interacting with a BLE peripheral that is not part of the swarm - ot about two Myrmic Nodes communicating over BLE.
+> **Note:** This guide is about a cell interacting with a BLE peripheral that is not part of the swarm - not about two Myrmic Nodes communicating over BLE.
 
 ## Placement requirement
 
@@ -24,6 +24,8 @@ This also means the cell must run on the specific device that has a BLE radio. T
   ```bash
   myrmic runtimes start --tag ble
   ```
+
+  A runtime built with BLE support advertises the `ble` tag on its own, so for BLE this tag need not be set by hand - see [Prerequisite: a BLE-enabled runtime](#prerequisite-a-ble-enabled-runtime).
 
 - **Cell** - a cell declares what it needs to fulfil its function through tags at deploy time. The distributed swarm ensures the cell lands on a device that has the required capabilities to run it, and therefore the right hardware.
 
@@ -53,6 +55,20 @@ For more details, explanations, and examples see:
 - [Cell and application configuration](../10_reference/01_configuration/02_cell-and-application-configuration.md) - the full `app_specs.yml` schema
 - [`myrmic runtimes start`](../10_reference/02_myrmic-cli/04_runtimes/01_start.md) - starting a runtime with capability tags
 - [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md) - deploying cells and applications with placement tags
+
+## Prerequisite: a BLE-enabled runtime
+
+A cell can only use BLE on a runtime built with BLE support. Such a runtime advertises the `ble` tag automatically, while a runtime built without it does not and cannot serve BLE cells.
+
+### OS (Linux)
+
+The release packages of the `myrmic-cli` do not include BLE support. A BLE-enabled Linux runtime requires a `myrmic-cli` built from source with its `ble` feature - see [Install with BLE support](../01_quickstart/01_installation.md#with-ble-support).
+
+### Embedded (ESP32)
+
+The `ble` feature is enabled automatically for `esp32c5` and `esp32c61` firmware, but is off by default for `esp32c6`. A BLE-enabled C6 firmware requires building with the `ble` feature - see [Build a firmware with BLE support](../01_quickstart/02_installation-embedded.md#with-ble-support).
+
+With a BLE-enabled runtime in place, the rest of this guide covers how a cell uses the `ble` module.
 
 ## Non-blocking by design
 

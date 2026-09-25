@@ -1,6 +1,11 @@
 # BLE pairing
 
 > **Availability:** Linux and embedded runtimes, on a node with Bluetooth hardware
+> 
+> **Build-time requirement:** The Myrmic runtime has to be compiled with BLE support:
+>
+> - [Install the CLI with the `ble` feature on Linux](../../../01_quickstart/01_installation.md#with-ble-support)
+> - [Build the ESP32 firmware with the `ble` feature](../../../01_quickstart/02_installation-embedded.md#with-ble-support)
 
 Some peripherals keep their characteristics behind a secured link. Pairing with a passkey secures it.
 
