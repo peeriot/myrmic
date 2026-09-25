@@ -1,6 +1,6 @@
 # Part 2 - The Grow-Bed and Its State
 
-This is Part 2 of the [Resilience](../03_resilience.md) tutorial. You deploy the grow-bed on the spare boxes, find out where the swarm keeps its state, and kill the node it runs on - twice. The first time, whether the bed remembers is a matter of luck. The second time, you have made it likely. Along the way you learn the most important fact about state in Myrmic today: unless you ask for copies, it exists in **one**.
+This is Part 2 of the [Resilience](../05_resilience.md) tutorial. You deploy the grow-bed on the spare boxes, find out where the swarm keeps its state, and kill the node it runs on - twice. The first time, whether the bed remembers is a matter of luck. The second time, you have made it likely. Along the way you learn the most important fact about state in Myrmic today: unless you ask for copies, it exists in **one**.
 
 ![One copy: the bed's state is kept on a node of the swarm's choosing](../../../images/resilience-one-copy.svg)
 

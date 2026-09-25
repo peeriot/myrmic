@@ -1,6 +1,6 @@
 # Part 2 - The Grafana Stack
 
-This is Part 2 of the [Observability](../06_observability.md) tutorial. The runtime from Part 1 starts exporting its logs, traces and metrics over OpenTelemetry to a local Grafana stack, and you find the counter's activity again in Loki, Tempo and Prometheus.
+This is Part 2 of the [Observability](../07_observability.md) tutorial. The runtime from Part 1 starts exporting its logs, traces and metrics over OpenTelemetry to a local Grafana stack, and you find the counter's activity again in Loki, Tempo and Prometheus.
 
 It continues where [Part 1](./01_the-cli.md) left off: `my-runtime.yml` exists in `myrmic-quickstart/` and the runtime is running in Terminal 1. Two things change: the `myrmic` binary, and three lines of configuration.
 
@@ -134,7 +134,7 @@ The configuration is read at start, and the running runtime is still the old bin
 myrmic runtimes start my-runtime.yml
 ```
 
-Only telemetry emitted from now on is exported. The counter is gone too: a cell with the default restart policy is not brought back when its runtime stops (the [Resilience](../03_resilience.md) tutorial covers restart policies), and `myrmic cells` answers `No cells registered`. In Terminal 2, deploy it again and produce fresh activity:
+Only telemetry emitted from now on is exported. The counter is gone too: a cell with the default restart policy is not brought back when its runtime stops (the [Resilience](../05_resilience.md) tutorial covers restart policies), and `myrmic cells` answers `No cells registered`. In Terminal 2, deploy it again and produce fresh activity:
 
 ```bash
 myrmic deploy counter

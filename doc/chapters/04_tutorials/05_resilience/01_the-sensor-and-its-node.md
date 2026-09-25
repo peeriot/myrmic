@@ -1,6 +1,6 @@
 # Part 1 - The Sensor and Its Node
 
-This is Part 1 of the [Resilience](../03_resilience.md) tutorial. You start three runtimes that stand in for three machines, pin the sensor to the one with the probe, and then kill that runtime. Along the way you learn about *placement tags* - how a cell says where it may run - and *restart policies* - what the swarm does when a cell's runtime dies.
+This is Part 1 of the [Resilience](../05_resilience.md) tutorial. You start three runtimes that stand in for three machines, pin the sensor to the one with the probe, and then kill that runtime. Along the way you learn about *placement tags* - how a cell says where it may run - and *restart policies* - what the swarm does when a cell's runtime dies.
 
 ---
 

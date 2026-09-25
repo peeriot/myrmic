@@ -1,6 +1,6 @@
 # Part 3 - One Sensor per Bed
 
-This is Part 3 of the [Scaling Your Application](../04_scaling.md) tutorial. You build a **sensor root** that spawns one mock sensor per probe, and you pair each bed with its own sensor - **learning how spawned cells find each other by name alone, and how a cell filters a broadcast event down to its partner.**
+This is Part 3 of the [Scaling Your Application](../06_scaling.md) tutorial. You build a **sensor root** that spawns one mock sensor per probe, and you pair each bed with its own sensor - **learning how spawned cells find each other by name alone, and how a cell filters a broadcast event down to its partner.**
 
 It continues where [Part 2](./02_bringing-beds-back.md) left off: four runtimes, the root and four beds running, copies on every node.
 

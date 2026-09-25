@@ -1,6 +1,6 @@
 # Part 3 - The Whole Greenhouse
 
-This is the last part of the [Resilience](../03_resilience.md) tutorial. You add a fourth runtime for the pump, fold what you did by hand - placement tags and restart policies - into the application specification, bring the whole greenhouse up with one command, and replicate the application as a whole.
+This is the last part of the [Resilience](../05_resilience.md) tutorial. You add a fourth runtime for the pump, fold what you did by hand - placement tags and restart policies - into the application specification, bring the whole greenhouse up with one command, and replicate the application as a whole.
 
 ---
 

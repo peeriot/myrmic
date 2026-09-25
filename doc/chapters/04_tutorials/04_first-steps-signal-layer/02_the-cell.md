@@ -1,6 +1,6 @@
 # Part 2 - The Cell
 
-This is Part 2 of [First Steps with the Signal Layer](../03_first-steps-signal-layer.md). The
+This is Part 2 of [First Steps with the Signal Layer](../04_first-steps-signal-layer.md). The
 pipeline from Part 1 is running and serving two taps. Now you start a runtime, write a cell that
 reads them, and watch the values flow.
 
@@ -27,7 +27,7 @@ myrmic new ~/sl-tutorial/thermometer
 ```
 
 This builds against the same `PEERIOT_MYRMIC_SDK` checkout from the
-[prerequisites](../03_first-steps-signal-layer.md) (or pass `--sdk <path>`). The scaffold is a small
+[prerequisites](../04_first-steps-signal-layer.md) (or pass `--sdk <path>`). The scaffold is a small
 counter example. Replace `thermometer/src/lib.rs` entirely:
 
 ```rust

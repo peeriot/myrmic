@@ -11,7 +11,7 @@ Every cell you have deployed so far was a **root**: listed in `app_specs.yml`, d
 ## Prerequisites
 
 - Completed the [Smart Greenhouse](./02_smart-greenhouse.md): you know what the grow-bed and the sensor do, and how the dashboard reaches the browser.
-- Completed [Resilience](./03_resilience.md): you know what placement tags, restart policies and `myrmic replicate` do.
+- Completed [Resilience](./05_resilience.md): you know what placement tags, restart policies and `myrmic replicate` do.
 - No Myrmic runtime running. If one is, stop it: `myrmic runtimes delete <name>`.
 
 You will use three terminals:
@@ -26,7 +26,7 @@ The finished code is in the repository under `examples/scaling-greenhouse`. The 
 
 ## Tutorial Parts
 
-1. [A Root That Spawns](./04_scaling/01_roots-that-spawn.md) - build a bare grow-bed and a bed root, and spawn three beds from the CLI into two sectors - **learning how one cell creates another, and where it runs.**
-2. [Bringing Beds Back](./04_scaling/02_bringing-beds-back.md) - kill the node a bed runs on, then the node the root runs on, and teach the root to bring its beds back - **learning how a parent is told about a lost child and how it rebuilds its tree after its own restart.**
-3. [One Sensor per Bed](./04_scaling/03_one-sensor-per-bed.md) - build a sensor root, spawn one mock sensor per bed from the CLI, and pair each bed with its own sensor by name - **learning how spawned cells find each other and how a cell filters a broadcast event.**
-4. [The Dashboard](./04_scaling/04_the-dashboard.md) - put the greenhouse on a web page with two inputs that add beds and sensors from the browser - **learning how a browser sends commands into the swarm through the gateway.**
+1. [A Root That Spawns](./06_scaling/01_roots-that-spawn.md) - build a bare grow-bed and a bed root, and spawn three beds from the CLI into two sectors - **learning how one cell creates another, and where it runs.**
+2. [Bringing Beds Back](./06_scaling/02_bringing-beds-back.md) - kill the node a bed runs on, then the node the root runs on, and teach the root to bring its beds back - **learning how a parent is told about a lost child and how it rebuilds its tree after its own restart.**
+3. [One Sensor per Bed](./06_scaling/03_one-sensor-per-bed.md) - build a sensor root, spawn one mock sensor per bed from the CLI, and pair each bed with its own sensor by name - **learning how spawned cells find each other and how a cell filters a broadcast event.**
+4. [The Dashboard](./06_scaling/04_the-dashboard.md) - put the greenhouse on a web page with two inputs that add beds and sensors from the browser - **learning how a browser sends commands into the swarm through the gateway.**

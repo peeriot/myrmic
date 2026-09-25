@@ -1,6 +1,6 @@
 # Part 2 - Bringing Beds Back
 
-This is Part 2 of the [Scaling Your Application](../04_scaling.md) tutorial. You kill the node a bed runs on and teach the bed root to bring the bed back; then you kill the node the root runs on and see what that does to the beds - **learning how a parent is told about a lost child, and how it rebuilds its tree after its own restart.**
+This is Part 2 of the [Scaling Your Application](../06_scaling.md) tutorial. You kill the node a bed runs on and teach the bed root to bring the bed back; then you kill the node the root runs on and see what that does to the beds - **learning how a parent is told about a lost child, and how it rebuilds its tree after its own restart.**
 
 It continues where [Part 1](./01_roots-that-spawn.md) left off: four runtimes, the root and three beds running, Terminal 2 on `myrmic subscribe bed_state`.
 
@@ -8,7 +8,7 @@ It continues where [Part 1](./01_roots-that-spawn.md) left off: four runtimes, t
 
 ## Step 6 - Copies First
 
-You are about to kill nodes, so remember the lesson of the [Resilience](../03_resilience.md) tutorial before you do: a cell's state has one copy by default, on a node the swarm picks. That is true for the beds' moisture, and it is true for the bed root's list of beds. Ask for copies on every node - all four carry the automatic `linux` tag - and give the swarm half a minute to make them:
+You are about to kill nodes, so remember the lesson of the [Resilience](../05_resilience.md) tutorial before you do: a cell's state has one copy by default, on a node the swarm picks. That is true for the beds' moisture, and it is true for the bed root's list of beds. Ask for copies on every node - all four carry the automatic `linux` tag - and give the swarm half a minute to make them:
 
 ```bash
 myrmic replicate app:greenhouse -t linux

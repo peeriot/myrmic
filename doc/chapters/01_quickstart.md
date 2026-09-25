@@ -25,7 +25,7 @@ To work with Myrmic, you only need to install the Myrmic CLI. The Myrmic SDK is 
 
 See [Installation](./01_quickstart/01_installation.md) for the system packages you need, installing from a release package on x86_64, building from source, and what Myrmic writes to your machine.
 
-For embedded targets, see *the Embedded tutorial* (TBD).
+For embedded targets - building and flashing firmware for ESP32 boards - see [Installation (Embedded)](./01_quickstart/02_installation-embedded.md).
 
 ### Verify Installation
 

@@ -1,13 +1,12 @@
 # Part 3 - The Transfer
 
-This is Part 3 of [First Steps with the Signal Layer](../03_first-steps-signal-layer.md), and the
+This is Part 3 of [First Steps with the Signal Layer](../04_first-steps-signal-layer.md), and the
 reason the first two exist. The pipeline and the cell are running on the Linux machine. Now the
 same pipeline goes onto an ESP32-C6, and the same cell moves onto it, unchanged.
 
-Make sure the embedded prerequisites from the
-[tutorial's intro](../03_first-steps-signal-layer.md) are installed: nightly Rust
-(`nightly-2026-08-07`) with `rust-src`, `riscv32imac-unknown-none-elf` target and `wamrc` 2.4.4 on
-your PATH.
+Make sure the embedded toolchain is installed - the `riscv32imac-unknown-none-elf` Rust target and
+`wamrc` 2.4.4 on your `PATH`. See [Installation (Embedded)](../../01_quickstart/02_installation-embedded.md)
+for the one-time setup.
 
 ---
 
@@ -22,7 +21,7 @@ cd ~/sl-tutorial/first-steps-c6
 ```
 
 As in Parts 1 and 2, this uses the `PEERIOT_MYRMIC_SDK` checkout from the
-[prerequisites](../03_first-steps-signal-layer.md); add `--sdk <path>` if you did not set it.
+[prerequisites](../04_first-steps-signal-layer.md); add `--sdk <path>` if you did not set it.
 
 The scaffold writes a `board.yml` for the C6 — pins instead of a device path:
 
@@ -122,12 +121,11 @@ myrmic cells status
 
 ```text
   cell         sri           kind  runtime     age  policy  class        srn
-  thermometer  e6f23498-...  aot   [7]96d60de  4s   never   thermometer  thermometer
+  thermometer  e6f23498-...  wasm  [7]96d60de  4s   never   thermometer  thermometer
 ```
 
-Two things moved from the Part 2 row: the `kind` is now `aot` (ahead-of-time compiled for the
-device, not `wasm`), and the `runtime` column is the ESP32's id, not the Linux machine's. That
-column is the proof — the same cell is now running on the microcontroller.
+The `runtime` column moved from the Part 2 row: it is the ESP32's id now, not the Linux machine's.
+That column is the proof - the same cell is running on the microcontroller.
 
 Watch it read the device's own taps in the serial monitor:
 

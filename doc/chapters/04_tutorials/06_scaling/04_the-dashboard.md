@@ -1,6 +1,6 @@
 # Part 4 - The Dashboard
 
-This is the last part of the [Scaling Your Application](../04_scaling.md) tutorial. You put the greenhouse on a web page again - and this time the page has two inputs: one that adds a bed, one that adds a sensor, each in the sector you type - **learning how a browser sends commands into the swarm through the gateway.**
+This is the last part of the [Scaling Your Application](../06_scaling.md) tutorial. You put the greenhouse on a web page again - and this time the page has two inputs: one that adds a bed, one that adds a sensor, each in the sector you type - **learning how a browser sends commands into the swarm through the gateway.**
 
 It continues where [Part 3](./03_one-sensor-per-bed.md) left off: four beds, four sensors, both roots running.
 

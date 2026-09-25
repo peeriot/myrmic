@@ -159,6 +159,6 @@ Along the way you used the CLI as a full participant in the swarm - publishing, 
 
 ## Where to Go Next
 
-- **Watch the swarm's internals** - traces of every command hop, including the agent's decisions, in the [Observability tutorial](../06_observability.md).
+- **Watch the swarm's internals** - traces of every command hop, including the agent's decisions, in the [Observability tutorial](../07_observability.md).
 - **A richer gateway frontend** - the dashboard here polls a static file; the gateway also streams events to the browser and accepts commands from it. See the [gateway reference](../../10_reference/02_myrmic-cli/10_gateway.md) and the `chatty` example in the repository.
 - **Revisit the patterns** - the [cell patterns](../../06_concepts/07_cell-patterns.md) page names what you just practiced: assets own state, adapters own actuation, agents own decisions.
