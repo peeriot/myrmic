@@ -84,16 +84,12 @@ struct WifiCredentials {
 
 static WIFI_CREDENTIALS: OnceLock<WifiCredentials> = OnceLock::new();
 
-/// Override the build-time WiFi credentials before starting the network service.
-///
-/// A firmware can load credentials from its own persistent storage in its
-/// `#[esp_firmware::main]` setup function, then call this before setup returns.
-/// The same credentials are used for the initial connection and reconnects.
+/// Set WiFi credentials before the network service starts.
+/// These replace `WIFI_SSID` and `WIFI_PASS` for connections and retries.
 ///
 /// # Panics
 ///
-/// Panics if called more than once. Call this only during startup, before
-/// `esp_firmware::start` (or before setup returns when using its entry point).
+/// Panics if called more than once.
 pub fn set_wifi_credentials(ssid: String, password: String) {
     assert!(
         WIFI_CREDENTIALS

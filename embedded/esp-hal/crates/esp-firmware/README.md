@@ -52,21 +52,6 @@ async fn setup(board: &mut Board, spawner: Spawner) {
 
 Everything still on the board when `setup` returns is started for you.
 
-## WiFi credentials from application storage
-
-The network service uses build-time `WIFI_SSID` and `WIFI_PASS` unless the
-application calls `esp_firmware::set_wifi_credentials(ssid, password)` during
-`setup`. The call must happen before `setup` returns (or before an explicit
-`esp_firmware::start`). It supplies the station configuration for the first
-connection and later retries. `esp_firmware::wifi_ssid()` returns the runtime
-SSID, if one was supplied.
-
-The application owns credential provisioning and persistence, including the
-flash partition or other storage it chooses. Load the saved values before
-starting the network service, and call `board.take_wifi()` if no valid
-credentials are available and the node should remain offline. The password
-does not need to be compiled into the firmware image.
-
 ## Being the cell yourself
 
 A node hosts one cell. Normally the orchestrator fills that slot with a WASM
