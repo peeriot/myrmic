@@ -1,0 +1,17 @@
+pipeline:
+  id: site-control-linux
+
+sources:
+  - id: sim
+    device: sim
+    config:
+      sample_interval_ms: 500
+      start: 20.0
+      step: 1.0
+      max: 40.0
+
+taps:
+  - name: temperature
+    kind: retained
+    type: f32
+    source: sim.value

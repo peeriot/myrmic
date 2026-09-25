@@ -109,12 +109,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "climate-agent"
+version = "0.1.0"
+dependencies = [
+ "myrmic-sdk",
+ "serde",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "controller"
+version = "0.1.0"
+dependencies = [
+ "myrmic-sdk",
+ "serde",
 ]
 
 [[package]]
@@ -568,6 +584,22 @@ name = "sha1_smol"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
+name = "site"
+version = "0.1.0"
+dependencies = [
+ "myrmic-sdk",
+ "serde",
+]
+
+[[package]]
+name = "site-dashboard"
+version = "0.1.0"
+dependencies = [
+ "myrmic-sdk",
+ "serde",
+]
 
 [[package]]
 name = "spawn"

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Site Control</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; background: #111; color: #eee; }
+      h1 { font-size: 1.2rem; font-weight: 600; }
+      .row { display: flex; gap: 2rem; margin: 1rem 0; }
+      .value { font-size: 2rem; font-variant-numeric: tabular-nums; }
+      .label { opacity: 0.6; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+      .on { color: #f66; }
+      .off { color: #6cf; }
+    </style>
+  </head>
+  <body>
+    <h1>Site Control</h1>
+    <div class="row">
+      <div>
+        <div class="label">Temperature</div>
+        <div class="value" id="temperature">--</div>
+      </div>
+      <div>
+        <div class="label">Heater</div>
+        <div class="value" id="heating">--</div>
+      </div>
+      <div>
+        <div class="label">Target</div>
+        <div class="value" id="target">--</div>
+      </div>
+    </div>
+    <script>
+      async function refresh() {
+        try {
+          const r = await fetch("latest.json", { cache: "no-store" });
+          if (!r.ok) return;
+          const s = await r.json();
+          document.getElementById("temperature").textContent = s.temperature.toFixed(1) + " C";
+          const heater = document.getElementById("heating");
+          heater.textContent = s.heating ? "on" : "off";
+          heater.className = "value " + (s.heating ? "on" : "off");
+          document.getElementById("target").textContent = s.target_low + "-" + s.target_high + " C";
+        } catch (_) {}
+      }
+      refresh();
+      setInterval(refresh, 1000);
+    </script>
+  </body>
+</html>

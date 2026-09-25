@@ -6,7 +6,12 @@ members = [
     "greenhouse/*",
     "chatty",
     "spawn",
+    "site-control/controller",
+    "site-control/site",
+    "site-control/climate-agent",
+    "site-control/dashboard",
 ]
+exclude = ["site-control/pipeline"]
 
 [workspace.package]
 version = "0.1.0"

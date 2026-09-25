@@ -1,0 +1,26 @@
+[workspace]
+
+[package]
+name = "site-control-pipeline"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+signal-layer-ipc      = { path = "../../../sdk/signal-layer/signal-layer-ipc" }
+signal-layer-linux-rt = { path = "../../../swarm/signal-layer/signal-layer-linux-rt" }
+linux-i2c-shim        = { path = "../../../swarm/signal-layer/linux-i2c-shim" }
+linux-gpio-shim       = { path = "../../../swarm/signal-layer/linux-gpio-shim" }
+linux-spi-shim        = { path = "../../../swarm/signal-layer/linux-spi-shim" }
+signal-layer-core     = { path = "../../../sdk/signal-layer/signal-layer-core" }
+signal-layer-types    = { path = "../../../sdk/signal-layer/signal-layer-types", package = "myrmic-signal-layer-types" }
+sim-source-driver     = { path = "../../../signal-modules/drivers/sim-source" }
+tokio                 = { version = "1", features = ["full"] }
+tokio-stream          = { version = "0.1", features = ["time"] }
+critical-section      = { version = "1", features = ["std"] }
+log                   = { version = "0.4", default-features = false }
+env_logger            = "0.11"
+embassy-time          = { version = "0.5", features = ["std", "generic-queue-8"] }
+
+[build-dependencies]
+linux-codegen = { path = "../../../sdk/signal-layer/linux-codegen" }

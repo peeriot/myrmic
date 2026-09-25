@@ -1,0 +1,22 @@
+name: site-control
+
+classes:
+  - id: controller
+    build:
+      path: ./controller
+      platforms:
+        - linux
+        - esp32c6
+  - id: site
+    build: ./site
+  - id: climate-agent
+    build: ./climate-agent
+  - id: dashboard
+    build: ./dashboard
+
+instances:
+  - class: controller
+    tags: [signal]
+  - class: site
+  - class: climate-agent
+  - class: dashboard
