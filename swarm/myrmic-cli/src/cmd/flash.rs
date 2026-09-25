@@ -6,6 +6,7 @@ use espflash::cli::ConnectArgs;
 use myrmic_build::firmware;
 
 use crate::args::Ctx;
+use crate::cmd::build::FeatureArgs;
 use crate::flash::{self, Board};
 use crate::utils::{PathType, determine_wd};
 use crate::{build, models};
@@ -26,6 +27,9 @@ pub struct Flash {
     #[clap(short = 'n', long)]
     name: Option<String>,
 
+    #[clap(flatten)]
+    features: FeatureArgs,
+
     /// After flashing, stream the board's serial output until interrupted.
     #[clap(short, long)]
     monitor: bool,
@@ -37,6 +41,7 @@ pub fn handle(ctx: &Ctx, cmd: Flash) -> anyhow::Result<()> {
         mut connect,
         target,
         name,
+        features,
         monitor,
     } = cmd;
 
@@ -77,7 +82,7 @@ pub fn handle(ctx: &Ctx, cmd: Flash) -> anyhow::Result<()> {
         &cargo_target,
         Some(flash_size),
         name.as_deref(),
-        &[],
+        &firmware::Features::from(features),
     )?;
     build::report_layout(ctx, &built);
 
@@ -108,5 +113,31 @@ mod tests {
         assert_eq!(flash.name.as_deref(), Some("kitchen"));
         let flash = Flash::try_parse_from(["flash", "--name", "kitchen"]).unwrap();
         assert_eq!(flash.name.as_deref(), Some("kitchen"));
+    }
+
+    #[test]
+    fn features_split_on_commas_and_repeat() {
+        let flash =
+            Flash::try_parse_from(["flash", "--features", "pipeline,wdt-selftest"]).unwrap();
+        assert_eq!(flash.features.features, ["pipeline", "wdt-selftest"]);
+
+        let flash = Flash::try_parse_from([
+            "flash",
+            "--features",
+            "pipeline",
+            "--features",
+            "wdt-selftest",
+        ])
+        .unwrap();
+        assert_eq!(flash.features.features, ["pipeline", "wdt-selftest"]);
+    }
+
+    #[test]
+    fn default_features_stay_on_unless_disabled() {
+        let flash = Flash::try_parse_from(["flash"]).unwrap();
+        assert!(!flash.features.no_default_features);
+
+        let flash = Flash::try_parse_from(["flash", "--no-default-features"]).unwrap();
+        assert!(flash.features.no_default_features);
     }
 }

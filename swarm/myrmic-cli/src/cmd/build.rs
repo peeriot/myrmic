@@ -1,3 +1,5 @@
+use myrmic_build::firmware;
+
 use crate::args::Ctx;
 use crate::platforms::Platform;
 use crate::utils::determine_wd;
@@ -24,10 +26,22 @@ pub struct Build {
     #[clap(short = 'n', long)]
     name: Option<String>,
 
+    /// Currently only firmware crates use them.
+    #[clap(flatten)]
+    features: FeatureArgs,
+}
+
+/// The cargo feature flags of the commands that build a firmware crate.
+#[derive(clap::Args)]
+pub struct FeatureArgs {
     /// Extra cargo features to enable, comma-separated or repeated. Added on top
-    /// of the crate's default features. Currently only firmware crates use them.
+    /// of the crate's default features unless `--no-default-features` is given.
     #[clap(long, value_delimiter = ',')]
-    features: Vec<String>,
+    pub(crate) features: Vec<String>,
+
+    /// Leaves the crate's default features off.
+    #[clap(long)]
+    pub(crate) no_default_features: bool,
 }
 
 pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
@@ -38,6 +52,7 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
         name,
         features,
     } = cmd;
+    let features = firmware::Features::from(features);
 
     let path = determine_wd(ctx, path)?;
 
@@ -53,10 +68,11 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
                         "--target was provided, but will be ignored (set `target:` per cell_class)"
                     );
                 }
-                if !features.is_empty() {
+                if !features.is_default() {
                     crate::warn!(
                         ctx,
-                        "--features was provided, but will be ignored for an app"
+                        "--features or --no-default-features was provided, but will be \
+                         ignored for an app"
                     );
                 }
 
@@ -87,6 +103,15 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
     Ok(())
 }
 
+impl From<FeatureArgs> for firmware::Features {
+    fn from(args: FeatureArgs) -> Self {
+        Self {
+            features: args.features,
+            no_default_features: args.no_default_features,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,7 +127,7 @@ mod tests {
     fn features_split_on_commas_and_repeat() {
         let build =
             Build::try_parse_from(["build", "--features", "pipeline,wdt-selftest"]).unwrap();
-        assert_eq!(build.features, ["pipeline", "wdt-selftest"]);
+        assert_eq!(build.features.features, ["pipeline", "wdt-selftest"]);
 
         let build = Build::try_parse_from([
             "build",
@@ -112,6 +137,15 @@ mod tests {
             "wdt-selftest",
         ])
         .unwrap();
-        assert_eq!(build.features, ["pipeline", "wdt-selftest"]);
+        assert_eq!(build.features.features, ["pipeline", "wdt-selftest"]);
+    }
+
+    #[test]
+    fn default_features_stay_on_unless_disabled() {
+        let build = Build::try_parse_from(["build"]).unwrap();
+        assert!(!build.features.no_default_features);
+
+        let build = Build::try_parse_from(["build", "--no-default-features"]).unwrap();
+        assert!(build.features.no_default_features);
     }
 }

@@ -173,6 +173,7 @@ Add the feature when building a C6 firmware:
 myrmic new --firmware=esp32c6 my-node
 cd my-node
 myrmic build --features ble
+myrmic flash --features ble --monitor
 ```
 
 Without the feature, BLE support is compiled out of the firmware, so it does not advertise `ble` and cannot serve BLE cells. See [Work with BLE peripherals](../05_guides/12_ble.md) for how a cell uses BLE.

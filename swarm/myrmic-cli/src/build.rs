@@ -223,7 +223,7 @@ pub fn build_toml(
     platforms: &[Platform],
     cargo_target: models::CargoTarget,
     runtime_name: Option<&str>,
-    features: &[String],
+    features: &firmware::Features,
 ) -> anyhow::Result<Vec<CellClass>> {
     let info = cargo::crate_info(manifest_path)?;
     let cargo_target = to_build_cargo_target(cargo_target);
@@ -277,7 +277,7 @@ fn build_member(
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
-    features: &[String],
+    features: &firmware::Features,
 ) -> anyhow::Result<Option<CellClass>> {
     if let Some(chip) = firmware::chip_of(path)? {
         build_firmware(
@@ -294,11 +294,11 @@ fn build_member(
         build_linux_pipeline(ctx, path, platforms, cargo_target, runtime_name, features)?;
         Ok(None)
     } else {
-        if !features.is_empty() {
+        if !features.is_default() {
             crate::warn!(
                 ctx,
-                "--features is currently only supported for firmware crates; ignoring it \
-                 for cell `{}`",
+                "--features and --no-default-features are currently only supported for \
+                 firmware crates; ignoring them for cell `{}`",
                 path.display()
             );
         }
@@ -314,7 +314,7 @@ fn build_firmware(
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
-    features: &[String],
+    features: &firmware::Features,
 ) -> anyhow::Result<()> {
     if platforms != Platform::DEFAULT {
         crate::warn!(
@@ -350,7 +350,7 @@ fn build_linux_pipeline(
     platforms: &[Platform],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
-    features: &[String],
+    features: &firmware::Features,
 ) -> anyhow::Result<()> {
     if platforms != Platform::DEFAULT {
         crate::warn!(
@@ -361,8 +361,11 @@ fn build_linux_pipeline(
     if runtime_name.is_some() {
         crate::warn!(ctx, "--name is ignored for a signal-layer pipeline");
     }
-    if !features.is_empty() {
-        crate::warn!(ctx, "--features is ignored for a signal-layer pipeline");
+    if !features.is_default() {
+        crate::warn!(
+            ctx,
+            "--features and --no-default-features are ignored for a signal-layer pipeline"
+        );
     }
 
     crate::info!(
