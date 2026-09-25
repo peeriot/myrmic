@@ -19,7 +19,7 @@ jobs:
     name: Dispatch
     # Unset in a repository not wired up yet: do nothing rather than fail.
     if: vars.CI_REPO != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/create-github-app-token@v2
         id: token
