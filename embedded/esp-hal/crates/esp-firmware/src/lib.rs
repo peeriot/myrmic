@@ -108,6 +108,7 @@ mod ble;
 pub use board::Board;
 pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
+pub use esp_common::esp_network::{set_wifi_credentials, wifi_ssid};
 pub use outlet::Outlet;
 pub use tap::{DeclareError, EventTap, Tap};
 
