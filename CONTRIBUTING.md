@@ -72,6 +72,13 @@ Target-specific work needs extra setup:
 - **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile with the provided cargo aliases, run from `embedded/`, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
 - **WebAssembly (Cell modules):** the `wasm32-unknown-unknown` target and a nightly toolchain (the WASM build uses `-Zbuild-std`). See [`sdk/`](sdk/) and the per-component READMEs.
 
+If you're using [Nix](https://nixos.org/explore/) (or [NixOS](https://nixos.org/)),
+you can easily install the entire development environment (provided by the `flake.nix` file):
+
+```sh
+nix develop
+```
+
 ### Editor Setup (rust-analyzer)
 
 Nothing here is needed to build or test - it only affects what your editor shows you. Settings are named with rust-analyzer's own keys, which every editor exposes under some name of its own (a `settings.json` object, an LSP `initializationOptions` table, a language-server config file).
