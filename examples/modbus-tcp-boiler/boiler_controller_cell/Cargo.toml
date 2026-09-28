@@ -1,0 +1,16 @@
+[package]
+name = "boiler_controller_cell"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.myrmic]
+heap_size = 32_768
+
+[dependencies.myrmic-sdk]
+workspace = true
+features = ["cell-init", "db"]
+
+[dependencies.serde]
+version = "1"
+default-features = false
+features = ["alloc", "derive"]

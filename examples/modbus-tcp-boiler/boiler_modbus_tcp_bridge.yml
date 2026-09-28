@@ -1,0 +1,28 @@
+name: boiler
+
+ip_address: 127.0.0.1
+
+poll:
+  # Published as the `boiler_temperature` event, once a second.
+  - id: boiler_temperature
+    address: 0x100
+    register: input
+    value: "${f32:celsius}"
+    interval_ms: 1_000
+
+read:
+  - id: read_setpoint
+    address: 0x200
+    register: holding
+    value: "${i16:setpoint}"
+
+write:
+  - id: burner_on
+    address: 0x05
+    register: coil
+    value: "${bool:on}"
+
+  - id: set_setpoint
+    address: 0x200
+    register: holding
+    value: "${i16:setpoint}"
