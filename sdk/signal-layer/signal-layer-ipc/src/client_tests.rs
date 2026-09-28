@@ -625,6 +625,65 @@ async fn cancelled_send_recv_does_not_desync_next_caller() {
     );
 }
 
+// ── B2c regression test: cancellation DURING the request write ───────────────
+
+/// B2c: If a `send_recv` future is cancelled while `write_frame` is still
+/// parked — the peer's receive buffer filled mid-frame — the connection must
+/// be torn down exactly as if the write had failed.  The bytes already
+/// accepted by the peer are a partial frame; a connection that survived would
+/// desynchronise every later frame on the stream all cells on the node share.
+///
+/// Strategy: inject an in-memory connection whose buffer is smaller than one
+/// request frame, with the peer end held but never read.  `write_all` accepts
+/// what fits and then parks; aborting the driving task cancels the future at
+/// that point — the same drop a `TAP_CALL_TIMEOUT` expiry delivers.  With the
+/// guard armed before the write, the connection is torn down and the next
+/// call fails cleanly; without it, the connection survives poisoned.
+#[tokio::test]
+async fn cancelled_mid_write_send_recv_tears_down_connection() {
+    let dir = tempfile::TempDir::new().unwrap();
+    // Nothing ever listens at this path: after a teardown, the next call must
+    // fail with None (cannot reconnect), never inherit a poisoned stream.
+    let path = dir.path().join("mid_write.sock");
+
+    let client = TapClient::new(path);
+
+    // A duplex pipe with a buffer smaller than one request frame; the peer
+    // end is held but never read, so the write parks once the buffer fills.
+    let (peer_end, client_end) = tokio::io::duplex(2);
+    client.connect_with_stream_for_test(client_end).await;
+    assert!(client.connected_for_test().await);
+
+    // Drive any request: the frame is longer than 2 bytes, so write_all
+    // flushes what fits and then parks inside write_frame.
+    let client = std::sync::Arc::new(client);
+    let client2 = std::sync::Arc::clone(&client);
+    let call = tokio::spawn(async move { client2.list_len().await });
+
+    // Let the call run to the parked write.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+
+    // Cancel mid-write.
+    call.abort();
+    let _ = call.await;
+
+    assert!(
+        !client.connected_for_test().await,
+        "B2c: a send_recv cancelled mid-write must tear the connection down"
+    );
+
+    // The next call must fail cleanly, never observe a desynchronised stream.
+    let result = client.list_len().await;
+    assert_eq!(
+        result, None,
+        "B2c: after a mid-write cancellation the next call must fail cleanly"
+    );
+
+    drop(peer_end);
+}
+
 // ── Resolve-name bound ───────────────────────────────────────────────────────
 
 /// A store that resolves any name to the same tap.  Because the server never

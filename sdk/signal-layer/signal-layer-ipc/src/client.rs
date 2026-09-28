@@ -94,9 +94,14 @@ impl HandleEntry {
     }
 }
 
+/// The stream halves are boxed trait objects rather than the concrete
+/// `UnixStream` halves so tests can inject an in-memory stream and drive
+/// stall/cancellation scenarios deterministically.  The indirection costs
+/// one pointer chase per poll on a path whose operations are bounded at
+/// [`TAP_CALL_TIMEOUT`] — negligible against socket I/O.
 struct Connection {
-    reader: tokio::io::ReadHalf<tokio::net::UnixStream>,
-    writer: tokio::io::WriteHalf<tokio::net::UnixStream>,
+    reader: Box<dyn tokio::io::AsyncRead + Unpin + Send>,
+    writer: Box<dyn tokio::io::AsyncWrite + Unpin + Send>,
 }
 
 impl TapClient {
@@ -546,52 +551,64 @@ async fn connect_and_handshake(path: &std::path::Path) -> Option<Connection> {
         _ => return None, // Version rejected or unexpected
     }
 
-    Some(Connection { reader, writer })
+    Some(Connection {
+        reader: Box::new(reader),
+        writer: Box::new(writer),
+    })
 }
 
 /// Send a request and receive a response.  On any error, tears down the
 /// connection so the next call triggers a reconnect.
 ///
-/// A drop-guard ensures that if this future is cancelled between the write and
-/// the read — the request bytes are on the wire but the response has not been
-/// received — the connection is unconditionally torn down.  This prevents the
-/// next caller from reading a response that was not intended for it (B2).
+/// A drop-guard ensures that if this future is cancelled anywhere between the
+/// start of the write and the end of the read, the connection is
+/// unconditionally torn down:
 ///
-/// The wait for the response is bounded by the [`TAP_CALL_TIMEOUT`] every public
-/// operation runs under; a peer that answers too late is a cancellation like any
-/// other, and takes the same teardown path, because the unread response would
-/// otherwise be handed to the next caller.
+/// - Cancelled *between* write and read (B2): the request bytes are on the
+///   wire but the response has not been received, so the next caller would
+///   read a response that was not intended for it.
+/// - Cancelled *during* the write (B2c): every public operation runs under
+///   [`TAP_CALL_TIMEOUT`], and a timeout that fires while `write_frame` is
+///   parked — e.g. the peer's receive buffer filled mid-frame — drops this
+///   future with a partial frame on the wire.  `write_all` is all-or-nothing
+///   only with respect to errors, not cancellation, so a connection that
+///   survived this would carry a corrupted framing boundary and desynchronise
+///   the next caller.
+///
+/// The guard is therefore armed BEFORE the write and disarmed only after a
+/// fully decoded response; any earlier exit, by error or by drop, takes the
+/// connection down.
 async fn send_recv(
     inner: &mut ClientInner,
     req: &crate::types::Request,
 ) -> Option<crate::types::Response> {
     use crate::framing::{decode_frame, read_frame, write_frame};
 
-    let conn = inner.conn.as_mut()?;
+    inner.conn.as_ref()?;
 
-    // Write the request.  If this fails, tear down immediately.
-    if write_frame(&mut conn.writer, req).await.is_err() {
-        inner.conn = None;
-        return None;
-    }
-
-    // The request is now on the wire.  Install a drop-guard: if this future is
-    // dropped (cancelled) before we finish reading the response, the guard tears
-    // down the connection so the stale response cannot be read by the next caller.
-    //
-    // The guard is disarmed (set to false) only after a successful read.
+    // Arm the teardown guard before the first byte goes out: from here on,
+    // dropping this future — at the write or at the read — must cost the
+    // connection, because the wire state can no longer be known.
     let must_teardown = TeardownGuard {
         conn: &mut inner.conn,
     };
 
-    let frame = read_frame(&mut must_teardown.conn.as_mut()?.reader).await;
-    let result = frame.ok().and_then(|f| decode_frame(&f).ok());
+    let result = {
+        let conn = must_teardown.conn.as_mut()?;
+        if write_frame(&mut conn.writer, req).await.is_err() {
+            None
+        } else {
+            read_frame(&mut conn.reader)
+                .await
+                .ok()
+                .and_then(|f| decode_frame(&f).ok())
+        }
+    };
 
-    // Read completed — disarm the guard.
-    must_teardown.disarm();
-
-    if result.is_none() {
-        inner.conn = None;
+    // Disarm only on a fully decoded response.  On any failure the guard is
+    // still armed and its drop tears the connection down.
+    if result.is_some() {
+        must_teardown.disarm();
     }
     result
 }
@@ -635,6 +652,26 @@ impl TapClient {
     /// Counting everything is what lets a test show that nothing is kept back.
     pub async fn handle_table_len_for_test(&self) -> usize {
         self.inner.lock().await.handles.len()
+    }
+
+    /// Install a pre-established connection over an in-memory stream, so a
+    /// test can drive stall and cancellation scenarios deterministically
+    /// without a real peer.  Bumps the generation like a real reconnect
+    /// would: handles issued on an earlier connection stay stale.
+    pub async fn connect_with_stream_for_test(&self, stream: tokio::io::DuplexStream) {
+        let (reader, writer) = tokio::io::split(stream);
+        let mut inner = self.inner.lock().await;
+        inner.generation = inner.generation.wrapping_add(1);
+        release_superseded(&mut inner);
+        inner.conn = Some(Connection {
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+        });
+    }
+
+    /// Whether the client currently holds a connection.
+    pub async fn connected_for_test(&self) -> bool {
+        self.inner.lock().await.conn.is_some()
     }
 }
 
