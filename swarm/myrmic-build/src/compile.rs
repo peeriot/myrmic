@@ -218,7 +218,7 @@ pub(crate) fn compile_cell(
     }
 
     cmd.env(HEAP_SIZE_ENV, memory.heap_size.to_string());
-    cmd.env(RUSTFLAGS_ENV, rustflags(&memory));
+    cargo::set_target_rustflags(&mut cmd, RUSTFLAGS_ENV, &rustflags(&memory));
     cmd.env_remove("RUSTUP_TOOLCHAIN");
 
     let mut artifacts = Vec::new();
