@@ -2,10 +2,10 @@ name: modbus-tcp-boiler
 
 classes:
   - id: boiler
-    spec: boiler_modbus_tcp_bridge.yml
-  - id: controller
-    build: ./boiler_controller_cell
+    spec: boiler-modbus-tcp-bridge.yml
+  - id: boiler-controller
+    build: ./boiler-controller
 
 instances:
   - bridge: boiler
-  - class: controller
+  - class: boiler-controller

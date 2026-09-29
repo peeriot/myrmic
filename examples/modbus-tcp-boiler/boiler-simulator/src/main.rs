@@ -1,18 +1,16 @@
-//! A simulated boiler that speaks Modbus TCP,
-//! so the Modbus bridge can be tried without hardware.
-//! It maps three values:
+//! A simulated boiler that speaks Modbus TCP, so the Modbus bridge can be tried
+//! without hardware. It maps three values:
 //!
-//! | Table            | Address   | Value                                           |
-//! |------------------|-----------|-------------------------------------------------|
-//! | input registers  | 100, 101  | water temperature in °C, `f32`, high word first |
-//! | coils            | 5         | burner on/off                                   |
-//! | holding register | 200       | setpoint in °C, `i16`                           |
+//! | Table            | Address         | Value                                   |
+//! |------------------|-----------------|-----------------------------------------|
+//! | input registers  | 0x0100, 0x0101  | water temperature in °C, `f32`, `abcd`  |
+//! | coil             | 0x0005          | burner on/off                           |
+//! | holding register | 0x0200          | setpoint in °C, `i16`                   |
 //!
-//! While the burner is on the water heats up by 1 °C per second,
-//! while it is off it cools down by 0.3 °C per second,
-//! but not below the room it stands in.
+//! While the burner is on the water heats up by 1 °C per second, while it is
+//! off it cools down by 0.3 °C per second, but not below the room it stands in.
 //!
-//! Usage: `boiler-sim [ADDRESS]`, listening on `127.0.0.1:5020` by default.
+//! Usage: `boiler-simulator [ADDRESS]`, listening on `127.0.0.1:5020` by default.
 
 use std::{
     future,
@@ -22,7 +20,6 @@ use std::{
 };
 
 use tokio::net::TcpListener;
-
 use tokio_modbus::{
     ExceptionCode, Request, Response,
     server::{
@@ -31,9 +28,9 @@ use tokio_modbus::{
     },
 };
 
-const ADDRESS_TEMPERATURE: u16 = 100;
-const ADDRESS_BURNER: u16 = 5;
-const ADDRESS_SETPOINT: u16 = 200;
+const ADDRESS_TEMPERATURE: u16 = 0x0100;
+const ADDRESS_BURNER: u16 = 0x0005;
+const ADDRESS_SETPOINT: u16 = 0x0200;
 
 const ROOM_TEMPERATURE: f32 = 15.0;
 const HEATING_PER_SECOND: f32 = 1.0;
@@ -60,19 +57,19 @@ impl Boiler {
     fn call(&mut self, request: Request<'_>) -> Result<Response, ExceptionCode> {
         let response = match request {
             Request::ReadInputRegisters(ADDRESS_TEMPERATURE, 2) => {
-                log::debug!("Read the boiler temperature");
+                log::debug!("Read temperature: {:.1} °C", self.temperature);
                 let bits = self.temperature.to_bits();
                 let words = vec![(bits >> 16) as u16, bits as u16];
                 Response::ReadInputRegisters(words)
             }
             Request::ReadCoils(ADDRESS_BURNER, 1) => {
-                log::debug!("Read the burner state");
+                log::debug!("Read burner: {}", self.burner);
                 Response::ReadCoils(vec![self.burner])
             }
             Request::WriteSingleCoil(ADDRESS_BURNER, on) => {
-                log::debug!("Set the burner state to {}", if on { "on" } else { "off" });
+                log::debug!("Write burner: {on}");
                 if on != self.burner {
-                    println!(
+                    log::info!(
                         "burner {} at {:.1} °C",
                         if on { "on" } else { "off" },
                         self.temperature
@@ -82,25 +79,23 @@ impl Boiler {
                 Response::WriteSingleCoil(ADDRESS_BURNER, on)
             }
             Request::ReadHoldingRegisters(ADDRESS_SETPOINT, 1) => {
-                log::debug!("Read the setpoint");
+                log::debug!("Read setpoint: {} °C", self.setpoint);
                 Response::ReadHoldingRegisters(vec![self.setpoint as u16])
             }
             Request::WriteSingleRegister(ADDRESS_SETPOINT, word) => {
-                let new_value = word as i16;
-                log::debug!("Write the setpoint to {new_value}");
-                self.setpoint = new_value;
-                println!("setpoint {} °C", self.setpoint);
+                log::debug!("Write setpoint: {} °C", word as i16);
+                self.setpoint = word as i16;
+                log::info!("setpoint {} °C", self.setpoint);
                 Response::WriteSingleRegister(ADDRESS_SETPOINT, word)
             }
             // Anything else, like a device that does not map the address.
-            _ => {
-                log::warn!("Invalid request: {request:?}");
+            request => {
+                log::debug!("Refuse unmapped request: {request:?}");
                 return Err(ExceptionCode::IllegalDataAddress);
             }
         };
 
-        log::debug!("New boiler state:\n {self:#?}");
-
+        log::debug!("New boiler state:\n{self:#?}");
         Ok(response)
     }
 }
@@ -121,7 +116,7 @@ impl Service for BoilerService {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let address: SocketAddr = std::env::args()
         .nth(1)
@@ -134,8 +129,7 @@ async fn main() -> anyhow::Result<()> {
         burner: false,
         setpoint: 60,
     };
-    log::debug!("Initial boiler state:\n {boiler_state:#?}");
-
+    log::debug!("Initial boiler state:\n{boiler_state:#?}");
     let boiler = Arc::new(Mutex::new(boiler_state));
 
     tokio::spawn({
@@ -150,16 +144,15 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let listener = TcpListener::bind(address).await?;
-    println!("Modbus TCP boiler simulator listening on {address}");
+    log::info!("boiler listening on modbus-tcp://{address}");
 
     let service = BoilerService(boiler);
     let on_connected = |stream, socket_addr| {
         let service = service.clone();
         async move { accept_tcp_connection(stream, socket_addr, |_| Ok(Some(service.clone()))) }
     };
-
     Server::new(listener)
-        .serve(&on_connected, |err| eprintln!("connection failed: {err}"))
+        .serve(&on_connected, |err| log::warn!("connection failed: {err}"))
         .await?;
 
     Ok(())
