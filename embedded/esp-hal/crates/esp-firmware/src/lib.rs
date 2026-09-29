@@ -47,24 +47,20 @@
 //!
 //! # WiFi credentials
 //!
-//! The board starts with `WIFI_SSID` and `WIFI_PASS` from the build environment
-//! (or the existing `test` defaults). A firmware can replace them during setup
-//! with credentials loaded from its own persistent storage:
+//! The board uses `WIFI_SSID` and `WIFI_PASS` from the build environment by
+//! default. A firmware can replace them during setup:
 //!
 //! ```ignore
 //! use esp_firmware::{Board, WifiCredentials};
 //!
 //! #[esp_firmware::main]
 //! async fn setup(board: &mut Board) {
-//!     if let Some((ssid, password)) = load_saved_wifi_credentials() {
-//!         board.set_wifi_credentials(WifiCredentials::new(ssid, password)).unwrap();
-//!     }
+//!     let credentials = WifiCredentials::new("my-network", "my-password").unwrap();
+//!     board.set_wifi_credentials(credentials).unwrap();
 //! }
 //! ```
 //!
-//! The credentials are used for the first connection and reconnect attempts.
-//! Setup completes before the shipped network service starts; changing them
-//! after `start` is outside this startup configuration flow.
+//! The credentials apply to the first connection and all reconnect attempts.
 //!
 //! # Taps and outlets
 //!
@@ -129,7 +125,7 @@ mod ble;
 pub use board::Board;
 pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
-pub use esp_common::esp_network::WifiCredentials;
+pub use esp_common::esp_network::{WifiCredentials, WifiCredentialsError};
 pub use outlet::Outlet;
 pub use tap::{DeclareError, EventTap, Tap};
 

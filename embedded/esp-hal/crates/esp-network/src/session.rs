@@ -82,13 +82,35 @@ pub struct WifiCredentials {
     password: String,
 }
 
+/// Why saved WiFi credentials cannot be used by the radio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiCredentialsError {
+    /// The SSID exceeds the radio's 32-byte limit.
+    SsidTooLong,
+    /// The password exceeds the radio's 64-byte limit.
+    PasswordTooLong,
+}
+
 impl WifiCredentials {
     /// Create credentials loaded by the application, for example from flash.
-    pub fn new(ssid: impl Into<String>, password: impl Into<String>) -> Self {
-        Self {
-            ssid: ssid.into(),
-            password: password.into(),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WifiCredentialsError`] if either value exceeds the radio's
+    /// byte limit. Invalid saved credentials can then be ignored during setup.
+    pub fn new(
+        ssid: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Result<Self, WifiCredentialsError> {
+        let ssid = ssid.into();
+        let password = password.into();
+        if ssid.len() > 32 {
+            return Err(WifiCredentialsError::SsidTooLong);
         }
+        if password.len() > 64 {
+            return Err(WifiCredentialsError::PasswordTooLong);
+        }
+        Ok(Self { ssid, password })
     }
 
     /// The configured network name.
@@ -106,7 +128,10 @@ impl WifiCredentials {
 
 impl Default for WifiCredentials {
     fn default() -> Self {
-        Self::new(WIFI_SSID, WIFI_PASS)
+        Self {
+            ssid: WIFI_SSID.into(),
+            password: WIFI_PASS.into(),
+        }
     }
 }
 
@@ -517,19 +542,19 @@ async fn get_peer_addr(
     reason = "malformed startup credentials cannot be used to initialize WiFi"
 )]
 fn station_config(credentials: &WifiCredentials) -> Config {
+    let ssid = credentials
+        .ssid
+        .as_str()
+        .try_into()
+        .expect("SSID exceeds the driver limit");
+    let password = credentials
+        .password
+        .as_str()
+        .try_into()
+        .expect("password exceeds the driver limit");
     let config = StationConfig::default()
-        .with_ssid(
-            credentials
-                .ssid()
-                .try_into()
-                .expect("SSID exceeds the driver limit"),
-        )
-        .with_authentication(AuthenticationMethodConfig::Wpa2Personal(
-            credentials
-                .password()
-                .try_into()
-                .expect("password exceeds the driver limit"),
-        ));
+        .with_ssid(ssid)
+        .with_authentication(AuthenticationMethodConfig::Wpa2Personal(password));
 
     Config::Station(config)
 }
