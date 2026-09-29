@@ -1,5 +1,5 @@
 use super::*;
-use crate::codegen::bridge_api::{UserHttpBridgeApi, UserMqttBridge};
+use crate::codegen::bridge_api::{UserHttpBridgeApi, UserModbusBridge, UserMqttBridge};
 
 /// Pretty-prints a generated token stream, asserting it is syntactically valid
 /// Rust in the process.
@@ -408,5 +408,72 @@ fn http_endpoint_with_path_param_generates_positional_arg_and_typed_callback() {
         "{out}"
     );
 
+    assert_self_contained(&out);
+}
+
+const MODBUS_SPEC: &str = r#"
+name: boiler
+host: plc.local
+poll:
+  - id: boiler_temperature
+    register: input
+    address: 100
+    value: "${f32:celsius}"
+    interval: 1s
+write:
+  - id: pump_on
+    register: coil
+    address: 5
+    value: "${bool:on}"
+read:
+  - id: read_setpoint
+    register: holding
+    address: 1
+    value: "${i16:setpoint}"
+"#;
+
+#[test]
+fn modbus_bridge_generates_poll_events_and_write_methods() {
+    let api: UserModbusBridge = serde_yaml::from_str(MODBUS_SPEC).expect("parse modbus spec");
+    let out = render(modbus_bridge(&root(), api).expect("generate modbus bridge"));
+
+    assert!(out.contains("pub struct BoilerClient"), "{out}");
+    // Poll -> event payload type, keyed by the value's field name.
+    assert!(out.contains("pub struct BoilerTemperature"), "{out}");
+    assert!(out.contains("pub celsius: f32"), "{out}");
+    assert!(
+        out.contains("impl ::myrmic_sdk::CellEvent for BoilerTemperature"),
+        "{out}"
+    );
+    // Write -> fire-and-forget method carrying the value to write.
+    assert!(out.contains("pub struct PumpOn"), "{out}");
+    assert!(out.contains("pub on: bool"), "{out}");
+    assert!(
+        out.contains("pub fn pump_on(&self, value: PumpOn)"),
+        "{out}"
+    );
+    assert_self_contained(&out);
+}
+
+#[test]
+fn modbus_bridge_generates_read_methods_with_a_callback() {
+    let api: UserModbusBridge = serde_yaml::from_str(MODBUS_SPEC).expect("parse modbus spec");
+    let out = render(modbus_bridge(&root(), api).expect("generate modbus bridge"));
+
+    // The value under its field name, as the bridge replies it inside `Ok`.
+    assert!(out.contains("pub struct ReadSetpointValue"), "{out}");
+    assert!(out.contains("pub setpoint: i16"), "{out}");
+    // The reply mirrors the bridge's `{"Ok": ..} | {"Exception": ..} | {"Failed": ..}`.
+    assert!(out.contains("pub enum ReadSetpointReply"), "{out}");
+    assert!(out.contains("Ok(ReadSetpointValue)"), "{out}");
+    assert!(out.contains("Exception(u8)"), "{out}");
+    assert!(out.contains("Failed(::myrmic_sdk::String)"), "{out}");
+    // A read takes no arguments, only the callback it is answered through.
+    assert!(out.contains("struct __ReadSetpointPayload"), "{out}");
+    assert!(out.contains("pub fn read_setpoint("), "{out}");
+    assert!(
+        out.contains("cb: ::myrmic_sdk::Callback<ReadSetpointReply>"),
+        "{out}"
+    );
     assert_self_contained(&out);
 }

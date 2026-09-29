@@ -1,5 +1,5 @@
 use anyhow::Context;
-use myrmic_common::codegen::bridge_api::{UserHttpBridgeApi, UserMqttBridge};
+use myrmic_common::codegen::bridge_api::{UserHttpBridgeApi, UserModbusBridge, UserMqttBridge};
 
 macro_rules! try_from_yaml_enum {
     (
@@ -44,6 +44,7 @@ try_from_yaml_enum! {
     pub enum ImportInput {
         Mqtt(UserMqttBridge),
         Http(UserHttpBridgeApi),
+        Modbus(UserModbusBridge),
     }
 }
 
