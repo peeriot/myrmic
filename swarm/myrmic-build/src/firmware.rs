@@ -195,7 +195,7 @@ fn configure(
     runtime_name: Option<&str>,
     already_set: impl Fn(&str) -> bool,
 ) -> anyhow::Result<Option<Partitions>> {
-    cmd.env(RUSTFLAGS_ENV, RUSTFLAGS);
+    cargo::set_target_rustflags(cmd, RUSTFLAGS_ENV, RUSTFLAGS);
     for (key, value) in DEFAULT_ENV {
         if !already_set(key) {
             cmd.env(key, value);
