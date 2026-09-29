@@ -27,11 +27,12 @@ use wasm_runtime::{from_thread_arg, into_thread_arg};
 pub use esp_common::esp_network::CONNECTED;
 use esp_common::esp_watchdog::liveness::{Task, bump};
 
-use crate::Config;
+use crate::{Config, WifiCredentials};
 
 /// Everything [`service_thread`] hands to [`start_service`].
 struct ServiceArgs {
     wifi: WIFI<'static>,
+    credentials: WifiCredentials,
     zenoh: ZenohArgs,
 }
 
@@ -46,9 +47,10 @@ struct ZenohArgs {
 }
 
 /// Starts the network service on its own [`Config::net_stack`]-sized thread.
-pub fn start_thread(wifi: WIFI<'static>, config: &Config) {
+pub fn start_thread(wifi: WIFI<'static>, credentials: WifiCredentials, config: &Config) {
     let args = ServiceArgs {
         wifi,
+        credentials,
         zenoh: ZenohArgs {
             wasm_transfer: crate::WASM_TRANSFER.sender(),
             db_requests: crate::DB_REQUESTS.receiver(),
@@ -94,19 +96,23 @@ extern "C" fn service_thread(arg: *mut c_void) {
 ///
 /// Panics if the WiFi module cannot be initialized
 fn start_service(spawner: Spawner, args: ServiceArgs) {
-    let ServiceArgs { wifi, zenoh } = args;
+    let ServiceArgs {
+        wifi,
+        credentials,
+        zenoh,
+    } = args;
 
-    let (controller, stack, runner) = esp_common::esp_network::init_stack(wifi);
+    let (controller, stack, runner) = esp_common::esp_network::init_stack(wifi, &credentials);
 
-    spawner.spawn(connection(controller).unwrap());
+    spawner.spawn(connection(controller, credentials).unwrap());
     spawner.spawn(net_task(runner).unwrap());
     spawner.spawn(zenoh_session(stack, zenoh).unwrap());
 }
 
 /// Establishes and keeps a WiFi connection
 #[embassy_executor::task]
-async fn connection(controller: WifiController<'static>) {
-    esp_common::esp_network::connection(controller, || bump(Task::Connection)).await;
+async fn connection(controller: WifiController<'static>, credentials: WifiCredentials) {
+    esp_common::esp_network::connection(controller, credentials, || bump(Task::Connection)).await;
 }
 
 /// Network stack runner
