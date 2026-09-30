@@ -28,6 +28,31 @@ myrmic --connect tcp/192.0.2.10:7447 cells status
 
 The runtime must be configured to listen on that reachable endpoint under its `zenoh` configuration.
 
+A runtime whose IP address changes rejoins by itself, with no restart, as long as it listens on an unspecified address - `tcp/0.0.0.0:7447` or `tcp/[::]:7447`, and the same under `tls/`. A listen endpoint that carries a host name or a concrete address is resolved once at startup and bound to the address that came back, so after the move it accepts nothing and only a restart clears it. Check which of the two your `zenoh` configuration declares before relying on this.
+
+A runtime that qualifies checks the host's addresses on a timer - every ten seconds, unless [`zenoh.scouting.interface_poll_interval`](../10_reference/01_configuration/01_runtime-configuration.md#zenoh-advanced) says otherwise - and once they have moved it re-publishes the addresses it can be reached at, pushes the change to the peers it is still connected to, and rebuilds its discovery sockets. The push and the socket rebuild are independent: a host with no multicast interface at all still re-publishes its addresses. Expect the swarm to settle within a minute of the move: the poll has to notice it, the links to the old address have to expire, and the peers have to find each other again.
+
+The runtime reports the outcome at `info`:
+
+```text
+INFO  Zenoh can be reached at: tcp/192.0.2.25:7447
+```
+
+That line is only visible where the log level lets it through, and so is everything else about the move. With neither `telemetry.logs.env_filter` nor `RUST_LOG` set, a runtime logs errors only - nothing about an address change reaches that level, including what goes wrong on the way, which is logged at `warn`: the host offering no usable interface, an address set that came back empty, a discovery socket that could not be rebound. On nodes whose address can move, set the filter to at least `info`, and wherever you narrow it keep these two targets carved out:
+
+```text
+info,zenoh::net::runtime::interface_monitor=debug,zenoh::net::runtime::orchestrator=info
+```
+
+If you silence the transport library with `zenoh=off`, put those two carve-outs after it - `zenoh=off` on its own drops the move entirely. The filter shipped in `swarm/configs/myrmic.jsonnet` and the one the CLI builds for `myrmic runtimes start` both already carry them.
+
+Several shapes do not get the full effect, and a node in one of them gives no sign of that:
+
+- A listen endpoint declared with a host name or a concrete address, as above, whatever the transport.
+- Mutual TLS with certificates issued for IP addresses. See [Addresses that change](../11_security.md#addresses-that-change).
+- A node with gossip scouting turned off (`zenoh.scouting.gossip.enabled: false`), on peers and routers alike. Such a node adopts its new addresses but announces them to nobody, so a peer it is still connected to is never told and has to rediscover it. Gossip is on by default and the shipped configurations leave it on.
+- Any node running a release that predates the host interface poll, including 0.6.1.
+
 A cell's SRN is swarm-wide. The same SRN names the same cell everywhere, so deploying a name that already exists addresses the existing cell rather than creating a second copy. Give distinct cells distinct names.
 
 When you deploy, the swarm places the cell on a node that can run it, which is not necessarily the machine you ran the CLI on. `myrmic cells status` shows each deployed cell and the runtime it runs on, so you can see where a deploy landed. See the [`myrmic cells status` reference](../10_reference/02_myrmic-cli/06_cells/01_status.md) for synopsis, options and examples.
@@ -120,10 +145,11 @@ Memory grows once the runtime is doing real work, and telemetry retention is the
 
 ## Current limitations
 
-Two operational states in this preview need a manual restart to clear:
+Three operational states in this preview need a manual restart to clear:
 
 - A full disk requires a runtime restart after space is freed (see [Disk and storage](#disk-and-storage)).
 - A forward clock jump requires a runtime restart after the clock is corrected (see [Clock synchronization](#clock-synchronization)).
+- An IP address change requires a restart on a node that listens on a named or concrete endpoint rather than an unspecified one, and on a node running mutual TLS with certificates issued for IP addresses, which also needs a re-issued certificate (see [Addresses that change](../11_security.md#addresses-that-change)). A node that listens on `0.0.0.0` or `[::]` rejoins without one; with gossip scouting off it rejoins but tells nobody, so its peers have to rediscover it. See [Discovery, identity, and placement](#discovery-identity-and-placement) for the full list.
 
 ## See also
 

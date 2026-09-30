@@ -119,4 +119,27 @@ mod tests {
             .expect_err("an unparsable timeout must be rejected");
         assert!(err.to_string().contains("expected number"), "{err}");
     }
+
+    /// Nothing in this tree loads the configs in `swarm/configs`, so a plugin key
+    /// that has been removed or a section written at the wrong nesting level
+    /// survives review and turns into a runtime that exits during startup.
+    #[test]
+    fn every_shipped_config_parses() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs");
+        let mut checked = 0;
+
+        for entry in std::fs::read_dir(&dir).expect("the configs directory must be readable") {
+            let path = entry.expect("the directory entry must be readable").path();
+            if path.extension().is_none_or(|ext| ext != "jsonnet") {
+                continue;
+            }
+
+            if let Err(err) = crate::eval_input::<SwarmConfig>(&path) {
+                panic!("{} must parse as a SwarmConfig: {err}", path.display());
+            }
+            checked += 1;
+        }
+
+        assert!(checked > 0, "no configs found in {}", dir.display());
+    }
 }
