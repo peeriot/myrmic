@@ -49,6 +49,7 @@ postcard = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 wiremock = { workspace = true }
+tokio-modbus = { workspace = true, features = ["tcp-server"] }
 tempfile = { workspace = true }
 
 [dev-dependencies]

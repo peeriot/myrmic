@@ -39,8 +39,8 @@ pub use cells::fence::FenceOutcome;
 pub use cells::instance_registry;
 pub use cells::lifecycle::{
     CellUndeployRequest, ExecCellUndeployRequest, SpawnLineage, WasmCellDeployRequest,
-    delete_application, deploy_cells, deploy_http_bridge, deploy_mqtt_bridge, deploy_wasm_cell,
-    undeploy_cell,
+    delete_application, deploy_cells, deploy_http_bridge, deploy_modbus_bridge, deploy_mqtt_bridge,
+    deploy_wasm_cell, undeploy_cell,
 };
 pub use cells::placement::{
     PlacementClaimOutcome, claim_placement, commit_placement, ensure_placement_exists,
@@ -63,11 +63,13 @@ pub use myrmic_common::cells::{CellLost, LostReason, SYS_CELL_LOST, SYS_COMMAND_
 pub use records::OrchRuntimeRecord;
 pub use records::app_deployment::{
     BodyTemplate, CellConfig, CellDeployment, DeployRequest, DeployResponse, DeployedCell,
-    HttpBridgeApi, HttpBridgeConfig, HttpBridgeRecord, MqttBridge, MqttBridgeConfig, MqttBridgeDef,
-    MqttBridgeRecord, RequirementTags, ResponseHeaderTemplate, RestartPolicy, RestartType,
-    TemplateSegment, TemplateSegments, WireHttpEndpoint, WireHttpRequestTemplate,
-    WireHttpResponseTemplate, WireHttpResponseVariant, WireMqttEgress, WireMqttIngress,
-    should_restart, status_variant_name,
+    HttpBridgeApi, HttpBridgeConfig, HttpBridgeRecord, ModbusBridge, ModbusByteOrder,
+    ModbusRegister, ModbusServerAddress, ModbusValueTemplate, ModbusWritableRegister, MqttBridge,
+    MqttBridgeConfig, MqttBridgeDef, MqttBridgeRecord, RequirementTags, ResponseHeaderTemplate,
+    RestartPolicy, RestartType, TemplateSegment, TemplateSegments, WireHttpEndpoint,
+    WireHttpRequestTemplate, WireHttpResponseTemplate, WireHttpResponseVariant, WireModbusPoll,
+    WireModbusRead, WireModbusWrite, WireMqttEgress, WireMqttIngress, should_restart,
+    status_variant_name,
 };
 pub use records::tasks::connectors::{InputRecord, OutputRecord};
 pub use reference::identifiers::{AsDeploymentIdentifier, DeploymentIdentifier, RuntimeIdentifier};

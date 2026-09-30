@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 
 use crate::args::Ctx;
-use crate::models::{self, DeployInput, http, mqtt};
+use crate::models::{self, DeployInput, http, modbus, mqtt};
 use crate::platforms::Platform;
 use crate::utils::{PathType, determine_wd};
 use crate::{deploy, determine_name};
@@ -172,6 +172,14 @@ async fn deploy_yaml(
             let session = ctx.session().await?;
 
             deploy::deploy_http_bridge(ctx, &session, &[api], tags).await
+        }
+        DeployInput::Modbus(mut bridge) => {
+            let name = name.unwrap_or_else(|| std::mem::take(&mut bridge.name));
+            let bridge = modbus::convert(name, bridge)?;
+
+            let session = ctx.session().await?;
+
+            deploy::deploy_modbus_bridge(ctx, &session, bridge, tags).await
         }
         DeployInput::MqttNest(config) => {
             if name.is_some() {

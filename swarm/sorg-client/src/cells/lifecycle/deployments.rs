@@ -1,8 +1,8 @@
 use cell_protocol::{PlacementEntry, Sri};
 use sorg_common::{
-    DeployRequest, DeployResponse, DeploymentError, HttpBridgeApi, MqttBridge, RequirementTags,
-    SpawnLineage, delete_application, deploy_cells, deploy_wasm_cell, get_placement,
-    list_placements, placement_exists, undeploy_cell,
+    DeployRequest, DeployResponse, DeploymentError, HttpBridgeApi, ModbusBridge, MqttBridge,
+    RequirementTags, SpawnLineage, delete_application, deploy_cells, deploy_wasm_cell,
+    get_placement, list_placements, placement_exists, undeploy_cell,
 };
 
 use crate::{Client, Result};
@@ -82,6 +82,23 @@ impl Client {
         tags: RequirementTags,
     ) -> std::result::Result<(), DeploymentError> {
         sorg_common::deploy_mqtt_bridge(
+            self.session(),
+            cell_sri,
+            bridge,
+            tags,
+            self.config.query_timeout(),
+        )
+        .await
+    }
+
+    /// Deploys a Modbus bridge cell.
+    pub async fn deploy_modbus_bridge(
+        &self,
+        cell_sri: Sri,
+        bridge: ModbusBridge,
+        tags: RequirementTags,
+    ) -> std::result::Result<(), DeploymentError> {
+        sorg_common::deploy_modbus_bridge(
             self.session(),
             cell_sri,
             bridge,

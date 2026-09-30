@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 pub mod http;
+pub mod modbus;
 pub mod mqtt;
 
 #[cfg(test)]
@@ -432,6 +433,7 @@ try_from_yaml_enum! {
     pub enum BridgeInput {
         Mqtt(mqtt::UserMqttBridge),
         Http(http::UserHttpBridgeApi),
+        Modbus(modbus::UserModbusBridge),
     }
 }
 
@@ -446,6 +448,7 @@ try_from_yaml_enum! {
         App(App),
         Mqtt(mqtt::UserMqttBridge),
         Http(http::UserHttpBridgeApi),
+        Modbus(modbus::UserModbusBridge),
         MqttNest(MqttBridgeConfig),
         HttpEgressNest(HttpBridgeConfig),
     }
@@ -460,6 +463,7 @@ impl DeployInput {
             DeployInput::App(_) => true,
             DeployInput::Mqtt(_)
             | DeployInput::Http(_)
+            | DeployInput::Modbus(_)
             | DeployInput::MqttNest(_)
             | DeployInput::HttpEgressNest(_) => false,
         }

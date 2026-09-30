@@ -454,6 +454,7 @@ rumqttc = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07", defa
     "use-rustls-no-provider",
 ] }
 rumqttd = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07" }
+tokio-modbus = { version = "0.17.0", default-features = false, features = ["tcp"] }
 
 oxiri = { version = "0.2.11", default-features = false }
 oxrdf = { version = "0.3.2", default-features = false }
