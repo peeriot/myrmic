@@ -56,7 +56,7 @@
 //! #[esp_firmware::main]
 //! async fn setup(board: &mut Board) {
 //!     let credentials = WifiCredentials::new("my-network", "my-password").unwrap();
-//!     board.set_wifi_credentials(credentials).unwrap();
+//!     assert!(board.set_wifi_credentials(credentials), "WiFi was taken");
 //! }
 //! ```
 //!
