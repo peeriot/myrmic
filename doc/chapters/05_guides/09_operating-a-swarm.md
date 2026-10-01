@@ -26,6 +26,13 @@ On a host where multicast is blocked, point the CLI at a Zenoh listener on a run
 myrmic --connect tcp/192.0.2.10:7447 cells status
 ```
 
+To do the same for every invocation in a shell session, set `MYRMIC_CONNECT` instead (comma-separated for fallback endpoints):
+
+```bash
+export MYRMIC_CONNECT=tcp/192.0.2.10:7447
+myrmic cells status
+```
+
 The runtime must be configured to listen on that reachable endpoint under its `zenoh` configuration.
 
 A runtime whose IP address changes rejoins by itself, with no restart, as long as it listens on an unspecified address - `tcp/0.0.0.0:7447` or `tcp/[::]:7447`, and the same under `tls/`. A listen endpoint that carries a host name or a concrete address is resolved once at startup and bound to the address that came back, so after the move it accepts nothing and only a restart clears it. Check which of the two your `zenoh` configuration declares before relying on this.

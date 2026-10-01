@@ -3,6 +3,7 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 
 pub use backend::MyrmicBackend;
 pub use backend::docker::DockerBinary;
@@ -88,6 +89,18 @@ fn policy_arg(policy: RestartType) -> &'static str {
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
+    /// set by [`Myrmic::local_isolated`]; shared by the clones, so its directories live as long
+    /// as any runtime or cell handle that may still need them for cleanup
+    isolation: Option<Arc<Isolation>>,
+}
+
+/// A private myrmic setup on the host (see [`Myrmic::local_isolated`]).
+struct Isolation {
+    /// holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs), `run/`
+    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read) and the runtime config
+    dir: tempfile::TempDir,
+    /// the endpoint the runtime listens on and everything else connects to
+    endpoint: String,
 }
 
 impl Myrmic<LocalBinary> {
@@ -95,11 +108,52 @@ impl Myrmic<LocalBinary> {
     pub fn local() -> Self {
         Self {
             backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
+            isolation: None,
         }
     }
 
-    /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI (peer mode,
-    /// default config, multicast scouting).
+    /// Like [`Self::local`], but nothing outside this shim and its clones sees its runtime, and
+    /// it sees no other runtime, so tests using it can run in parallel.
+    ///
+    /// The shim gets its own state directories, and its runtime listens on a free loopback port
+    /// with multicast scouting off. Every CLI call (through `MYRMIC_CONNECT`) and
+    /// [`Self::connect_session`] connect to that port directly. There is one port, so the shim runs one runtime at a time; a restart under
+    /// the same name is fine. [`RuntimeBuilder::config`] is not available, the shim generates the
+    /// config itself.
+    pub fn local_isolated() -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("myrmic-isolated.")
+            .tempdir()
+            .expect("failed to create a temporary directory for an isolated myrmic");
+        for subdir in ["data", "run"] {
+            std::fs::create_dir(dir.path().join(subdir))
+                .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
+        }
+        // bind-and-release: another process may grab the port before the runtime binds it,
+        // which fails the runtime's start rather than going unnoticed
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("failed to find a free loopback port")
+            .port();
+        let endpoint = format!("tcp/127.0.0.1:{port}");
+        // JSON is YAML, which `runtimes start` parses
+        let config = serde_json::json!({
+            "zenoh": {
+                "listen": { "endpoints": [endpoint] },
+                "scouting": { "multicast": { "enabled": false } },
+            },
+        });
+        std::fs::write(dir.path().join("runtime.yaml"), config.to_string())
+            .expect("failed to write the isolated runtime's config");
+        Self {
+            backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
+            isolation: Some(Arc::new(Isolation { dir, endpoint })),
+        }
+    }
+
+    /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI: in peer mode,
+    /// found by multicast scouting, or for [`Self::local_isolated`] connected to its runtime's
+    /// endpoint with multicast scouting off.
     ///
     /// It does not use the shim: the receiver only restricts it to the local backend, whose
     /// runtimes are on this host and so reachable by multicast scouting. A remote mesh needs a
@@ -112,6 +166,17 @@ impl Myrmic<LocalBinary> {
         config
             .set_mode(Some(zenoh::config::WhatAmI::Peer))
             .expect("setting zenoh mode cannot fail");
+        if let Some(isolation) = &self.isolation {
+            config
+                .insert_json5(
+                    "connect/endpoints",
+                    &serde_json::json!([isolation.endpoint]).to_string(),
+                )
+                .expect("the isolated endpoint is a valid zenoh endpoint");
+            config
+                .insert_json5("scouting/multicast/enabled", "false")
+                .expect("disabling multicast scouting cannot fail");
+        }
         zenoh::open(config)
             .await
             .expect("failed to open zenoh session")
@@ -124,6 +189,7 @@ impl<'c> Myrmic<DockerBinary<'c>> {
     pub fn attach(container: &'c ConnectedContainer) -> Self {
         Self {
             backend: DockerBinary::attach(container),
+            isolation: None,
         }
     }
 }
@@ -134,6 +200,7 @@ impl Myrmic<SshBinary> {
     pub fn ssh(host: impl Into<String>) -> Self {
         Self {
             backend: SshBinary::new(host),
+            isolation: None,
         }
     }
 
@@ -142,6 +209,7 @@ impl Myrmic<SshBinary> {
     pub fn ssh_at(host: impl Into<String>, binary: impl Into<String>) -> Self {
         Self {
             backend: SshBinary::at(host, binary),
+            isolation: None,
         }
     }
 }
@@ -274,7 +342,7 @@ where
     /// Run `program args` on the target and capture its output. Panics when it cannot be
     /// started, or its wrapper failed: broken test infrastructure, not a result.
     async fn run_program(&self, program: &str, args: &[&str]) -> CommandOutput {
-        let command = self.backend.command(program, args);
+        let command = self.command(program, args);
         let invocation = format!("{command:?}");
         let output = tokio::process::Command::from(command)
             .output()
@@ -293,11 +361,26 @@ where
     /// command that cannot be started, or whose wrapper failed, is the error instead of a panic:
     /// a panic during unwinding aborts the process and hides the original one.
     fn run_program_blocking(&self, program: &str, args: &[&str]) -> std::io::Result<CommandOutput> {
-        let mut command = self.backend.command(program, args);
+        let mut command = self.command(program, args);
         let invocation = format!("{command:?}");
         let output = command.output()?;
         self.captured(&invocation, output)
             .map_err(std::io::Error::other)
+    }
+
+    /// `program args` as a host command from the backend, inside the isolation, if any: its
+    /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, and its runtime's endpoint as
+    /// `MYRMIC_CONNECT`, which the CLI takes like `--connect`. Every program the shim starts goes
+    /// through here, so the CLI inherits the isolation also when it is exec'd by `sh`.
+    fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
+        let mut command = self.backend.command(program, args);
+        if let Some(isolation) = &self.isolation {
+            command
+                .env("XDG_DATA_HOME", isolation.dir.path().join("data"))
+                .env("XDG_RUNTIME_DIR", isolation.dir.path().join("run"))
+                .env("MYRMIC_CONNECT", &isolation.endpoint);
+        }
+        command
     }
 
     /// `output`, with the invocation and exit code folded into a failed command's stderr (the
@@ -463,8 +546,18 @@ where
         for tag in self.tags {
             args.extend(["--tag", tag]);
         }
+        let isolated_config = self.myrmic.isolation.as_ref().map(|isolation| {
+            assert!(
+                self.config.is_none(),
+                "an isolated shim generates the runtime config itself"
+            );
+            isolation.dir.path().join("runtime.yaml")
+        });
         if let Some(config) = &self.config {
             args.push(config);
+        }
+        if let Some(config) = &isolated_config {
+            args.push(path_arg(config));
         }
         self.myrmic.run(&args).await?;
         self.myrmic.wait_until_listed(&self.name, true).await?;
@@ -561,6 +654,12 @@ where
     }
 }
 
+/// How long [`DebugListenerBuilder::start`] waits before returning. The CLI reports nothing once
+/// its subscriptions are in place (it prints `starting debug stream` before it even opens its
+/// session), so the wait is a guess. Measured with [`Myrmic::local_isolated`]: without it, a
+/// command sent right after the spawn was missed in most runs; with 5 s, none was.
+pub const DEBUG_LISTENER_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Options for one `myrmic telemetry debug --json`, created by [`Myrmic::debug_listener`].
 pub struct DebugListenerBuilder<'a, B> {
     myrmic: &'a Myrmic<B>,
@@ -588,7 +687,9 @@ where
 
     /// run: myrmic telemetry debug --json [--id `id`] [--level `level`]
     ///
-    /// The CLI keeps running for as long as the returned listener lives.
+    /// Returns after [`DEBUG_LISTENER_SETTLE`], so the listener sees what happens after the
+    /// return; start it before whatever it is meant to observe. The CLI keeps running for as long
+    /// as the returned listener lives.
     pub async fn start(self) -> DebugListener {
         let mut args = vec!["telemetry", "debug", "--json"];
         if let Some(id) = &self.id {
@@ -597,7 +698,9 @@ where
         if let Some(level) = &self.level {
             args.extend(["--level", level]);
         }
-        DebugListener::spawn(&self.myrmic.backend, &args).await
+        let listener = DebugListener::spawn(self.myrmic, &args).await;
+        tokio::time::sleep(DEBUG_LISTENER_SETTLE).await;
+        listener
     }
 }
 

@@ -52,6 +52,11 @@ impl DebugStream {
         self.take(Some(boundary), sri_filter)
     }
 
+    /// Whether no item is waiting to be printed.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
     /// Takes every queued item the cell filter admits, oldest first.
     pub(crate) fn drain_all(&mut self, sri_filter: Option<&str>) -> Vec<DebugItem> {
         self.take(None, sri_filter)

@@ -21,8 +21,15 @@ pub struct Ctx {
     pub timeout: Option<humantime::Duration>,
 
     /// Connect directly to a runtime endpoint instead of using multicast
-    /// discovery. May be supplied more than once for fallback endpoints.
-    #[clap(long, value_name = "ENDPOINT", global = true)]
+    /// discovery. May be supplied more than once for fallback endpoints, or
+    /// set as a comma-separated list in `MYRMIC_CONNECT`.
+    #[clap(
+        long,
+        value_name = "ENDPOINT",
+        env = "MYRMIC_CONNECT",
+        value_delimiter = ',',
+        global = true
+    )]
     pub connect: Vec<String>,
 }
 

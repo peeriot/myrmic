@@ -46,7 +46,7 @@ open-telemetry = [
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ["env"] }
 dialoguer = { workspace = true }
 espflash = { workspace = true, features = ["cli"] }
 log = { workspace = true, features = ["std"] }
