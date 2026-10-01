@@ -160,6 +160,7 @@ impl Board {
             return Err(credentials);
         };
         *current = credentials;
+
         Ok(())
     }
 
