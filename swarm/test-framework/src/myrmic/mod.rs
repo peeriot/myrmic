@@ -10,6 +10,7 @@ pub use backend::local::LocalBinary;
 pub use backend::ssh::SshBinary;
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
+use sorg_common::RestartType;
 
 use crate::{
     CommandOutput,
@@ -21,6 +22,7 @@ use crate::{
 pub mod backend;
 pub mod cell;
 mod debug;
+pub mod mqtt;
 
 /// Prefix of the CLI's info lines on stderr (the label is padded to the width of `ERROR`).
 const INFO_PREFIX: &str = "INFO  ";
@@ -47,6 +49,34 @@ pub enum Error {
     /// the CLI succeeded, but the state it leads to did not show up in time
     #[error("timed out waiting for {waited_for}")]
     Timeout { waited_for: String },
+}
+
+/// A build platform for `myrmic deploy --platform`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    /// the host runtime (Wasmtime)
+    Linux,
+    /// Espressif riscv32imac boards (ESP32-C5, ESP32-C6, ESP32-C61)
+    Riscv32imac,
+}
+
+impl Platform {
+    /// the CLI's spelling of the platform
+    fn cli_name(self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::Riscv32imac => "riscv32imac",
+        }
+    }
+}
+
+/// the CLI's spelling of `policy` for `myrmic deploy --policy`
+fn policy_arg(policy: RestartType) -> &'static str {
+    match policy {
+        RestartType::Never => "never",
+        RestartType::OnError => "on-error",
+        RestartType::Always => "always",
+    }
 }
 
 /// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
@@ -159,11 +189,23 @@ where
         Ok(cell)
     }
 
-    /// run: myrmic send `sri` `command`
+    /// run: myrmic send `sri` `command` [`payload` --raw]
     ///
-    /// The CLI only hands the command over and prints no response, so success carries no value.
-    pub async fn send(&self, sri: &str, command: &str) -> Result<(), Error> {
-        self.run(&["send", sri, command]).await?;
+    /// `payload` is delivered as-is, so the test encodes it in the handler's codec (e.g.
+    /// `serde_json::to_vec` for the JSON default). The CLI only hands the command over and prints
+    /// no response, so success carries no value.
+    pub async fn send(
+        &self,
+        sri: &str,
+        command: &str,
+        payload: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        let payload = payload.map(hex::encode);
+        let mut args = vec!["send", sri, command];
+        if let Some(payload) = &payload {
+            args.extend([payload.as_str(), "--raw"]);
+        }
+        self.run(&args).await?;
         Ok(())
     }
 
@@ -174,6 +216,9 @@ where
             cell: cell.into(),
             srn: format!("e2e-{}", uuid::Uuid::new_v4().simple()),
             tags: &[],
+            platforms: None,
+            init: None,
+            policy: None,
         }
     }
 
@@ -440,6 +485,9 @@ where
     cell: CellSpec<B>,
     srn: String,
     tags: &'a [&'a str],
+    platforms: Option<&'a [Platform]>,
+    init: Option<&'a [u8]>,
+    policy: Option<RestartType>,
 }
 
 impl<'a, B> CellDeployBuilder<'a, B>
@@ -459,13 +507,50 @@ where
         self
     }
 
-    /// run: myrmic deploy --name `srn` `cell` [--tag `tag`...]
+    /// `--platform`: the platforms a cell crate is built for; defaults to the CLI's (`linux`)
+    pub fn platforms(mut self, platforms: &'a [Platform]) -> Self {
+        self.platforms = Some(platforms);
+        self
+    }
+
+    /// `--init` with `--raw`: the arguments delivered as-is to the cell's `#[init]`, encoded in
+    /// its codec (see [`Myrmic::send`]); defaults to none
+    pub fn init(mut self, init: &'a [u8]) -> Self {
+        self.init = Some(init);
+        self
+    }
+
+    /// `--policy`: the cell's restart policy; defaults to the CLI's ([`RestartType::Never`])
+    pub fn policy(mut self, policy: RestartType) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// run: myrmic deploy --name `srn` `cell` [--tag `tag`...] [--platform `platforms`]
+    /// [--init `init` --raw] [--policy `policy`]
     ///
     /// Returns once the SRI shows up in `myrmic cells status`.
     pub async fn deploy(self) -> Result<DeployedCell<B>, Error> {
+        let platforms = self.platforms.map(|platforms| {
+            platforms
+                .iter()
+                .map(|platform| platform.cli_name())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
+        let init = self.init.map(hex::encode);
         let mut args = vec!["deploy", "--name", &self.srn, path_arg(self.cell.as_path())];
         for tag in self.tags {
             args.extend(["--tag", tag]);
+        }
+        if let Some(platforms) = &platforms {
+            args.extend(["--platform", platforms.as_str()]);
+        }
+        if let Some(init) = &init {
+            args.extend(["--init", init.as_str(), "--raw"]);
+        }
+        if let Some(policy) = self.policy {
+            args.extend(["--policy", policy_arg(policy)]);
         }
         let output = self.myrmic.run(&args).await?;
         let sri = Sri::of_path(&self.srn)

@@ -27,9 +27,16 @@ pub struct Deploy {
 
     /// Init arguments delivered to the cell's `#[init]` on deploy. Parsed like
     /// a `send` payload (JSON by default; a value that isn't valid JSON is sent
-    /// as a JSON string). Single-cell (`.wasm` / crate) deploys only.
+    /// as a JSON string). Use `--raw` to deliver hex-decoded raw bytes instead.
+    /// Single-cell (`.wasm` / crate) deploys only.
     #[clap(long, conflicts_with = "init_file")]
     init: Option<String>,
+
+    /// Decode the `--init` payload as a hex string (optional `0x` prefix) and
+    /// deliver the raw bytes as-is, bypassing JSON encoding. For non-JSON wire
+    /// formats.
+    #[clap(long, requires = "init")]
+    raw: bool,
 
     /// File whose raw bytes are delivered verbatim as the cell's `#[init]`
     /// arguments. Single-cell (`.wasm` / crate) deploys only.
@@ -58,6 +65,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
         platform,
         target,
         init,
+        raw,
         init_file,
         tags,
         policy,
@@ -74,7 +82,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
 
     let path = determine_wd(&ctx, path)?;
     let tags = sorg_common::RequirementTags::new(tags);
-    let init = resolve_init(init, init_file)?;
+    let init = resolve_init(init, raw, init_file)?;
     let restart = policy.map(models::RestartTypeName::to_policy);
 
     let resolved = PathType::from_path(&path)?;
@@ -208,15 +216,17 @@ fn root_config(
 }
 
 /// Resolves the init-argument buffer from the mutually-exclusive `--init`
-/// (payload literal, encoded like a `send` payload) / `--init-file` (raw bytes)
-/// flags. The bytes are forwarded verbatim; the cell's `#[init]` decodes them.
+/// (payload literal, encoded like a `send` payload, `raw` like `send --raw`) /
+/// `--init-file` (raw bytes) flags. The bytes are forwarded verbatim; the
+/// cell's `#[init]` decodes them.
 fn resolve_init(
     init: Option<String>,
+    raw: bool,
     init_file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Option<Vec<u8>>> {
     match (init, init_file) {
         (Some(_), Some(_)) => anyhow::bail!("--init and --init-file are mutually exclusive"),
-        (Some(payload), None) => Ok(Some(crate::payload::encode(payload, false)?)),
+        (Some(payload), None) => Ok(Some(crate::payload::encode(payload, raw)?)),
         (None, Some(path)) => {
             let bytes = std::fs::read(&path)
                 .with_context(|| format!("failed to read init file '{}'", path.display()))?;

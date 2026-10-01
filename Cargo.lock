@@ -10857,6 +10857,7 @@ dependencies = [
  "config 0.15.27",
  "db-client",
  "futures",
+ "hex",
  "introspection-client",
  "introspection-common",
  "myrmic-build",
