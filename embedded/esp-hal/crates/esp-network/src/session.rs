@@ -82,25 +82,13 @@ pub struct WifiCredentials {
     password: String,
 }
 
-/// Why saved WiFi credentials cannot be used by the radio.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WifiCredentialsError {
-    /// The SSID exceeds the radio's 32-byte limit.
-    SsidTooLong,
-    /// The password exceeds the radio's 64-byte limit.
-    PasswordTooLong,
-}
-
 impl WifiCredentials {
     /// Create credentials loaded by the application, for example from flash.
-
-    pub fn new(
-        ssid: impl Into<String>,
-        password: impl Into<String>,
-    ) -> Result<Self, WifiCredentialsError> {
-        let ssid = ssid.into();
-        let password = password.into();
-        Ok(Self { ssid, password })
+    pub fn new(ssid: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            ssid: ssid.into(),
+            password: password.into(),
+        }
     }
 
     /// The configured network name.

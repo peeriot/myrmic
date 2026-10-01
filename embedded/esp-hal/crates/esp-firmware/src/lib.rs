@@ -55,7 +55,7 @@
 //!
 //! #[esp_firmware::main]
 //! async fn setup(board: &mut Board) {
-//!     let credentials = WifiCredentials::new("my-network", "my-password").unwrap();
+//!     let credentials = WifiCredentials::new("my-network", "my-password");
 //!     assert!(board.set_wifi_credentials(credentials), "WiFi was taken");
 //! }
 //! ```
@@ -125,7 +125,7 @@ mod ble;
 pub use board::Board;
 pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
-pub use esp_common::esp_network::{WifiCredentials, WifiCredentialsError};
+pub use esp_common::esp_network::WifiCredentials;
 pub use outlet::Outlet;
 pub use tap::{DeclareError, EventTap, Tap};
 
