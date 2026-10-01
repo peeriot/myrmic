@@ -93,23 +93,13 @@ pub enum WifiCredentialsError {
 
 impl WifiCredentials {
     /// Create credentials loaded by the application, for example from flash.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WifiCredentialsError`] if either value exceeds the radio's
-    /// byte limit. Invalid saved credentials can then be ignored during setup.
+
     pub fn new(
         ssid: impl Into<String>,
         password: impl Into<String>,
     ) -> Result<Self, WifiCredentialsError> {
         let ssid = ssid.into();
         let password = password.into();
-        if ssid.len() > 32 {
-            return Err(WifiCredentialsError::SsidTooLong);
-        }
-        if password.len() > 64 {
-            return Err(WifiCredentialsError::PasswordTooLong);
-        }
         Ok(Self { ssid, password })
     }
 
