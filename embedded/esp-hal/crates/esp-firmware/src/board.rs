@@ -15,7 +15,7 @@ use signal_layer_core::{OutletRegistry, TapRegistry, WireType};
 use wasm_runtime::Pins;
 use wasm_storage::PartitionLayout;
 
-use crate::{Config, DeclareError, EventTap, Outlet, Tap, WifiCredentials};
+use crate::{Config, DeclareError, EventTap, Outlet, Tap, WifiCredentials, log};
 
 /// The hardware and settings [`start`](crate::start) brings up.
 ///
@@ -151,17 +151,16 @@ impl Board {
 
     /// Replace the WiFi credentials before [`start`](crate::start).
     ///
-    /// Returns the credentials unchanged if the WiFi peripheral was taken.
-    pub fn set_wifi_credentials(
-        &mut self,
-        credentials: WifiCredentials,
-    ) -> Result<(), WifiCredentials> {
+    /// Returns `false`, and ignores the credentials, if the WiFi peripheral was taken.
+    #[must_use]
+    pub fn set_wifi_credentials(&mut self, credentials: WifiCredentials) -> bool {
         let Some((_, current)) = &mut self.wifi else {
-            return Err(credentials);
+            log::warn!("[esp-firmware] WiFi was taken: credentials ignored");
+            return false;
         };
         *current = credentials;
 
-        Ok(())
+        true
     }
 
     /// Takes the WiFi peripheral, so the shipped network service does not
