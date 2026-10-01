@@ -65,12 +65,12 @@ Copy the block of `*-c6` aliases and rename to `*-*`, adjusting the `--target` t
 e.g. for the C61:
 
 ```toml
-check-c61 = "check  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
-build-c61 = "build  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61 -Zbuild-std=core,alloc"
+check-c61 = "check  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61"
+build-c61 = "build  -p modem-esp32 --release --target riscv32imac-unknown-none-elf --no-default-features --features esp32c61"
 # … clippy-c61, doc-c61, citest-c61
 ```
 
-After this, `cargo +nightly-2026-08-07 build-*` should at least start compiling (and fail on the missing feature arms you're about
+After this, `cargo build-*` should at least start compiling (and fail on the missing feature arms you're about
 to add).
 
 ### 2. Feature plumbing

@@ -110,6 +110,9 @@ pub(crate) enum TimerCommand {
     Cancel {
         id: TimerId,
     },
+    /// Drops every timer. The table outlives cells, so a torn-down cell's
+    /// timers would otherwise keep their slots and tick into its successor.
+    CancelAll,
 }
 
 #[derive(Debug)]
@@ -165,6 +168,12 @@ pub(crate) async fn cancel(id: TimerId) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(msg) => Err(String::from(msg)),
     }
+}
+
+pub(crate) async fn cancel_all() {
+    CANCEL_RESPONSE.reset();
+    TIMER_COMMANDS.send(TimerCommand::CancelAll).await;
+    let _ = CANCEL_RESPONSE.wait().await;
 }
 
 #[embassy_executor::task]
@@ -242,6 +251,10 @@ fn handle_command(timers: &mut heapless::Vec<TimerEntry, MAX_TIMERS>, cmd: Timer
             } else {
                 CANCEL_RESPONSE.signal(Err("timer not found"));
             }
+        }
+        TimerCommand::CancelAll => {
+            timers.clear();
+            CANCEL_RESPONSE.signal(Ok(()));
         }
     }
 }

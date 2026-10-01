@@ -142,23 +142,22 @@ pub fn build(
         Selector::Lib => anyhow::bail!("a firmware is a binary; `lib` is not a firmware target"),
     };
 
+    // A crate without a pin falls back to the toolchain this crate declares; a
+    // pinned one builds with its pin, picked up from `current_dir`.
+    let toolchain = (!cargo::has_toolchain_pin(manifest_dir)).then_some(TOOLCHAIN);
     let mut cmd = Command::new("cargo");
     cmd.current_dir(manifest_dir);
-    cmd.arg(format!("+{TOOLCHAIN}"));
-    // Build `core`/`alloc` from source: the BLE stack calls compiler-builtins
-    // intrinsics that fault when linked against a precompiled `core` on riscv32imac.
-    // The chip `build-c*` aliases and the cell compiler use the same flag.
-    cmd.args([
-        "build",
-        "--release",
-        "-Z",
-        "build-std=core,alloc",
-        "--target",
-        TARGET,
-        "--manifest-path",
-    ])
-    .arg(manifest_path)
-    .args(["--bin", &bin]);
+    if let Some(toolchain) = toolchain {
+        cmd.arg(format!("+{toolchain}"));
+    }
+    cmd.args(["build", "--release"]);
+    if cargo::is_nightly(manifest_dir, toolchain)? {
+        // Build `core`/`alloc` from source with the firmware's own flags.
+        cmd.args(["-Z", "build-std=core,alloc"]);
+    }
+    cmd.args(["--target", TARGET, "--manifest-path"])
+        .arg(manifest_path)
+        .args(["--bin", &bin]);
     if features.no_default_features {
         cmd.arg("--no-default-features");
     }

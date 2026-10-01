@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SWARM_ROOT="$SCRIPT_DIR/../.."
 WASM_ROOT="$SWARM_ROOT/../sdk"
-WASM_TARGET="$WASM_ROOT/target/wasm32-unknown-unknown/release"
+WASM_TARGET="$WASM_ROOT/target/wasm32v1-none/release"
 
 echo "Building swarm..."
 (cd "$SWARM_ROOT" && cargo build -p swarm-cli)

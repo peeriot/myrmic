@@ -36,6 +36,8 @@ struct ProcessedMetrics {
     spans: Counter<u64>,
     host_log_nanos: Counter<u64>,
     host_logs: Counter<u64>,
+    timer_late_nanos: Counter<u64>,
+    timer_late_ticks: Counter<u64>,
 }
 
 static METRICS: LazyLock<ProcessedMetrics> = LazyLock::new(|| {
@@ -60,6 +62,8 @@ static METRICS: LazyLock<ProcessedMetrics> = LazyLock::new(|| {
         spans: meter.u64_counter("cell_spans").build(),
         host_log_nanos: meter.u64_counter("cell_host_log_nanos").build(),
         host_logs: meter.u64_counter("cell_host_logs").build(),
+        timer_late_nanos: meter.u64_counter("cell_timer_late_nanos").build(),
+        timer_late_ticks: meter.u64_counter("cell_timer_ticks_late").build(),
     }
 });
 
@@ -151,6 +155,15 @@ pub(crate) fn record_host_log(sri: &Sri, elapsed: std::time::Duration) {
     let attrs = attrs_of(sri);
     METRICS.host_log_nanos.add(nanos_of(elapsed), &attrs);
     METRICS.host_logs.add(1, &attrs);
+}
+
+/// A timer tick that waited at least one full period for inbox capacity —
+/// the cell's clock is being throttled by its own message volume. `waited` is
+/// scheduled instant to inbox acceptance; a sum and a count, like the others.
+pub(crate) fn record_late_tick(sri: &Sri, waited: std::time::Duration) {
+    let attrs = attrs_of(sri);
+    METRICS.timer_late_nanos.add(nanos_of(waited), &attrs);
+    METRICS.timer_late_ticks.add(1, &attrs);
 }
 
 /// Records that `sri` finished processing a command named `cmd`.

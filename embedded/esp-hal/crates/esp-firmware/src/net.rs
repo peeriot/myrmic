@@ -112,7 +112,13 @@ fn start_service(spawner: Spawner, args: ServiceArgs) {
 /// Establishes and keeps a WiFi connection
 #[embassy_executor::task]
 async fn connection(controller: WifiController<'static>, credentials: WifiCredentials) {
-    esp_common::esp_network::connection(controller, credentials, || bump(Task::Connection)).await;
+    esp_common::esp_network::connection(
+        controller,
+        credentials,
+        || bump(Task::Connection),
+        crate::status::set_associated,
+    )
+    .await;
 }
 
 /// Network stack runner
@@ -148,6 +154,7 @@ async fn zenoh_session(stack: embassy_net::Stack<'static>, zenoh_args: ZenohArgs
                     node_lease_ttl,
                     node_lease_renewal_interval,
                     esp_common::esp_network::wall_time,
+                    crate::status::set_registered,
                     crate::cell::registration().map(|r| esp_common::cell_db_service::NativeCell {
                         sri: r.sri,
                         commands: r.commands,
@@ -167,6 +174,7 @@ async fn zenoh_session(stack: embassy_net::Stack<'static>, zenoh_args: ZenohArgs
             .await;
         },
         || bump(Task::ZenohSession),
+        crate::status::set_session,
     )
     .await;
 }

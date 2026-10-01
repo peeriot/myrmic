@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use claims::{assert_none, assert_ok};
-use sorg_tests::{build_cell, swarm_config};
+use sorg_tests::{register_fixture, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -54,7 +54,7 @@ pub async fn sorg_client_event_pub_sub() {
 pub async fn cell_publishes_event() {
     // Arrange - bring up a swarm and build the test publisher
     let swarm = swarm_config!("cells/events/swarm.jsonnet");
-    build_cell("../../tests/fixtures/event_publish", &swarm).await;
+    register_fixture("../../tests/fixtures/event_publish", &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
     let mut e_queue = test_app.subscribe_cell_event(EVENT_ONE).await;
@@ -75,7 +75,7 @@ pub async fn cell_publishes_event() {
 pub async fn cell_subscribes_to_event() {
     // Arrange - bring up swarm and build the subscriber cell
     let swarm = swarm_config!("cells/events/swarm.jsonnet");
-    build_cell("../../tests/fixtures/event_subscribe", &swarm).await;
+    register_fixture("../../tests/fixtures/event_subscribe", &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -102,9 +102,9 @@ pub async fn cell_subscribes_to_event() {
 pub async fn cell_to_cell_event_fan_out() {
     // Arrange - build all three modules: publisher + two subscribers forwarding to different events
     let swarm = swarm_config!("cells/events/swarm.jsonnet");
-    build_cell("../../tests/fixtures/event_publish", &swarm).await;
-    build_cell("../../tests/fixtures/event_subscribe", &swarm).await;
-    build_cell("../../tests/fixtures/event_subscribe_b", &swarm).await;
+    register_fixture("../../tests/fixtures/event_publish", &swarm).await;
+    register_fixture("../../tests/fixtures/event_subscribe", &swarm).await;
+    register_fixture("../../tests/fixtures/event_subscribe_b", &swarm).await;
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
     // Subscribe the sorg-client to both forwarded events

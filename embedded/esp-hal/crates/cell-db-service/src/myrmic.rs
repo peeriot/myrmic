@@ -192,10 +192,12 @@ async fn read_tag_overlay(db_client: &Client, node: RuntimeId) -> ZResult<Option
     }
 }
 
-/// Registers the device as an exec runtime by inserting the relevant information in the DB
-pub(crate) async fn register_exec_runtime(db_client: &Client, info: ExecRuntimeInfo) {
+/// Registers the device as an exec runtime by inserting the relevant
+/// information in the DB, reporting whether the row was committed: until it is,
+/// the swarm cannot see this node at all.
+pub(crate) async fn register_exec_runtime(db_client: &Client, info: ExecRuntimeInfo) -> bool {
     log::info!("Registering exec runtime with info: {info:?}");
-    if let Err(e) = db_client
+    match db_client
         .write_tx_in_with_retention(
             scope_of_exec_registry(),
             Some(Duration::from_secs(RETENTION_PERIOD_S)),
@@ -221,7 +223,11 @@ pub(crate) async fn register_exec_runtime(db_client: &Client, info: ExecRuntimeI
         )
         .await
     {
-        log::error!("Failed to register runtime in DB: {e}");
+        Ok(()) => true,
+        Err(e) => {
+            log::error!("Failed to register runtime in DB: {e}");
+            false
+        }
     }
 }
 

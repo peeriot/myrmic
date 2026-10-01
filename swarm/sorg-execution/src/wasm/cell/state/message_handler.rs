@@ -16,6 +16,7 @@ use opentelemetry::KeyValue;
 use sorg_common::{bail, custom_err};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinHandle};
+use tokio::time::{Instant, MissedTickBehavior};
 use zenoh::Session;
 
 use crate::Result;
@@ -183,7 +184,7 @@ impl CellMessageHandler {
     }
 
     /// Maximum number of concurrent timers per cell. Just a chosen number for now
-    const MAX_TIMERS: usize = 5;
+    const MAX_TIMERS: usize = 8;
 
     /// Creates a timer that sends `TimerTick` messages on a schedule.
     /// Returns the timer ID, or an error if the per-cell limit is exceeded.
@@ -202,68 +203,7 @@ impl CellMessageHandler {
         let id = self.next_timer_id;
         self.next_timer_id += 1;
 
-        let snd = self.message_snd.clone();
-        let CreateTimerRequest {
-            export_name,
-            delay_ms,
-            period_ms,
-            count,
-            fixed_delay,
-        } = request;
-
-        let handle = tokio::spawn(async move {
-            if delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            }
-
-            let mut remaining = count;
-            loop {
-                let (completed_tx, completed_rx) = if fixed_delay {
-                    let (tx, rx) = oneshot::channel();
-                    (Some(tx), Some(rx))
-                } else {
-                    (None, None)
-                };
-
-                let incoming = IncomingMessage {
-                    span_context: None,
-                    queued_at: None,
-                    message: CellMessage::TimerTick(CellTimerTick {
-                        timer_id: id,
-                        export_name: export_name.clone(),
-                        completed: completed_tx,
-                    }),
-                };
-                if snd.send(incoming).await.is_err() {
-                    break;
-                }
-                if let Some(completed_rx) = completed_rx {
-                    let _ = completed_rx.await;
-                }
-
-                if let Some(ref mut n) = remaining {
-                    *n -= 1;
-                    if *n == 0 {
-                        break;
-                    }
-                }
-
-                if period_ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(period_ms)).await;
-                } else {
-                    break;
-                }
-            }
-
-            // notify the cell task that this timer completed naturally
-            let _ = snd
-                .send(IncomingMessage {
-                    span_context: None,
-                    message: CellMessage::TimerFinished(CellTimerFinished { timer_id: id }),
-                    queued_at: None,
-                })
-                .await;
-        });
+        let handle = tokio::spawn(run_timer(self.message_snd.clone(), self.sri, id, request));
 
         self.timer_tasks.insert(id, handle.abort_handle());
         Ok(id)
@@ -287,6 +227,157 @@ impl CellMessageHandler {
         };
         handle.abort();
         Ok(())
+    }
+}
+
+/// Drives one timer: a tick per period on `snd` until the count runs out, then
+/// `TimerFinished`.
+///
+/// Delivery waits for inbox capacity like every other producer (the channel is
+/// FIFO-fair), but the schedule does not follow the inbox: a tick the inbox
+/// held up is delivered late once, the periods that passed meanwhile are
+/// skipped rather than burst, and the next tick lands on the original phase. A
+/// `fixed_delay` timer instead measures its period from the handler's
+/// completion, so it re-bases after every tick. Either way the wait is counted
+/// and logged at the edges of each late streak.
+async fn run_timer(
+    snd: mpsc::Sender<IncomingMessage>,
+    sri: Sri,
+    id: u32,
+    request: CreateTimerRequest,
+) {
+    let CreateTimerRequest {
+        export_name,
+        delay_ms,
+        period_ms,
+        count,
+        fixed_delay,
+    } = request;
+
+    let first = Instant::now() + Duration::from_millis(delay_ms);
+    let period = Duration::from_millis(period_ms);
+    // A zero period is a one-shot: nothing to keep in step with.
+    let mut schedule = (period_ms > 0).then(|| {
+        let mut interval = tokio::time::interval_at(first, period);
+        // Backstop for the task itself being woken late; a held inbox is
+        // handled explicitly below.
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        interval
+    });
+    let mut remaining = count;
+    let mut streak = LateStreak::default();
+
+    loop {
+        let due = match &mut schedule {
+            Some(interval) => interval.tick().await,
+            None => {
+                tokio::time::sleep_until(first).await;
+                first
+            }
+        };
+
+        let (completed_tx, completed_rx) = if fixed_delay {
+            let (tx, rx) = oneshot::channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+
+        let incoming = IncomingMessage {
+            span_context: None,
+            queued_at: None,
+            message: CellMessage::TimerTick(CellTimerTick {
+                timer_id: id,
+                export_name: export_name.clone(),
+                completed: completed_tx,
+            }),
+        };
+        if snd.send(incoming).await.is_err() {
+            // The cell is gone, and with it anyone to tell.
+            return;
+        }
+
+        if let Some(interval) = &mut schedule {
+            let waited = due.elapsed();
+            // How many ticks we skipped...
+            let skipped = u32::try_from(waited.as_nanos() / period.as_nanos()).unwrap_or(u32::MAX);
+            if skipped > 0 {
+                crate::wasm::cell::cell_task::metrics::record_late_tick(&sri, waited);
+                if !fixed_delay
+                    && let Some(next) =
+                        due.checked_add(period.saturating_mul(skipped.saturating_add(1)))
+                {
+                    interval.reset_at(next);
+                }
+            }
+            match streak.observe(skipped > 0) {
+                Some(StreakEdge::Began) => tracing::warn!(
+                    "cell {sri} timer {id} ({export_name}): tick waited {waited:?} for inbox capacity, {skipped} period(s) of {period:?} lost"
+                ),
+                Some(StreakEdge::Ended { late_ticks }) => tracing::info!(
+                    "cell {sri} timer {id} ({export_name}): back on schedule after {late_ticks} late tick(s)"
+                ),
+                None => {}
+            }
+        }
+
+        if let Some(completed_rx) = completed_rx {
+            let _ = completed_rx.await;
+            if let Some(interval) = &mut schedule {
+                interval.reset();
+            }
+        }
+
+        if let Some(n) = &mut remaining {
+            *n -= 1;
+            if *n == 0 {
+                break;
+            }
+        }
+        if schedule.is_none() {
+            break;
+        }
+    }
+
+    // notify the cell task that this timer completed naturally
+    let _ = snd
+        .send(IncomingMessage {
+            span_context: None,
+            message: CellMessage::TimerFinished(CellTimerFinished { timer_id: id }),
+            queued_at: None,
+        })
+        .await;
+}
+
+/// Rate-limits the late-tick log to the edges of a streak: the first late tick
+/// warns, the first on-time tick after it reports how long the streak ran.
+#[derive(Default)]
+struct LateStreak {
+    late_ticks: u32,
+}
+
+enum StreakEdge {
+    Began,
+    Ended { late_ticks: u32 },
+}
+
+impl LateStreak {
+    fn observe(&mut self, late: bool) -> Option<StreakEdge> {
+        match (late, self.late_ticks) {
+            (true, 0) => {
+                self.late_ticks = 1;
+                Some(StreakEdge::Began)
+            }
+            (true, n) => {
+                self.late_ticks = n.saturating_add(1);
+                None
+            }
+            (false, 0) => None,
+            (false, late_ticks) => {
+                self.late_ticks = 0;
+                Some(StreakEdge::Ended { late_ticks })
+            }
+        }
     }
 }
 
@@ -409,4 +500,125 @@ async fn event_listener(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(period_ms: u64, count: Option<u32>, fixed_delay: bool) -> CreateTimerRequest {
+        CreateTimerRequest {
+            export_name: "tick".to_owned(),
+            delay_ms: 0,
+            period_ms,
+            count,
+            fixed_delay,
+        }
+    }
+
+    fn sri() -> Sri {
+        Sri::from_uuid(uuid::Uuid::nil())
+    }
+
+    /// Receives the next message, which must be a tick, and hands back its
+    /// completion sender.
+    async fn next_tick(rcv: &mut mpsc::Receiver<IncomingMessage>) -> Option<oneshot::Sender<()>> {
+        match rcv.recv().await.expect("timer task ended early").message {
+            CellMessage::TimerTick(tick) => tick.completed,
+            other => panic!("expected a tick, got {}", other.ty()),
+        }
+    }
+
+    async fn next_finished(rcv: &mut mpsc::Receiver<IncomingMessage>) -> u32 {
+        match rcv.recv().await.expect("timer task ended early").message {
+            CellMessage::TimerFinished(finished) => finished.timer_id,
+            other => panic!("expected the timer to finish, got {}", other.ty()),
+        }
+    }
+
+    /// A tick held up by a full inbox is delivered late, but the next one still
+    /// lands on the schedule's original phase, not one period after the inbox
+    /// drained.
+    #[tokio::test(start_paused = true)]
+    async fn held_inbox_does_not_shift_the_schedule() {
+        let (snd, mut rcv) = mpsc::channel(1);
+        let start = Instant::now();
+        tokio::spawn(run_timer(snd, sri(), 0, request(100, None, false)));
+
+        // The tick due at 0 fills the inbox; the one due at 100 blocks on it
+        // until the inbox is read, ten and a half periods later.
+        tokio::time::sleep(Duration::from_millis(1050)).await;
+        next_tick(&mut rcv).await;
+        next_tick(&mut rcv).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(1050));
+
+        next_tick(&mut rcv).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(1100));
+    }
+
+    /// With `fixed_delay` the period is measured from the handler's completion,
+    /// so a slow handler pushes the next tick out rather than being skipped.
+    #[tokio::test(start_paused = true)]
+    async fn fixed_delay_measures_the_period_from_handler_completion() {
+        let (snd, mut rcv) = mpsc::channel(1);
+        let start = Instant::now();
+        tokio::spawn(run_timer(snd, sri(), 0, request(100, None, true)));
+
+        let completed = next_tick(&mut rcv)
+            .await
+            .expect("fixed-delay ticks carry a completion");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        drop(completed);
+
+        next_tick(&mut rcv).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(350));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bounded_timer_finishes_after_its_last_tick() {
+        let (snd, mut rcv) = mpsc::channel(4);
+        let start = Instant::now();
+        tokio::spawn(run_timer(snd, sri(), 7, request(100, Some(2), false)));
+
+        next_tick(&mut rcv).await;
+        next_tick(&mut rcv).await;
+        assert_eq!(next_finished(&mut rcv).await, 7);
+        assert_eq!(start.elapsed(), Duration::from_millis(100));
+        assert!(
+            rcv.recv().await.is_none(),
+            "a finished timer must not tick again"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_shot_fires_once_after_its_delay() {
+        let (snd, mut rcv) = mpsc::channel(4);
+        let start = Instant::now();
+        let request = CreateTimerRequest {
+            delay_ms: 40,
+            ..request(0, None, false)
+        };
+        tokio::spawn(run_timer(snd, sri(), 3, request));
+
+        next_tick(&mut rcv).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(40));
+        assert_eq!(next_finished(&mut rcv).await, 3);
+        assert!(rcv.recv().await.is_none());
+    }
+
+    /// The late-tick log line fires once when a streak begins and once, with
+    /// the count, when it ends, so a saturated inbox does not log every period.
+    #[test]
+    fn late_streak_reports_only_its_edges() {
+        let mut streak = LateStreak::default();
+        assert!(streak.observe(false).is_none());
+        assert!(matches!(streak.observe(true), Some(StreakEdge::Began)));
+        assert!(streak.observe(true).is_none());
+        assert!(streak.observe(true).is_none());
+        assert!(matches!(
+            streak.observe(false),
+            Some(StreakEdge::Ended { late_ticks: 3 })
+        ));
+        assert!(streak.observe(false).is_none());
+    }
 }

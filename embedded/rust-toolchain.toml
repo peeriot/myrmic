@@ -1,4 +1,4 @@
 [toolchain]
-channel = "nightly-2026-08-07"
-components = ["clippy", "rustfmt", "rust-src"]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
 targets = ["riscv32imac-unknown-none-elf"]

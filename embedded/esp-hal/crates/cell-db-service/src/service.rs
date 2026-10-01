@@ -56,6 +56,10 @@ const SUB_ERROR_BACKOFF: Duration = Duration::from_secs(1);
 /// the cell slot from the first iteration — the identity was resolved offline —
 /// so no deployment can take the slot, and its placement row is asserted on the
 /// node-maintenance tick alongside the exec registration.
+///
+/// `registered` reports whether this node's exec-registry row is standing: the
+/// row is what makes the node visible to the swarm, so the firmware can show
+/// the difference between having a session and being deployable.
 #[allow(
     clippy::too_many_lines,
     reason = "The select loop reads clearest in one place"
@@ -73,6 +77,7 @@ pub async fn service(
     node_lease_ttl: core::time::Duration,
     node_lease_renewal_interval: core::time::Duration,
     wall_time: fn() -> Option<core::time::Duration>,
+    registered: fn(bool),
     native: Option<crate::NativeCell>,
 ) {
     let subscription_fallback_period = subscription_fallback_period(session_lease);
@@ -162,6 +167,7 @@ pub async fn service(
         let epoch = session.connection_epoch();
         if epoch != registered_epoch {
             registered_epoch = epoch;
+            registered(false);
             next_exec_registration = Instant::now();
             next_lease_renewal = Instant::now();
         }
@@ -302,7 +308,7 @@ pub async fn service(
                         .iter()
                         .map(|tag| String::from(tag.as_ref()))
                         .collect();
-                    myrmic::register_exec_runtime(&client, runtime_info).await;
+                    registered(myrmic::register_exec_runtime(&client, runtime_info).await);
 
                     // If this boot followed a watchdog reset, report it to the swarm
                     // (SDS-FEAT-2026-HWD-001 Area D). The report is held until the

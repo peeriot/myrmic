@@ -21,7 +21,7 @@ use sorg_common::{
     RequirementTags,
 };
 use sorg_tests::{
-    DeployResponseMode, MockEmbeddedExec, Platform, build_and_register_cell_class, swarm_config,
+    DeployResponseMode, MockEmbeddedExec, Platform, register_fixture_class, swarm_config,
 };
 use zenoh::config::ZenohId;
 
@@ -280,7 +280,7 @@ async fn artifact_narrows_untagged_cell_to_linux() {
     // A real wasm is built because the cell actually loads on the linux exec.
     let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
     let _exec_linux = swarm_config!("cells/embedded/exec_linux.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/dummy_cell",
         "embedded_routing",
         &swarm,

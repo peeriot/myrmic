@@ -5,10 +5,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Cells need nightly for -Zbuild-std. Dated rather than floating: `nightly` moves
-# on its own, and the set of lints it denies moves with it, so CI and a local run
-# stop agreeing on what clean means. The workflow passes the same date.
-CARGO_CHANNEL=${CARGO_CHANNEL:-nightly-2026-08-07}
+# Cells build with the stable toolchain `myrmic-build` pins. Reading the channel
+# out of the constant keeps this from drifting from it.
+if [ -z "${CARGO_CHANNEL:-}" ]; then
+    CARGO_CHANNEL="$(sed -nE 's/^pub const TOOLCHAIN: &str = "(.+)";$/\1/p' \
+        "${REPO_ROOT}/swarm/myrmic-build/src/compile.rs")"
+fi
+if [ -z "$CARGO_CHANNEL" ]; then
+    printf 'could not read the cell toolchain pin from myrmic-build\n' >&2
+    exit 1
+fi
 
 # Cell crates are `cdylib` and pull wasm-only SDK features, so they cannot join
 # `default-members` and are invisible to Check Code. This job is their only linter.
@@ -46,14 +52,13 @@ done
 
 rustup toolchain list | grep -q "^${CARGO_CHANNEL}" \
     || rustup toolchain install "$CARGO_CHANNEL" --profile minimal
-rustup component add clippy rust-src --toolchain "$CARGO_CHANNEL"
-rustup target add wasm32-unknown-unknown --toolchain "$CARGO_CHANNEL"
+rustup component add clippy --toolchain "$CARGO_CHANNEL"
+rustup target add wasm32v1-none --toolchain "$CARGO_CHANNEL"
 
 cargo "+$CARGO_CHANNEL" clippy \
     --manifest-path "${REPO_ROOT}/Cargo.toml" \
     --profile wasm-release \
-    --target wasm32-unknown-unknown \
-    -Zbuild-std=core,alloc,compiler_builtins \
+    --target wasm32v1-none \
     "${pkgs[@]}" \
     -- \
         --deny "warnings"

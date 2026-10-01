@@ -24,4 +24,4 @@ cargo build -p publisher
 cargo build -p subscriber
 
 printf "building the wasm operator\n\n"
-cargo build -p even_filter --target wasm32-unknown-unknown
+cargo build -p even_filter --target wasm32v1-none

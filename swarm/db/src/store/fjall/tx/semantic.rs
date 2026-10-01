@@ -314,7 +314,7 @@ fn collect_triples<M>(tx: &Transaction<M>, scope: Scope<'_>) -> anyhow::Result<V
     for entry in tx.range_latest(lower, upper) {
         let raw = entry.context("unable to read triple entry")?;
         let key: crate::domain::TripleKey<'_> =
-            StoreKey::decode_from_bytes(&raw).context("unable to decode triple key")?;
+            StoreKey::decode_exact(&raw).context("unable to decode triple key")?;
 
         let (subject, predicate, object) = encoding.sort(key.a, key.b, key.c);
 
@@ -342,7 +342,7 @@ fn collect_quads<M>(
     for entry in tx.range_latest(lower, upper) {
         let raw = entry.context("unable to read quad entry")?;
         let key: crate::domain::QuadKey<'_> =
-            StoreKey::decode_from_bytes(&raw).context("unable to decode quad key")?;
+            StoreKey::decode_exact(&raw).context("unable to decode quad key")?;
 
         let (subject, predicate, object, graph_name) = encoding.sort(key.a, key.b, key.c, key.d);
 
@@ -371,7 +371,7 @@ fn collect_graph_names<M>(
     for entry in tx.prefix_latest(&prefix) {
         let raw = entry.context("unable to read graph name entry")?;
         let key: crate::domain::GraphName<'_> =
-            StoreKey::decode_from_bytes(&raw).context("unable to decode graph name key")?;
+            StoreKey::decode_exact(&raw).context("unable to decode graph name key")?;
 
         names.push(key.name);
     }
@@ -468,7 +468,7 @@ impl<'tx, M> DataView<'tx, M> {
         let encoded = scope.encode().context("Unable to encode scope")?;
 
         let decoded: Scope<'_> =
-            StoreKey::decode_from_bytes(encoded.as_slice()).context("Unable to decode scope")?;
+            StoreKey::decode_exact(encoded.as_slice()).context("Unable to decode scope")?;
 
         let same = scope.namespace == decoded.namespace
             && scope.database == decoded.database
@@ -654,7 +654,7 @@ fn select_from_named_graph<'tx, M>(
 
     for entry in tx.range_latest(lower, upper) {
         let raw = tri!(entry);
-        let quad_key: crate::domain::QuadKey<'_> = tri!(StoreKey::decode_from_bytes(&raw));
+        let quad_key: crate::domain::QuadKey<'_> = tri!(StoreKey::decode_exact(&raw));
 
         let (subject, predicate, object, graph_name) =
             encoding.sort(quad_key.a, quad_key.b, quad_key.c, quad_key.d);
@@ -684,7 +684,7 @@ fn select_from_default_graph<'tx, M>(
 
     for entry in tx.range_latest(lower, upper) {
         let raw = tri!(entry);
-        let triple_key: crate::domain::TripleKey<'_> = tri!(StoreKey::decode_from_bytes(&raw));
+        let triple_key: crate::domain::TripleKey<'_> = tri!(StoreKey::decode_exact(&raw));
 
         let (subject, predicate, object) = encoding.sort(triple_key.a, triple_key.b, triple_key.c);
 
@@ -860,7 +860,7 @@ impl<'a, M> spareval::QueryableDataset<'a> for DataView<'a, M> {
 
         for entry in self.tx.prefix_latest(&prefix) {
             let raw = tri!(entry);
-            let key: crate::domain::GraphName<'_> = tri!(StoreKey::decode_from_bytes(&raw));
+            let key: crate::domain::GraphName<'_> = tri!(StoreKey::decode_exact(&raw));
             items.push(Ok(key.name));
         }
 

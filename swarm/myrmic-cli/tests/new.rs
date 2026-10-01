@@ -93,7 +93,7 @@ fn workspace_member_app_build_finds_workspace_target_wasm() {
     assert!(
         workspace
             .path()
-            .join("target/wasm32-unknown-unknown/release/my_cell.wasm")
+            .join("target/wasm32v1-none/release/my_cell.wasm")
             .exists(),
         "cargo should write the wasm artifact under the workspace target directory"
     );

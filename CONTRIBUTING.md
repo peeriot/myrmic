@@ -69,8 +69,8 @@ cargo install cargo-nextest cargo-deny
 
 Target-specific work needs extra setup:
 
-- **Embedded:** a Rust **nightly** toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile with the provided cargo aliases, run from `embedded/`, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
-- **WebAssembly (Cell modules):** the `wasm32-unknown-unknown` target and a nightly toolchain (the WASM build uses `-Zbuild-std`). See [`sdk/`](sdk/) and the per-component READMEs.
+- **Embedded:** the `riscv32imac-unknown-none-elf` target on the stable toolchain plus the Espressif toolchain and [`espflash`](https://github.com/esp-rs/espflash). Compile with the provided cargo aliases, run from `embedded/`, e.g. `cargo build-c6`, and flash with `myrmic flash`. See the examples under [`embedded/`](embedded/).
+- **WebAssembly (Cell modules):** the `wasm32v1-none` target on the stable toolchain. See [`sdk/`](sdk/) and the per-component READMEs.
 
 ### Editor Setup (rust-analyzer)
 
@@ -128,7 +128,7 @@ Notes:
 - New dependencies must pass `cargo deny` (acceptable licenses, no banned crates or advisories). See [deny.toml](deny.toml).
 - Add or update tests for behavior you change.
 - Every workspace member must be named by a lint list and every host-testable one by the test list; `./.ci/check/coverage` fails if one is not.
-- The chip aliases pass `-Zbuild-std`, which stable rejects, so they need the dated nightly that [embedded/rust-toolchain.toml](embedded/rust-toolchain.toml) pins. A cargo command run anywhere under `embedded/` picks the channel up from that file without naming the date.
+- The chip aliases build on the stable toolchain that [embedded/rust-toolchain.toml](embedded/rust-toolchain.toml) pins. A cargo command run anywhere under `embedded/` picks the channel up from that file without naming it. On a nightly toolchain `-Zbuild-std=core,alloc` can be appended to an alias, e.g. `cargo +nightly build-c6 -Zbuild-std=core,alloc`.
 - The gate runs tests from the explicit list in [.ci/check/test-packages](.ci/check/test-packages) rather than from `cargo citest` with no `-p` (which covers only the default members); today that list matches the default members exactly, and `./.ci/check/coverage` checks every member against it.
 
 ## Pull Request Process

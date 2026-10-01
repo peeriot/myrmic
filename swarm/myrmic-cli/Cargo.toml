@@ -19,6 +19,8 @@ workspace = true
 # relative to this crate's directory, hence the `../../` for repo-root files.
 [package.metadata.deb]
 section = "network"
+# The glibc floor of the release packages; the release pipeline checks the binary against it.
+depends = "libc6 (>= 2.17)"
 assets = [
     ["target/release/myrmic", "usr/bin/", "755"],
     ["../../NOTICE", "usr/share/doc/myrmic-cli/NOTICE", "644"],

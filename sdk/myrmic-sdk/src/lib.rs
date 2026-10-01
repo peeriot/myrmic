@@ -94,10 +94,6 @@
 //! docs are the API reference.
 
 #![no_std]
-#![cfg_attr(
-    all(feature = "alloc", target_arch = "wasm32"),
-    feature(alloc_error_handler)
-)]
 #![warn(missing_docs)]
 #![allow(clippy::cast_possible_truncation)] // using the crate just from Wasm -> no need to worry about casting to i32
 #![allow(clippy::cast_possible_wrap)] // using the crate just from Wasm -> no need to worry about casting to i32

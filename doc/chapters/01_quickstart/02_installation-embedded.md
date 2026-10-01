@@ -37,15 +37,18 @@ The host C toolchain from the [Installation](./01_installation.md) page (`build-
 
 ### The embedded Rust toolchain
 
-Firmware compiles for `riscv32imac-unknown-none-elf` with a pinned nightly toolchain, the `rust-src` component, and Rust's `-Z build-std`. You do not install these by hand: a firmware crate scaffolded by `myrmic new --firmware`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the toolchain, its `rust-src` component and the target. You will see a line like `the missing active toolchain nightly-2026-08-07 has been auto-installed` the first time.
+Firmware compiles for `riscv32imac-unknown-none-elf` with the same pinned stable toolchain as cells. You do not install it by hand: a firmware crate scaffolded by `myrmic new --firmware`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the toolchain and the target. You will see a line like `the missing active toolchain 1.98.1 has been auto-installed` the first time.
 
-As with cells, the pinned nightly date is the latest tested for the current Myrmic release and moves forward with each release. To install it ahead of that first build - on an offline machine, or just to keep the build output quiet - the steps are optional:
+As with cells, the pinned version is the release tested for the current Myrmic release and moves forward with each release. To install it ahead of that first build - on an offline machine, or just to keep the build output quiet - the steps are optional:
 
 ```sh
-rustup toolchain install nightly-2026-08-07
-rustup component add rust-src --toolchain nightly-2026-08-07
-rustup target add riscv32imac-unknown-none-elf --toolchain nightly-2026-08-07
+rustup toolchain install 1.98.1
+rustup target add riscv32imac-unknown-none-elf --toolchain 1.98.1
 ```
+
+#### Building on a nightly toolchain
+
+If a firmware crate pins a nightly toolchain in its `rust-toolchain.toml` instead, `myrmic build` and `myrmic flash` notice and pass `-Z build-std=core,alloc`, so `core` and `alloc` are built from source with the firmware's own flags. That needs the `rust-src` component on the nightly toolchain.
 
 ### wamrc, the cell AOT compiler
 
@@ -125,7 +128,7 @@ Expected output:
 INFO  Creating firmware 'my-node' for esp32c6
 ```
 
-Build it. The first build is the slow one: it auto-installs the toolchain (above), fetches the ESP SDK crates, and compiles `core`, `alloc` and the WAMR runtime from source. On a small cloud instance that first build took around one and a half to two minutes once the toolchain was downloaded; later builds, with everything cached, are seconds.
+Build it. The first build is the slow one: it auto-installs the toolchain (above), fetches the ESP SDK crates, and compiles the WAMR runtime from source. On a small cloud instance that first build took around one and a half to two minutes once the toolchain was downloaded; later builds, with everything cached, are seconds.
 
 ```bash
 cd my-node

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use claims::{assert_none, assert_ok};
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -14,7 +14,7 @@ const TICK_EVENT: &str = "timer_tick";
 pub async fn timer_init_smoke() {
     // Arrange - build the init-based timer cell and deploy it
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-init-logic",
         "timer_init",
         &swarm,
@@ -39,7 +39,7 @@ pub async fn timer_init_smoke() {
 pub async fn timer_periodic_via_command() {
     // Arrange - build and deploy the command-driven timer cell
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-cmd-logic",
         "timer_cmd",
         &swarm,
@@ -70,7 +70,7 @@ pub async fn timer_periodic_via_command() {
 pub async fn timer_respects_period() {
     // Arrange - build and deploy the command-driven timer cell
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-cmd-logic",
         "timer_cmd",
         &swarm,
@@ -109,7 +109,7 @@ pub async fn timer_respects_period() {
 pub async fn timer_delayed_one_shot() {
     // Arrange - build and deploy the command-driven timer cell
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-cmd-logic",
         "timer_cmd",
         &swarm,
@@ -142,7 +142,7 @@ pub async fn timer_delayed_one_shot() {
 pub async fn timer_finite_count() {
     // Arrange - build and deploy the command-driven timer cell
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-cmd-logic",
         "timer_cmd",
         &swarm,
@@ -177,7 +177,7 @@ pub async fn timer_finite_count() {
 pub async fn timer_cancellation() {
     // Arrange - build and deploy the command-driven timer cell
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-cmd-logic",
         "timer_cmd",
         &swarm,
@@ -218,7 +218,7 @@ pub async fn timer_cancellation() {
 pub async fn timer_delayed_periodic() {
     // Arrange
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-timer-cmd-logic",
         "timer_cmd",
         &swarm,
@@ -254,7 +254,7 @@ pub async fn timer_delayed_periodic() {
 // pub async fn timer_limit_exceeded() {
 //     // Arrange
 //     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-//     build_and_register_cell_class(
+//     register_fixture_class(
 //         "../../tests/fixtures/cell-timer-cmd-logic",
 //         "timer_cmd",
 //         &swarm,
@@ -305,7 +305,7 @@ pub async fn timer_delayed_periodic() {
 // pub async fn timer_invalid_export_errors() {
 //     // Arrange - build and deploy the command-driven timer cell
 //     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-//     build_and_register_cell_class(
+//     register_fixture_class(
 //         "../../tests/fixtures/cell-timer-cmd-logic",
 //         "timer_cmd",
 //         &swarm,

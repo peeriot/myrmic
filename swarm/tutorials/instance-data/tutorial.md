@@ -37,13 +37,11 @@ If you don't have Rust installed, get it via [rustup](https://rustup.rs/):
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Cell code compiles to WebAssembly using the Rust nightly toolchain. Install
-it along with the required target and component:
+Cell code compiles to WebAssembly using the stable Rust toolchain. Install
+the required target:
 
 ```sh
-rustup toolchain install nightly
-rustup target add wasm32-unknown-unknown --toolchain nightly
-rustup component add rust-src --toolchain nightly
+rustup target add wasm32v1-none
 ```
 
 ## Step 1 -- Setup
@@ -133,12 +131,12 @@ Verify the build artifacts exist:
 
 ```sh
 ls workspace/room/target/room-api.yml
-ls workspace/room/target/wasm32-unknown-unknown/release/room.wasm
+ls workspace/room/target/wasm32v1-none/release/room.wasm
 ```
 
 The API file (`room-api.yml`) is placed in the top-level target directory.
 The compiled binary (`room.wasm`) lives in cargo's standard output path
-under `target/wasm32-unknown-unknown/release/`. The controller cell will
+under `target/wasm32v1-none/release/`. The controller cell will
 import the API file in the next step.
 
 ## Step 5 -- Create the controller cell
@@ -217,11 +215,11 @@ Verify the build:
 
 ```sh
 ls workspace/controller/target/controller-api.yml
-ls workspace/controller/target/wasm32-unknown-unknown/release/controller.wasm
+ls workspace/controller/target/wasm32v1-none/release/controller.wasm
 ```
 
 As with the room cell, the API file is in the top-level target directory
-and the compiled binary is under `target/wasm32-unknown-unknown/release/`.
+and the compiled binary is under `target/wasm32v1-none/release/`.
 
 ## Step 8 -- Write the app-spec
 
@@ -369,7 +367,7 @@ Deploy `controller.002` using the CLI's `--instance-data` flag, binding it
 to `room.002`:
 
 ```sh
-./workspace/myrmic deploy ./workspace/controller/target/wasm32-unknown-unknown/release/controller.wasm \
+./workspace/myrmic deploy ./workspace/controller/target/wasm32v1-none/release/controller.wasm \
     --name controller.002 \
     --instance-data '{"room_sri": "room.002"}'
 ```

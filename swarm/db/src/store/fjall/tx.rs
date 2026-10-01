@@ -163,7 +163,18 @@ impl<M> Transaction<M> {
         self.active_scopes.iter()
     }
 
-    fn write_scope(&mut self, namespace: &str, database: &str, schema: &str) -> u64 {
+    /// Fails, touching nothing, for a scope that can't be encoded — otherwise
+    /// the refused write would still leave a sync point commit can't write.
+    fn write_scope(
+        &mut self,
+        namespace: &str,
+        database: &str,
+        schema: &str,
+    ) -> anyhow::Result<u64> {
+        Key::new_scope(namespace, database, schema)
+            .encode()
+            .context("invalid scope")?;
+
         let n_scope = api::Scope {
             namespace: namespace.to_owned(),
             database: database.to_owned(),
@@ -172,7 +183,7 @@ impl<M> Transaction<M> {
 
         self.active_scopes.insert(n_scope);
 
-        self.ts.get_time().as_u64()
+        Ok(self.ts.get_time().as_u64())
     }
 }
 
@@ -1267,7 +1278,7 @@ impl<M> Transaction<M> {
     }
 
     pub fn key_put(&mut self, key: UserKey<'_>, value: ValueRef<'_>) -> anyhow::Result<()> {
-        let ts = self.write_scope(key.namespace, key.database, key.schema);
+        let ts = self.write_scope(key.namespace, key.database, key.schema)?;
 
         self.put_at(&key, value, ts)?;
 
@@ -1275,7 +1286,7 @@ impl<M> Transaction<M> {
     }
 
     pub fn key_delete(&mut self, key: UserKey<'_>) -> anyhow::Result<()> {
-        let ts = self.write_scope(key.namespace, key.database, key.schema);
+        let ts = self.write_scope(key.namespace, key.database, key.schema)?;
 
         self.erase_at(&key, ts)?;
 
@@ -1301,7 +1312,7 @@ impl<M> Transaction<M> {
                 }
             }
 
-            let user_key = UserKey::decode_from_bytes(user_key)?;
+            let user_key = UserKey::decode_exact(user_key)?;
 
             out.push(String::from(user_key.key));
         }
@@ -1317,7 +1328,7 @@ impl<M> Transaction<M> {
         for key in self.prefix_latest_untracked(&table) {
             let key = key?;
             // Just make sure we're looking at a valid entity.
-            let _entity = Entity::decode_from_bytes(&key)?;
+            let _entity = Entity::decode_exact(&key)?;
             count += 1;
         }
 
@@ -1329,7 +1340,7 @@ impl<M> Transaction<M> {
     }
 
     pub fn tb_delete(&mut self, table: Table<'_>, id: IdRef<'_>) -> anyhow::Result<()> {
-        let ts = self.write_scope(table.namespace, table.database, table.schema);
+        let ts = self.write_scope(table.namespace, table.database, table.schema)?;
 
         self.erase_at(&table.id(id), ts)?;
 
@@ -1342,7 +1353,7 @@ impl<M> Transaction<M> {
         id: IdRef<'_>,
         value: ValueRef<'_>,
     ) -> anyhow::Result<()> {
-        let ts = self.write_scope(table.namespace, table.database, table.schema);
+        let ts = self.write_scope(table.namespace, table.database, table.schema)?;
 
         self.put_at(&table.id(id), value, ts)?;
 
@@ -1355,7 +1366,7 @@ impl<M> Transaction<M> {
         table: Table<'_>,
         entries: &[(IdRef<'_>, ValueRef<'_>)],
     ) -> anyhow::Result<()> {
-        let ts = self.write_scope(table.namespace, table.database, table.schema);
+        let ts = self.write_scope(table.namespace, table.database, table.schema)?;
 
         for (id, value) in entries {
             self.put_at(&table.id(id), value, ts)?;
@@ -1427,7 +1438,7 @@ impl<M> Transaction<M> {
                 break;
             }
 
-            let entity = Entity::decode_from_bytes(&key).context("unable to decode row key")?;
+            let entity = Entity::decode_exact(&key).context("unable to decode row key")?;
             results.push((entity.id.to_vec(), value.to_vec()));
         }
 
@@ -1442,7 +1453,7 @@ impl<M> Transaction<M> {
         fields: Fields,
         timestamp: Timestamp,
     ) -> anyhow::Result<()> {
-        let ts = self.write_scope(scope.namespace, scope.database, scope.schema);
+        let ts = self.write_scope(scope.namespace, scope.database, scope.schema)?;
 
         let key = Key::measurement()
             .namespace(scope.namespace)
@@ -1511,7 +1522,7 @@ impl<M> Transaction<M> {
             let (key, value) = entry?;
 
             let measurement =
-                Measurement::decode_from_bytes(&key).context("unable to decode measurement key")?;
+                Measurement::decode_exact(&key).context("unable to decode measurement key")?;
             let body: MeasurementBody =
                 postcard::from_bytes(&value).context("unable to deserialise measurement body")?;
 
@@ -1526,7 +1537,7 @@ impl<M> Transaction<M> {
         scope: Scope<'a>,
         blob: BlobRef<'_>,
     ) -> anyhow::Result<BlobId<'a>> {
-        let ts = self.write_scope(scope.namespace, scope.database, scope.schema);
+        let ts = self.write_scope(scope.namespace, scope.database, scope.schema)?;
 
         // We should be able to easily change the hash used...
         let hash = Hash::Sha2(sha2::Sha256::digest(blob).into());
@@ -1543,7 +1554,7 @@ impl<M> Transaction<M> {
     }
 
     pub fn link_blob(&mut self, path: Path<'_>, id: BlobId<'_>) -> anyhow::Result<()> {
-        let ts = self.write_scope(path.namespace, path.database, path.schema);
+        let ts = self.write_scope(path.namespace, path.database, path.schema)?;
 
         debug_assert_eq!(path.namespace, id.namespace, "scope should match");
         debug_assert_eq!(path.database, id.database, "scope should match");
@@ -1571,7 +1582,7 @@ impl<M> Transaction<M> {
         &mut self,
         path: Path<'a>,
     ) -> anyhow::Result<Option<(BlobId<'a>, Option<Meta>)>> {
-        let ts = self.write_scope(path.namespace, path.database, path.schema);
+        let ts = self.write_scope(path.namespace, path.database, path.schema)?;
 
         let original_path = path;
 
@@ -1580,8 +1591,7 @@ impl<M> Transaction<M> {
             return Ok(None);
         };
 
-        let id: BlobId<'_> =
-            StoreKey::decode_from_bytes(&id).context("unable to decode blob id")?;
+        let id: BlobId<'_> = StoreKey::decode_exact(&id).context("unable to decode blob id")?;
 
         debug_assert_eq!(original_path.namespace, id.namespace, "scope should match");
         debug_assert_eq!(original_path.database, id.database, "scope should match");
@@ -1637,8 +1647,7 @@ impl<M> Transaction<M> {
         let Some((_k, raw_id)) = self.get(&path)? else {
             return Ok(None);
         };
-        let id: BlobId<'_> =
-            StoreKey::decode_from_bytes(&raw_id).context("unable to decode blob id")?;
+        let id: BlobId<'_> = StoreKey::decode_exact(&raw_id).context("unable to decode blob id")?;
 
         let Some(blob) = self.resolve_blob(id)? else {
             return Ok(None);
@@ -1660,8 +1669,7 @@ impl<M> Transaction<M> {
         let Some((_k, raw_id)) = self.get(&path)? else {
             return Ok(None);
         };
-        let id: BlobId<'_> =
-            StoreKey::decode_from_bytes(&raw_id).context("unable to decode blob id")?;
+        let id: BlobId<'_> = StoreKey::decode_exact(&raw_id).context("unable to decode blob id")?;
 
         debug_assert_eq!(original_path.namespace, id.namespace, "scope should match");
         debug_assert_eq!(original_path.database, id.database, "scope should match");
@@ -1699,7 +1707,7 @@ impl<M> Transaction<M> {
                 break;
             }
 
-            let path = Path::decode_from_bytes(&key).context("unable to decode path key")?;
+            let path = Path::decode_exact(&key).context("unable to decode path key")?;
             paths.push(String::from(path.path));
         }
 
@@ -1709,7 +1717,7 @@ impl<M> Transaction<M> {
     pub fn sem_update(&mut self, scope: Scope<'_>, update: Update) -> anyhow::Result<()> {
         // We're just calling this to track the scope, the functions inside the sem-engine call functions
         // that use the timestamp already embedded in the tx.
-        let _ts = self.write_scope(scope.namespace, scope.database, scope.schema);
+        let _ts = self.write_scope(scope.namespace, scope.database, scope.schema)?;
 
         let spargebra::Update {
             base_iri,

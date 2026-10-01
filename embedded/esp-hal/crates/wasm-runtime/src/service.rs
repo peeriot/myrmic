@@ -28,6 +28,7 @@ use wasm_storage::metadata::Metadata;
 
 #[cfg(feature = "ble")]
 use crate::async_request::Ble;
+use crate::async_request::cell_host::CellHost;
 use crate::async_request::{CELL_MSG_CHANNEL, DbClient, send_request_and_wait};
 use crate::{CellMessage, TimerCompletionGuard, WamrRuntime, is_terminated};
 
@@ -302,6 +303,18 @@ impl WamrContext {
         unsafe { *Box::from_raw(ptr) }
     }
 
+    /// Drops whatever the gone cell left behind: its timers (which live outside the cell and
+    /// would keep their slots and tick into the next cell) and any message still queued for it
+    /// (BLE callback, command, event, or timer tick alike), so nothing is misdelivered to
+    /// whatever cell deploys next. Timers go first so no tick lands behind the clear. Both
+    /// buffers between the producer and here must be cleared: the embassy channel and the RTOS
+    /// queue.
+    fn discard_cell_leftovers(&self) {
+        send_request_and_wait(CellHost::ClearTimers);
+        CELL_MSG_CHANNEL.clear();
+        self.drain_cell_messages();
+    }
+
     /// Drains any [`CellMessage`]s still sitting in the RTOS queue, reconstructing and
     /// dropping each leaked `Box`. Paired with the `is_terminated()` gate in [`cell_pump`]
     /// (which stops feeding this queue during teardown), this keeps a message queued for a
@@ -497,6 +510,8 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
             Ok(runtime) => runtime,
             Err(e) => {
                 log::error!("[WAMR] Runtime initialization failed: {e}");
+                // `#[init]` may have created timers before failing.
+                ctx.discard_cell_leftovers();
                 send_request_and_wait(DbClient::ConfirmDeployment {
                     sri,
                     available_commands: vec![],
@@ -562,11 +577,7 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
                     if let Err(e) = send_request_and_wait(Ble::Reset) {
                         log::error!("[ble] reset on cell teardown failed: {e}");
                     }
-                    // Drop any message still queued for the cell that is now gone (BLE callback, command, event, or
-                    // timer tick alike), so it can't be misdelivered to whatever cell deploys next. Both buffers
-                    // between the producer and here must be cleared: the embassy channel and the RTOS queue.
-                    CELL_MSG_CHANNEL.clear();
-                    ctx.drain_cell_messages();
+                    ctx.discard_cell_leftovers();
                     send_request_and_wait(DbClient::ConfirmDeletion);
                     break;
                 }

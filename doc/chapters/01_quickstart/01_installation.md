@@ -5,7 +5,7 @@ This page installs the **Myrmic CLI** on Linux. The CLI is the only thing you in
 - The **Myrmic Runtime** is managed by the CLI - `myrmic runtimes start` brings one up, there is nothing separate to install.
 - The **Myrmic SDK** is a Rust dependency of your cell crate - `myrmic new` puts it into the generated `Cargo.toml`.
 
-On x86_64 the release package is the shortest path. There is no arm64 package, so on arm64 you [build from source](#install-from-source).
+On x86_64 and arm64 (64-bit, including a Raspberry Pi on a 64-bit OS) the release package is the shortest path. On any other architecture, [build from source](#install-from-source).
 
 ## Prerequisites
 
@@ -27,16 +27,15 @@ You need all of these whether you installed the CLI from a package or built it y
   source "$HOME/.cargo/env"
   ```
 
-- **The pinned nightly toolchain, the `wasm32-unknown-unknown` target and the `rust-src` component** are all installed for you on the first build. A cell scaffolded by `myrmic new`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the right toolchain and its components.
+- **The pinned stable toolchain and the `wasm32v1-none` target** are installed for you on the first build. A cell scaffolded by `myrmic new`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the right toolchain and target.
 
-  The pinned date is not a technical floor; it is the latest nightly tested for the current Myrmic release, and it moves forward with each release.
+  The pinned version is not a technical floor; it is the release tested for the current Myrmic release, and it moves forward with each release.
 
   To install these ahead of that first build - on an offline machine, or just to keep the build output quiet - the steps are optional:
 
   ```sh
-  rustup toolchain install nightly-2026-08-07
-  rustup target add wasm32-unknown-unknown --toolchain nightly-2026-08-07
-  rustup component add rust-src --toolchain nightly-2026-08-07
+  rustup toolchain install 1.98.1
+  rustup target add wasm32v1-none --toolchain 1.98.1
   ```
 
 - **A C toolchain.** A cell compiles to WebAssembly, but cargo still compiles and links every dependency's build script as a native binary for your machine. rustup ships no linker, so without one `myrmic build` stops before it starts the build, with `no C linker found`.
@@ -64,15 +63,15 @@ These are lab measurements on small cloud instances, not guaranteed minimums - t
 - **A cell build takes seconds.** Once the C toolchain is present, `myrmic build` was 9 to 10 seconds on 2 to 4 vCPU, and up to around 30 seconds on a busier host. The first build in a fresh crate also compiles the cell's dependencies, so it is the slow one; later builds are quicker.
 - **Building the CLI from source is the heavy step**, and wants a few GB of both RAM and disk. On 8 vCPU running alone it took about three and a half minutes, roughly 2 GB peak resident memory and 2.6 GB left in `target/`. On a contended host it takes proportionally longer - around 9 to 10 minutes when three builds shared a 16-thread machine.
 
-## Install from a release package (x86_64)
+## Install from a release package
 
 Packages are published on the [releases page](https://github.com/peeriot/myrmic/releases) under the tag `myrmic/v<version>`. Each release carries:
 
 | Asset | What it is |
 |---|---|
-| `myrmic-cli_<version>_amd64.deb` | the CLI |
-| `myrmic-cli-dbgsym_<version>_amd64.deb` | its debug symbols |
-| two `.rpm` files | the same CLI and its debug symbols, converted from the `.deb`; the converter picks their names, so read them off `SHA256SUMS` |
+| `myrmic-cli_<version>_<arch>.deb` | the CLI; `<arch>` is `amd64` (x86_64) or `arm64` (aarch64) |
+| `myrmic-cli-dbgsym_<version>_<arch>.deb` | its debug symbols |
+| four `.rpm` files, two per architecture | the same CLI and its debug symbols, converted from the `.deb`; the converter picks their names, so read them off `SHA256SUMS` |
 | `myrmic-cli_<version>_sbom.spdx.json`, `myrmic-cli_<version>_sbom.cdx.json` | the dependency inventory of the build |
 | `SHA256SUMS` | checksums for every asset above |
 
@@ -97,7 +96,8 @@ Then fetch the package you want from the same place:
 Debian, Ubuntu:
 
 ```bash
-curl -fLO "$base/myrmic-cli_${version}_amd64.deb"
+arch="$(dpkg --print-architecture)"
+curl -fLO "$base/myrmic-cli_${version}_${arch}.deb"
 ```
 
 RHEL, AlmaLinux, Fedora:
@@ -121,7 +121,7 @@ sha256sum --ignore-missing -c SHA256SUMS
 Debian, Ubuntu:
 
 ```bash
-sudo apt install "./myrmic-cli_${version}_amd64.deb"
+sudo apt install "./myrmic-cli_${version}_${arch}.deb"
 ```
 
 RHEL, AlmaLinux, Fedora:
@@ -130,29 +130,27 @@ RHEL, AlmaLinux, Fedora:
 sudo dnf install "./<the .rpm name SHA256SUMS listed>"
 ```
 
-The `.deb` line reuses the `$version` you set in the Download block. For the RPM, pass the name you read off `SHA256SUMS`. If you would rather not type it out, a glob covers the release suffix the converter picked:
+The `.deb` line reuses the `$version` and `$arch` you set above. For the RPM, pass the name you read off `SHA256SUMS`. If you would rather not type it out, a glob covers the release suffix the converter picked:
 
 ```bash
-sudo dnf install "./myrmic-cli-${version}"-*.x86_64.rpm
+sudo dnf install "./myrmic-cli-${version}"-*."$(uname -m)".rpm
 ```
 
 ### Distributions
 
-The `.deb` carries a `libc6` dependency that `dpkg-shlibdeps` derives at build time, from the glibc the release binary happened to be built against - as of Myrmic 0.5.0, `libc6 (>= 2.34)`. Nothing in this repository pins that floor, so treat the number as the current value rather than a promise, and read the real one off the package you downloaded:
+The `.deb` declares `libc6 (>= 2.17)` on both architectures, and the release pipeline checks the binary against that floor before anything is published, so the floor cannot drift. glibc 2.17 is the oldest glibc Rust itself supports, so every distribution the commands on this page work on meets it - Debian 9 or newer, Ubuntu 16.04 or newer, RHEL 8 or newer, and every 64-bit Raspberry Pi OS. The package you downloaded states it too:
 
 ```bash
-dpkg-deb -f "myrmic-cli_${version}_amd64.deb" Depends
+dpkg-deb -f "myrmic-cli_${version}_${arch}.deb" Depends
 ```
 
-Installing the package has been observed to work on Ubuntu 22.04 and 24.04, Debian 12, and AlmaLinux 9 and 10. Other distributions with glibc 2.34 or newer should work as well, but have not been checked.
+Installing the package has been observed to work on Ubuntu 22.04 and 24.04, Debian 12, and AlmaLinux 9 and 10. Other distributions that meet the floor should work as well, but have not been checked.
 
-Below the floor, `apt` refuses the `.deb` rather than letting it fail later: the install stops with a `libc6` dependency error naming the version your system has. Ubuntu 20.04, on glibc 2.31, was observed to do exactly that.
+Below the floor, `apt` refuses the `.deb` with a `libc6` dependency error naming the version your system has. The RPMs carry the same floor as per-symbol requirements such as `libc.so.6(GLIBC_2.17)(64bit)`, so `dnf` refuses them below it as well; `rpm -qp --requires <file>.rpm` shows them. Below the floor, build from source.
 
-Whether the RPM carries the same guard is not checked anywhere in this repository. It is converted from the `.deb` at release time, and nothing in the pipeline reads back which dependencies survived the conversion - so below the floor it may install cleanly and then die on a missing symbol version the first time you run `myrmic`. `rpm -qp --requires <file>.rpm` shows what it really asks for. Below the floor, on either family, build from source instead.
+### 32-bit ARM
 
-### arm64
-
-No aarch64 package is published - the release pipeline builds x86_64 only. On arm64, build from source.
+No package is published for 32-bit ARM (armhf, for example a 32-bit Raspberry Pi OS). There, build from source.
 
 ## Install from source
 

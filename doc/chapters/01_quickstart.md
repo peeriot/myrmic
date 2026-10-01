@@ -23,7 +23,7 @@ Myrmic Runtime runs on Linux-based systems and a growing set of embedded targets
 
 To work with Myrmic, you only need to install the Myrmic CLI. The Myrmic SDK is a Rust dependency you add to your cell code. The Myrmic Runtime is managed by the CLI - no separate installation needed.
 
-See [Installation](./01_quickstart/01_installation.md) for the system packages you need, installing from a release package on x86_64, building from source, and what Myrmic writes to your machine.
+See [Installation](./01_quickstart/01_installation.md) for the system packages you need, installing from a release package on x86_64 and arm64, building from source, and what Myrmic writes to your machine.
 
 For embedded targets - building and flashing firmware for ESP32 boards - see [Installation (Embedded)](./01_quickstart/02_installation-embedded.md).
 
@@ -185,7 +185,7 @@ INFO  Attempting to build: .../counter
     Finished release [optimized] target(s) in Xs
 ```
 
-This compiles the Cell to WebAssembly. The binary `counter.wasm` is placed in `counter/target/wasm32-unknown-unknown/release/`.
+This compiles the Cell to WebAssembly. The binary `counter.wasm` is placed in `counter/target/wasm32v1-none/release/`.
 
 ### 4. Start a local runtime.
 

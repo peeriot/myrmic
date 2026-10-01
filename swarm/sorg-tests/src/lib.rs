@@ -37,7 +37,7 @@ pub use swarm::{
     KillableProcess, ScopedProcess, scope_test_multicast, set_up_killable_swarm,
     set_up_swarm_with_config, test_session,
 };
-pub use wasm::{build_and_register_cell_class, build_cell};
+pub use wasm::{register_fixture, register_fixture_class};
 
 pub use tracing_subscriber;
 

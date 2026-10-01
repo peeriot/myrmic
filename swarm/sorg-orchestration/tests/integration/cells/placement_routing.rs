@@ -34,7 +34,7 @@ use sorg_common::{
     DeploymentError, RejectionReason, RequirementTags, class_registry, exec_registry,
     get_placement, instance_registry, node_lease,
 };
-use sorg_tests::{TestApp, build_and_register_cell_class, swarm_config};
+use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 use zenoh::key_expr::OwnedKeyExpr;
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
@@ -83,7 +83,7 @@ async fn placement_locates_the_class_registry_scope() {
     // Arrange - one node running orchestration, execution and db, with the
     // probe class registered on it.
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
+    register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -152,7 +152,7 @@ async fn placement_locates_the_class_registry_scope() {
 async fn placement_class_read_follows_the_class_registry_holder() {
     // Arrange - the probe class registered on the one real node.
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
+    register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -204,7 +204,7 @@ async fn placement_class_read_follows_the_class_registry_holder() {
 async fn placement_exec_registry_read_follows_its_own_scope() {
     // Arrange - the probe class registered on the one real node.
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
+    register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -252,7 +252,7 @@ async fn placement_exec_registry_read_follows_its_own_scope() {
 async fn placement_node_lease_read_follows_its_own_scope() {
     // Arrange - the probe class registered on the one real node.
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
+    register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -298,7 +298,7 @@ async fn placement_node_lease_read_follows_its_own_scope() {
 async fn placement_retries_while_only_an_artifact_is_missing() {
     // Arrange - the probe class registered on the one real node.
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
+    register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 

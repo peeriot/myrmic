@@ -13,7 +13,7 @@ use wasmtime::Caller;
 use crate::wasm::{
     cell::state::CellState,
     host_functions::{
-        db::{apply, defer, transform_scope},
+        db::{apply, defer, key_name, transform_scope},
         decode, encode, tri,
     },
 };
@@ -53,6 +53,7 @@ pub(crate) async fn tb_insert(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&table));
 
     let inserted = tri!(
         apply(
@@ -99,6 +100,7 @@ pub(crate) async fn tb_append(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&table));
 
     defer(
         &mut caller,
@@ -122,6 +124,7 @@ pub(crate) async fn tb_count(
         tri!(decode(&mut caller, req_ptr, req_len, "table count request"));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&table));
 
     let counted = tri!(apply(&mut caller, tb_count::Op { scope, table }).await);
     let response = TbCountResponse {
@@ -150,6 +153,7 @@ pub(crate) async fn tb_get(
         tri!(decode(&mut caller, req_ptr, req_len, "table get request"));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&table));
 
     let got = tri!(apply(&mut caller, tb_get::Op { scope, table, eid }).await);
     let response = TbGetResponse { value: got.value };
@@ -181,6 +185,7 @@ pub(crate) async fn tb_list(
     } = tri!(decode(&mut caller, req_ptr, req_len, "table list request"));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&table));
     let cursor = cursor.map(transform_cursor);
     let order = order.map(transform_order);
 
@@ -225,6 +230,7 @@ pub(crate) async fn tb_delete(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&table));
 
     defer(&mut caller, tb_delete::Op { scope, table, eid })
 }

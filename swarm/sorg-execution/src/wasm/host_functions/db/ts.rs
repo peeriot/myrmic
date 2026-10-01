@@ -11,7 +11,7 @@ use myrmic_common::db::TsOrderBy as WasmTsOrderBy;
 
 use crate::wasm::cell::state::CellState;
 use crate::wasm::host_functions::{
-    db::{apply, defer, transform_scope},
+    db::{apply, defer, key_name, transform_scope},
     decode, encode, tri,
 };
 
@@ -35,6 +35,7 @@ pub(crate) async fn publish_measurement(
         fields,
         ts,
     } = measurement;
+    tri!(key_name(&name));
     let fields = transform_fields(fields);
     let ts = ts.unwrap_or_else(|| caller.data().session().new_timestamp().get_time().as_u64());
 
@@ -72,6 +73,7 @@ pub(crate) async fn find_measurement(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&measurement_name));
     let order = order.map(transform_order);
 
     let response = tri!(

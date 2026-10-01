@@ -215,8 +215,7 @@ default-members = [
 # cut, and a release tag that disagrees with it is rejected.
 version = "0.7.0"
 edition = "2024"
-# Floored by the cranelift/pulley (wasmtime) stack.
-rust-version = "1.94"
+rust-version = "1.96"
 # Zone A (platform). Crates outside this zone declare their own license;
 # see REUSE.toml for the authoritative per-path declarations.
 license = "GPL-2.0-only WITH LicenseRef-Myrmic-exception-1.0"
@@ -446,7 +445,7 @@ which = "8.0.2"
 libc = "0.2.186"
 
 tryhard = "0.5.2"
-wasmtime = "47.0.3"
+wasmtime = "49.0.1"
 
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 

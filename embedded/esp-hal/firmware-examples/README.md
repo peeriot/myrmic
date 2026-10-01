@@ -10,12 +10,13 @@ directory to start a new firmware crate.
 | [`own-ble`](src/bin/own-ble.rs) | Replacing the shipped BLE stack, and keeping a GPIO back from the cell. |
 | [`native-cell`](src/bin/native-cell.rs) | Being the cell natively, with no WASM runtime at all. |
 | [`taps.rs`](src/bin/taps.rs) | Publishing a tap and acting on an outlet, declared by the firmware rather than a pipeline. |
+| [`internal-temp`](src/bin/internal-temp.rs) | Publishing the on-die temperature sensor as a tap, so a node reports a reading with nothing wired. |
 
 ```sh
 cd embedded/esp-hal
 cargo build -p firmware-examples --bin native-cell \
   --release --target riscv32imac-unknown-none-elf \
-  --no-default-features --features esp32c6 -Zbuild-std=core,alloc
+  --no-default-features --features esp32c6
 ```
 
 ## What makes this a firmware crate

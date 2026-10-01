@@ -143,7 +143,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
     // Logs roll into the runtime's data folder unless the config says otherwise.
     // Created up front so a bad directory fails here, not silently post-daemonize.
     if config.telemetry.logs.directory.is_none() {
-        let dir = super::runtime_data_dir(&zid.to_string())?.join("logs");
+        let dir = super::runtime_data_dir(&zid.to_string())?.join(super::LOGS_DIR);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create log directory {}", dir.display()))?;
         config.telemetry.logs.directory = Some(dir);
@@ -276,7 +276,7 @@ fn stable_zid(ctx: &Ctx, name: &str) -> anyhow::Result<ZenohId> {
 /// stable id so the same node reclaims its data across restarts, with room for
 /// other per-runtime state alongside it.
 fn default_db_dir(base: &Path, zid: ZenohId) -> PathBuf {
-    base.join(zid.to_string()).join("db")
+    base.join(zid.to_string()).join(super::DEFAULT_DB_DIR)
 }
 
 /// Where the db stores its data. `--tmp` forces in-memory (`None`), overriding

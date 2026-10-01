@@ -5,7 +5,7 @@ mod undeploy;
 use std::time::Duration;
 
 use sorg_client::Client as SorgClient;
-use sorg_tests::{TestApp, build_and_register_cell_class, swarm_config};
+use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 
 use crate::integration::spawn_full_test_app_with_swarm;
 
@@ -18,7 +18,7 @@ const DUMMY_MARKER_KEY: &str = "dummy/output";
 
 async fn spawn_test_app_with_dummy_cell() -> (TestApp, SorgClient) {
     let swarm = swarm_config!("full.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", CELL_CLASS, &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", CELL_CLASS, &swarm).await;
     let test_app = spawn_full_test_app_with_swarm(swarm).await;
     let sorg = SorgClient::new(test_app.session().clone());
     (test_app, sorg)

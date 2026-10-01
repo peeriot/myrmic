@@ -32,7 +32,7 @@ if [ -n "$CARGO_CHANNEL" ]; then
     # idempotent, so they run unconditionally.
     rustup toolchain list | grep -q "^${CARGO_CHANNEL}" \
         || rustup toolchain install "$CARGO_CHANNEL" --profile minimal
-    rustup component add clippy rustfmt rust-src --toolchain "$CARGO_CHANNEL"
+    rustup component add clippy rustfmt --toolchain "$CARGO_CHANNEL"
     rustup target add riscv32imac-unknown-none-elf --toolchain "$CARGO_CHANNEL"
 fi
 
@@ -140,10 +140,9 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     fi
 
     # The integration tests compile their cell fixtures at test runtime, with the
-    # pinned nightly `myrmic-build` invokes and the `rust-src` its `-Z build-std`
-    # needs. The CI image ships that toolchain, so nothing here ever had to
-    # install it, and a runner without it fails deep inside the tests with a
-    # rustup error instead of failing here with a reason.
+    # pinned toolchain `myrmic-build` invokes and its `wasm32v1-none` target. A
+    # runner without them fails deep inside the tests with a rustup error instead
+    # of failing here with a reason.
     #
     # Reading the channel out of the constant keeps this from drifting from it.
     printf "\n\n--== Ensure Cell Toolchain ==--\n\n"
@@ -155,7 +154,7 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     fi
     rustup toolchain list | grep -q "^${CELL_TOOLCHAIN}" \
         || rustup toolchain install "$CELL_TOOLCHAIN" --profile minimal
-    rustup component add rust-src --toolchain "$CELL_TOOLCHAIN"
+    rustup target add wasm32v1-none --toolchain "$CELL_TOOLCHAIN"
 
     cargo nextest --version >/dev/null 2>&1 \
         || curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"

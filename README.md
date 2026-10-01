@@ -25,7 +25,7 @@
   <a href="https://github.com/peeriot/myrmic/releases"><img src="https://img.shields.io/github/v/release/peeriot/myrmic?filter=myrmic*&label=release&style=flat-square" alt="Latest release"></a>
   <a href="https://crates.io/crates/myrmic-sdk"><img src="https://img.shields.io/crates/d/myrmic-sdk?style=flat-square" alt="Downloads"></a>
   <a href="#status"><img src="https://img.shields.io/badge/status-experimental-orange.svg?style=flat-square" alt="Status: experimental"></a>
-  <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.97-orange.svg?style=flat-square" alt="Rust 1.97"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/rust-1.96%2B-orange.svg?style=flat-square" alt="Rust 1.96+"></a>
   <a href="https://discord.gg/zExh79pWgj"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white&style=flat-square" alt="Discord"></a>
   <a href="https://www.youtube.com/@MyrmicOfficial"><img src="https://img.shields.io/badge/YouTube-red?logo=youtube&logoColor=white&style=flat-square" alt="YouTube"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-GPL--2.0%20%2B%20Myrmic%20Exception-blue.svg?style=flat-square" alt="License: GPL-2.0 with Myrmic Exception"></a>

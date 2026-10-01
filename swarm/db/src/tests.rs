@@ -1288,3 +1288,86 @@ async fn touched_tx_survives_the_reaper() {
         );
     }
 }
+
+/// Names that would let one scope's keys collide with, or land inside, another's.
+#[tokio::test(flavor = "current_thread")]
+async fn names_with_nul_are_refused() {
+    let store = open_tmp();
+
+    let victim = Key::new_scope("sorg", "node-lease", "p");
+    let mut tx = write(&store);
+    tx.key_put(victim.kv("real-1"), b"v").unwrap();
+    tx.tb_insert(victim.table("entries"), b"real-node", b"lease")
+        .unwrap();
+    tx.commit().unwrap();
+
+    // One lease-table prefix plus a well-formed id; would list as a forged row.
+    let mut forged_row = String::from("sorg\0*node-lease\0*p\0:tbentries\0");
+    forged_row.extend(11u64.to_be_bytes().map(char::from));
+    forged_row.push_str("forged-node");
+
+    let evil_scopes = [
+        Key::new_scope("a\0*b", "c", "d"),
+        Key::new_scope("sorg\0*node-lease\0*p\0:kvADMIN", "x", "y"),
+        Key::new_scope(&forged_row, "x", "y"),
+        Key::new_scope("ok", "a\0", "b"),
+        Key::new_scope("ok", "a", "b\0"),
+    ];
+
+    let mut tx = write(&store);
+    for scope in evil_scopes {
+        assert!(scope.encode().is_err());
+        assert!(tx.key_put(scope.kv("k"), b"x").is_err());
+        assert!(tx.tb_insert(scope.table("t"), b"id", b"x").is_err());
+    }
+    assert!(tx.key_put(victim.kv("a\0b"), b"x").is_err());
+    assert!(
+        tx.tb_insert(victim.table("entries\0x"), b"id", b"x")
+            .is_err()
+    );
+    assert!(tx.key_prefix(victim, "re\0").is_err());
+    // The refused writes left nothing behind that breaks the commit.
+    tx.commit().unwrap();
+
+    let mut tx = read(&store);
+    assert_eq!(tx.key_prefix(victim, "").unwrap(), ["real-1"]);
+    assert_eq!(tx.tb_count(victim.table("entries")).unwrap(), 1);
+    let rows = tx
+        .tb_list(victim.table("entries"), None, None, None)
+        .unwrap();
+    assert_eq!(rows, [(b"real-node".to_vec(), b"lease".to_vec())]);
+}
+
+/// Separator characters are ordinary name characters: scopes differing only in
+/// where they fall stay disjoint.
+#[tokio::test(flavor = "current_thread")]
+async fn separator_characters_keep_scopes_disjoint() {
+    let store = open_tmp();
+
+    let scopes = [
+        Key::new_scope("a", "b*c", "d"),
+        Key::new_scope("a*b", "c", "d"),
+        Key::new_scope("a", "b", "c*d"),
+        Key::new_scope("a", "b:kvk", "d"),
+        Key::new_scope("@a", "b", "d"),
+        Key::new_scope("a", "b", "d:kv"),
+    ];
+
+    for (i, a) in scopes.iter().enumerate() {
+        for b in &scopes[i + 1..] {
+            let (a_bytes, b_bytes) = (a.encode().unwrap(), b.encode().unwrap());
+            assert!(!a_bytes.starts_with(&b_bytes) && !b_bytes.starts_with(&a_bytes));
+        }
+    }
+
+    let mut tx = write(&store);
+    for (i, scope) in scopes.iter().enumerate() {
+        tx.key_put(scope.kv(&i.to_string()), b"v").unwrap();
+    }
+    tx.commit().unwrap();
+
+    let mut tx = read(&store);
+    for (i, scope) in scopes.iter().enumerate() {
+        assert_eq!(tx.key_prefix(*scope, "").unwrap(), [i.to_string()]);
+    }
+}

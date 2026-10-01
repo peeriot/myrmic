@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
-use crate::docker::{container::ConnectedContainer, init_docker};
+use crate::docker::{DockerDaemon, container::ConnectedContainer, init_docker};
 
 /// helper to spin up a docker compose project
 ///
 /// Dropping the project runs `docker compose down -v` best-effort (panic-safe cleanup).
 /// Call [`ComposeProject::down`] instead when the test asserts on the teardown result.
 pub struct ComposeProject {
+    docker: DockerDaemon,
     compose_file: PathBuf,
     project_name: String,
     armed: bool,
@@ -20,6 +21,7 @@ impl ComposeProject {
     /// a [`ComposeProject`] is initialized by running `docker compose up`
     pub async fn up(compose_file: impl Into<PathBuf>, project_name: &str) -> Self {
         let project = Self {
+            docker: init_docker(),
             compose_file: compose_file.into(),
             project_name: project_name.into(),
             armed: true,
@@ -74,12 +76,11 @@ impl ComposeProject {
             format_args!("docker compose ps for service `{service}`"),
         );
 
-        let docker = init_docker();
         String::from_utf8_lossy(&output.stdout)
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
-            .map(|id| ConnectedContainer::attach(docker.clone(), id.to_owned()))
+            .map(|id| ConnectedContainer::attach(self.docker.clone(), id.to_owned()))
             .collect()
     }
 
@@ -91,14 +92,22 @@ impl ComposeProject {
     }
 
     async fn compose(&self, args: &[&str]) -> std::process::Output {
-        let mut command = Command::new("docker");
+        Command::from(self.compose_command(args))
+            .output()
+            .await
+            .unwrap()
+    }
+
+    /// `docker compose -f <file> <args>` for this project, on the framework's docker daemon
+    fn compose_command(&self, args: &[&str]) -> std::process::Command {
+        let mut command = self.docker.cli();
         command
             .env("COMPOSE_PROJECT_NAME", &self.project_name)
             .arg("compose")
             .arg("-f")
             .arg(&self.compose_file)
             .args(args);
-        command.output().await.unwrap()
+        command
     }
 }
 
@@ -107,13 +116,7 @@ impl Drop for ComposeProject {
         if !self.armed {
             return;
         }
-        let result = std::process::Command::new("docker")
-            .env("COMPOSE_PROJECT_NAME", &self.project_name)
-            .arg("compose")
-            .arg("-f")
-            .arg(&self.compose_file)
-            .args(["down", "-v"])
-            .output();
+        let result = self.compose_command(&["down", "-v"]).output();
         match result {
             Ok(output) if output.status.success() => {}
             Ok(output) => eprintln!(

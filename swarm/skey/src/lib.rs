@@ -95,5 +95,69 @@ pub trait StoreKey<'a>: Sized {
         Self::decode_from(&mut decoder)
     }
 
+    /// Decodes a whole key: bytes left over after it are an error, not ignored.
+    /// Use this wherever `bytes` should be exactly one key, so a longer key that
+    /// merely starts like one can't pass for it.
+    fn decode_exact(bytes: &'a [u8]) -> Result<Self, KeyError> {
+        let mut decoder = decoder(bytes);
+        let value = Self::decode_from(&mut decoder)?;
+        let trailing = decoder.remaining();
+        if trailing != 0 {
+            anyhow::bail!("{trailing} trailing bytes after the key");
+        }
+        Ok(value)
+    }
+
     fn decode_from(decoder: &mut Decoder<'a>) -> Result<Self, KeyError>;
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::StoreKey;
+
+    #[test]
+    fn str_round_trips() {
+        for s in ["", "a", "sorg", "a*b:c@d", "ünïcödé"] {
+            let encoded = s.encode().unwrap();
+            assert_eq!(<&str>::decode_exact(&encoded).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn str_order_is_preserved() {
+        let mut names = ["b", "a", "ab", "", "a*", "a:", "aa", "\u{1}"];
+        let mut encoded = names.map(|s| s.encode().unwrap());
+        names.sort_unstable();
+        encoded.sort();
+        assert_eq!(
+            encoded.map(|e| <&str>::decode_exact(&e).unwrap().to_owned()),
+            names
+        );
+    }
+
+    #[test]
+    fn str_containing_nul_is_refused() {
+        for s in ["\0", "a\0", "\0a", "a\0*b", "sorg\0*reg\0*p\0:kvADMIN"] {
+            assert!(s.encode().is_err(), "{s:?} encoded");
+        }
+    }
+
+    #[test]
+    fn decode_exact_refuses_trailing_bytes() {
+        let mut encoded = "k".encode().unwrap();
+        encoded.push(b'z');
+
+        assert_eq!(<&str>::decode_from_bytes(&encoded).unwrap(), "k");
+        assert!(<&str>::decode_exact(&encoded).is_err());
+    }
+
+    #[test]
+    fn decode_exact_accepts_a_whole_key() {
+        let encoded = 42u64.encode().unwrap();
+        assert_eq!(u64::decode_exact(&encoded).unwrap(), 42);
+
+        let bytes: &[u8] = b"id\0with-nul";
+        let encoded = bytes.encode().unwrap();
+        assert_eq!(<&[u8]>::decode_exact(&encoded).unwrap(), bytes);
+    }
 }

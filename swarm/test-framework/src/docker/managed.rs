@@ -1,34 +1,19 @@
 use std::{ops::Deref, path::Path};
 
 use bollard::{
-    Docker,
-    models::{
-        ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
-    },
-    query_parameters::{
-        CreateContainerOptionsBuilder, RemoveContainerOptionsBuilder, RemoveImageOptionsBuilder,
-        StartContainerOptions, StopContainerOptions,
-    },
+    models::{ContainerCreateBody, EndpointSettings, HostConfig, NetworkingConfig},
+    query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions},
 };
 
-use crate::docker::{container::ConnectedContainer, image::Image};
+use crate::docker::{DockerDaemon, container::ConnectedContainer, image::Image};
 
-/// what [`ManagedContainer::cleanup`] should tear down
-#[derive(Clone, Default)]
-pub struct CleanupOptions {
-    /// stop and force-remove the container
-    pub stop_container: bool,
-    /// additionally force-remove the image with this tag
-    pub remove_image: Option<String>,
-}
-
-#[derive(Clone)]
-/// a [`ManagedContainer`] is a docker container that was started using this framework and can have
-/// specific cleanup options.
+/// a [`ManagedContainer`] is a docker container that was started by this framework and is
+/// force-removed when dropped (panic-safe cleanup)
+///
+/// Not `Clone`: exactly one value owns the container. Borrow it (it derefs to
+/// [`ConnectedContainer`]) to work with it, e.g. `Myrmic::attach(&container)`.
 pub struct ManagedContainer {
     container: ConnectedContainer,
-    /// what [`Self::cleanup`] tears down
-    pub cleanup_opts: CleanupOptions,
 }
 
 impl Deref for ManagedContainer {
@@ -39,94 +24,57 @@ impl Deref for ManagedContainer {
     }
 }
 
-impl From<ConnectedContainer> for ManagedContainer {
-    fn from(value: ConnectedContainer) -> Self {
-        Self {
-            container: value,
-            cleanup_opts: CleanupOptions::default(),
-        }
-    }
-}
-
 impl ManagedContainer {
-    /// as [`ConnectedContainer`] also a [`ManagedContainer`] can be attached to a running container id
-    pub fn attach(docker: Docker, container_id: impl Into<String>) -> Self {
-        Self {
-            container: ConnectedContainer::attach(docker, container_id),
-            cleanup_opts: CleanupOptions::default(),
-        }
-    }
-
     /// run a docker image with command and connect to networks
     pub(crate) async fn run(
         image: &Image,
-        docker: Docker,
+        docker: DockerDaemon,
         command: &[&str],
         networks: &[&str],
         name: &str,
     ) -> Self {
         let options = CreateContainerOptionsBuilder::default().name(name).build();
         let first_network = networks.first().copied();
-        let container = docker
+        let created = docker
             .create_container(
                 Some(options),
                 container_config_with_command(image.tag().into(), command, first_network),
             )
             .await
             .unwrap();
+        // owned from here on, so a failure below still removes the container
+        let managed = Self {
+            container: ConnectedContainer::attach(docker, created.id),
+        };
 
-        docker
-            .start_container(&container.id, None::<StartContainerOptions>)
+        managed
+            .start_container(managed.id(), None::<StartContainerOptions>)
             .await
             .unwrap();
 
         for network in networks.iter().skip(1) {
-            docker
-                .connect_network(
-                    network,
-                    NetworkConnectRequest {
-                        container: container.id.clone(),
-                        endpoint_config: Some(EndpointSettings::default()),
-                    },
-                )
-                .await
-                .unwrap();
+            managed.connect_network(network).await;
         }
 
-        Self {
-            container: ConnectedContainer::attach(docker, container.id),
-            cleanup_opts: CleanupOptions {
-                stop_container: true,
-                ..Default::default()
-            },
-        }
+        managed
     }
+}
 
-    /// depending on clean up options, stop the container or even delete the image
-    pub async fn cleanup(&self) {
-        if self.cleanup_opts.stop_container {
-            self.container
-                .stop_container(self.container.id(), None::<StopContainerOptions>)
-                .await
-                .unwrap();
-            self.container
-                .remove_container(
-                    self.container.id(),
-                    Some(RemoveContainerOptionsBuilder::default().force(true).build()),
-                )
-                .await
-                .unwrap();
-        }
-
-        if let Some(image) = &self.cleanup_opts.remove_image {
-            self.container
-                .remove_image(
-                    image,
-                    Some(RemoveImageOptionsBuilder::default().force(true).build()),
-                    None,
-                )
-                .await
-                .unwrap();
+impl Drop for ManagedContainer {
+    fn drop(&mut self) {
+        let result = self
+            .container
+            .docker_cli()
+            .args(["rm", "-f", self.container.id()])
+            .output();
+        match result {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => eprintln!(
+                "ManagedContainer drop-guard: docker rm -f {} failed: {}",
+                self.container.id(),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            Err(err) => eprintln!("ManagedContainer drop-guard: failed to run docker: {err}"),
         }
     }
 }

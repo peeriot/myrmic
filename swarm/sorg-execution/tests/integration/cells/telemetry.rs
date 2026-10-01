@@ -1,7 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use cell_protocol::Sri;
-use sorg_tests::{build_cell, swarm_config};
+use sorg_tests::{register_fixture, swarm_config};
 use swarm_telemetry::db::opentelemetry_proto::tonic::common::v1::any_value::Value;
 use swarm_telemetry::db::opentelemetry_proto::tonic::metrics::v1::metric::Data;
 use swarm_telemetry::db::opentelemetry_proto::tonic::metrics::v1::{Metric, number_data_point};
@@ -30,8 +30,8 @@ fn attr_str<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
 #[expect(clippy::too_many_lines, reason = "it's a test, so it's fine")]
 pub async fn cell_telemetry() {
     let swarm = swarm_config!("tracing.jsonnet");
-    build_cell("../../tests/fixtures/trace_example_intermediate", &swarm).await;
-    build_cell("../../tests/fixtures/trace_example_sink", &swarm).await;
+    register_fixture("../../tests/fixtures/trace_example_intermediate", &swarm).await;
+    register_fixture("../../tests/fixtures/trace_example_sink", &swarm).await;
 
     // Arrange - spawn the test app and load both test cells
     let test_app = spawn_test_app_with_swarm(swarm).await;

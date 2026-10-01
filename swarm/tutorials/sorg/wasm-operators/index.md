@@ -17,21 +17,21 @@ The `Cargo.toml` of any Wasm operators you would be implementing is likely to lo
 
 For the implementation of Wasm operators, it is recommended to use the libraries `myrmic-sdk` (providing convenient methods for accessing the API offered by the host runtime of the Wasm module) and `myrmic-sdk-macros` (providing an ergonomic way to reference the inputs/outputs of the Wasm task and Rust-like error handling). When annotating the `run` function of a Wasm module, you should use the same names for the inputs/outputs as provided for the corresponding task in the application manifest (`input` and `filtered` in our case). With this, the macro will generate enums which you can use to reference the inputs/outputs when doing calls to the host API functions (`send` and `receive` in this example). Note also that you can emit logs which will be forwarded to the host and logged out by the execution runtime running the corresponding Wasm operator.
 
-The lib crate of a Wasm module can be compiled to a Wasm binary using `cargo` with `wasm32-unknown-unknown` as target.
+The lib crate of a Wasm module can be compiled to a Wasm binary using `cargo` with `wasm32v1-none` as target.
 
 Since the Wasm target is not available with the default cargo distribution, you may need to first add it by running:
 
 ```
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32v1-none
 ```
 
 After the target has been added, you can compile Rust lib crates to Wasm binaries. For instance, you can compile the `even-filter` lib by running:
 
 ```
-cargo build -p even_filter --target wasm32-unknown-unknown
+cargo build -p even_filter --target wasm32v1-none
 ```
 
-from the `swarm` workspace root. This will generate the Wasm binary `even_filter.wasm` and place it under `./target/wasm32-unknown-unknown/debug`.
+from the `swarm` workspace root. This will generate the Wasm binary `even_filter.wasm` and place it under `./target/wasm32v1-none/debug`.
 
 (you don't necessarily have to run this command, since it will be run as part of the `build.sh` script of this tutorial)
 
@@ -42,7 +42,7 @@ The `binary` entry in the manifest defines the location of the Wasm binary of th
 
 For running the application in this example, we will, similarly to the previous chapter of the tutorial, be using a setup with one node. In addition to the execution and the orchestration plugin, the node will also host a filestore plugin. The node configuration we will be using is specified by the config file `./wasm-operators/swarm-config.jsonnet`. 
 
-We configure the root directory as `../../target/wasm32-unknown-unknown/debug`, since we (or rather zellij) will be running the swarm script from the directory `[repo-root]/swarm/tutorials/sorg` -- the root directory of the filestore is provided either as an absolute path or as a path specified relatively to the directory where the `swarm` binary is executed. 
+We configure the root directory as `../../target/wasm32v1-none/debug`, since we (or rather zellij) will be running the swarm script from the directory `[repo-root]/swarm/tutorials/sorg` -- the root directory of the filestore is provided either as an absolute path or as a path specified relatively to the directory where the `swarm` binary is executed. 
 
 As you see, we configure the directory where the Wasm binaries are being placed after compilation as the root directory of the filestore. Alternatively, it would be possible to define relative paths in the application manifest. The CLI also offers a command to inject files from the local machine into the swarm filestore, but that is something intended rather as a convenience feature for the distributed case (see the `files` subcommand of the `sorg-ctl`).
 

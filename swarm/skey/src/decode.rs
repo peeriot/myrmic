@@ -8,7 +8,7 @@ use serde::de::Visitor;
 use std::marker::PhantomData;
 use std::str;
 
-use self::read::{ReadReference, Reference};
+use self::read::{ReadReference, Reference, SliceReader};
 
 pub mod read;
 
@@ -41,6 +41,13 @@ impl serde::de::Error for Error {
 
 /// Shorthand for `Result<T, storekey::de::Error>`.
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl Deserializer<SliceReader<'_>> {
+    /// Bytes not yet decoded.
+    pub fn remaining(&self) -> usize {
+        self.reader.remaining()
+    }
+}
 
 impl<'de, R: ReadReference<'de>> Deserializer<R> {
     /// Creates a new ordered bytes encoder whose output will be written to the provided writer.

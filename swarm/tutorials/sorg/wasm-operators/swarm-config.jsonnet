@@ -7,5 +7,5 @@ z.peer()
   execution: {
     name: 'runtime',
   },
-  db: s.db.load_from('../../target/wasm32-unknown-unknown/debug', max_depth=1),
+  db: s.db.load_from('../../target/wasm32v1-none/debug', max_depth=1),
 })

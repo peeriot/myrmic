@@ -4,7 +4,7 @@ use sorg_common::{
     CellConfig, CellDeployment, DeployRequest, DeploymentError, HttpBridgeApi, RejectionReason,
     RequirementTags, check_tag_requirements,
 };
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
 
@@ -53,7 +53,7 @@ async fn single_tag_match() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -92,7 +92,7 @@ async fn multi_tag_and_match() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_gpu_sensor = swarm_config!("cells/tagged_placement/exec_gpu_sensor.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -123,7 +123,7 @@ async fn untagged_placeable_anywhere() {
     let swarm = swarm_config!("cells/orch_only.jsonnet");
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -147,7 +147,7 @@ async fn untagged_cells_spread_across_nodes() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -179,7 +179,7 @@ async fn untagged_spreads_off_tagged_node() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -223,7 +223,7 @@ async fn unplaceable_tag_absent() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -268,7 +268,7 @@ async fn unplaceable_and_not_satisfiable() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -356,7 +356,7 @@ async fn standalone_single_tag_match() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -390,7 +390,7 @@ async fn standalone_unplaceable() {
     let _exec_gpu = swarm_config!("cells/tagged_placement/exec_gpu.jsonnet");
     let _exec_cpu = swarm_config!("cells/tagged_placement/exec_cpu.jsonnet");
 
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());

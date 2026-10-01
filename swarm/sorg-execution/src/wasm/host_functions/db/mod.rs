@@ -38,12 +38,12 @@ pub(super) fn transform_scope(
             }
 
             let mut scope = DbScope {
-                namespace: non_empty(public_ns)?,
+                namespace: segment(public_ns)?,
                 ..Default::default()
             };
 
             if let Some(db) = db {
-                scope.database = non_empty(db)?;
+                scope.database = segment(db)?;
             }
 
             scope
@@ -51,7 +51,7 @@ pub(super) fn transform_scope(
     };
 
     if let Some(schema) = schema {
-        scope.schema = non_empty(schema)?;
+        scope.schema = segment(schema)?;
     }
 
     if scope.namespace == NAMESPACE_GATEWAY && !is_own_asset_scope(&scope, caller.data().sri()) {
@@ -61,14 +61,28 @@ pub(super) fn transform_scope(
     Ok(scope)
 }
 
-/// A segment the guest named explicitly must be non-empty — `Some("")` is a
-/// guest bug, not a request for the default.
-fn non_empty(segment: std::borrow::Cow<'static, str>) -> Result<String, i32> {
+/// A segment the guest named explicitly must be a valid [`key_name`] and
+/// non-empty — `Some("")` is a guest bug, not a request for the default.
+fn segment(segment: std::borrow::Cow<'static, str>) -> Result<String, i32> {
+    key_name(&segment)?;
     if segment.is_empty() {
         return Err(EINVAL);
     }
 
     Ok(segment.into_owned())
+}
+
+/// Any name the guest hands the db to build a key from — scope segments, kv
+/// keys and prefixes, tables, measurements, paths — must not contain NUL.
+/// Keys end each name at a NUL, so one inside would let the name reach into
+/// another scope's keys. The db refuses such a name too; this makes it an
+/// `EINVAL` rather than a failed call.
+pub(super) fn key_name(name: &str) -> Result<(), i32> {
+    if name.contains('\0') {
+        return Err(EINVAL);
+    }
+
+    Ok(())
 }
 
 /// Inverse of [`transform_scope`], for scopes handed back to the guest inside a
@@ -154,7 +168,7 @@ mod tests {
     use std::borrow::Cow;
 
     use super::{DbScope, GATEWAY_ASSETS_DB, NAMESPACE_GATEWAY, Sri, is_own_asset_scope};
-    use super::{EINVAL, is_reserved_namespace, non_empty};
+    use super::{EINVAL, is_reserved_namespace, key_name, segment};
 
     fn gateway_scope(database: &str, schema: &str) -> DbScope {
         DbScope {
@@ -219,7 +233,27 @@ mod tests {
 
     #[test]
     fn empty_segments_are_rejected() {
-        assert_eq!(non_empty(Cow::Borrowed("")), Err(EINVAL));
-        assert_eq!(non_empty(Cow::Borrowed("d")).as_deref(), Ok("d"));
+        assert_eq!(segment(Cow::Borrowed("")), Err(EINVAL));
+        assert_eq!(segment(Cow::Borrowed("d")).as_deref(), Ok("d"));
+    }
+
+    #[test]
+    fn nul_in_a_segment_is_rejected() {
+        // Would encode into the `sorg` keyspace were it accepted.
+        assert_eq!(
+            segment(Cow::Borrowed("sorg\0*node-lease\0*p\0:tbentries\0")),
+            Err(EINVAL)
+        );
+        assert_eq!(segment(Cow::Borrowed("a\0*b")), Err(EINVAL));
+        assert_eq!(segment(Cow::Borrowed("\0")), Err(EINVAL));
+    }
+
+    #[test]
+    fn nul_in_a_key_name_is_rejected() {
+        assert_eq!(key_name("a\0b"), Err(EINVAL));
+        assert_eq!(key_name("\0"), Err(EINVAL));
+        assert_eq!(key_name("a*b:c@d"), Ok(()));
+        // An empty kv prefix lists everything; only segments must be non-empty.
+        assert_eq!(key_name(""), Ok(()));
     }
 }

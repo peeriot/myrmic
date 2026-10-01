@@ -77,7 +77,8 @@ use thiserror::Error;
 /// ##### Sequences, Strings and Maps
 ///
 /// Sequences are ordered from the most significant to the least. Strings are serialized into their
-/// natural UTF8 representation.
+/// natural UTF8 representation followed by a `0x00` terminator. A string containing NUL is
+/// refused: the terminator must be the only `0x00`, or distinct keys could encode identically.
 ///
 /// The ordering of sequential elements follows the `Ord` implementation of `slice`, that is, from
 /// left to write when viewing a `Vec` printed via the `{:?}` formatter.
@@ -408,6 +409,11 @@ where
     }
 
     fn serialize_str(self, v: &str) -> Result<()> {
+        if v.as_bytes().contains(&0) {
+            return Err(Error::Message(format!(
+                "cannot serialize a str containing NUL: {v:?}"
+            )));
+        }
         self.writer.write_all(v.as_bytes())?;
         self.writer.write_u8(0)?;
         Ok(())

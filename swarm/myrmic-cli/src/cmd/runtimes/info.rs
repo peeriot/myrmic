@@ -26,7 +26,8 @@ pub fn handle(_ctx: Ctx, cmd: Info) -> anyhow::Result<()> {
     let (name, id) = super::resolve_runtime(name, pid_path.as_deref())?;
 
     let runtime_dir = super::runtime_data_dir(&id)?;
-    let db_dir = runtime_dir.join("db");
+    let db_dir = runtime_dir.join(super::DEFAULT_DB_DIR);
+    let logs_dir = runtime_dir.join(super::LOGS_DIR);
 
     let pid_path = pid_path.unwrap_or_else(|| default_pid_dir(super::DEFAULT_PID_DIR));
     let status = match Pid::from_args(&pid_path, &name)?.status() {
@@ -38,22 +39,34 @@ pub fn handle(_ctx: Ctx, cmd: Info) -> anyhow::Result<()> {
     println!("status    {status}");
     println!("data      {}", runtime_dir.display());
 
-    if !db_dir.is_dir() {
+    if logs_dir.is_dir() {
+        println!("logs      {}", logs_dir.display());
+        print_stats(&logs_dir)?;
+    } else {
+        println!("logs      {} (missing)", logs_dir.display());
+    }
+
+    if db_dir.is_dir() {
+        println!("db        {}", db_dir.display());
+        print_stats(&db_dir)?;
+    } else {
         println!("db        {} (missing)", db_dir.display());
         println!();
         println!(
             "no database on disk: the runtime never started, runs with --tmp (in-memory),\n\
              or stores its database in a directory set by its configuration file"
         );
-        return Ok(());
     }
 
-    let stats = dir_stats(&db_dir)?;
+    Ok(())
+}
+
+fn print_stats(path: &Path) -> anyhow::Result<()> {
+    let stats = dir_stats(path)?;
 
     #[allow(clippy::cast_precision_loss)]
     let size = human_bytes::human_bytes(stats.bytes as f64);
 
-    println!("db        {}", db_dir.display());
     println!("size      {size} across {} file(s)", stats.files);
 
     if let Some(modified) = stats.newest {

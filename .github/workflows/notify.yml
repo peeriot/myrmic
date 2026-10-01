@@ -17,8 +17,9 @@ on:
 jobs:
   dispatch:
     name: Dispatch
-    # Unset in a repository not wired up yet: do nothing rather than fail.
-    if: vars.CI_REPO != ''
+    # Unset in a repository not wired up yet: do nothing rather than fail. A draft
+    # pull request has nothing to report until it is marked ready.
+    if: vars.CI_REPO != '' && !github.event.pull_request.draft
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/create-github-app-token@v2
@@ -40,6 +41,8 @@ jobs:
           DRAFT: ${{ github.event.pull_request.draft }}
           HIL: ${{ contains(github.event.pull_request.labels.*.name, 'hil') }}
           REVIEW: ${{ github.event.review.state }}
+          # How the reviewer relates to the repository, e.g. MEMBER or NONE.
+          REVIEWER: ${{ github.event.review.author_association }}
         run: |
           set -euo pipefail
           gh api -X POST "/repos/${TARGET}/dispatches" \
@@ -52,4 +55,5 @@ jobs:
             -F "client_payload[private]=${PRIVATE:-false}" \
             -F "client_payload[draft]=${DRAFT:-false}" \
             -F "client_payload[hil]=${HIL:-false}" \
-            -F "client_payload[review]=${REVIEW:-}"
+            -F "client_payload[review]=${REVIEW:-}" \
+            -F "client_payload[reviewer]=${REVIEWER:-}"

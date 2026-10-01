@@ -82,7 +82,7 @@ myrmic flash --monitor
 ```
 
 The first build is the slow one: it auto-installs the embedded toolchain, fetches the ESP SDK
-crates, and compiles `core`, `alloc` and the WAMR runtime from source. `myrmic flash` then connects
+crates, and compiles the WAMR runtime from source. `myrmic flash` then connects
 to the board, writes the image sized to the device's flash, and resets into it:
 
 ```text

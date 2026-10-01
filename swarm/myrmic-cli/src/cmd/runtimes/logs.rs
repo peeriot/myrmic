@@ -1,4 +1,5 @@
-use std::io::{Seek, SeekFrom};
+use std::fs::File;
+use std::io::{IsTerminal as _, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -11,6 +12,12 @@ pub struct Logs {
     /// Keep the log open and print new lines as the runtime writes them.
     #[clap(short, long)]
     pub follow: bool,
+
+    /// Number of trailing lines to print from the current log.
+    ///
+    /// Defaults to the whole file on a terminal, else the last 10 lines.
+    #[clap(short = 'n', long)]
+    pub lines: Option<usize>,
 
     /// Directory holding runtime PID files, used to pick the runtime when
     /// no name is given. Defaults to the standard pid directory.
@@ -26,12 +33,13 @@ pub struct Logs {
 pub fn handle(ctx: &Ctx, cmd: Logs) -> anyhow::Result<()> {
     let Logs {
         follow,
+        lines,
         pid_path,
         name,
     } = cmd;
 
     let (name, id) = super::resolve_runtime(name, pid_path.as_deref())?;
-    let dir = super::runtime_data_dir(&id)?.join("logs");
+    let dir = super::runtime_data_dir(&id)?.join(super::LOGS_DIR);
 
     if !dir.is_dir() {
         anyhow::bail!(
@@ -44,13 +52,25 @@ pub fn handle(ctx: &Ctx, cmd: Logs) -> anyhow::Result<()> {
     crate::debug!(&ctx, "log directory: {}", dir.display());
 
     let mut current = latest_log(&dir)?;
-    let mut offset = 0;
-
-    if let Some(path) = &current {
-        offset = print_from(path, 0)?;
-    } else if !follow {
+    if current.is_none() && !follow {
         anyhow::bail!("no log files in {}", dir.display());
     }
+
+    let mut stdout = std::io::stdout().lock();
+    let lines = lines.or_else(|| (!stdout.is_terminal()).then_some(10));
+
+    let mut log = current
+        .as_deref()
+        .map(|path| {
+            let mut log = LogFile::open(path)?;
+            let start = match lines {
+                Some(lines) => tail_start(&mut log.file, lines)?,
+                None => 0,
+            };
+            log.print_from(start, &mut stdout)?;
+            anyhow::Ok(log)
+        })
+        .transpose()?;
 
     if !follow {
         return Ok(());
@@ -59,39 +79,99 @@ pub fn handle(ctx: &Ctx, cmd: Logs) -> anyhow::Result<()> {
     loop {
         std::thread::sleep(Duration::from_millis(250));
 
-        if let Some(path) = &current {
-            let len = std::fs::metadata(path).map_or(0, |meta| meta.len());
-            if len < offset {
-                // Truncated or replaced; start over.
-                offset = 0;
-            }
-            if len > offset {
-                offset = print_from(path, offset)?;
-            }
+        if let Some(log) = &mut log
+            && log.drain(&mut stdout)?
+        {
+            continue;
         }
 
+        // A rolled-over file stops growing, so only rescan when idle.
         let latest = latest_log(&dir)?;
         if latest != current {
-            // The appender rolled over; drain the old file once more.
-            if let Some(old) = &current {
-                let _ = print_from(old, offset);
+            if let Some(old) = &mut log {
+                let _ = old.drain(&mut stdout);
             }
+            log = latest
+                .as_deref()
+                .map(|path| {
+                    let mut log = LogFile::open(path)?;
+                    log.print_from(0, &mut stdout)?;
+                    anyhow::Ok(log)
+                })
+                .transpose()?;
             current = latest;
-            offset = 0;
         }
     }
 }
 
-/// Prints `path` from `offset` to the end, returning the new offset.
-fn print_from(path: &Path, offset: u64) -> anyhow::Result<u64> {
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("failed to open log file {}", path.display()))?;
-    file.seek(SeekFrom::Start(offset))?;
+/// An open log file and how far into it has been printed.
+struct LogFile {
+    file: File,
+    pos: u64,
+}
 
-    let mut stdout = std::io::stdout().lock();
-    let copied = std::io::copy(&mut file, &mut stdout)?;
+impl LogFile {
+    fn open(path: &Path) -> anyhow::Result<Self> {
+        let file = File::open(path)
+            .with_context(|| format!("failed to open log file {}", path.display()))?;
+        Ok(Self { file, pos: 0 })
+    }
 
-    Ok(offset + copied)
+    fn print_from(&mut self, offset: u64, out: &mut impl Write) -> std::io::Result<()> {
+        self.file.seek(SeekFrom::Start(offset))?;
+        let copied = std::io::copy(&mut self.file, out)?;
+        self.pos = offset + copied;
+        out.flush()
+    }
+
+    /// Prints whatever was appended since the last read; returns whether
+    /// there was anything.
+    fn drain(&mut self, out: &mut impl Write) -> std::io::Result<bool> {
+        let len = self.file.metadata()?.len();
+        if len == self.pos {
+            return Ok(false);
+        }
+        // Shorter than what was printed means truncated; start over.
+        let from = if len < self.pos { 0 } else { self.pos };
+        self.print_from(from, out)?;
+        Ok(true)
+    }
+}
+
+/// Byte offset where the last `lines` lines of `file` begin, scanning
+/// backwards so large logs aren't read in full.
+fn tail_start(file: &mut (impl Read + Seek), lines: usize) -> std::io::Result<u64> {
+    let len = file.seek(SeekFrom::End(0))?;
+    if lines == 0 {
+        return Ok(len);
+    }
+
+    let mut buf = [0u8; 8192];
+    let mut remaining = lines;
+    let mut end = len;
+    // A final newline terminates the last line rather than starting a new one.
+    let mut at_last_byte = true;
+
+    while end > 0 {
+        let chunk_len = usize::try_from(end).map_or(buf.len(), |end| end.min(buf.len()));
+        let start = end - chunk_len as u64;
+        let chunk = &mut buf[..chunk_len];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(chunk)?;
+
+        for (i, &byte) in chunk.iter().enumerate().rev() {
+            if std::mem::take(&mut at_last_byte) || byte != b'\n' {
+                continue;
+            }
+            remaining -= 1;
+            if remaining == 0 {
+                return Ok(start + i as u64 + 1);
+            }
+        }
+        end = start;
+    }
+
+    Ok(0)
 }
 
 /// The most recently written `*.log` file in `dir`, if any.
@@ -122,10 +202,17 @@ fn pick_latest(files: impl Iterator<Item = (PathBuf, SystemTime)>) -> Option<Pat
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     fn at(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    fn tail(content: &str, lines: usize) -> &str {
+        let start = tail_start(&mut Cursor::new(content), lines).unwrap();
+        &content[usize::try_from(start).unwrap()..]
     }
 
     #[test]
@@ -155,5 +242,30 @@ mod tests {
     #[test]
     fn no_files_no_pick() {
         assert_eq!(pick_latest(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn tail_takes_last_lines() {
+        assert_eq!(tail("a\nb\nc\n", 2), "b\nc\n");
+        assert_eq!(tail("a\nb\nc", 2), "b\nc");
+    }
+
+    #[test]
+    fn tail_with_fewer_lines_prints_everything() {
+        assert_eq!(tail("a\nb\n", 10), "a\nb\n");
+        assert_eq!(tail("", 10), "");
+    }
+
+    #[test]
+    fn tail_zero_lines_prints_nothing() {
+        assert_eq!(tail("a\nb\n", 0), "");
+    }
+
+    #[test]
+    fn tail_spans_chunks() {
+        let long = "x".repeat(10_000);
+        let content = format!("first\n{long}\nlast\n");
+        assert_eq!(tail(&content, 2), format!("{long}\nlast\n"));
+        assert_eq!(tail(&content, 3), content);
     }
 }

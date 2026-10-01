@@ -1,4 +1,4 @@
-[target.wasm32-unknown-unknown]
+[target.wasm32v1-none]
 rustflags = [
     "-C",
     "link-arg=-zstack-size=32768",
@@ -8,8 +8,6 @@ rustflags = [
     "link-arg=--initial-memory=131072",
     "-C",
     "link-arg=--max-memory=131072",
-    "-C",
-    "target-cpu=mvp",
 ]
 
 [alias]

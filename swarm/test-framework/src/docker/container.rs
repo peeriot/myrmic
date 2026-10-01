@@ -10,12 +10,13 @@ use bollard::{
 };
 use futures::{StreamExt, TryStreamExt};
 
-use crate::docker::CommandOutput;
+use crate::CommandOutput;
+use crate::docker::DockerDaemon;
 
 #[derive(Clone)]
 /// a thin wrapper for interacting with a running docker container (exec, logs, network shaping)
 pub struct ConnectedContainer {
-    docker: Docker,
+    docker: DockerDaemon,
     container_id: String,
 }
 
@@ -29,11 +30,16 @@ impl Deref for ConnectedContainer {
 
 impl ConnectedContainer {
     /// a [`ConnectedContainer`] is created by attaching to a `container_id`
-    pub fn attach(docker: Docker, container_id: impl Into<String>) -> Self {
+    pub fn attach(docker: DockerDaemon, container_id: impl Into<String>) -> Self {
         Self {
             docker,
             container_id: container_id.into(),
         }
+    }
+
+    /// the `docker` CLI, pointed at the daemon this container runs on
+    pub(crate) fn docker_cli(&self) -> std::process::Command {
+        self.docker.cli()
     }
 
     /// the docker container id

@@ -4,48 +4,53 @@
 Prebuild binary of `myrmic` is required. 
 ---
 
-Writing a myrmic e2e you will need to use the `test_framework::myrmic::Myrmic` type. You have two
-option on how to use the type:
+Writing a myrmic e2e you will need to use the `test_framework::myrmic::Myrmic` type. It knows
+the CLI's commands and runs them on one of three backends:
 - local binary - `Myrmic::local()`
-- binary inside a docker container - `Myrmic::attach("my-container-id)`
+- binary on a remote host over SSH - `Myrmic::ssh("user@host")`
+- binary inside a docker container - `Myrmic::attach(&container)`, borrowing the container, so it
+  outlives every runtime and cell guard
 
-Once initialized the `Myrmic` gives a common interface, not matter if running locally or inside a 
-docker container. 
+Once initialized the `Myrmic` gives a common interface, no matter where the CLI runs. Every
+operation returns a `Result`; write `.unwrap()`/`.expect(..)` where the test assumes success.
 
-In any case the first thing you will be doing is starting a runtime: 
+In any case the first thing you will be doing is starting a runtime:
 ```rust
 let myrmic = Myrmic::local();
-let runtime = myrmic.start_runtime("my-runtime").await
+// a random name and an in-memory database unless `.name(..)`/`.persistent(true)` say otherwise
+let runtime = myrmic.runtime(&["my-tag"]).start().await.unwrap();
 // ...
-runtime.delete().await;
+runtime.delete().await.unwrap();
 ```
-
-
 
 The next thing you will usually do is deploying a cell or application:
 ```rust
-// crate new cell and deploy
-let cell_spec = myrmic.new_cell("my-cell", None).await;
-let cell = myrmic.deploy(cell_spec, "my-cell-sri").await;
+// create a new cell and deploy it; the SRN is random unless `.srn(..)` sets one
+let cell_spec = myrmic.new_cell("my-cell", None).await.unwrap();
+let cell = myrmic.cell(cell_spec).tags(&["my-tag"]).deploy().await.unwrap();
 //...
-cell.delete().await;
-
+cell.delete().await.unwrap();
 
 // deploy an application specification
-myrmic.deploy_app("assets/apps/app_spec.yml").await;
+let app = myrmic.deploy_app("assets/apps/app_spec.yml").await.unwrap();
 ```
 
-After cells or am application have deployed, you can interact with those. For single cells the 
-returned `DeployedCell` offers a `send` function that automatically uses the correct SRI. For 
-applications with multiple cells the `Myrmic` type also offers a `send` function that needs to know 
+Both guards keep the deploy's CLI output (`output()`) for tests that assert on it.
+
+After cells or an application have been deployed, you can interact with those. For single cells
+the returned `DeployedCell` offers a `send` function that automatically uses the correct SRI. For
+applications with multiple cells the `Myrmic` type also offers a `send` function that needs to know
 the SRI you are sending to.
+
+With the local backend, `myrmic.connect_session()` opens a zenoh session into the same mesh, e.g.
+for a `SorgHandle`.
 
 
 ---
 **NOTE**
 
-In case a test failed and a runtime with that name exist, the `start_runtime` command panics, same
-applies to deploy commands with existing cell SRIs. It is very important that runtimes are deleted.
+`Runtime`, `DeployedCell` and `DeployedApp` delete what they stand for when dropped, also when a
+test panics. A drop after an explicit `delete()` finds nothing left and stays silent.
 ---
 
 
@@ -115,12 +120,11 @@ compose.down().await;
 # Swarm Tests 
 
 ---
-Prebuild binaries of `swarm`, `myrmic` are required. 
+Prebuild binary of `swarm` is required. 
 ---
 
 Swarm tests are running typically running locally. The normal test setup up looks like this:
 ```rust
-let myrmic = Myrmic::local();
 let swarm = Swarm::local();
 
 let process = swarm
@@ -133,12 +137,8 @@ let process = swarm
 
 As a second step you would usually build one or more cells and register the artifact(s):
 ```rust
-let cell_artifact = myrmic
-    .build(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/path/to/test/cell/Cargo.toml"
-    ))
-    .await;
+let cell_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/path/to/test/cell");
+let cell_artifact = CellArtifact::build(cell_dir.into()).await;
 cell_artifact.register(process.session()).await;
 ```
 

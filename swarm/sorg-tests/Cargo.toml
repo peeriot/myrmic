@@ -37,7 +37,6 @@ config = { workspace = true }
 
 uuid = { workspace = true, features = ["std"] }
 myrmic-common = { workspace = true }
-myrmic-build = { workspace = true }
 futures = { workspace = true }
 tokio-stream = { workspace = true, features = ["sync"] }
 

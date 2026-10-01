@@ -13,6 +13,10 @@ mod start;
 const DEFAULT_PID_DIR: &str = "myrmic";
 const DEFAULT_RUNTIME_NAME: &str = "default";
 
+const DEFAULT_DB_DIR: &str = "db";
+
+const LOGS_DIR: &str = "logs";
+
 #[derive(clap::Parser)]
 pub struct Runtimes {
     /// Name of the runtime to operate on, e.g. `runtimes <NAME> logs`.

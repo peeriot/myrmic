@@ -21,7 +21,7 @@ use crate::wasm::{
     cell::state::CellState,
     host_functions::{
         as_slice,
-        db::{apply, defer, transform_scope, untransform_scope},
+        db::{apply, defer, key_name, transform_scope, untransform_scope},
         decode, encode, tri,
     },
 };
@@ -109,6 +109,7 @@ pub(crate) async fn blob_link(
         tri!(decode(&mut caller, req_ptr, req_len, "blob link request"));
 
     let blob_id = tri!(transform_blob_id(&mut caller, blob_id));
+    tri!(key_name(&path));
 
     defer(&mut caller, blob_link::Op { blob_id, path })
 }
@@ -122,6 +123,7 @@ pub(crate) async fn blob_unlink(
         tri!(decode(&mut caller, req_ptr, req_len, "blob unlink request"));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&path));
 
     defer(&mut caller, blob_unlink::Op { scope, path })
 }
@@ -138,6 +140,8 @@ pub(crate) async fn blob_move(
     } = tri!(decode(&mut caller, req_ptr, req_len, "blob move request"));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&old_path));
+    tri!(key_name(&new_path));
 
     defer(
         &mut caller,
@@ -208,6 +212,7 @@ pub(crate) async fn path_resolve(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&path));
 
     let resolved = tri!(
         apply(

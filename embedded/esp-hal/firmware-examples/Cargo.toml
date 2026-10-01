@@ -16,7 +16,7 @@ default = ["esp32c6"]
 # `esp_firmware::board!` and `esp_firmware_build::configure()` both read the
 # chip from the crate that invokes them.
 esp32c5 = ["esp-firmware/esp32c5", "ble", "rmt"]
-esp32c6 = ["esp-firmware/esp32c6", "rmt"]
+esp32c6 = ["esp-firmware/esp32c6", "rmt", "tsens"]
 esp32c61 = ["esp-firmware/esp32c61", "ble"]
 
 ble = ["esp-firmware/ble"]
@@ -25,9 +25,17 @@ ble = ["esp-firmware/ble"]
 # C61, so `rmt-led` cannot build there.
 rmt = []
 
+# The chip has an on-die temperature sensor (TSENS). Only C6 has it configured
+# in esp-hal; C61 doesn't expose it despite the hardware being present.
+tsens = []
+
 [[bin]]
 name = "rmt-led"
 required-features = ["rmt"]
+
+[[bin]]
+name = "internal-temp"
+required-features = ["tsens"]
 
 [dependencies]
 esp-firmware = { workspace = true }

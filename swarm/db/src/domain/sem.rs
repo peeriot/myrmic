@@ -285,7 +285,7 @@ mod tests {
                 let encoded = value
                     .encode()
                     .expect(concat!("Unable to encode value: ", stringify!($expr)));
-                let decoded: $ty = skey::StoreKey::decode_from_bytes(encoded.as_slice())
+                let decoded: $ty = skey::StoreKey::decode_exact(encoded.as_slice())
                     .expect(concat!("Unable to decode: ", stringify!($expr)));
 
                 assert_eq!(

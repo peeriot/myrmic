@@ -34,6 +34,11 @@ impl<'a> SliceReader<'a> {
     pub fn new(inner: &'a [u8]) -> Self {
         Self { inner }
     }
+
+    #[inline]
+    pub fn remaining(&self) -> usize {
+        self.inner.len()
+    }
 }
 
 impl Read for SliceReader<'_> {

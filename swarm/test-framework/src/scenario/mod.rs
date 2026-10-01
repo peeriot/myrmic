@@ -11,7 +11,6 @@ use uuid::Uuid;
 use crate::cell::{AotCellArtifact, CellArtifact};
 use crate::clients::sorg::{EventQueue, SorgHandle};
 use crate::metrics::CellInteractionMetricsSnapshot;
-use crate::myrmic::{BuildTarget, Myrmic};
 use crate::swarm::{Swarm, SwarmProcess};
 
 /// How a [`SwarmTestBuilder`] obtains its [`SwarmProcess`] before cells are built/loaded.
@@ -79,14 +78,14 @@ struct PendingLoad {
 
 /// A cell the scenario will register, before it has been built.
 enum PendingCell {
-    /// built with the myrmic CLI from a cell directory, and loaded under each of these SRIs
-    /// (more than one for [`SwarmTestBuilder::wasm_cell_replicated`])
-    WasmPath(PathBuf, Vec<String>, BuildTarget),
+    /// built from a cell directory (see [`CellArtifact::build`]), and loaded under each of these
+    /// SRIs (more than one for [`SwarmTestBuilder::wasm_cell_replicated`])
+    WasmPath(PathBuf, Vec<String>),
     /// like `WasmPath`, but each `(sri, tags)` pair pins that replica to its own runtime tags
     /// instead of the scenario's own [`SwarmTestBuilder::tags`] — for topologies where each
     /// replica must land on a specific host (see
-    /// [`SwarmTestBuilder::wasm_cell_replicated_pinned_with_api`]).
-    WasmPathPinned(PathBuf, Vec<(String, Vec<String>)>, BuildTarget),
+    /// [`SwarmTestBuilder::wasm_cell_replicated_pinned`]).
+    WasmPathPinned(PathBuf, Vec<(String, Vec<String>)>),
     /// already-built wasm module, optionally pinned to a runtime
     WasmArtifact(CellArtifact, String, Option<Vec<String>>),
     /// already-built AOT artifact, with optional `#[init]` arguments
@@ -136,97 +135,54 @@ impl SwarmTestBuilder {
         self
     }
 
-    /// build the cell at `cell_path` with the myrmic CLI, register it, and load
+    /// build the cell crate in `cell_dir` (see [`CellArtifact::build`]), register it, and load
     /// it under `sri` once connected
-    pub fn wasm_cell(mut self, cell_path: impl Into<PathBuf>, sri: impl Into<String>) -> Self {
-        self.cells.push(PendingCell::WasmPath(
-            cell_path.into(),
-            vec![sri.into()],
-            BuildTarget::Wasm,
-        ));
+    pub fn wasm_cell(mut self, cell_dir: impl Into<PathBuf>, sri: impl Into<String>) -> Self {
+        self.cells
+            .push(PendingCell::WasmPath(cell_dir.into(), vec![sri.into()]));
         self
     }
 
-    /// like [`Self::wasm_cell`], but also generates the cell's `<name>-api.yml` (`myrmic build`
-    /// with `BuildTarget::WasmWithApi`) — use this for a cell that a sibling cell resolves via
-    /// `import_cells!`. Cells are built sequentially in the order they were pushed onto this
-    /// builder, so push a cell before any sibling that imports its API.
-    pub fn wasm_cell_with_api(
-        mut self,
-        cell_path: impl Into<PathBuf>,
-        sri: impl Into<String>,
-    ) -> Self {
-        self.cells.push(PendingCell::WasmPath(
-            cell_path.into(),
-            vec![sri.into()],
-            BuildTarget::WasmWithApi,
-        ));
-        self
-    }
-
-    /// build the cell at `cell_path` with the myrmic CLI once, register it, and
-    /// load it `count` times, once for each SRI produced by expanding
-    /// `sri_template` (see [`sri_range`]) once connected.
+    /// build the cell crate in `cell_dir` (see [`CellArtifact::build`]) once, register it, and
+    /// load it `count` times, once for each SRI produced by expanding `sri_template` (see
+    /// [`sri_range`]) once connected.
     pub fn wasm_cell_replicated(
         mut self,
-        cell_path: impl Into<PathBuf>,
+        cell_dir: impl Into<PathBuf>,
         sri_template: impl Into<String>,
         count: usize,
     ) -> Self {
         let sris = sri_range(&sri_template.into(), count);
-        self.cells.push(PendingCell::WasmPath(
-            cell_path.into(),
-            sris,
-            BuildTarget::Wasm,
-        ));
+        self.cells
+            .push(PendingCell::WasmPath(cell_dir.into(), sris));
         self
     }
 
-    /// like [`Self::wasm_cell_replicated`], but also generates the cell's `<name>-api.yml`
-    /// (`myrmic build` with `BuildTarget::WasmWithApi`) — use this for a cell that a sibling
-    /// cell resolves via `import_cells!`. Cells are built sequentially in the order they were
-    /// pushed onto this builder, so push a cell before any sibling that imports its API.
-    pub fn wasm_cell_replicated_with_api(
+    /// like [`Self::wasm_cell`], but pinned to `tags` rather than the scenario's own
+    /// [`Self::tags`] — the single-cell counterpart of [`Self::wasm_cell_replicated_pinned`], for
+    /// a topology's one-off cell (e.g. a central/aggregator tier) that still needs to land on a
+    /// specific host.
+    pub fn wasm_cell_pinned(
         mut self,
-        cell_path: impl Into<PathBuf>,
-        sri_template: impl Into<String>,
-        count: usize,
-    ) -> Self {
-        let sris = sri_range(&sri_template.into(), count);
-        self.cells.push(PendingCell::WasmPath(
-            cell_path.into(),
-            sris,
-            BuildTarget::WasmWithApi,
-        ));
-        self
-    }
-
-    /// like [`Self::wasm_cell_with_api`], but pinned to `tags` rather than the scenario's own
-    /// [`Self::tags`] — the single-cell counterpart of
-    /// [`Self::wasm_cell_replicated_pinned_with_api`], for a topology's one-off cell (e.g. a
-    /// central/aggregator tier) that still needs to land on a specific host.
-    pub fn wasm_cell_pinned_with_api(
-        mut self,
-        cell_path: impl Into<PathBuf>,
+        cell_dir: impl Into<PathBuf>,
         sri: impl Into<String>,
         tags: Vec<String>,
     ) -> Self {
         self.cells.push(PendingCell::WasmPathPinned(
-            cell_path.into(),
+            cell_dir.into(),
             vec![(sri.into(), tags)],
-            BuildTarget::WasmWithApi,
         ));
         self
     }
 
-    /// like [`Self::wasm_cell_replicated_with_api`], but each replica is pinned to its own set of
-    /// runtime tags (one entry of `tags_per_replica` per replica, in order) rather than the
-    /// scenario's own [`Self::tags`] — for topologies where each replica must land on a specific
+    /// like [`Self::wasm_cell_replicated`], but each replica is pinned to its own set of runtime
+    /// tags (one entry of `tags_per_replica` per replica, in order) rather than the scenario's
+    /// own [`Self::tags`] — for topologies where each replica must land on a specific
     /// host/runtime (e.g. one Raspberry Pi per replica) instead of being load-balanced across
     /// whatever runtimes match the scenario's tags.
-    pub fn wasm_cell_replicated_pinned_with_api(
+    pub fn wasm_cell_replicated_pinned(
         mut self,
-        cell_path: impl Into<PathBuf>,
+        cell_dir: impl Into<PathBuf>,
         sri_template: impl Into<String>,
         tags_per_replica: &[Vec<String>],
     ) -> Self {
@@ -235,18 +191,15 @@ impl SwarmTestBuilder {
             .into_iter()
             .zip(tags_per_replica.iter().cloned())
             .collect();
-        self.cells.push(PendingCell::WasmPathPinned(
-            cell_path.into(),
-            pinned,
-            BuildTarget::WasmWithApi,
-        ));
+        self.cells
+            .push(PendingCell::WasmPathPinned(cell_dir.into(), pinned));
         self
     }
 
     /// register an already-built wasm artifact and load it under `sri` once connected.
     ///
-    /// Unlike [`Self::wasm_cell`] this needs no myrmic binary on the host — the caller has
-    /// already produced the module.
+    /// Unlike [`Self::wasm_cell`] this builds nothing on the host — the caller has already
+    /// produced the module.
     pub fn wasm_artifact(mut self, artifact: CellArtifact, sri: impl Into<String>) -> Self {
         self.cells
             .push(PendingCell::WasmArtifact(artifact, sri.into(), None));
@@ -328,28 +281,11 @@ impl SwarmTestBuilder {
         // Registering the classes below is a datalayer write, so the DB plugin has to be up.
         process.wait_for_datalayer(DATALAYER_TIMEOUT).await;
 
-        // resolve the myrmic binary only if something needs building — scenarios that pass
-        // pre-built artifacts (embedded) must not require a myrmic binary on the host
-        let needs_myrmic = self.cells.iter().any(|c| {
-            matches!(
-                c,
-                PendingCell::WasmPath(..) | PendingCell::WasmPathPinned(..)
-            )
-        });
-        let myrmic = needs_myrmic.then(Myrmic::local);
-
         let mut loads = Vec::new();
-        // Cells are built sequentially in the order they were pushed, so a cell built with
-        // WasmWithApi (see wasm_cell_with_api/wasm_cell_replicated_with_api) must be pushed
-        // before any sibling that `import_cells!`s its generated `<name>-api.yml`.
         for cell in self.cells {
             match cell {
-                PendingCell::WasmPath(cell_path, sris, target) => {
-                    let artifact = myrmic
-                        .as_ref()
-                        .expect("myrmic resolved when a wasm_cell is declared")
-                        .build(cell_path, target)
-                        .await;
+                PendingCell::WasmPath(cell_dir, sris) => {
+                    let artifact = CellArtifact::build(cell_dir).await;
                     artifact.register_on(&process).await;
                     for sri in sris {
                         loads.push(PendingLoad {
@@ -360,12 +296,8 @@ impl SwarmTestBuilder {
                         });
                     }
                 }
-                PendingCell::WasmPathPinned(cell_path, pinned, target) => {
-                    let artifact = myrmic
-                        .as_ref()
-                        .expect("myrmic resolved when a wasm_cell is declared")
-                        .build(cell_path, target)
-                        .await;
+                PendingCell::WasmPathPinned(cell_dir, pinned) => {
+                    let artifact = CellArtifact::build(cell_dir).await;
                     artifact.register_on(&process).await;
                     for (sri, tags) in pinned {
                         loads.push(PendingLoad {

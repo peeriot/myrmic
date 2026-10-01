@@ -2,7 +2,7 @@ use cell_protocol::Sri;
 use claims::assert_ok;
 use sorg_client::Client;
 use sorg_common::RequirementTags;
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -13,7 +13,7 @@ const ROOM_SRI: &str = "room-cell-001";
 pub async fn deploy_cell_via_client() {
     // Arrange - build the room cell, start the swarm
     let swarm = swarm_config!("cells/sorg_client/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let client = Client::new(test_app.session().clone());
 
@@ -42,7 +42,7 @@ pub async fn deploy_cell_via_client() {
 pub async fn undeploy_cell_via_client() {
     // Arrange - build, start, and deploy the room cell
     let swarm = swarm_config!("cells/sorg_client/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let client = Client::new(test_app.session().clone());
     assert_ok!(

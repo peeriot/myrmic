@@ -34,7 +34,7 @@
 //! $ myrmic send <sri> enable
 //! INFO  successfully sent command
 //! ```
-#![no_std] // required for wasm32-unknown-unknown
+#![no_std] // required for wasm32v1-none
 
 /// The BLE device protocol for parsing data
 mod protocol;

@@ -94,6 +94,15 @@
 //! registers its slots into the same registries via [`Board::taps`] and
 //! [`Board::outlets`]; both kinds coexist.
 //!
+//! # Where the node has got to
+//!
+//! [`status()`] answers what the swarm can do with this node — nothing
+//! ([`Down`](NodeStatus::Down)), see it ([`Registered`](NodeStatus::Registered))
+//! or the rungs between — and [`status_watch`] wakes a task on every change of
+//! it. It is the firmware's view of what the network service and the db service
+//! have achieved, which is otherwise theirs alone: an indicator light, a
+//! display, or a decision to hold off work until the node is deployable.
+//!
 //! # What your crate still owns
 //!
 //! `#![no_std]`, `#![no_main]`, a `build.rs` calling
@@ -116,6 +125,7 @@ mod net;
 mod outlet;
 #[cfg(feature = "stack-hwm")]
 mod stack_hwm;
+mod status;
 mod tap;
 mod wasm;
 
@@ -127,6 +137,7 @@ pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
 pub use esp_common::esp_network::WifiCredentials;
 pub use outlet::Outlet;
+pub use status::{NodeStatus, StatusWatch, status, status_watch};
 pub use tap::{DeclareError, EventTap, Tap};
 
 /// Marks the firmware entry point.

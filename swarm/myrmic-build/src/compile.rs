@@ -1,4 +1,4 @@
-//! Compiling a cell logic crate to a `wasm32-unknown-unknown` module.
+//! Compiling a cell logic crate to a `wasm32v1-none` module.
 
 use std::env;
 use std::ffi::OsString;
@@ -12,15 +12,16 @@ use which::which;
 use crate::CargoTarget;
 use crate::cargo;
 
-const TARGET: &str = "wasm32-unknown-unknown";
-const BUILD_STD: &str = "core,alloc,compiler_builtins";
+/// The `WebAssembly` MVP target (plus mutable globals). Its prebuilt `core` and
+/// `alloc` are built for the MVP feature set as well, so no post-MVP
+/// instructions (bulk memory, sign extension, ...) reach the module.
+const TARGET: &str = "wasm32v1-none";
 
-/// The nightly toolchain cells are compiled with. `-Z build-std` requires the
-/// `rust-src` component, so a cell scaffolded by `myrmic new` ships a
-/// `rust-toolchain.toml` pinning this channel and declaring that component (see
-/// the `new` template); the pin is rendered from here to keep a single source of
-/// truth.
-pub const TOOLCHAIN: &str = "nightly-2026-08-07";
+/// The stable toolchain cells are compiled with. A cell scaffolded by `myrmic
+/// new` ships a `rust-toolchain.toml` pinning this channel and declaring the
+/// `wasm32v1-none` target (see the `new` template); the pin is rendered from here to keep a
+/// single source of truth.
+pub const TOOLCHAIN: &str = "1.98.1";
 
 const DEFAULT_STACK_SIZE: usize = 32 * 1024;
 const DEFAULT_INITIAL_MEMORY: usize = 64 * 1024;
@@ -30,7 +31,7 @@ const DEFAULT_HEAP_SIZE: usize = 32 * 1024;
 
 const PAGE_SIZE: usize = 65_536;
 
-const RUSTFLAGS_ENV: &str = "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS";
+const RUSTFLAGS_ENV: &str = "CARGO_TARGET_WASM32V1_NONE_RUSTFLAGS";
 const HEAP_SIZE_ENV: &str = "WASM_SDK_HEAP_SIZE";
 
 /// Per-cell memory layout, sourced from `[package.metadata.myrmic]` (with
@@ -181,32 +182,29 @@ pub(crate) fn compile_cell(
         .to_str()
         .context("manifest path is not valid UTF-8")?;
 
-    let build_std = format!("build-std={BUILD_STD}");
+    let manifest_dir = manifest_path
+        .parent()
+        .context("cell manifest has no parent directory")?;
 
-    // Cells without a pin fall back to the toolchain this crate declares.
-    let pinned_dir = manifest_path.parent().filter(|dir| {
-        dir.join("rust-toolchain.toml").exists() || dir.join("rust-toolchain").exists()
-    });
+    // Cells without a pin fall back to the toolchain this crate declares; a
+    // pinned one builds with its pin, picked up from `current_dir`.
+    let toolchain = (!cargo::has_toolchain_pin(manifest_dir)).then_some(TOOLCHAIN);
 
     let mut cmd = Command::new("cargo");
-    match pinned_dir {
-        Some(dir) => {
-            cmd.current_dir(dir);
+    match toolchain {
+        Some(toolchain) => {
+            cmd.arg(format!("+{toolchain}"));
         }
         None => {
-            cmd.arg(format!("+{TOOLCHAIN}"));
+            cmd.current_dir(manifest_dir);
         }
     }
-    cmd.args([
-        "rustc",
-        "--release",
-        "--target",
-        TARGET,
-        "-Z",
-        &build_std,
-        "--manifest-path",
-        manifest_arg,
-    ]);
+    cmd.args(["rustc", "--release"]);
+    if cargo::is_nightly(manifest_dir, toolchain)? {
+        // Build `core`/`alloc` from source with the cell's own flags.
+        cmd.args(["-Z", "build-std=core,alloc"]);
+    }
+    cmd.args(["--target", TARGET, "--manifest-path", manifest_arg]);
 
     // A library must be linked as a `cdylib` to emit a standalone wasm module
     // (the manifest declares `rlib`); a binary already links to one.
@@ -309,7 +307,6 @@ fn rustflags(memory: &MemoryConfig) -> String {
         format!("-C link-arg=-zstack-size={stack_size}"),
         format!("-C link-arg=--initial-memory={initial_memory}"),
         format!("-C link-arg=--max-memory={max_memory}"),
-        "-C target-cpu=mvp".to_owned(),
         "-C opt-level=z".to_owned(),
         "-C lto".to_owned(),
         "-C embed-bitcode=yes".to_owned(),
@@ -405,10 +402,7 @@ mod tests {
                 &[("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER", "cc")],
                 false,
             ),
-            (
-                &[("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER", "rust-lld")],
-                false,
-            ),
+            (&[("CARGO_TARGET_WASM32V1_NONE_LINKER", "rust-lld")], false),
             // Would pass if matching became suffix-based instead of an exact name match.
             (&[("MY_LINKER", "clang")], false),
             // Neither of these reaches the host build-script link.

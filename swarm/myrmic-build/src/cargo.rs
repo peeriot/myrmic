@@ -298,6 +298,41 @@ where
     Ok(())
 }
 
+/// Whether `dir` pins its own toolchain with a `rust-toolchain.toml` (or a
+/// legacy `rust-toolchain`) file, which rustup honours for a command run there.
+pub fn has_toolchain_pin(dir: &Path) -> bool {
+    dir.join("rust-toolchain.toml").exists() || dir.join("rust-toolchain").exists()
+}
+
+/// Whether the `cargo` a build runs in `dir` (on `toolchain` when given, as a
+/// `+toolchain` override) belongs to a nightly or dev toolchain, the only ones
+/// that accept `-Z` flags.
+pub fn is_nightly(dir: &Path, toolchain: Option<&str>) -> anyhow::Result<bool> {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(dir);
+    if let Some(toolchain) = toolchain {
+        cmd.arg(format!("+{toolchain}"));
+    }
+    cmd.arg("-vV");
+    cmd.env_remove("RUSTUP_TOOLCHAIN");
+    // As in `locate_project`: rustup may auto-install a pinned toolchain here
+    // and reports that on stderr, so it stays visible.
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::inherit());
+
+    let out = cmd
+        .spawn()
+        .context("failed to run cargo -vV")?
+        .wait_with_output()
+        .context("failed to run cargo -vV")?;
+    if !out.status.success() {
+        anyhow::bail!("cargo -vV failed in {}", dir.display());
+    }
+    let version = String::from_utf8(out.stdout).context("cargo -vV printed invalid UTF-8")?;
+
+    Ok(release_is_nightly(&version))
+}
+
 /// A file cargo reported as the output of a `compiler-artifact` message.
 pub struct Artifact {
     pub path: PathBuf,
@@ -327,9 +362,37 @@ fn artifacts_in(line: &str) -> Vec<Artifact> {
         .collect()
 }
 
+/// Whether the `release:` line of `cargo -vV` output names a nightly or dev
+/// build, e.g. `release: 1.99.0-nightly`.
+fn release_is_nightly(version: &str) -> bool {
+    version
+        .lines()
+        .find_map(|line| line.strip_prefix("release: "))
+        .is_some_and(|release| {
+            let release = release.trim();
+            release.ends_with("-nightly") || release.ends_with("-dev")
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_is_nightly_reads_the_channel_from_the_release_line() {
+        let version = |release: &str| {
+            format!(
+                "cargo 1.99.0 (abc 2026-08-06)\nrelease: {release}\nhost: x86_64-unknown-linux-gnu\n"
+            )
+        };
+        assert!(release_is_nightly(&version("1.99.0-nightly")));
+        assert!(release_is_nightly(&version("1.99.0-dev")));
+        assert!(!release_is_nightly(&version("1.98.1")));
+        assert!(!release_is_nightly(&version("1.98.0-beta.3")));
+        assert!(!release_is_nightly(
+            "cargo 1.99.0-nightly (abc 2026-08-06)\n"
+        ));
+    }
 
     #[test]
     fn artifacts_in_flags_the_executable_among_the_filenames() {

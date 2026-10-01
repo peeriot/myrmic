@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use claims::{assert_err, assert_matches};
 use sorg_common::DeploymentError;
-use sorg_tests::{TestApp, build_and_register_cell_class, swarm_config};
+use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 
 use crate::integration::{spawn_empty_test_app, spawn_test_app_with_swarm};
 
@@ -47,7 +47,7 @@ async fn count_reaches(app: &TestApp, sri: &str, want: i32, attempts: u32) -> bo
 pub async fn deploy_cell() {
     // Arrange - build + register the counter cell
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
+    register_fixture_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -69,7 +69,7 @@ pub async fn deploy_cell() {
 pub async fn load_error_no_exec() {
     // Arrange - orch only, no exec runtime
     let swarm = swarm_config!("cells/orch_only.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/dummy_cell", "dummy", &swarm).await;
+    register_fixture_class("../../tests/fixtures/dummy_cell", "dummy", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
@@ -131,7 +131,7 @@ const MISSING_CELL_SRI: &str = "a1b2c3d4-5e6f-7g8h-9i0j-k1l2m3n4o5p6";
 pub async fn load_error_unregistered_class_does_not_affect_existing_cell() {
     // Arrange - deploy the counter cell successfully
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
+    register_fixture_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     test_app.deploy_wasm_cell("counter.wasm", COUNTER_SRI).await;
@@ -165,7 +165,7 @@ pub async fn load_error_unregistered_class_does_not_affect_existing_cell() {
 pub async fn undeploy_cell() {
     // Arrange - deploy the counter cell
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
+    register_fixture_class(COUNTER_LOGIC, COUNTER_CLASS, &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
     test_app.deploy_wasm_cell("counter.wasm", COUNTER_SRI).await;

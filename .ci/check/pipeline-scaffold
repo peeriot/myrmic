@@ -18,7 +18,16 @@ set -xeuo pipefail
 
 REPO="$PWD"
 MYRMIC="$REPO/target/debug/myrmic"
-CARGO_CHANNEL="${CARGO_CHANNEL:-nightly}"
+# The firmware builds with the stable toolchain `myrmic-build` pins. Reading the
+# channel out of the constant keeps this from drifting from it.
+if [ -z "${CARGO_CHANNEL:-}" ]; then
+    CARGO_CHANNEL="$(sed -nE 's/^pub const TOOLCHAIN: &str = "(.+)";$/\1/p' \
+        "$REPO/swarm/myrmic-build/src/compile.rs")"
+fi
+if [ -z "$CARGO_CHANNEL" ]; then
+    printf 'could not read the toolchain pin from myrmic-build\n' >&2
+    exit 1
+fi
 
 # Build the scaffolds into the (cached) workspace target dir so their path
 # dependencies reuse crates the other jobs already compiled, rather than a cold
@@ -29,14 +38,12 @@ WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-# The firmware build needs a nightly toolchain with rust-src (for -Zbuild-std)
-# and the riscv target. Install only when absent; components/targets are
+# The firmware build needs the pinned toolchain and the riscv target. Install only when absent; components/targets are
 # idempotent. Mirrors .ci/check/check so this job does not depend on another
 # seeding the toolchain volume first.
 printf "\n\n--== Ensure Toolchain ==--\n\n"
 rustup toolchain list | grep -q "^${CARGO_CHANNEL}" \
     || rustup toolchain install "$CARGO_CHANNEL" --profile minimal
-rustup component add rust-src --toolchain "$CARGO_CHANNEL"
 rustup target add riscv32imac-unknown-none-elf --toolchain "$CARGO_CHANNEL"
 
 printf "\n\n--== Build myrmic ==--\n\n"
@@ -58,7 +65,7 @@ LINUX="$WORK/linux"
 printf "\n\n--== Firmware pipeline: scaffold + build ==--\n\n"
 FIRMWARE="$WORK/firmware"
 "$MYRMIC" new --firmware=esp32c6 --pipeline "$FIRMWARE" --sdk "$REPO"
-# `myrmic build` supplies the nightly + -Zbuild-std + chip feature the firmware
+# `myrmic build` supplies the toolchain + link flags + chip feature the firmware
 # needs; the chip comes from the scaffold manifest's default feature.
 "$MYRMIC" build "$FIRMWARE"
 

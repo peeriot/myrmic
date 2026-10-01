@@ -14,12 +14,12 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use crate::myrmic::{Myrmic, MyrmicBackend as _, Runtime, SshBinary};
+use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, Runtime, SshBinary, already_gone};
 use crate::swarm::SwarmProcess;
 
 /// One remote host's role in the deployment: which myrmic runtime to start there, and under
 /// which capability tags. Pin cells to a specific host with
-/// [`crate::scenario::SwarmTestBuilder::wasm_cell_replicated_pinned_with_api`], passing each
+/// [`crate::scenario::SwarmTestBuilder::wasm_cell_replicated_pinned`], passing each
 /// replica the `tags` of the [`HostSpec`] it should land on.
 pub struct HostSpec {
     /// SSH destination, e.g. `user@rack-node-1.example` (anything `ssh`/`scp` accept,
@@ -176,9 +176,22 @@ pub async fn provision(
 
             let remote_config = host_config_path(myrmic_path, &host.runtime_name);
             upload_host_config(&host.host, host.listen_port, &remote_config, telemetry).await;
+            // A fixed name (so a re-run with the same topology needs no new names), but still
+            // temporary: `runtimes start --name` reuses a stable name's on-disk db across runs,
+            // so a second run would collide on the previous run's registered cells
+            // (`DuplicateSri`). The default `--tmp` keeps the db in memory instead.
             myrmic
-                .start_runtime_at(&host.runtime_name, &tag_refs, Some(&remote_config))
+                .runtime(&tag_refs)
+                .name(&host.runtime_name)
+                .config(&remote_config)
+                .start()
                 .await
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "failed to start runtime `{}` on {}: {err}",
+                        host.runtime_name, host.host
+                    )
+                })
         }))
         .await;
 
@@ -579,29 +592,24 @@ async fn upload_host_config(
 /// that directory over SSH separately if a run needs a truly empty database.
 pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     // Concurrent, not sequential — same rationale as `provision`: each host's teardown (a
-    // blocking `runtimes delete` plus two `rm -f`s) is an independent SSH round trip, so
+    // `runtimes delete` plus two `rm -f`s) is an independent SSH round trip, so
     // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
     futures::future::join_all(hosts.iter().map(|host| async move {
-        let backend = SshBinary::at(host.host.clone(), myrmic_path);
-        let runtime_name = host.runtime_name.clone();
+        let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
         // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic/mod.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"
         // message — isn't a failure, it's this backstop confirming there was nothing left to do.
         // It only matters as a backstop for a driver that never got to run its own cleanup (a
-        // crash, a kill -9), so a genuine failure (host unreachable, permission denied, ...)
-        // still needs to be loud.
-        let delete_result =
-            tokio::task::spawn_blocking(move || backend.delete_runtime_blocking(&runtime_name))
-                .await
-                .expect("delete_runtime_blocking task panicked");
-        if let Err(err) = delete_result
-            && !err.contains("no runtime")
-        {
-            eprintln!(
+        // crash, a kill -9), so a genuine CLI failure (permission denied, ...) still needs to be
+        // loud. An unreachable host panics, like every other broken-infrastructure case.
+        match myrmic.delete_runtime(&host.runtime_name).await {
+            Ok(()) => {}
+            Err(Error::Cli { stderr }) if already_gone(&stderr, &RUNTIME_GONE) => {}
+            Err(err) => eprintln!(
                 "rack cleanup: failed to delete runtime `{}` on {}: {err}",
                 host.runtime_name, host.host
-            );
+            ),
         }
 
         let config_path = host_config_path(myrmic_path, &host.runtime_name);

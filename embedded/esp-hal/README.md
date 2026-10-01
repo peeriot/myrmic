@@ -74,11 +74,11 @@ For example, say that we want to load the `blinky` example from the `../tests/fi
 the ESP32-C6. One should:
 
 ```shell
-$ cargo +nightly-2026-08-07 build --manifest-path ../../Cargo.toml -p blinky --target wasm32-unknown-unknown --release
+$ cargo +1.98.1 build --manifest-path ../../Cargo.toml -p blinky --target wasm32v1-none --release
 $ cargo run --manifest-path ../../sdk/tools/aot-compiler/Cargo.toml -- \
     --target esp32c6 \
-    --out-dir ../../target/wasm32-unknown-unknown/release/ \
-    ../../target/wasm32-unknown-unknown/release/blinky.wasm
+    --out-dir ../../target/wasm32v1-none/release/ \
+    ../../target/wasm32v1-none/release/blinky.wasm
 $ myrmic flash --monitor
 ```
 

@@ -98,34 +98,3 @@ macro_rules! define_panic_handlers {
         };
     };
 }
-
-/// The allocation-error handler lives in the SDK crate (rather than being emitted into each cell
-/// crate by `cell_prelude!`) so that consuming modules do not need to enable the unstable
-/// `#![feature(alloc_error_handler)]` themselves — the gate is carried by this crate alone.
-#[cfg(all(feature = "alloc", target_arch = "wasm32"))]
-const _: () = {
-    use core::fmt::Write;
-
-    // Allocation-free buffer, mirroring the panic handler's approach.
-    static OOM_BUF: crate::__reexports::spin::Mutex<[u8; 192]> =
-        crate::__reexports::spin::Mutex::new([0; 192]);
-
-    #[alloc_error_handler]
-    fn oom(layout: core::alloc::Layout) -> ! {
-        if let Some(mut g) = OOM_BUF.try_lock() {
-            let ptr = g.as_mut_ptr();
-            let cap = g.len();
-            let mut w = crate::RawBuf::new(ptr, cap);
-            // tiny, allocation-free message
-            let _ = w.write_fmt(core::format_args!(
-                "wasm oom - size={} align={}; Double check your heap size.",
-                layout.size(),
-                layout.align()
-            ));
-            let _ = crate::log_buffer(&w, crate::LogLevel::Error);
-        } else {
-            let _ = crate::log("wasm oom (buffer busy)", crate::LogLevel::Error);
-        }
-        core::arch::wasm32::unreachable();
-    }
-};

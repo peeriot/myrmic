@@ -1,6 +1,6 @@
 //! Target-aware cell builds.
 //!
-//! Every target compiles the cell to a `wasm32-unknown-unknown` module via
+//! Every target compiles the cell to a `wasm32v1-none` module via
 //! [`compile_cell`]; embedded (esp) targets additionally AOT-compile that module
 //! for the device. This is the entry point shared by consumers that need the
 //! finished artifacts for a specific platform (the linux integration tests build
@@ -18,7 +18,7 @@ pub use aot_compiler::Artifacts as AotArtifacts;
 
 /// Artifacts produced by [`build`] for a single cell and target.
 pub struct CellBuild {
-    /// The compiled `wasm32-unknown-unknown` module — produced for every target.
+    /// The compiled `wasm32v1-none` module — produced for every target.
     pub wasm: PathBuf,
     /// AOT artifacts, present only for embedded targets.
     pub aot: Option<AotArtifacts>,

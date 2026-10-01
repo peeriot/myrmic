@@ -210,6 +210,7 @@ async fn deploy_app_info(
     if request.cells.is_empty() {
         crate::warn!(ctx, "no cells to deploy; '{}' not deployed", info.name);
     } else {
+        crate::info!(ctx, "deploying app (name = {})", info.name);
         let response = sorg
             .deploy_cells(request)
             .await

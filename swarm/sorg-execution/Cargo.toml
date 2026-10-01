@@ -73,7 +73,7 @@ tokio-stream = { workspace = true, features = ["sync"] }
 [dev-dependencies]
 swarm-telemetry = { workspace = true, features = ["export-db"] }
 tempfile = "3"
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "test-util"] }
 zenoh = { workspace = true, features = ["unstable", "default"] }
 zenoh-protocol = { workspace = true }
 

@@ -1,3 +1,15 @@
+experimental = ["setup-scripts"]
+
+# Tests that link `sorg-tests` register cell fixtures as wasm classes. The
+# fixtures are built once, up front, instead of by each test: concurrent
+# builds serialize on the target dir's cargo lock and ate the tests' budgets.
+[scripts.setup.build-cell-fixtures]
+command = { command-line = "swarm/sorg-tests/build-cell-fixtures.sh", relative-to = "workspace-root" }
+
+[[profile.default.scripts]]
+filter = 'rdeps(sorg-tests)'
+setup = 'build-cell-fixtures'
+
 # `serial-integration` is for tests that genuinely cannot share the host:
 # `swarm-telemetry` builds its swarm inline (bypassing the `sorg-tests` harness)
 # so it stays on the default zenoh multicast group, and `sorg-tests`' own mqtt
@@ -10,9 +22,9 @@
 [test-groups]
 serial-integration = { max-threads = 1 }
 
-# Running in parallel, several cell fixtures compile to wasm at test-runtime
-# under CPU contention; the slowest cell-to-cell / macro tests need more head-
-# room than the 40s that served the serial runs.
+# Raised above the 40s that served the serial runs back when every test compiled
+# its cell fixtures at runtime; the fixtures are prebuilt by
+# `build-cell-fixtures` now, and the budget has not been re-tuned since.
 [[profile.default.overrides]]
 filter = 'package(sorg-execution) & kind(test)'
 platform = 'cfg(unix)'
@@ -23,9 +35,10 @@ filter = 'package(sorg-orchestration) & kind(test)'
 platform = 'cfg(unix)'
 slow-timeout = { period = "10s", terminate-after = 4 }
 
-# sorg-client's cells::timeout tests compile a wasm fixture at runtime and then
-# wait out a 12s cell init; under full-suite CPU contention that exceeds the 40s
-# the lighter sorg-client tests are fine with.
+# sorg-client's cells::timeout tests wait out a 12s cell init. The budget was
+# raised above the 40s the lighter sorg-client tests are fine with back when the
+# tests also compiled their cell fixture at runtime; the fixtures are prebuilt
+# by `build-cell-fixtures` now, and the budget has not been re-tuned since.
 [[profile.default.overrides]]
 filter = 'package(sorg-client) & kind(test)'
 platform = 'cfg(unix)'

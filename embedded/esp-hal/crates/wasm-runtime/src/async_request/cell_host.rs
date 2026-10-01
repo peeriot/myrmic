@@ -138,6 +138,7 @@ requests! {
     GetArguments => Option<Vec<u8>>,
     CreateTimer(CreateTimerRequest) => Result<u32, Error>,
     CancelTimer(u32) => ResponseResult,
+    ClearTimers => (),
 }
 
 /// Executes the cell host async request
@@ -207,5 +208,9 @@ pub(crate) async fn execute_request(ctx: &mut Context, req: CellRequest) -> Cell
                 CellResponse::CancelTimer(Err(Error::Generic))
             }
         },
+        CellRequest::ClearTimers => {
+            timers::cancel_all().await;
+            CellResponse::ClearTimers
+        }
     }
 }

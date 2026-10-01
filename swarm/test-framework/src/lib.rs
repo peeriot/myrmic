@@ -80,6 +80,27 @@ pub fn ssh_known_hosts_file() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Captured output of a finished command (on the host, over SSH or inside a container).
+#[derive(Debug, Clone)]
+pub struct CommandOutput {
+    /// whether the command exited with code 0
+    pub success: bool,
+    /// captured stdout, lossily decoded as UTF-8
+    pub stdout: String,
+    /// captured stderr, lossily decoded as UTF-8
+    pub stderr: String,
+}
+
+impl From<std::process::Output> for CommandOutput {
+    fn from(output: std::process::Output) -> Self {
+        Self {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+}
+
 pub trait SriAttribute {
     fn sri(&self) -> Option<Sri>;
 }

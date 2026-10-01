@@ -8,7 +8,7 @@ use wasmtime::Caller;
 use crate::wasm::{
     cell::state::CellState,
     host_functions::{
-        db::{apply, defer, transform_scope},
+        db::{apply, defer, key_name, transform_scope},
         decode, encode, tri,
     },
 };
@@ -26,6 +26,7 @@ pub(crate) async fn key_put(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&key));
 
     defer(&mut caller, key_put::Op { scope, key, value })
 }
@@ -43,6 +44,7 @@ pub(crate) async fn key_delete(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&key));
 
     defer(&mut caller, key_delete::Op { scope, key })
 }
@@ -62,6 +64,7 @@ pub(crate) async fn key_get(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&key));
 
     let got = tri!(apply(&mut caller, key_get::Op { scope, key }).await);
     let response = GetResponse { payload: got.value };
@@ -92,6 +95,7 @@ pub(crate) async fn key_prefix(
     ));
 
     let scope = tri!(transform_scope(&mut caller, scope));
+    tri!(key_name(&prefix));
 
     let listed = tri!(apply(&mut caller, key_prefix::Op { scope, prefix }).await);
     let response = PrefixResponse { keys: listed.keys };

@@ -31,13 +31,11 @@ If you don't have Rust installed, get it via [rustup](https://rustup.rs/):
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Cell code compiles to WebAssembly using the Rust nightly toolchain. Install it
-along with the required target and component:
+Cell code compiles to WebAssembly using the stable Rust toolchain. Install the
+required target:
 
 ```sh
-rustup toolchain install nightly
-rustup target add wasm32-unknown-unknown --toolchain nightly
-rustup component add rust-src --toolchain nightly
+rustup target add wasm32v1-none
 ```
 
 ## Step 1 -- Setup
