@@ -15,7 +15,7 @@ use signal_layer_core::{OutletRegistry, TapRegistry, WireType};
 use wasm_runtime::Pins;
 use wasm_storage::PartitionLayout;
 
-use crate::{Config, DeclareError, EventTap, Outlet, Tap};
+use crate::{Config, DeclareError, EventTap, Outlet, Tap, WifiCredentials, log};
 
 /// The hardware and settings [`start`](crate::start) brings up.
 ///
@@ -26,7 +26,7 @@ pub struct Board {
     /// Knobs that are numbers rather than hardware — stack sizes, priorities.
     pub config: Config,
     pins: Pins,
-    wifi: Option<WIFI<'static>>,
+    wifi: Option<(WIFI<'static>, WifiCredentials)>,
     bt: Option<BT<'static>>,
     flash: Option<FLASH<'static>>,
     mmu: Option<Mmu>,
@@ -52,7 +52,7 @@ impl Board {
         Self {
             config: Config::default(),
             pins,
-            wifi: Some(wifi),
+            wifi: Some((wifi, WifiCredentials::default())),
             bt: Some(bt),
             flash: Some(flash),
             mmu: Some(mmu),
@@ -142,6 +142,27 @@ impl Board {
         self.pins.get(n).is_some_and(Option::is_some)
     }
 
+    /// The WiFi credentials that will be used when the network service starts.
+    /// Returns `None` if the WiFi peripheral has been taken.
+    #[must_use]
+    pub fn wifi_credentials(&self) -> Option<&WifiCredentials> {
+        self.wifi.as_ref().map(|(_, credentials)| credentials)
+    }
+
+    /// Replace the WiFi credentials before [`start`](crate::start).
+    ///
+    /// Returns `false`, and ignores the credentials, if the WiFi peripheral was taken.
+    #[must_use]
+    pub fn set_wifi_credentials(&mut self, credentials: WifiCredentials) -> bool {
+        let Some((_, current)) = &mut self.wifi else {
+            log::warn!("[esp-firmware] WiFi was taken: credentials ignored");
+            return false;
+        };
+        *current = credentials;
+
+        true
+    }
+
     /// Takes the WiFi peripheral, so the shipped network service does not
     /// start.
     ///
@@ -149,7 +170,7 @@ impl Board {
     /// and no mailbox, so a cell — native or WASM — has nothing to talk to.
     /// Take it only if you are replacing the transport wholesale.
     pub fn take_wifi(&mut self) -> Option<WIFI<'static>> {
-        self.wifi.take()
+        self.wifi.take().map(|(wifi, _)| wifi)
     }
 
     /// Whether the shipped network service will start.
@@ -233,7 +254,7 @@ impl Board {
 pub(crate) struct BoardParts {
     pub config: Config,
     pub pins: Pins,
-    pub wifi: Option<WIFI<'static>>,
+    pub wifi: Option<(WIFI<'static>, WifiCredentials)>,
     pub bt: Option<BT<'static>>,
     pub wasm_host: Option<(FLASH<'static>, Mmu)>,
     pub watchdog: Option<(TIMG1<'static>, RTC_TIMER<'static>)>,

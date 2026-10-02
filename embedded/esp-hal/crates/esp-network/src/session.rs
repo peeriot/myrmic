@@ -1,6 +1,6 @@
 //! WiFi + embassy-net bring-up and the zenoh session lifecycle.
 
-use alloc::vec;
+use alloc::{string::String, vec};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use edge_nal::io::Error;
@@ -76,6 +76,52 @@ const WIFI_PASS: &str = if let Some(wifi_pass) = option_env!("WIFI_PASS") {
     "test"
 };
 
+/// WiFi station credentials supplied to the network service at startup.
+pub struct WifiCredentials {
+    ssid: String,
+    password: String,
+}
+
+impl WifiCredentials {
+    /// Create credentials loaded by the application, for example from flash.
+    pub fn new(ssid: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            ssid: ssid.into(),
+            password: password.into(),
+        }
+    }
+
+    /// The configured network name.
+    #[must_use]
+    pub fn ssid(&self) -> &str {
+        &self.ssid
+    }
+
+    /// The configured network password.
+    #[must_use]
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+}
+
+impl Default for WifiCredentials {
+    fn default() -> Self {
+        Self {
+            ssid: WIFI_SSID.into(),
+            password: WIFI_PASS.into(),
+        }
+    }
+}
+
+impl core::fmt::Debug for WifiCredentials {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WifiCredentials")
+            .field("ssid", &self.ssid)
+            .field("password", &"[redacted]")
+            .finish()
+    }
+}
+
 /// Set a direct TCP address to connect to the zenoh network (bypasses scouting)
 const TCP_DIRECT_ADDR: Option<&str> = option_env!("TCP_DIRECT_ADDR");
 
@@ -88,6 +134,7 @@ const TCP_DIRECT_ADDR: Option<&str> = option_env!("TCP_DIRECT_ADDR");
 #[must_use]
 pub fn init_stack(
     wifi: WIFI<'static>,
+    credentials: &WifiCredentials,
 ) -> (
     WifiController<'static>,
     Stack<'static>,
@@ -96,7 +143,7 @@ pub fn init_stack(
     static STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
     let stack_resources = STACK_RESOURCES.init(StackResources::new());
 
-    let station_config = station_config();
+    let station_config = station_config(credentials);
     #[expect(
         clippy::expect_used,
         reason = "If WiFi is broken, this is unrecoverable"
@@ -269,6 +316,7 @@ pub async fn zenoh_session<F, Fut>(
 /// that knows.
 pub async fn connection(
     mut controller: WifiController<'static>,
+    credentials: WifiCredentials,
     liveness: fn(),
     associated: fn(bool),
 ) {
@@ -314,7 +362,7 @@ pub async fn connection(
                 } else {
                     log::error!("Failed to connect to wifi: {e:?}");
                 }
-                reset_station(&mut controller);
+                reset_station(&mut controller, &credentials);
                 Timer::after(WIFI_RECONNECT_BACKOFF).await;
             }
         }
@@ -484,19 +532,25 @@ async fn get_peer_addr(
     }
 }
 
-/// Build the station configuration from the compile-time WiFi credentials.
+/// Build the station configuration from the board's WiFi credentials.
 #[expect(
     clippy::expect_used,
-    reason = "the credentials are compile-time constants; malformed ones are unrecoverable"
+    reason = "malformed startup credentials cannot be used to initialize WiFi"
 )]
-fn station_config() -> Config {
+fn station_config(credentials: &WifiCredentials) -> Config {
+    let ssid = credentials
+        .ssid
+        .as_str()
+        .try_into()
+        .expect("SSID exceeds the driver limit");
+    let password = credentials
+        .password
+        .as_str()
+        .try_into()
+        .expect("password exceeds the driver limit");
     let config = StationConfig::default()
-        .with_ssid(WIFI_SSID.try_into().expect("SSID exceeds the driver limit"))
-        .with_authentication(AuthenticationMethodConfig::Wpa2Personal(
-            WIFI_PASS
-                .try_into()
-                .expect("password exceeds the driver limit"),
-        ));
+        .with_ssid(ssid)
+        .with_authentication(AuthenticationMethodConfig::Wpa2Personal(password));
 
     Config::Station(config)
 }
@@ -506,8 +560,8 @@ fn station_config() -> Config {
 /// Re-applying the station configuration is the only public API that resets the station state.
 /// Without this, every second `connect_async` fails immediately with `ConnectionFailed` and an
 /// all-zero BSSID instead of reporting the real reason the attempt failed.
-fn reset_station(controller: &mut WifiController<'static>) {
-    if let Err(e) = controller.set_config(&station_config()) {
+fn reset_station(controller: &mut WifiController<'static>, credentials: &WifiCredentials) {
+    if let Err(e) = controller.set_config(&station_config(credentials)) {
         log::warn!("Failed to reset station state after failed connect: {e:?}");
     }
 }
