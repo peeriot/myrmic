@@ -45,6 +45,7 @@ postcard = { workspace = true, features = ["experimental-derive"] }
 
 claims = { workspace = true }
 rumqttc = { workspace = true }
+tokio-modbus = { workspace = true }
 
 flume = { workspace = true }
 

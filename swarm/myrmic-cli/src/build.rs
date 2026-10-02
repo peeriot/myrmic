@@ -4,7 +4,7 @@ use crate::platforms::Platform;
 use crate::utils::PathType;
 use anyhow::Context;
 use myrmic_build::{cargo, firmware, linux_pipeline};
-use sorg_common::{HttpBridgeApi, MqttBridge};
+use sorg_common::{HttpBridgeApi, ModbusBridge, MqttBridge};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -25,6 +25,7 @@ pub struct AppInfo {
     pub classes: HashMap<String, CellClass>,
     pub mqtt_bridges: Vec<MqttBridge>,
     pub http_bridges: Vec<HttpBridgeApi>,
+    pub modbus_bridges: Vec<ModbusBridge>,
 }
 
 /// The app name for a bundle: an explicit name if given (a manifest `name:` or a
@@ -68,6 +69,7 @@ pub fn build_app(
         classes: Default::default(),
         mqtt_bridges: Default::default(),
         http_bridges: Default::default(),
+        modbus_bridges: Default::default(),
     };
 
     // Resolve classes: build cell classes now; record bridge classes (id →
@@ -187,6 +189,10 @@ pub fn build_app(
                     }
                     models::BridgeInput::Http(bridge) => {
                         info.http_bridges.push(models::http::convert(srn, bridge)?);
+                    }
+                    models::BridgeInput::Modbus(bridge) => {
+                        info.modbus_bridges
+                            .push(models::modbus::convert(srn, bridge)?);
                     }
                 }
             }
@@ -521,6 +527,42 @@ mod tests {
             class_name(Some("t2-simple-sensor"), &target, "simple_sensor"),
             "t2-simple-sensor"
         );
+    }
+
+    /// Builds the app `instances: [{ bridge: plc }]` around the Modbus bridge spec
+    /// `plc_spec`.
+    fn build_app_with_modbus_bridge(plc_spec: &str) -> anyhow::Result<super::AppInfo> {
+        let dir = tempfile::tempdir().unwrap();
+        let app_path = dir.path().join("app.yml");
+        std::fs::write(dir.path().join("plc.yml"), plc_spec).unwrap();
+        std::fs::write(
+            &app_path,
+            "classes: [{ id: plc, spec: plc.yml }]\ninstances: [{ bridge: plc }]\n",
+        )
+        .unwrap();
+
+        let app = serde_yaml::from_str(&std::fs::read_to_string(&app_path).unwrap()).unwrap();
+        super::build_app(&crate::args::Ctx::default(), &app_path, app, Some("t"))
+    }
+
+    #[test]
+    fn app_with_a_modbus_bridge_builds_it_into_the_app() {
+        let info = build_app_with_modbus_bridge("{ name: plc, host: plc.local }").unwrap();
+
+        let [bridge] = info.modbus_bridges.as_slice() else {
+            panic!("expected one modbus bridge, got {:?}", info.modbus_bridges);
+        };
+        assert_eq!(bridge.cell_name, "plc");
+        assert_eq!(bridge.host, "plc.local");
+    }
+
+    #[test]
+    fn app_with_an_invalid_modbus_bridge_does_not_build() {
+        let Err(err) = build_app_with_modbus_bridge("{ name: plc, host: '' }") else {
+            panic!("a modbus bridge without a host must not build");
+        };
+
+        assert!(err.to_string().contains("host"), "{err:#}");
     }
 
     #[test]
