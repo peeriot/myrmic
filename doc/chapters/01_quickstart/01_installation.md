@@ -27,6 +27,10 @@ You need all of these whether you installed the CLI from a package or built it y
   source "$HOME/.cargo/env"
   ```
 
+  Rust from somewhere else works as well, as long as it is the pinned version below with the `wasm32v1-none` target.
+  `myrmic build` then uses the `cargo` on your `PATH` as it is.
+  It needs rustup only to switch to the pinned version from another one, and says so when that is the case.
+
 - **The pinned stable toolchain and the `wasm32v1-none` target** are installed for you on the first build. A cell scaffolded by `myrmic new`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the right toolchain and target.
 
   The pinned version is not a technical floor; it is the release tested for the current Myrmic release, and it moves forward with each release.
