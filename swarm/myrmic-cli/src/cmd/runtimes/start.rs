@@ -1,3 +1,4 @@
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -156,29 +157,93 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
-    let ready_name = String::from(name);
+    let log_dir = config
+        .telemetry
+        .logs
+        .directory
+        .clone()
+        .expect("the log directory is set above");
     let swarm = swarm::Swarm::new(config);
 
     if detached {
-        match fork::daemon(false, false) {
-            Ok(fork::Fork::Child) => {}
-            Ok(fork::Fork::Parent(_)) => unreachable!("fork::daemon never returns Parent"),
-            Err(err) => {
-                anyhow::bail!("unable to create daemon process: {}", err);
+        start_detached(ctx, &pid, swarm, name, zid, &log_dir)
+    } else {
+        run(ctx, &pid, swarm, name, zid, None)
+    }
+}
+
+/// Starts the runtime as a daemon and returns once it is ready, or fails if it exits before.
+///
+/// The daemon reports readiness by writing one byte into a pipe this process waits on; if it dies
+/// first, the pipe closes without one.
+fn start_detached(
+    ctx: Ctx,
+    pid: &Pid,
+    swarm: swarm::Swarm,
+    name: &str,
+    zid: ZenohId,
+    log_dir: &Path,
+) -> anyhow::Result<()> {
+    let (mut reader, writer) = std::io::pipe().context("unable to create the readiness pipe")?;
+
+    match fork::fork().context("unable to fork the runtime")? {
+        fork::Fork::Parent(_) => {
+            drop(writer);
+            let mut ready = [0];
+            match reader.read_exact(&mut ready) {
+                Ok(()) => {
+                    crate::info!(ctx, "runtime {name:?} ready ({zid})");
+                    Ok(())
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => anyhow::bail!(
+                    "runtime {name:?} exited before it was ready; see its logs in {}",
+                    log_dir.display()
+                ),
+                Err(err) => Err(err).context("unable to wait for the runtime to become ready"),
             }
         }
+        fork::Fork::Child => {
+            drop(reader);
+            become_daemon()?;
+            run(ctx, pid, swarm, name, zid, Some(writer))
+        }
     }
+}
 
-    // The fork above precedes the runtime, so a full worker pool is fork-safe.
+/// Turns the forked child into the daemon; returns only in the daemon.
+///
+/// `setsid` moves the child into a new session without a controlling terminal, so closing the
+/// terminal (SIGHUP) or Ctrl+C there no longer reaches the runtime. That makes the child a session
+/// leader, which would acquire a controlling terminal again by opening a terminal device (a serial
+/// port, say); the second fork's child is not a session leader, so it can't.
+fn become_daemon() -> anyhow::Result<()> {
+    fork::setsid().context("unable to start a new session")?;
+    fork::chdir().context("unable to change to the root directory")?;
+    fork::redirect_stdio().context("unable to redirect stdio to /dev/null")?;
+
+    match fork::fork().context("unable to fork the daemon")? {
+        // stdio already goes to /dev/null, so exiting flushes nothing anywhere
+        fork::Fork::Parent(_) => std::process::exit(0),
+        fork::Fork::Child => Ok(()),
+    }
+}
+
+/// Runs the runtime until a shutdown signal. `ready_pipe` is the daemon's end of the readiness
+/// pipe of a detached start.
+fn run(
+    ctx: Ctx,
+    pid: &Pid,
+    swarm: swarm::Swarm,
+    name: &str,
+    zid: ZenohId,
+    ready_pipe: Option<std::io::PipeWriter>,
+) -> anyhow::Result<()> {
+    // Any fork precedes the runtime, so a full worker pool is fork-safe.
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     crate::block_on_with(workers, async move {
         pid.write_self().await?;
 
-        let _guard = swarm.spawn_in_place().unwrap();
-
-        crate::info!(ctx, "runtime {ready_name:?} ready ({zid})");
-
-        let result = wait_for_shutdown(detached).await;
+        let result = serve(&ctx, swarm, name, zid, ready_pipe).await;
 
         if let Err(err) = pid.remove_async().await {
             crate::warn!(
@@ -190,6 +255,32 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
 
         result
     })
+}
+
+/// Starts the swarm, reports it ready once every plugin is (the exec plugin only after it
+/// registered and leased, so cells can be placed on it), then waits for a shutdown signal.
+async fn serve(
+    ctx: &Ctx,
+    swarm: swarm::Swarm,
+    name: &str,
+    zid: ZenohId,
+    ready_pipe: Option<std::io::PipeWriter>,
+) -> anyhow::Result<()> {
+    let detached = ready_pipe.is_some();
+    let _guard = swarm.spawn_in_place()?.wait().await?;
+
+    match ready_pipe {
+        Some(mut ready_pipe) => {
+            if let Err(err) = ready_pipe.write_all(&[0]) {
+                // the starting process is gone (killed, say); the runtime itself is fine. The
+                // daemon's stdio is /dev/null, so this goes to the runtime's log file.
+                tracing::warn!("unable to report readiness to the starting process: {err}");
+            }
+        }
+        None => crate::info!(ctx, "runtime {name:?} ready ({zid})"),
+    }
+
+    wait_for_shutdown(detached).await
 }
 
 /// Waits for a shutdown signal.

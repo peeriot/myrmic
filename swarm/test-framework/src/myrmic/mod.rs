@@ -241,7 +241,7 @@ where
     /// [`Error::Cli`], like any other failed delete.
     pub async fn delete_runtime(&self, name: &str) -> Result<(), Error> {
         self.run(&["runtimes", "delete", name]).await?;
-        self.wait_until_listed(name, false).await
+        self.wait_until_unlisted(name).await
     }
 
     /// run: myrmic new --name `name` [--sdk `sdk`] into a temporary directory on the target
@@ -404,17 +404,15 @@ where
         }
     }
 
-    /// Wait until the runtime `name` is `listed` by `myrmic runtimes list`, or no longer is.
-    async fn wait_until_listed(&self, name: &str, listed: bool) -> Result<(), Error> {
-        let waited_for = if listed {
-            format!("runtime `{name}` to show up in `runtimes list`")
-        } else {
-            format!("runtime `{name}` to leave `runtimes list`")
-        };
-        wait_for(waited_for, || async {
-            let runtimes = self.list_runtimes().await?;
-            Ok(runtimes.iter().any(|runtime| runtime == name) == listed)
-        })
+    /// Wait until the runtime `name` is no longer listed by `myrmic runtimes list`.
+    async fn wait_until_unlisted(&self, name: &str) -> Result<(), Error> {
+        wait_for(
+            format!("runtime `{name}` to leave `runtimes list`"),
+            || async {
+                let runtimes = self.list_runtimes().await?;
+                Ok(!runtimes.iter().any(|runtime| runtime == name))
+            },
+        )
         .await
     }
 
@@ -537,7 +535,8 @@ where
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] [`config`]
     ///
-    /// Returns once the runtime shows up in `myrmic runtimes list`.
+    /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
+    /// on it.
     pub async fn start(self) -> Result<Runtime<B>, Error> {
         let mut args = vec!["runtimes", "start", "-d", "--name", &self.name];
         if !self.persistent {
@@ -560,7 +559,6 @@ where
             args.push(path_arg(config));
         }
         self.myrmic.run(&args).await?;
-        self.myrmic.wait_until_listed(&self.name, true).await?;
         Ok(Runtime {
             myrmic: self.myrmic.clone(),
             name: self.name,
