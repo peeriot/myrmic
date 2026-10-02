@@ -73,7 +73,8 @@ impl BleCallbackSink {
     }
 }
 
-const QUEUE_CAPACITY: usize = 10; // TODO: we need to specify what a reasonable number is and - more importantly - what we want to happen once the queue is full
+// @TODO jezza - 15 Sept 2026: Make this configurable at some point.
+const QUEUE_CAPACITY: usize = 16;
 
 /// Manages command queryable and dynamic event subscriptions for a cell, providing all messages through one channel served by the cell task
 pub(crate) struct CellMessageHandler {

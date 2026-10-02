@@ -11,10 +11,11 @@ pub enum Event {
     CellDeployQuery(Query),
     /// Query for undeploying a cell from this runtime
     CellUndeployQuery(Query),
-    /// A hosted cell's task ended. If the cell is still registered in the
-    /// event loop's map this was a crash (deliberate undeploys remove the
-    /// entry before the task terminates).
-    CellExited(cell_protocol::Sri),
+    /// A hosted cell's task ended. It was a crash only if that incarnation is
+    /// still the one registered in the event loop's map: deliberate undeploys
+    /// remove the entry before the task terminates, and a deploy over a
+    /// still-hosted sri replaces it with the successor's.
+    CellExited(cell_protocol::Sri, cell_protocol::Gen),
     /// Periodic supervision tick: drain pending registry cleanup and run the
     /// fencing verification pass (spec §3).
     VerifyPass,
