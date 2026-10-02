@@ -100,12 +100,14 @@ impl StoreContext {
 
         tx.commit()?;
 
-        // Data committed to a scope this node doesn't replicate would strand
-        // here; offer it up to the nodes that do. A drain already running for
-        // the scope is woken rather than left to its periodic announce — a
-        // fresh one announces on its first iteration anyway.
+        // A scope this node replicates: its other replicas hear of the commit
+        // now. Data committed to a scope this node doesn't replicate would
+        // strand here; offer it up to the nodes that do. A drain already
+        // running for the scope is woken rather than left to its periodic
+        // announce — a fresh one announces on its first iteration anyway.
         for scope in scopes {
             if self.store.is_replicating(&scope) {
+                self.nudge_replication(&scope);
                 continue;
             }
 
@@ -272,8 +274,10 @@ impl StoreContext {
         // A fallback landing while a drain is already running is the re-arm
         // signal: the client just proved it searched and found nobody better,
         // so an unwinding drain's deference target is evidently unreachable.
+        // A write rolled back here lands nothing either.
         if let tx_begin::Constraint::Routed(scope) = &constraint
             && matches!(access, tx_begin::Access::Write)
+            && !matches!(finish, tx_apply::Finish::Rollback)
             && let Err(message) = self.place_routed_write(scope)
         {
             return Err(Some(tx_apply::Error {
@@ -288,7 +292,7 @@ impl StoreContext {
             TransactionOptions::write()
         };
 
-        if matches!(finish, tx_apply::Finish::Commit) {
+        if !matches!(finish, tx_apply::Finish::KeepOpen) {
             let mut tx = self.store.begin_local(&opts).map_err(|err| {
                 tracing::error!("Unable to start transaction: {}", err);
                 Some(tx_apply::Error {
@@ -305,6 +309,15 @@ impl StoreContext {
                 }
             };
 
+            if matches!(finish, tx_apply::Finish::Rollback) {
+                tx.rollback();
+                return Ok(tx_apply::Response {
+                    tx: None,
+                    node: self.id().to_le_bytes(),
+                    last,
+                });
+            }
+
             self.finish_commit(tx).await.map_err(|err| {
                 tracing::error!("Failed to commit transaction: {:?}", err);
                 Some(tx_apply::Error {
@@ -313,7 +326,11 @@ impl StoreContext {
                 })
             })?;
 
-            return Ok(tx_apply::Response { tx: None, last });
+            return Ok(tx_apply::Response {
+                tx: None,
+                node: self.id().to_le_bytes(),
+                last,
+            });
         }
 
         opts.idle_timeout = Some(self.tx_idle_timeout);
@@ -330,6 +347,7 @@ impl StoreContext {
 
         Ok(tx_apply::Response {
             tx: Some(tx_id),
+            node: self.id().to_le_bytes(),
             last,
         })
     }
@@ -343,7 +361,7 @@ impl StoreContext {
         ops: Vec<TxOp>,
         finish: tx_apply::Finish,
     ) -> Result<tx_apply::Response, Option<tx_apply::Error>> {
-        if matches!(finish, tx_apply::Finish::Commit) {
+        if !matches!(finish, tx_apply::Finish::KeepOpen) {
             let mut tx = self.remove_tx(id).ok_or_else(|| {
                 tracing::warn!("Unable to find tx");
                 None
@@ -357,6 +375,15 @@ impl StoreContext {
                 }
             };
 
+            if matches!(finish, tx_apply::Finish::Rollback) {
+                tx.rollback();
+                return Ok(tx_apply::Response {
+                    tx: None,
+                    node: self.id().to_le_bytes(),
+                    last,
+                });
+            }
+
             self.finish_commit(tx).await.map_err(|err| {
                 tracing::error!("Failed to commit transaction: {:?}", err);
                 Some(tx_apply::Error {
@@ -365,12 +392,20 @@ impl StoreContext {
                 })
             })?;
 
-            return Ok(tx_apply::Response { tx: None, last });
+            return Ok(tx_apply::Response {
+                tx: None,
+                node: self.id().to_le_bytes(),
+                last,
+            });
         }
 
         let last = self.apply_registered(id, ops)?;
 
-        Ok(tx_apply::Response { tx: Some(id), last })
+        Ok(tx_apply::Response {
+            tx: Some(id),
+            node: self.id().to_le_bytes(),
+            last,
+        })
     }
 
     /// Applies to a registered transaction, leaving it open. On failure the

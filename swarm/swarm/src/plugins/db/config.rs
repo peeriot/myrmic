@@ -53,7 +53,7 @@ pub struct StoreConfig {
     #[serde(default, deserialize_with = "deserialize_optional_duration")]
     pub tx_idle_timeout: Option<Duration>,
 
-    /// How long an offloader serves a scope no replica has taken over before it
+    /// How long an offloader serves a scope no replica fetches from before it
     /// escalates itself into a durable replica. Humantime duration string.
     /// Defaults to 30 seconds when omitted.
     #[serde(default, deserialize_with = "deserialize_optional_duration")]

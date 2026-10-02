@@ -517,9 +517,13 @@ fn stand_in_store_reply(
             };
             let open = match application.finish {
                 tx_apply::Finish::KeepOpen => Some(tx),
-                tx_apply::Finish::Commit => None,
+                tx_apply::Finish::Commit | tx_apply::Finish::Rollback => None,
             };
-            Ok(encode(&tx_apply::Response { tx: open, last }))
+            Ok(encode(&tx_apply::Response {
+                tx: open,
+                node: tx.2,
+                last,
+            }))
         }
         DbRequest::TxCommit(_) => Ok(encode(&tx_commit::Response {})),
         DbRequest::TxRollback(_) => Ok(encode(&tx_rollback::Response {})),

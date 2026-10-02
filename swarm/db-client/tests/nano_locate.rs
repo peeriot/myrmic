@@ -74,6 +74,7 @@ fn routed_tx_begin_locates_the_holder() {
 
             let response = tx_apply::Response {
                 tx: Some(expected_tx),
+                node: expected_tx.2,
                 last: None,
             };
             direct_q

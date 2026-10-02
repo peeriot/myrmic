@@ -1024,12 +1024,14 @@ impl<M> Transaction<M> {
         Ok(out)
     }
 
+    /// Records a replicated version, reporting whether it wrote anything: a
+    /// sync point this store already holds is skipped.
     pub fn insert_changeset(
         &mut self,
         sp: SyncPoint<'_>,
         sm: SyncMeta,
         entries: &[(RawKey, Option<Value>)],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         if self.contains_key_untracked(&sp)? {
             tracing::debug!(
                 "Already Sync'd {}/{}/{} @ {}",
@@ -1038,7 +1040,7 @@ impl<M> Transaction<M> {
                 sp.schema,
                 sp.ts,
             );
-            return Ok(());
+            return Ok(false);
         }
 
         self.insert(&sp, &sm)?;
@@ -1051,7 +1053,7 @@ impl<M> Transaction<M> {
             let scope = Key::new_scope(sp.namespace, sp.database, sp.schema);
 
             self.delete_scope_at_version(scope, ts)?;
-            return Ok(());
+            return Ok(true);
         }
 
         tracing::debug!("inserting {} entries", entries.len());
@@ -1064,7 +1066,7 @@ impl<M> Transaction<M> {
             }
         }
 
-        Ok(())
+        Ok(true)
     }
 }
 

@@ -15,6 +15,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+mod pacer;
+use pacer::PullPacer;
+
 /// How far behind "now" the announce baseline sits. Heads younger than this
 /// stay explicit, so peers that lag a few announce rounds still see them
 /// (and epoch bumps) directly instead of through a probed full announce.
@@ -33,11 +36,6 @@ pub const SYNC_PAGE_BYTES: usize = 64 * 1024;
 /// into the pull page budget so a page of entry-less tombstone chunks still
 /// pages instead of ballooning into one link-choking reply.
 const CHUNK_WIRE_OVERHEAD: usize = 48;
-
-/// Pause between pulled pages. The puller paces the transfer, so this is the
-/// duty-cycle knob that keeps a deep pull from saturating the holder's link
-/// or the puller's own storage.
-const PULL_PAGE_PAUSE: Duration = Duration::from_millis(250);
 
 /// Rough serialised size of a chunk's payload, for the pull page budget —
 /// the entry bytes plus a small per-entry overhead.
@@ -85,6 +83,73 @@ pub trait ReplicaTransport: Clone + Send + Sync + 'static {
         async move {
             let _ = (target, req);
             None
+        }
+    }
+
+    /// Publishes an announce; `reason` is why it went out, for metrics.
+    fn publish_announce(
+        &self,
+        reason: AnnounceReason,
+        announce: Announce,
+    ) -> impl Future<Output = ()> + Send {
+        let _ = reason;
+        self.publish(ReplicaMessage::Announce(announce))
+    }
+
+    /// Publishes a probe; `reason` is why it went out, for metrics.
+    fn publish_probe(&self, reason: ProbeReason, probe: Probe) -> impl Future<Output = ()> + Send {
+        let _ = reason;
+        self.publish(ReplicaMessage::Probe(probe))
+    }
+}
+
+/// Why a probe went out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeReason {
+    /// Starting up: whoever holds the scope, speak now.
+    Solicit,
+    /// A peer's announce diverged from ours in a way only a full announce
+    /// resolves.
+    Repair,
+    /// A gossip-only offloader asking for the full announces that retire it.
+    Gossip,
+}
+
+impl ProbeReason {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Solicit => "solicit",
+            Self::Repair => "repair",
+            Self::Gossip => "gossip",
+        }
+    }
+}
+
+/// Why an announce went out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceReason {
+    /// The announce loop's periodic tick.
+    Tick,
+    /// A commit woke the announce loop.
+    Commit,
+    /// A peer's probe asked for it.
+    Probe,
+    /// A pull from a drain finished.
+    Pull,
+    /// The announce loop woke for anything else.
+    Wake,
+}
+
+impl AnnounceReason {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tick => "tick",
+            Self::Commit => "commit",
+            Self::Probe => "probe",
+            Self::Pull => "pull",
+            Self::Wake => "wake",
         }
     }
 }
@@ -154,6 +219,9 @@ pub struct Replicator<T: ReplicaTransport, M = ()> {
     /// announces from the same holder don't stack duplicate pulls.
     pulling: Arc<dashmap::DashMap<(models::NodeId, api::Scope), ()>>,
     frontier: Arc<FrontierCache>,
+    /// What an offloader's announce-based retirement was confirmed to cover:
+    /// the frontier a full replica's announce vouched for, version by version.
+    covered: Arc<std::sync::Mutex<Vec<models::SyncPointId>>>,
 }
 
 /// Holds one (holder, scope) pull slot; the slot frees on drop.
@@ -180,6 +248,7 @@ impl<T: ReplicaTransport, M> Clone for Replicator<T, M> {
             probes: self.probes.clone(),
             pulling: self.pulling.clone(),
             frontier: self.frontier.clone(),
+            covered: self.covered.clone(),
         }
     }
 }
@@ -210,6 +279,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             probes: Default::default(),
             pulling: Default::default(),
             frontier: Default::default(),
+            covered: Default::default(),
         };
 
         let handle = ReplicationHandle { stopped };
@@ -226,6 +296,13 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// Waits until the replicator has confirmed it is stopping.
     pub async fn stopped(&self) {
         self.stopped.cancelled().await;
+    }
+
+    /// The sync points an announce-based retirement confirmed a full replica
+    /// holds, taken so a retired drain can release exactly those. Empty unless
+    /// this offloader retired that way.
+    pub fn take_confirmed_coverage(&self) -> Vec<models::SyncPointId> {
+        std::mem::take(&mut *self.covered.lock().expect("coverage lock poisoned"))
     }
 
     async fn request_changeset(
@@ -252,24 +329,29 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
 
     /// This tells the replica to generate an Announce message, and send it through the transport.
     pub async fn announce(&self) -> anyhow::Result<()> {
+        self.announce_for(AnnounceReason::Tick).await
+    }
+
+    /// [`Self::announce`], saying why.
+    pub async fn announce_for(&self, reason: AnnounceReason) -> anyhow::Result<()> {
         match self.mode {
-            ReplicaMode::Full => self.send_announce(&[], true).await.map(drop),
+            ReplicaMode::Full => self.send_announce(&[], true, reason).await.map(drop),
             // With a sync-capable transport, replicas pull a drain's holdings
             // directly and coverage is verified point-to-point, so a floored
             // heartbeat is all the mesh needs — re-broadcasting a frozen
             // frontier in full every round is pure waste.
             ReplicaMode::Offload if self.transport.can_sync() => {
-                self.send_announce(&[], true).await.map(drop)
+                self.send_announce(&[], true, reason).await.map(drop)
             }
             // Gossip-only: an offloader holds a stray subset, so a baseline
             // fingerprint would never match a replica's; it announces
             // explicitly, and the probe solicits the full announces its
             // announce-based coverage check needs.
             ReplicaMode::Offload => {
-                let scopes = self.send_announce(&[], false).await?;
+                let scopes = self.send_announce(&[], false, reason).await?;
                 if !scopes.is_empty() {
                     self.transport
-                        .publish(ReplicaMessage::Probe(Probe { filter: scopes }))
+                        .publish_probe(ProbeReason::Gossip, Probe { filter: scopes })
                         .await;
                 }
                 Ok(())
@@ -308,7 +390,9 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// A probe answers with a full announce: it is the repair path for peers
     /// that cannot verify a floored announce's elided prefix.
     async fn handle_probe(&self, probe: Probe) -> anyhow::Result<()> {
-        self.send_announce(&probe.filter, false).await.map(drop)
+        self.send_announce(&probe.filter, false, AnnounceReason::Probe)
+            .await
+            .map(drop)
     }
 
     /// The heads this node holds for its subject.
@@ -378,6 +462,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         &self,
         filter: &[api::Scope],
         floored: bool,
+        reason: AnnounceReason,
     ) -> anyhow::Result<Vec<api::Scope>> {
         let me = self.store.node_id();
 
@@ -429,10 +514,13 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         }
 
         self.transport
-            .publish(ReplicaMessage::Announce(Announce {
-                known,
-                full_replica: matches!(self.mode, ReplicaMode::Full),
-            }))
+            .publish_announce(
+                reason,
+                Announce {
+                    known,
+                    full_replica: matches!(self.mode, ReplicaMode::Full),
+                },
+            )
             .await;
 
         Ok(scopes)
@@ -446,11 +534,11 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// refusing routed writes) after absorbing at most the write that minted
     /// it.
     pub async fn solicit(&self, scope: &api::Scope) {
-        self.probe_scope(scope).await;
+        self.probe_scope(scope, ProbeReason::Solicit).await;
     }
 
     /// Probes `scope` for a full announce, unless one was requested recently.
-    async fn probe_scope(&self, scope: &api::Scope) {
+    async fn probe_scope(&self, scope: &api::Scope, reason: ProbeReason) {
         let now = Instant::now();
         let fire = match self.probes.entry(scope.clone()) {
             dashmap::Entry::Occupied(mut entry) => {
@@ -468,9 +556,12 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
 
         if fire {
             self.transport
-                .publish(ReplicaMessage::Probe(Probe {
-                    filter: vec![scope.clone()],
-                }))
+                .publish_probe(
+                    reason,
+                    Probe {
+                        filter: vec![scope.clone()],
+                    },
+                )
                 .await;
         }
     }
@@ -523,7 +614,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
                             scope,
                             sender,
                         );
-                        self.probe_scope(scope).await;
+                        self.probe_scope(scope, ProbeReason::Repair).await;
                     }
                 }
                 CatchupPlan::Behind {
@@ -577,9 +668,11 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// prefix cannot vouch for individual versions, so old holdings retire off
     /// the full announces our own announce's probe solicits.
     async fn handle_coverage(&self, sender: uhlc::ID, announce: Announce) -> anyhow::Result<()> {
+        // The frontier checked is exactly what the announce vouched for, so
+        // it is also exactly what a retirement on it may release.
         let covered = if announce.full_replica {
             let frontiers = self.frontiers().await?;
-            frontiers.scopes.iter().all(|(scope, frontier)| {
+            let all_held = frontiers.scopes.iter().all(|(scope, frontier)| {
                 frontier.iter().all(|(ts, &(epoch, _))| {
                     announce
                         .known
@@ -587,9 +680,17 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
                         .and_then(|sa| sa.heads.get(ts))
                         .is_some_and(|&(their_epoch, _)| their_epoch >= epoch)
                 })
+            });
+            all_held.then(|| {
+                frontiers
+                    .scopes
+                    .iter()
+                    .flat_map(|(_, frontier)| frontier.iter())
+                    .map(|(&ts, &(epoch, node))| (epoch, ts, node))
+                    .collect::<Vec<_>>()
             })
         } else {
-            false
+            None
         };
 
         self.store.record_peer_frontier(
@@ -598,7 +699,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             announce.full_replica,
         );
 
-        if covered {
+        if let Some(points) = covered {
             let me = self.store.node_id();
             let (namespace, database, schema) = self.subject.as_keyexprs();
             tracing::debug!(
@@ -609,6 +710,9 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
                 schema,
                 sender,
             );
+            // Recorded before the shutdown it justifies, so the drain sees it
+            // as soon as it wakes.
+            *self.covered.lock().expect("coverage lock poisoned") = points;
             self.confirm_shutdown();
         }
 
@@ -650,36 +754,55 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             epoch_floors,
         };
         let mut pages = 0usize;
+        // The requester paces this transfer; see [`PullPacer`].
+        let mut pacer = PullPacer::new();
+        // The oldest pulled version as a floored announce would judge it:
+        // elided once both its timestamp and epoch fall behind the cut.
+        let mut oldest = models::Version::MAX;
 
         loop {
+            let page_started = Instant::now();
             let Some(sync::PullResponse { chunks, next }) =
                 self.transport.pull(target, req.clone()).await
             else {
                 return false;
             };
 
+            let fetched = page_started.elapsed();
             let page_chunks = chunks.len();
+            let page_bytes: usize = chunks
+                .iter()
+                .map(|chunk| chunk_size(&chunk.entries) + CHUNK_WIRE_OVERHEAD)
+                .sum();
+            for &(epoch, ts, _) in chunks.iter().map(|chunk| &chunk.id) {
+                oldest = oldest.min(ts.max(epoch));
+            }
             if let Err(err) = self.apply_pull(scope, chunks).await {
                 // Partially applied; the holder's next announce drives a retry.
                 tracing::error!("unable to apply a pulled page: {}", err);
                 return true;
             }
             pages += 1;
+
+            let took = page_started.elapsed();
+            let rest = pacer.rest_after(took, page_bytes);
             tracing::debug!(
-                "[{}]({}) applied pull page {} ({} chunk(s)) from [{}]",
+                "[{}]({}) applied pull page {} ({} chunk(s), {} bytes) from [{}]: fetched in {:?}, applied in {:?}, resting {:?}",
                 me,
                 scope,
                 pages,
                 page_chunks,
+                page_bytes,
                 target,
+                fetched,
+                took.saturating_sub(fetched),
+                rest,
             );
 
             match next {
                 Some(cursor) => {
                     req.after = Some(cursor);
-                    // Breathing room between pages: the requester paces this
-                    // transfer, and a small node's storage must survive it.
-                    tokio::time::sleep(PULL_PAGE_PAUSE).await;
+                    tokio::time::sleep(rest).await;
                 }
                 None => break,
             }
@@ -692,6 +815,31 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             pages,
             target,
         );
+
+        // Caught up with the drain, which retires once a full replica vouches
+        // for every version it holds. A handoff — history, or more than a page
+        // of it — is vouched for now. A sink's trickle of fresh rows waits for
+        // our periodic announce: under load that is thousands of pulls, and
+        // an announce each costs every peer a frontier scan.
+        let lag_cut = self
+            .store
+            .now()
+            .saturating_sub(uhlc::NTP64::from(self.lag).0);
+        let floored = oldest > lag_cut;
+        if floored && pages == 1 {
+            return true;
+        }
+        if let Err(err) = self
+            .send_announce(std::slice::from_ref(scope), floored, AnnounceReason::Pull)
+            .await
+        {
+            tracing::warn!(
+                "[{}]({}) unable to announce a finished pull: {}",
+                me,
+                scope,
+                err
+            );
+        }
         true
     }
 
@@ -1076,12 +1224,10 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
                 }
             };
 
-            tx.insert_changeset(sp, sm, &entries)?;
+            let wrote = tx.insert_changeset(sp, sm, &entries)?;
 
-            let ok = tx.commit().is_ok();
-
-            if ok {
-                inserted = true;
+            if tx.commit().is_ok() {
+                inserted = wrote;
                 break;
             }
 

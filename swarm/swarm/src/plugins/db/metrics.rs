@@ -26,9 +26,14 @@ use opentelemetry::metrics::Counter;
 struct ReplicationMetrics {
     msgs_sent: Counter<u64>,
     msgs_recv: Counter<u64>,
+    msg_bytes_sent: Counter<u64>,
+    msg_bytes_recv: Counter<u64>,
     announce_heads: Counter<u64>,
     announce_baselines: Counter<u64>,
     announce_scopes: Counter<u64>,
+    announce_reasons: Counter<u64>,
+    announce_reason_bytes: Counter<u64>,
+    probe_reasons: Counter<u64>,
     handle_queue_nanos: Counter<u64>,
     handle_nanos: Counter<u64>,
     handled: Counter<u64>,
@@ -43,6 +48,7 @@ struct ReplicationMetrics {
     served_age_nanos: Counter<u64>,
     served_age_skewed: Counter<u64>,
     served_pages_full: Counter<u64>,
+    served_bytes: Counter<u64>,
     peeks_served: Counter<u64>,
     peek_rows_served: Counter<u64>,
 }
@@ -52,9 +58,14 @@ static METRICS: LazyLock<ReplicationMetrics> = LazyLock::new(|| {
     ReplicationMetrics {
         msgs_sent: meter.u64_counter("repl_msgs_sent").build(),
         msgs_recv: meter.u64_counter("repl_msgs_recv").build(),
+        msg_bytes_sent: meter.u64_counter("repl_msg_bytes_sent").build(),
+        msg_bytes_recv: meter.u64_counter("repl_msg_bytes_recv").build(),
         announce_heads: meter.u64_counter("repl_announce_heads").build(),
         announce_baselines: meter.u64_counter("repl_announce_baselines").build(),
         announce_scopes: meter.u64_counter("repl_announce_scopes").build(),
+        announce_reasons: meter.u64_counter("repl_announce_reasons").build(),
+        announce_reason_bytes: meter.u64_counter("repl_announce_reason_bytes").build(),
+        probe_reasons: meter.u64_counter("repl_probe_reasons").build(),
         handle_queue_nanos: meter.u64_counter("repl_handle_queue_nanos").build(),
         handle_nanos: meter.u64_counter("repl_handle_nanos").build(),
         handled: meter.u64_counter("repl_handled").build(),
@@ -69,6 +80,7 @@ static METRICS: LazyLock<ReplicationMetrics> = LazyLock::new(|| {
         served_age_nanos: meter.u64_counter("repl_served_age_nanos").build(),
         served_age_skewed: meter.u64_counter("repl_served_age_skewed").build(),
         served_pages_full: meter.u64_counter("repl_served_pages_full").build(),
+        served_bytes: meter.u64_counter("repl_served_bytes").build(),
         peeks_served: meter.u64_counter("db_peeks_served").build(),
         peek_rows_served: meter.u64_counter("db_peek_rows_served").build(),
     }
@@ -83,19 +95,19 @@ fn pid() -> KeyValue {
 /// pushes, and both default to `CongestionControl::Drop`.
 ///
 /// [`ReplicaMessage::name`]: db_commons::models::ReplicaMessage::name
-pub(crate) fn record_msg_sent(kind: &'static str) {
-    METRICS
-        .msgs_sent
-        .add(1, &[KeyValue::new("msg", kind), pid()]);
+pub(crate) fn record_msg_sent(kind: &'static str, bytes: usize) {
+    let attrs = [KeyValue::new("msg", kind), pid()];
+    METRICS.msgs_sent.add(1, &attrs);
+    METRICS.msg_bytes_sent.add(bytes as u64, &attrs);
 }
 
 /// One replica message received. An announce is broadcast to every replicating
 /// node, so this is not `msgs_sent` times one — read the two as volumes, not as
 /// a delivery ratio.
-pub(crate) fn record_msg_recv(kind: &'static str) {
-    METRICS
-        .msgs_recv
-        .add(1, &[KeyValue::new("msg", kind), pid()]);
+pub(crate) fn record_msg_recv(kind: &'static str, bytes: usize) {
+    let attrs = [KeyValue::new("msg", kind), pid()];
+    METRICS.msgs_recv.add(1, &attrs);
+    METRICS.msg_bytes_recv.add(bytes as u64, &attrs);
 }
 
 /// The shape of one announce as published: how many scopes it covers, how many
@@ -114,6 +126,32 @@ pub(crate) fn record_announce(scopes: usize, heads: usize, baselines: usize) {
     METRICS.announce_scopes.add(scopes as u64, &attrs);
     METRICS.announce_heads.add(heads as u64, &attrs);
     METRICS.announce_baselines.add(baselines as u64, &attrs);
+}
+
+/// One announce published, by what sent it (`role`, as for [`record_pull`])
+/// and why — a periodic tick, a commit, a peer's probe, or a finished pull —
+/// and its encoded size.
+pub(crate) fn record_announce_reason(role: &'static str, reason: &'static str, bytes: usize) {
+    let attrs = [
+        KeyValue::new("role", role),
+        KeyValue::new("reason", reason),
+        pid(),
+    ];
+    METRICS.announce_reasons.add(1, &attrs);
+    METRICS.announce_reason_bytes.add(bytes as u64, &attrs);
+}
+
+/// One probe published, by what sent it and why — see
+/// `db::replication::ProbeReason`.
+pub(crate) fn record_probe_reason(role: &'static str, reason: &'static str) {
+    METRICS.probe_reasons.add(
+        1,
+        &[
+            KeyValue::new("role", role),
+            KeyValue::new("reason", reason),
+            pid(),
+        ],
+    );
 }
 
 /// One received message's handling, split at the point that matters: `queued` is
@@ -204,6 +242,14 @@ where
             .served_age_nanos
             .add(u64::try_from(age.as_nanos()).unwrap_or(u64::MAX), &attrs);
     }
+}
+
+/// One served pull page's encoded size: the data replication actually moves.
+pub(crate) fn record_pull_served_bytes(namespace: &str, bytes: usize) {
+    METRICS.served_bytes.add(
+        bytes as u64,
+        &[KeyValue::new("ns", namespace.to_owned()), pid()],
+    );
 }
 
 /// One direct pull round trip: how long it took and how many chunks came back,

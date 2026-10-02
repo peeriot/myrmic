@@ -203,6 +203,17 @@ impl Client {
             .await
     }
 
+    /// [`read_tx_in`](Self::read_tx_in), but only on a node holding `scope`
+    /// at at least `version` — so a read woken by a table event sees the
+    /// change it was told about, even before it replicates anywhere else.
+    pub async fn read_tx_at<F, R>(&self, scope: Scope, version: Version, func: F) -> ZResult<R>
+    where
+        F: for<'a> AsyncFnOnce(&'a Self, TxId) -> ZResult<R>,
+    {
+        self.read_tx_constrained(tx_begin::Constraint::RoutedAt(scope, version), func)
+            .await
+    }
+
     /// Begins an unrouted read transaction. Use [`read_tx_in`](Self::read_tx_in)
     /// instead when the scope is known at this point.
     pub async fn read_tx<F, R>(&self, func: F) -> ZResult<R>

@@ -12,6 +12,9 @@ use db_client::v1::Client;
 use db_commons::models::events::TableEvent;
 use db_commons::models::{self, Scope, Subject};
 
+mod handoff_timing;
+mod replication_speed;
+
 const TABLE: &str = "letters";
 
 async fn open_session() -> zenoh::Session {
@@ -39,6 +42,16 @@ async fn start_connected_pair() -> (
     (zenoh::Session, swarm_api::DropSender),
     (zenoh::Session, swarm_api::DropSender),
 ) {
+    start_connected_pair_with(&Default::default()).await
+}
+
+/// [`start_connected_pair`], both nodes running `config`.
+async fn start_connected_pair_with(
+    config: &super::config::Config,
+) -> (
+    (zenoh::Session, swarm_api::DropSender),
+    (zenoh::Session, swarm_api::DropSender),
+) {
     // Bound and released to find a free port; a bind racing another process
     // for it is accepted for a test.
     let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -48,15 +61,19 @@ async fn start_connected_pair() -> (
         .port();
     let endpoints = format!(r#"["tcp/127.0.0.1:{port}"]"#);
 
-    let listener = start_node_on(|config| {
-        config.insert_json5("listen/endpoints", &endpoints).unwrap();
-    })
+    let listener = start_node_on(
+        |zenoh| {
+            zenoh.insert_json5("listen/endpoints", &endpoints).unwrap();
+        },
+        config.clone(),
+    )
     .await;
-    let connector = start_node_on(|config| {
-        config
-            .insert_json5("connect/endpoints", &endpoints)
-            .unwrap();
-    })
+    let connector = start_node_on(
+        |zenoh| {
+            zenoh.insert_json5("connect/endpoints", &endpoints).unwrap();
+        },
+        config.clone(),
+    )
     .await;
 
     (listener, connector)
@@ -84,18 +101,19 @@ fn ctx(session: &zenoh::Session, drop_rx: swarm_api::DropNotifier) -> MyrmicCtx 
 }
 
 async fn start_node() -> (zenoh::Session, swarm_api::DropSender) {
-    start_node_on(|_| {}).await
+    start_node_on(|_| {}, Default::default()).await
 }
 
-/// [`start_node`] on a session configured by `configure`.
+/// [`start_node`] running `config`, on a session configured by `configure`.
 async fn start_node_on(
     configure: impl FnOnce(&mut zenoh::Config),
+    config: super::config::Config,
 ) -> (zenoh::Session, swarm_api::DropSender) {
     let session = open_session_with(configure).await;
 
     let (drop_tx, drop_rx) = flume::bounded(1);
 
-    Plugin::main(ctx(&session, drop_rx), Default::default())
+    Plugin::main(ctx(&session, drop_rx), config)
         .await
         .expect("unable to start db plugin");
 
@@ -618,6 +636,43 @@ async fn a_routed_read_fallback_leaves_no_trace() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_rolled_back_routed_write_leaves_no_trace() {
+    let (session, _drop_tx) = start_node_with_escalation(Duration::from_millis(300)).await;
+    let client = Client::new(&session);
+
+    client
+        .send(models::tx_apply::Request {
+            target: models::tx_apply::Target::New {
+                constraint: models::tx_begin::Constraint::Routed(scope()),
+                access: models::tx_begin::Access::Write,
+                retention_period: None,
+            },
+            ops: vec![append(b"1", b"a")],
+            finish: models::tx_apply::Finish::Rollback,
+        })
+        .await
+        .expect("send failed")
+        .expect("apply failed");
+
+    // Past the escalation window: nothing landed, so nothing is held.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+        .expect("unable to create replica client");
+    let holders = replica.locate(&scope(), None).await.expect("locate failed");
+    assert!(
+        holders.is_empty(),
+        "a rolled-back write must not make the scope locatable",
+    );
+
+    let key = custody_key(&session, &scope());
+    assert!(
+        read_custody_row(&client, &key).await.is_none(),
+        "a rolled-back write must not escalate into custody",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_commit_to_an_unreplicated_scope_starts_offloading() {
     let (session, _drop_tx) = start_node().await;
     let client = Client::new(&session);
@@ -684,11 +739,13 @@ async fn dropping_replication_stops_locate_and_starts_offloading() {
         .await
         .expect("unable to subscribe");
 
-    commit_and_await_version(&client, &events_rx).await;
-
+    // Replicating before the commit: a commit landing first would start a
+    // stray drain of its own, still running when the replica is dropped.
     let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
         .expect("unable to create replica client");
     locate_eventually(&replica, &scope(), None).await;
+
+    commit_and_await_version(&client, &events_rx).await;
 
     // Watch the scope's replica channel raw, as in the offload test above.
     let s = scope();
@@ -739,17 +796,20 @@ async fn dropping_replication_stops_locate_and_starts_offloading() {
         .expect("send failed")
         .expect("commit failed");
 
-    // The replicator winds down, so locate stops offering this node up.
+    // The replicator winds down, but the full copy stays findable as a drain
+    // until a successor holds it — never as a replica, so writes pass it by.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let holders = replica.locate(&scope(), None).await.expect("locate failed");
-        if holders.is_empty() {
+        if let [holder] = holders.as_slice()
+            && matches!(holder.state, models::locate::HolderState::Draining)
+        {
             break;
         }
 
         assert!(
             tokio::time::Instant::now() < deadline,
-            "a dropped replica must stop answering locate"
+            "a dropped replica must answer locate as a drain, not a replica"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -768,6 +828,76 @@ async fn dropping_replication_stops_locate_and_starts_offloading() {
         if announce.known.contains_key(&scope()) {
             announces += 1;
         }
+    }
+}
+
+/// Rows committed before a node replicates their scope start a hidden drain,
+/// which only stands down on its next tick. A replica dropped inside that
+/// window must still leave its full copy findable.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replica_dropped_beside_a_leftover_hidden_drain_stays_findable() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+    insert_one(&client, tx.id, &scope()).await;
+    client
+        .send(models::tx_commit::Request { id: tx.id })
+        .await
+        .expect("send failed")
+        .expect("commit failed");
+
+    replicate(&client, &session, Subject::Scope(scope())).await;
+    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+        .expect("unable to create replica client");
+    locate_eventually(&replica, &scope(), None).await;
+
+    // Dropped straight away, while the stray drain is likely still running.
+    let selector = ReplicaSelector::Subject(Subject::Scope(scope()));
+    let label = selector.to_string();
+    let entry = ReplicaEntry::new(selector, vec![String::from("tag:nobody")], &label);
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+    client
+        .send(models::tb_insert::Request {
+            id: tx.id,
+            op: models::tb_insert::Op {
+                scope: replication_scope(),
+                table: REPLICATION_TABLE.into(),
+                eid: Some(entry.key().into_bytes()),
+                value: postcard::to_allocvec(&entry).expect("entry should serialise"),
+            },
+        })
+        .await
+        .expect("send failed")
+        .expect("insert failed");
+    client
+        .send(models::tx_commit::Request { id: tx.id })
+        .await
+        .expect("send failed")
+        .expect("commit failed");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let holders = replica.locate(&scope(), None).await.expect("locate failed");
+        if let [holder] = holders.as_slice()
+            && matches!(holder.state, models::locate::HolderState::Draining)
+        {
+            break;
+        }
+
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the dropped replica's copy must stay findable as a drain"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -926,6 +1056,65 @@ async fn application_commits_ops_in_one_round_trip_and_publishes_one_event() {
     assert!(
         extra.is_err(),
         "expected a single event per table per commit"
+    );
+}
+
+/// A rolled-back application answers from what it applied — its own writes
+/// included — and leaves nothing behind: no rows, no open transaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rolled_back_application_answers_and_keeps_nothing() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+
+    client
+        .send(models::tx_apply::Request::commit_new(
+            models::tx_begin::Constraint::Routed(scope()),
+            vec![append(b"1", b"a")],
+        ))
+        .await
+        .expect("send failed")
+        .expect("apply failed");
+
+    let applied = client
+        .send(models::tx_apply::Request {
+            target: models::tx_apply::Target::New {
+                constraint: models::tx_begin::Constraint::Routed(scope()),
+                access: models::tx_begin::Access::Write,
+                retention_period: None,
+            },
+            ops: vec![
+                append(b"2", b"b"),
+                models::TxOp::from(models::tb_count::Op {
+                    scope: scope(),
+                    table: TABLE.into(),
+                }),
+            ],
+            finish: models::tx_apply::Finish::Rollback,
+        })
+        .await
+        .expect("send failed")
+        .expect("apply failed");
+    assert!(applied.tx.is_none(), "nothing is left open to close");
+    assert_eq!(applied.node, node_id(&session), "it says where it ran");
+    let counted = applied
+        .last
+        .map(models::tb_count::Response::try_from)
+        .expect("the count answered")
+        .expect("a count response");
+    assert_eq!(
+        counted.count, 2,
+        "the count sees the application's own write"
+    );
+
+    assert_eq!(
+        read_letter(&client, b"2").await,
+        None,
+        "the write was rolled back"
+    );
+    assert_eq!(
+        read_letter(&client, b"1").await.as_deref(),
+        Some(b"a".as_slice()),
+        "what was committed before is untouched"
     );
 }
 

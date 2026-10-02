@@ -519,6 +519,10 @@ async fn an_offloader_retires_once_a_replica_covers_it() {
         store1.is_offloading(&scope),
         "uncovered data keeps the offloader alive",
     );
+    assert!(
+        offloader.take_confirmed_coverage().is_empty(),
+        "nothing was confirmed, so nothing may be released",
+    );
 
     // Let the replica pull everything, then announce what it now holds.
     settle(&offloader, &transport1, &replica, &transport2).await;
@@ -536,6 +540,16 @@ async fn an_offloader_retires_once_a_replica_covers_it() {
         !store1.is_offloading(&scope),
         "a covering announce retires the offloader",
     );
+
+    // What it retired on is what it may release: every point it held.
+    let mut confirmed = offloader.take_confirmed_coverage();
+    let mut held = store1
+        .held_sync_points(&scope)
+        .expect("unable to list held sync points");
+    confirmed.sort_unstable();
+    held.sort_unstable();
+    assert!(!held.is_empty());
+    assert_eq!(confirmed, held);
 }
 
 /// The point of offloading is to stop holding the scope — but letting go must

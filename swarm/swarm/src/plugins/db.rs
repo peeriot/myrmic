@@ -8,6 +8,7 @@ use zenoh::{Result as ZResult, Session};
 use config::{Config, StoreConfig};
 
 use crate::plugins::MyrmicCtx;
+use db::replication::AnnounceReason;
 use db::store::TransactionOptions;
 use db::store::fjall::RemoteTx;
 use db_commons::models;
@@ -164,19 +165,26 @@ const DEFAULT_TX_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
 /// Cadence of the background sweep for scopes to offload.
 const STRAY_SCAN_INTERVAL: Duration = Duration::from_mins(1);
 
-/// How long an offloader serves a scope no replica has taken over before it
-/// escalates itself into a durable replica. Long enough that a transiently
-/// unreachable replica (GC pause, WiFi blip) can recover and cover it first.
+/// How long an offloader serves a scope no replica fetches from before it
+/// escalates itself into a durable replica. Counted from the last fetch, so a
+/// long pull never trips it. Long enough that a transiently unreachable
+/// replica (GC pause, WiFi blip) can recover and cover it first.
 const DEFAULT_OFFLOAD_ESCALATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How a [`StoreContext::start_offload`] drain takes part in routing, and
 /// when it may escalate itself back into a replica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OffloadKind {
-    /// Shedding a scope this node stopped replicating (or found stranded).
-    /// Hidden from locate — it is not trying to attract transactions — but
-    /// escalation is armed: uncovered data must still find a durable home.
+    /// Shedding rows found stranded here — committed to a scope this node
+    /// never replicated. Hidden from locate, since it is not trying to attract
+    /// transactions, but escalation is armed: uncovered data must still find a
+    /// durable home.
     Hidden,
+    /// Shedding a scope the configuration no longer has this node replicate.
+    /// It holds a full copy while its successor may still be catching up, so
+    /// it stays findable: reads rank it by head, and writes already pass
+    /// drainers by. Escalation is armed, as for [`Self::Hidden`].
+    Dropped,
     /// A fallback write landed here because no replica was locatable: the
     /// scope stays findable so subsequent writes consolidate onto this node,
     /// and escalation is armed.
@@ -199,14 +207,29 @@ struct StoreContext {
     store: db::store::fjall::Store<TxEvents>,
     tx_idle_timeout: Duration,
     escalation_timeout: Duration,
-    /// Escalation re-arm signals of the running offloaders, keyed by scope.
-    offload_rearms: Arc<Mutex<HashMap<models::Scope, Arc<Notify>>>>,
-    /// Per-scope "a commit just stranded data here" signal, woken by
-    /// [`finish_commit`](Self::finish_commit). Separate from
-    /// `offload_rearms` on purpose: a commit is not evidence that a drain's
-    /// deference target is unreachable, and conflating the two would re-arm
-    /// escalation on every write and flap the drain.
-    offload_nudges: Arc<Mutex<HashMap<models::Scope, Arc<Notify>>>>,
+    /// The running offloaders' signals, keyed by scope.
+    offload_signals: Arc<Mutex<HashMap<models::Scope, Arc<DrainSignals>>>>,
+    /// "A commit just landed here" signals of the running single-scope
+    /// replicators, keyed by scope; see [`Self::nudge_replication`].
+    replica_nudges: Arc<Mutex<HashMap<models::Scope, Arc<Notify>>>>,
+}
+
+/// What can wake a running drain besides its own tick.
+#[derive(Default)]
+struct DrainSignals {
+    /// Evidence the deference target is unreachable: arms escalation.
+    rearm: Notify,
+    /// A commit just stranded data here: announce now. Kept apart from
+    /// `rearm` on purpose — a commit is not evidence the target is gone, and
+    /// conflating the two would re-arm escalation on every write and flap the
+    /// drain.
+    nudge: Notify,
+    /// What it drains is a full copy after all (see [`OffloadKind::Dropped`]):
+    /// become findable.
+    findable: Notify,
+    /// A replica applied a page it fetched from it: the data is on its way to
+    /// a durable home, so an armed escalation deadline starts over.
+    fetched: Notify,
 }
 
 impl StoreContext {
@@ -223,8 +246,30 @@ impl StoreContext {
             store,
             tx_idle_timeout,
             escalation_timeout,
-            offload_rearms: Arc::default(),
-            offload_nudges: Arc::default(),
+            offload_signals: Arc::default(),
+            replica_nudges: Arc::default(),
+        }
+    }
+
+    /// Wakes the replicator of `scope`, if it replicates exactly that scope,
+    /// so its other replicas hear of a commit now rather than on the next
+    /// periodic announce, seconds out.
+    ///
+    /// Namespace-wide replicators (`sys`, `sorg`, `gw`) are not woken: an
+    /// announce rescans the replicator's whole subject, and those take commits
+    /// constantly.
+    pub fn nudge_replication(&self, scope: &models::Scope) {
+        let nudges = self.replica_nudges.lock().expect("nudge map poisoned");
+        if let Some(nudge) = nudges.get(scope) {
+            nudge.notify_one();
+        }
+    }
+
+    /// Wakes the running drain of `scope`, if any, through `signal`.
+    fn signal_offload(&self, scope: &models::Scope, signal: impl FnOnce(&DrainSignals) -> &Notify) {
+        let signals = self.offload_signals.lock().expect("signal map poisoned");
+        if let Some(drain) = signals.get(scope) {
+            signal(drain).notify_one();
         }
     }
 
@@ -300,10 +345,7 @@ impl StoreContext {
     /// Arms an [`OffloadKind::Unwinding`] drain's timer; a drain whose timer is
     /// already armed ignores it.
     pub fn rearm_offload(&self, scope: &models::Scope) {
-        let rearms = self.offload_rearms.lock().expect("rearm map poisoned");
-        if let Some(rearm) = rearms.get(scope) {
-            rearm.notify_one();
-        }
+        self.signal_offload(scope, |drain| &drain.rearm);
     }
 
     /// Wakes the drain of `scope`, if any, so it announces the rows a commit
@@ -311,10 +353,19 @@ impl StoreContext {
     /// of commits coalesces into one wake, so this cannot turn write traffic
     /// into announce traffic one-for-one.
     pub fn nudge_offload(&self, scope: &models::Scope) {
-        let nudges = self.offload_nudges.lock().expect("nudge map poisoned");
-        if let Some(nudge) = nudges.get(scope) {
-            nudge.notify_one();
-        }
+        self.signal_offload(scope, |drain| &drain.nudge);
+    }
+
+    /// Makes the running drain of `scope`, if any, findable — for a hidden
+    /// drain that turns out to hold a replica's full copy.
+    pub fn expose_offload(&self, scope: &models::Scope) {
+        self.signal_offload(scope, |drain| &drain.findable);
+    }
+
+    /// Tells the running drain of `scope`, if any, that a replica applied a
+    /// page it fetched from it.
+    fn note_offload_fetch(&self, scope: &models::Scope) {
+        self.signal_offload(scope, |drain| &drain.fetched);
     }
 
     /// Announces and serves `scope` on its replica channel so the nodes that
@@ -356,9 +407,9 @@ impl StoreContext {
                         let repl = repl.clone();
                         let handle = handle;
 
-                        move |sender, msg| {
+                        move |sender, msg, bytes| {
                             let kind = msg.name();
-                            metrics::record_msg_recv(kind);
+                            metrics::record_msg_recv(kind, bytes);
 
                             // Taken before the spawn, so the gap to the task
                             // actually running is measured rather than assumed.
@@ -379,20 +430,14 @@ impl StoreContext {
             }
         });
 
-        let rearm = Arc::new(Notify::new());
-        self.offload_rearms
+        let signals = Arc::new(DrainSignals::default());
+        self.offload_signals
             .lock()
-            .expect("rearm map poisoned")
-            .insert(scope.clone(), rearm.clone());
-
-        let nudge = Arc::new(Notify::new());
-        self.offload_nudges
-            .lock()
-            .expect("nudge map poisoned")
-            .insert(scope.clone(), nudge.clone());
+            .expect("signal map poisoned")
+            .insert(scope.clone(), signals.clone());
 
         self.handle
-            .spawn(drive_offload(self.clone(), repl, scope, kind, rearm, nudge));
+            .spawn(drive_offload(self.clone(), repl, scope, kind, signals));
     }
 
     /// Declares the direct catch-up queryable for `subject`: answers pull
@@ -409,12 +454,12 @@ impl StoreContext {
         let ke = db_commons::topics::replica_sync::format(me, namespace, database, schema);
 
         let handle = self.handle.clone();
-        let store = self.store.clone();
+        let context = self.clone();
         self.session
             .declare_queryable(ke)
             .callback(move |query| {
                 let repl = repl.clone();
-                let store = store.clone();
+                let context = context.clone();
                 handle.spawn(async move {
                     let Some(payload) = query.payload() else {
                         return;
@@ -427,14 +472,20 @@ impl StoreContext {
                         }
                     };
 
-                    let pull_namespace = match &req {
-                        sync::Request::Pull(req) => Some(req.scope.namespace.clone()),
+                    let pulled = match &req {
+                        sync::Request::Pull(req) => Some(req.scope.clone()),
                         sync::Request::Verify(_) => None,
                     };
+                    // A puller asks for the next page only once it applied the
+                    // last; a first page proves nothing, as a puller whose
+                    // applies keep failing asks for it again and again.
+                    let progressed =
+                        matches!(&req, sync::Request::Pull(req) if req.after.is_some());
 
                     // Store scans, off the async workers: a busy sync
                     // queryable must not starve the locate/tx queryables
                     // sharing the executor.
+                    let scan_started = std::time::Instant::now();
                     let served = tokio::task::spawn_blocking(move || match req {
                         sync::Request::Pull(req) => repl
                             .serve_pull(&req, db::replication::SYNC_PAGE_BYTES)
@@ -455,21 +506,37 @@ impl StoreContext {
 
                     match resp {
                         Ok(resp) => {
-                            if let (Some(namespace), sync::Response::Pull(page)) =
-                                (&pull_namespace, &resp)
-                            {
+                            if let (Some(scope), sync::Response::Pull(page)) = (&pulled, &resp) {
                                 metrics::record_pull_served(
-                                    namespace,
-                                    store.now(),
+                                    &scope.namespace,
+                                    context.store.now(),
                                     page.chunks.iter().map(|chunk| chunk.id.1),
                                     page.next.is_some(),
                                 );
+                                // A replica is taking the scope off this node:
+                                // a drain of it is not stranded.
+                                if progressed {
+                                    context.note_offload_fetch(scope);
+                                }
                             }
 
+                            let scanned = scan_started.elapsed();
                             let bytes = postcard::to_allocvec(&resp)
                                 .expect("unable to serialise sync response");
+                            let encoded = scan_started.elapsed().saturating_sub(scanned);
+                            let len = bytes.len();
+                            if let Some(scope) = &pulled {
+                                metrics::record_pull_served_bytes(&scope.namespace, len);
+                            }
                             if let Err(err) = query.reply(query.key_expr().clone(), bytes).await {
                                 tracing::warn!("unable to reply to a sync request: {}", err);
+                            }
+                            if pulled.is_some() {
+                                tracing::debug!(
+                                    "served a pull page of {len} bytes: scanned in {scanned:?}, \
+                                     encoded in {encoded:?}, replied in {:?}",
+                                    scan_started.elapsed().saturating_sub(scanned + encoded),
+                                );
                             }
                         }
                         Err(err) => tracing::warn!("unable to serve a sync request: {}", err),
@@ -614,6 +681,7 @@ impl StoreContext {
         self.handle.spawn({
             let handle = self.handle.clone();
             let repl = repl.clone();
+            let subject = repl_subject.clone();
 
             async move {
                 // Held until the replicator stops, then dropped to undeclare them.
@@ -627,9 +695,9 @@ impl StoreContext {
                         let repl = repl.clone();
                         let handle = handle;
 
-                        move |sender, msg| {
+                        move |sender, msg, bytes| {
                             let kind = msg.name();
-                            metrics::record_msg_recv(kind);
+                            metrics::record_msg_recv(kind, bytes);
 
                             // Taken before the spawn, so the gap to the task
                             // actually running is measured rather than assumed.
@@ -646,23 +714,49 @@ impl StoreContext {
                     })
                     .await;
 
+                // Whoever already holds the scope — typically a drain handing
+                // it over — announced before this node was listening, and
+                // won't again for seconds. Ask now, so the catch-up starts on
+                // the reply rather than on their next periodic announce.
+                if let models::Subject::Scope(scope) = &subject {
+                    repl.solicit(scope).await;
+                }
+
                 repl.stopped().await;
             }
         });
+
+        let nudge = match &repl_subject {
+            models::Subject::Scope(scope) => {
+                let nudge = Arc::new(Notify::new());
+                self.replica_nudges
+                    .lock()
+                    .expect("nudge map poisoned")
+                    .insert(scope.clone(), nudge.clone());
+                Some((scope.clone(), nudge))
+            }
+            _ => None,
+        };
 
         // This "forces" the replicator to announce itself periodically.
         // Like the publisher, this will kill itself when the replicator shutsdown.
         self.handle.spawn({
             let repl = repl.clone();
+            let nudges = self.replica_nudges.clone();
 
             async move {
                 let interval = Duration::from_secs(2);
                 let jitter_range = 100..6000u64;
+                let nudged = async |nudge: &Option<(models::Scope, Arc<Notify>)>| match nudge {
+                    Some((_, nudge)) => nudge.notified().await,
+                    None => std::future::pending().await,
+                };
 
+                let mut reason = AnnounceReason::Tick;
                 loop {
                     tracing::trace!("[{}] Sending announcement", me);
 
-                    if let Err(err) = repl.announce().await {
+                    if let Err(err) = repl.announce_for(reason).await {
                         tracing::warn!("unable to announce self to network: {}", err);
                     }
 
@@ -676,9 +770,25 @@ impl StoreContext {
 
                     tracing::trace!("[{}] sleeping for {}s", me, sleep_time.as_secs_f32());
 
-                    tokio::select! {
-                        () = tokio::time::sleep(sleep_time) => (),
+                    reason = tokio::select! {
+                        () = tokio::time::sleep(sleep_time) => AnnounceReason::Tick,
                         () = repl.stopped() => break,
+                        // A commit landed: announce it now. Commits arriving
+                        // within the debounce ride the same announce, so write
+                        // traffic never becomes announce traffic one for one.
+                        () = nudged(&nudge) => {
+                            tokio::time::sleep(NUDGE_DEBOUNCE).await;
+                            AnnounceReason::Commit
+                        }
+                    };
+                }
+
+                // Only this replicator's own entry: a successor for the same
+                // scope may already have registered its own.
+                if let Some((scope, nudge)) = &nudge {
+                    let mut nudges = nudges.lock().expect("nudge map poisoned");
+                    if nudges.get(scope).is_some_and(|n| Arc::ptr_eq(n, nudge)) {
+                        nudges.remove(scope);
                     }
                 }
             }
@@ -695,11 +805,12 @@ impl StoreContext {
 /// count gave at the base interval (8 ticks x 2s).
 const VERIFY_EVERY: Duration = Duration::from_secs(16);
 
-/// A commit that strands rows wakes the drain instead of leaving them for the
-/// periodic tick — but a burst of commits must not become a burst of announces,
-/// which is how the mesh has been wedged before. `Notify` coalesces everything
-/// arriving while the drain is busy into a single wake, and this window bounds
-/// what is left: at most one extra announce per window per scope.
+/// A commit wakes the drain it strands rows on, or the replicator of the scope
+/// it lands in, instead of leaving it for the periodic tick — but a burst of
+/// commits must not become a burst of announces, which is how the mesh has
+/// been wedged before. `Notify` coalesces everything arriving while the
+/// announcer is busy into a single wake, and this window bounds what is left:
+/// at most one extra announce per window per scope.
 const NUDGE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 /// The drain loop of one offloader: announces, watches for coverage and the
@@ -710,26 +821,16 @@ async fn drive_offload(
     repl: db::replication::Replicator<replication::ZenohTransport, TxEvents>,
     scope: models::Scope,
     kind: OffloadKind,
-    rearm: Arc<Notify>,
-    nudge: Arc<Notify>,
+    signals: Arc<DrainSignals>,
 ) {
     let me = context.session.zid();
 
     // Findable unless hidden, so a scope no other replica holds can still be
-    // located; held for the offloader's lifetime.
-    let _queryable = if matches!(kind, OffloadKind::Hidden) {
+    // located; held until the drain stops, and never while it releases.
+    let mut queryable = if matches!(kind, OffloadKind::Hidden) {
         None
     } else {
-        let locate_ke = db_commons::topics::replica_query::format(
-            &scope.namespace,
-            &scope.database,
-            &scope.schema,
-        );
-        Some(
-            context
-                .declare_locate(locate_ke, models::locate::HolderState::Draining)
-                .await,
-        )
+        Some(declare_drain_locate(&context, &scope).await)
     };
 
     // A fresh drain's peer view is empty until a replica's next periodic
@@ -740,9 +841,9 @@ async fn drive_offload(
     repl.solicit(&scope).await;
 
     let interval = Duration::from_secs(2);
-    let jitter_range = 100..2000u64;
+    let jitter = || Duration::from_millis(rand::random_range(100..2000u64));
     let mut escalate_at = match kind {
-        OffloadKind::Hidden | OffloadKind::Sink => {
+        OffloadKind::Hidden | OffloadKind::Dropped | OffloadKind::Sink => {
             Some(tokio::time::Instant::now() + context.escalation_timeout)
         }
         // Unarmed: re-promotion would ping-pong with the target unless the
@@ -761,6 +862,10 @@ async fn drive_offload(
     let mut covered = Vec::new();
 
     let mut verify_at = tokio::time::Instant::now() + VERIFY_EVERY;
+    // `None` when the wake has nothing new to announce. The tick is a fixed
+    // deadline only an announce moves, so wakes that skip one never starve it.
+    let mut reason = Some(AnnounceReason::Tick);
+    let mut tick_at = tokio::time::Instant::now();
 
     loop {
         // A replicator for the scope announces and serves strictly more than
@@ -770,34 +875,31 @@ async fn drive_offload(
             break;
         }
 
-        tracing::trace!("[{}] announcing offload of {}", me, scope);
+        if let Some(reason) = reason {
+            tracing::trace!("[{}] announcing offload of {}", me, scope);
 
-        if let Err(err) = repl.announce().await {
-            tracing::warn!("unable to announce offload: {}", err);
+            if let Err(err) = repl.announce_for(reason).await {
+                tracing::warn!("unable to announce offload: {}", err);
+            }
+
+            tick_at = tokio::time::Instant::now() + interval + jitter();
         }
 
         if tokio::time::Instant::now() >= verify_at {
             verify_at = tokio::time::Instant::now() + VERIFY_EVERY;
 
-            // Taken before the ask, so the answer can only be about more than
-            // this and never less — a row that lands while the peer is
-            // answering is not something it just vouched for.
-            let held = held_sync_points(&context, &scope).await;
-
-            if verify_covered(&context, &repl, &scope).await {
-                // A verified retirement, same as the announce-based path: the
-                // custody row this drain recorded is over. confirm_shutdown
-                // drives the loop's exit through the stopped() arm below.
+            // A verified retirement, same as the announce-based path: the
+            // custody row this drain recorded is over. confirm_shutdown
+            // drives the loop's exit through the stopped() arm below.
+            if let Some(held) = verified_holdings(&context, &repl, &scope).await {
                 retired = true;
                 covered = held;
                 repl.confirm_shutdown();
             }
         }
 
-        let ms = rand::random_range(jitter_range.clone());
-
-        tokio::select! {
-            () = tokio::time::sleep(interval + Duration::from_millis(ms)) => (),
+        reason = tokio::select! {
+            () = tokio::time::sleep_until(tick_at) => Some(AnnounceReason::Tick),
             () = repl.stopped() => {
                 retired = true;
                 break;
@@ -828,31 +930,33 @@ async fn drive_offload(
             // latency path for a transaction that writes a scope its own node
             // does not hold — measured at ~4s per hop on the rack, which is one
             // tick of this loop, not any transfer cost.
-            () = nudge.notified() => {
+            () = signals.nudge.notified() => {
                 tokio::time::sleep(NUDGE_DEBOUNCE).await;
+                Some(AnnounceReason::Commit)
             }
-            () = rearm.notified() => {
+            () = signals.rearm.notified() => {
                 if escalate_at.is_none() {
                     tracing::info!("[{}] re-arming escalation for the drain of {}", me, scope);
                     escalate_at = Some(tokio::time::Instant::now() + context.escalation_timeout);
                 }
+                Some(AnnounceReason::Wake)
             }
-        }
+            () = signals.findable.notified(), if queryable.is_none() => {
+                queryable = Some(declare_drain_locate(&context, &scope).await);
+                Some(AnnounceReason::Wake)
+            }
+            // Escalation is for data no replica is coming for; one pulling
+            // it is coming. Only an armed deadline moves: an unarmed one is
+            // an unwinding drain's, and stays unarmed. The puller already
+            // knows what we hold, so there is nothing to announce.
+            () = signals.fetched.notified(), if escalate_at.is_some() => {
+                escalate_at = Some(tokio::time::Instant::now() + context.escalation_timeout);
+                None
+            }
+        };
     }
 
-    {
-        // Only this drain's own entry: a successor for the same scope may
-        // already have registered its own signal.
-        let mut rearms = context.offload_rearms.lock().expect("rearm map poisoned");
-        if rearms.get(&scope).is_some_and(|n| Arc::ptr_eq(n, &rearm)) {
-            rearms.remove(&scope);
-        }
-
-        let mut nudges = context.offload_nudges.lock().expect("nudge map poisoned");
-        if nudges.get(&scope).is_some_and(|n| Arc::ptr_eq(n, &nudge)) {
-            nudges.remove(&scope);
-        }
-    }
+    forget_drain_signals(&context, &scope, &signals);
 
     // A verified holder covers everything this drain held; its custody — if
     // this was a demoted provisional — is over.
@@ -870,11 +974,54 @@ async fn drive_offload(
     // it runs after the replicator has confirmed shutdown and can no longer
     // serve a pull from what we are about to drop.
     //
-    // `covered` is empty unless a verification actually happened, so a
-    // `stopped()` that came from somewhere else releases nothing.
+    // `covered` holds what a coverage confirmation vouched for — this drain's
+    // own verify, or a full replica's announce matching every version — and
+    // is empty otherwise, so a `stopped()` that came from somewhere else
+    // releases nothing.
+    //
+    // Unfindable first: a drain still answering locate while it releases
+    // would route reads to a copy that is disappearing under them. Then a
+    // grace, for reads that located it just before: one that has begun reads
+    // its own snapshot, but one still on its way would begin on a copy
+    // already half gone.
+    drop(queryable);
     if retired {
+        if covered.is_empty() {
+            covered = repl.take_confirmed_coverage();
+        }
+        tokio::time::sleep(RELEASE_GRACE).await;
         release_offloaded(&context, &scope, &covered, me).await;
     }
+}
+
+/// How long a retired drain keeps its copy after going unfindable: several
+/// locate rounds, so a read routed to it in its last moments has begun.
+const RELEASE_GRACE: Duration = Duration::from_secs(2);
+
+/// Unregisters a stopped drain's signals — only its own: a successor for the
+/// same scope may already have registered its own.
+fn forget_drain_signals(context: &StoreContext, scope: &models::Scope, own: &Arc<DrainSignals>) {
+    let mut signals = context.offload_signals.lock().expect("signal map poisoned");
+    if signals
+        .get(scope)
+        .is_some_and(|drain| Arc::ptr_eq(drain, own))
+    {
+        signals.remove(scope);
+    }
+}
+
+/// A drain's locate queryable: it answers as a [`Draining`] holder.
+///
+/// [`Draining`]: models::locate::HolderState::Draining
+async fn declare_drain_locate(
+    context: &StoreContext,
+    scope: &models::Scope,
+) -> zenoh::query::Queryable<()> {
+    let locate_ke =
+        db_commons::topics::replica_query::format(&scope.namespace, &scope.database, &scope.schema);
+    context
+        .declare_locate(locate_ke, models::locate::HolderState::Draining)
+        .await
 }
 
 /// The scopes this node holds outside every subject it replicates, or nothing
@@ -949,6 +1096,20 @@ async fn release_offloaded(
         Ok(Err(err)) => tracing::error!("unable to release the offloaded data of {scope}: {err}"),
         Err(err) => tracing::error!("release task for {scope} failed: {err}"),
     }
+}
+
+/// What this drain holds of `scope`, if a live replica confirms covering it.
+///
+/// Taken before the ask, so the answer can only be about more than this and
+/// never less — a row that lands while the peer is answering is not something
+/// it just vouched for.
+async fn verified_holdings(
+    context: &StoreContext,
+    repl: &db::replication::Replicator<replication::ZenohTransport, TxEvents>,
+    scope: &models::Scope,
+) -> Option<Vec<models::SyncPointId>> {
+    let held = held_sync_points(context, scope).await;
+    verify_covered(context, repl, scope).await.then_some(held)
 }
 
 /// Whether any live replica in the peer view confirms full coverage of `scope`.

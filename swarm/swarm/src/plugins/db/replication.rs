@@ -34,9 +34,10 @@ impl ZenohTransport {
     }
 }
 
-impl db::replication::ReplicaTransport for ZenohTransport {
-    async fn publish(&self, msg: ReplicaMessage) {
-        super::metrics::record_msg_sent(msg.name());
+impl ZenohTransport {
+    /// Publishes `msg`, recording it; returns its encoded size.
+    async fn send(&self, msg: ReplicaMessage) -> usize {
+        let kind = msg.name();
 
         if let ReplicaMessage::Announce(announce) = &msg {
             super::metrics::record_announce(
@@ -50,7 +51,33 @@ impl db::replication::ReplicaTransport for ZenohTransport {
             );
         }
 
-        self.client.publish(msg).await;
+        let bytes = self.client.publish(msg).await;
+        super::metrics::record_msg_sent(kind, bytes);
+        bytes
+    }
+}
+
+impl db::replication::ReplicaTransport for ZenohTransport {
+    async fn publish(&self, msg: ReplicaMessage) {
+        self.send(msg).await;
+    }
+
+    async fn publish_announce(
+        &self,
+        reason: db::replication::AnnounceReason,
+        announce: db_commons::models::replication::Announce,
+    ) {
+        let bytes = self.send(ReplicaMessage::Announce(announce)).await;
+        super::metrics::record_announce_reason(self.role, reason.name(), bytes);
+    }
+
+    async fn publish_probe(
+        &self,
+        reason: db::replication::ProbeReason,
+        probe: db_commons::models::replication::Probe,
+    ) {
+        self.send(ReplicaMessage::Probe(probe)).await;
+        super::metrics::record_probe_reason(self.role, reason.name());
     }
 
     fn can_sync(&self) -> bool {

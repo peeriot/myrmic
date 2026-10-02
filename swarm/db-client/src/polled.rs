@@ -3,13 +3,17 @@
 //! `select!` idiom was copy-pasted across the command loop, the event queue,
 //! and several gateway loops.
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
 use tokio::time::Interval;
 
-use crate::v1::{Client, Subscription, models::Subject};
+use crate::v1::{
+    Client, Subscription,
+    models::{Scope, Subject, Version},
+};
 
 /// Watches one or more db tables for changes. Subscribes for prompt wakeups;
 /// the periodic poll (driven by the caller's [`Interval`]) is a best-effort
@@ -21,6 +25,7 @@ use crate::v1::{Client, Subscription, models::Subject};
 pub struct PolledTable {
     notify: Arc<Notify>,
     received: Arc<AtomicU64>,
+    latest: Arc<Mutex<HashMap<Scope, Version>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -40,6 +45,7 @@ impl PolledTable {
     {
         let notify = Arc::new(Notify::new());
         let received = Arc::new(AtomicU64::new(0));
+        let latest = Arc::new(Mutex::new(HashMap::<Scope, Version>::new()));
         let mut subscriptions = Vec::new();
 
         for (subject, table) in tables {
@@ -47,8 +53,16 @@ impl PolledTable {
                 .subscribe(subject, table, {
                     let notify = notify.clone();
                     let received = received.clone();
-                    move |_notification| {
+                    let latest = latest.clone();
+                    move |notification| {
                         received.fetch_add(1, Ordering::Relaxed);
+                        let version = notification.version();
+                        latest
+                            .lock()
+                            .expect("latest-version map poisoned")
+                            .entry(notification.scope)
+                            .and_modify(|seen| *seen = (*seen).max(version))
+                            .or_insert(version);
                         notify.notify_one();
                     }
                 })
@@ -65,8 +79,22 @@ impl PolledTable {
         Self {
             notify,
             received,
+            latest,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// The highest version any notification has reported for `scope`.
+    ///
+    /// A change's event outruns its replication, so a watcher reading on the
+    /// wake should route there (see [`Client::read_tx_at`]) rather than trust
+    /// whichever copy it would otherwise reach.
+    pub fn latest(&self, scope: &Scope) -> Option<Version> {
+        self.latest
+            .lock()
+            .expect("latest-version map poisoned")
+            .get(scope)
+            .copied()
     }
 
     /// Notifications delivered to this watcher since it was opened, counted

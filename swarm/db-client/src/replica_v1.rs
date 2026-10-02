@@ -49,15 +49,19 @@ impl Client {
     }
 
     /// Broadcasts a `ReplicaMessage` to other clients using the same key.
-    pub async fn publish(&self, msg: ReplicaMessage) {
+    /// Broadcasts `msg`, returning its encoded size.
+    pub async fn publish(&self, msg: ReplicaMessage) -> usize {
         tracing::debug!("[{}] sending {}", self.session.zid(), msg.name());
 
         let msg = postcard::to_allocvec(&msg).expect("unable to ser msg");
+        let bytes = msg.len();
 
         self.session
             .put(&self.broadcast, msg)
             .await
             .expect("unable to publish replica message");
+
+        bytes
     }
 
     /// Asks replicating nodes which of them hold `scope` at at least
@@ -195,7 +199,8 @@ impl Client {
     /// The provided closure is called for each incoming message.
     pub async fn subscribe<F>(&self, func: F) -> zenoh::pubsub::Subscriber<()>
     where
-        F: Fn(uhlc::ID, ReplicaMessage) + Send + Sync + 'static,
+        // The last argument is the message's encoded size.
+        F: Fn(uhlc::ID, ReplicaMessage, usize) + Send + Sync + 'static,
     {
         let me: uhlc::ID = self.session.zid().into();
 
@@ -212,7 +217,7 @@ impl Client {
                     let func = &func;
 
                     if let Some((id, msg)) = handle_query(me, &sample) {
-                        func(id, msg);
+                        func(id, msg, sample.payload().len());
                     }
                 }
             })

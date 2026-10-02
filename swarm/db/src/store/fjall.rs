@@ -638,6 +638,15 @@ impl<M: Send + Sync + 'static> Store<M> {
             .is_some_and(|handle| !handle.is_stopped())
     }
 
+    /// Every scope an offloader is running for.
+    pub fn offloading_scopes(&self) -> Vec<models::Scope> {
+        self.offload_handles
+            .iter()
+            .filter(|entry| !entry.value().is_stopped())
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
     /// Scopes this node holds sync points for while neither replicating nor
     /// offloading them — data that would otherwise stay stranded here.
     pub fn stray_scopes(&self) -> Result<Vec<models::Scope>> {
