@@ -99,30 +99,29 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Wait for a signalled runtime to exit, then remove its PID file. A SIGTERM
-/// can arrive during daemon startup before the runtime installs its shutdown
-/// handler; in that case the process exits without cleaning up the file.
+/// Wait for a signalled runtime's process to exit, then remove its PID file.
+///
+/// Waits on the process, not on the file: the runtime removes its PID file as
+/// soon as it receives the SIGTERM, before it has shut down and released its
+/// resources (e.g. its listen port). A SIGTERM can also arrive during daemon
+/// startup before the runtime installs its shutdown handler; in that case the
+/// process exits without cleaning up the file.
 fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match pid.status() {
-            PidStatus::Running(_) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            PidStatus::Running(_) => {
-                anyhow::bail!(
-                    "runtime {:?} (pid {process}) did not stop within 10 seconds",
-                    pid.file_stem()
-                );
-            }
-            PidStatus::Stale(_) | PidStatus::Absent => {
-                if let Err(err) = pid.remove()
-                    && err.kind() != std::io::ErrorKind::NotFound
-                {
-                    return Err(anyhow::Error::new(err));
-                }
-                return Ok(());
-            }
+    while process_is_alive(process) {
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "runtime {:?} (pid {process}) did not stop within 10 seconds",
+                pid.file_stem()
+            );
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
+
+    if let Err(err) = pid.remove()
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(anyhow::Error::new(err));
+    }
+    Ok(())
 }
