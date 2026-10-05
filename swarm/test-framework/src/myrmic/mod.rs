@@ -4,6 +4,7 @@
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 pub use backend::MyrmicBackend;
 pub use backend::docker::DockerBinary;
@@ -99,8 +100,9 @@ struct Isolation {
     /// holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs), `run/`
     /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read) and the runtime config
     dir: tempfile::TempDir,
-    /// the endpoint the runtime listens on and everything else connects to
-    endpoint: String,
+    /// the multicast group (`<address>:<port>`) its runtimes scout on, and the CLI and
+    /// [`Myrmic::connect_session`] discover them by
+    multicast_group: String,
 }
 
 impl Myrmic<LocalBinary> {
@@ -115,11 +117,10 @@ impl Myrmic<LocalBinary> {
     /// Like [`Self::local`], but nothing outside this shim and its clones sees its runtime, and
     /// it sees no other runtime, so tests using it can run in parallel.
     ///
-    /// The shim gets its own state directories, and its runtime listens on a free loopback port
-    /// with multicast scouting off. Every CLI call (through `MYRMIC_CONNECT`) and
-    /// [`Self::connect_session`] connect to that port directly. There is one port, so the shim runs one runtime at a time; a restart under
-    /// the same name is fine. [`RuntimeBuilder::config`] is not available, the shim generates the
-    /// config itself.
+    /// The shim gets its own state directories and its own multicast group, on which its
+    /// runtimes scout and every CLI call (through `MYRMIC_MULTICAST_GROUP`) and
+    /// [`Self::connect_session`] discover them, the same way as on the default group.
+    /// [`RuntimeBuilder::config`] is not available, the shim generates the config itself.
     pub fn local_isolated() -> Self {
         let dir = tempfile::Builder::new()
             .prefix("myrmic-isolated.")
@@ -129,31 +130,24 @@ impl Myrmic<LocalBinary> {
             std::fs::create_dir(dir.path().join(subdir))
                 .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
         }
-        // bind-and-release: another process may grab the port before the runtime binds it,
-        // which fails the runtime's start rather than going unnoticed
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .expect("failed to find a free loopback port")
-            .port();
-        let endpoint = format!("tcp/127.0.0.1:{port}");
+        let multicast_group = isolated_multicast_group();
         // JSON is YAML, which `runtimes start` parses
         let config = serde_json::json!({
-            "zenoh": {
-                "listen": { "endpoints": [endpoint] },
-                "scouting": { "multicast": { "enabled": false } },
-            },
+            "zenoh": { "scouting": { "multicast": { "address": multicast_group } } },
         });
         std::fs::write(dir.path().join("runtime.yaml"), config.to_string())
             .expect("failed to write the isolated runtime's config");
         Self {
             backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
-            isolation: Some(Arc::new(Isolation { dir, endpoint })),
+            isolation: Some(Arc::new(Isolation {
+                dir,
+                multicast_group,
+            })),
         }
     }
 
     /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI: in peer mode,
-    /// found by multicast scouting, or for [`Self::local_isolated`] connected to its runtime's
-    /// endpoint with multicast scouting off.
+    /// found by multicast scouting, on [`Self::local_isolated`]'s own group if it is one.
     ///
     /// It does not use the shim: the receiver only restricts it to the local backend, whose
     /// runtimes are on this host and so reachable by multicast scouting. A remote mesh needs a
@@ -169,18 +163,34 @@ impl Myrmic<LocalBinary> {
         if let Some(isolation) = &self.isolation {
             config
                 .insert_json5(
-                    "connect/endpoints",
-                    &serde_json::json!([isolation.endpoint]).to_string(),
+                    "scouting/multicast/address",
+                    &serde_json::json!(isolation.multicast_group).to_string(),
                 )
-                .expect("the isolated endpoint is a valid zenoh endpoint");
-            config
-                .insert_json5("scouting/multicast/enabled", "false")
-                .expect("disabling multicast scouting cannot fail");
+                .expect("the isolated multicast group is a valid zenoh multicast address");
         }
         zenoh::open(config)
             .await
             .expect("failed to open zenoh session")
     }
+}
+
+/// A multicast group no other [`Myrmic::local_isolated`] shim uses: the address from this
+/// process's pid (administratively scoped 239.0.0.0/8; its low 24 bits cover every Linux pid),
+/// the port from a per-process counter.
+fn isolated_multicast_group() -> String {
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(7446);
+    let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+    assert!(
+        port >= 7446,
+        "ran out of ports for isolated multicast groups"
+    );
+    let pid = std::process::id();
+    format!(
+        "239.{}.{}.{}:{port}",
+        (pid >> 16) & 0xFF,
+        (pid >> 8) & 0xFF,
+        pid & 0xFF
+    )
 }
 
 impl<'c> Myrmic<DockerBinary<'c>> {
@@ -369,8 +379,8 @@ where
     }
 
     /// `program args` as a host command from the backend, inside the isolation, if any: its
-    /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, and its runtime's endpoint as
-    /// `MYRMIC_CONNECT`, which the CLI takes like `--connect`. Every program the shim starts goes
+    /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, and its multicast group as
+    /// `MYRMIC_MULTICAST_GROUP`, which the CLI takes like `--multicast-group`. Every program the shim starts goes
     /// through here, so the CLI inherits the isolation also when it is exec'd by `sh`.
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut command = self.backend.command(program, args);
@@ -378,7 +388,7 @@ where
             command
                 .env("XDG_DATA_HOME", isolation.dir.path().join("data"))
                 .env("XDG_RUNTIME_DIR", isolation.dir.path().join("run"))
-                .env("MYRMIC_CONNECT", &isolation.endpoint);
+                .env("MYRMIC_MULTICAST_GROUP", &isolation.multicast_group);
         }
         command
     }

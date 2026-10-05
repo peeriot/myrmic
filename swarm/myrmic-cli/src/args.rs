@@ -31,6 +31,20 @@ pub struct Ctx {
         global = true
     )]
     pub connect: Vec<String>,
+
+    /// Discover runtimes on this multicast group instead of the default
+    /// `224.0.0.224:7446`, e.g. to keep a set of runtimes apart from the
+    /// others on the host. The runtimes must scout on the same group
+    /// (`zenoh.scouting.multicast.address` in their config). Can also be set
+    /// in `MYRMIC_MULTICAST_GROUP`.
+    #[clap(
+        long,
+        value_name = "ADDRESS:PORT",
+        env = "MYRMIC_MULTICAST_GROUP",
+        conflicts_with = "connect",
+        global = true
+    )]
+    pub multicast_group: Option<std::net::SocketAddr>,
 }
 
 impl Ctx {

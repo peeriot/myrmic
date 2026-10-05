@@ -95,6 +95,11 @@ impl Ctx {
                 .insert_json5("open/return_conditions/connect_scouted", "true")
                 .expect("setting explicit connect return condition cannot fail");
         }
+        if let Some(group) = self.multicast_group {
+            zenoh_config
+                .insert_json5("scouting/multicast/address", &format!("\"{group}\""))
+                .map_err(|err| anyhow::anyhow!("invalid --multicast-group: {err}"))?;
+        }
 
         let session = zenoh::open(zenoh_config)
             .await
