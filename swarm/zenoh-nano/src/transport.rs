@@ -363,7 +363,7 @@ impl<R: LinkReceive, S: LinkSend> Transport<R, S> {
             ext_mlink: None,
             ext_lowlatency: None,
             ext_compression: None,
-            ext_south: None,
+            ext_remote_bound: None,
         });
 
         send.send(&syn.into(), None).await?;
@@ -540,7 +540,7 @@ impl<R: LinkReceive, S: LinkSend> Transport<R, S> {
             ext_mlink: None,
             ext_lowlatency: None,
             ext_compression: None,
-            ext_south: None,
+            ext_remote_bound: None,
         });
 
         send.send(&ack.into(), None).await?;

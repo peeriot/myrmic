@@ -190,6 +190,7 @@ impl<'a, M: RawMutex> Queryable<'a, M> {
                         // FIXME: Why is this important and how does it work?
                         eid: 0,
                     }),
+                    ext_ts_stack: None,
                 }),
                 reliability: Reliability::Reliable,
             })
