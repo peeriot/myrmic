@@ -220,11 +220,11 @@ where
 
     /// run: myrmic runtimes delete `name`
     ///
-    /// Returns once the runtime is no longer listed. A runtime that is not running fails with an
-    /// [`Error::Cli`], like any other failed delete.
+    /// Returns once the runtime has exited: the CLI waits for that. A runtime that is not running
+    /// fails with an [`Error::Cli`], like any other failed delete.
     pub async fn delete_runtime(&self, name: &str) -> Result<(), Error> {
         self.run(&["runtimes", "delete", name]).await?;
-        self.wait_until_unlisted(name).await
+        Ok(())
     }
 
     /// run: myrmic new --name `name` [--sdk `sdk`] into a temporary directory on the target
@@ -388,18 +388,6 @@ where
         }
     }
 
-    /// Wait until the runtime `name` is no longer listed by `myrmic runtimes list`.
-    async fn wait_until_unlisted(&self, name: &str) -> Result<(), Error> {
-        wait_for(
-            format!("runtime `{name}` to leave `runtimes list`"),
-            || async {
-                let runtimes = self.list_runtimes().await?;
-                Ok(!runtimes.iter().any(|runtime| runtime == name))
-            },
-        )
-        .await
-    }
-
     /// Wait until `sri` is `deployed` according to `myrmic cells status`, or no longer is.
     async fn wait_until_deployed(&self, sri: &str, deployed: bool) -> Result<(), Error> {
         let waited_for = if deployed {
@@ -477,6 +465,23 @@ fn deployed_sris(stderr: &str) -> Vec<String> {
         .collect()
 }
 
+/// the zid from `myrmic runtimes start -d`'s `runtime "<name>" ready (<zid>)` line
+fn started_runtime_zid(stderr: &str, name: &str) -> zenoh::config::ZenohId {
+    let ready = format!("runtime {name:?} ready (");
+    let zid = stderr
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix(INFO_PREFIX)?
+                .strip_prefix(&ready)?
+                .strip_suffix(')')
+        })
+        .unwrap_or_else(|| {
+            panic!("`myrmic runtimes start` reported no zid for `{name}`\n{stderr}")
+        });
+    zid.parse()
+        .unwrap_or_else(|err| panic!("`myrmic runtimes start` reported `{zid}` as zid: {err}"))
+}
+
 /// Options for one `myrmic runtimes start`, created by [`Myrmic::runtime`].
 ///
 /// Options are per start, not per [`Myrmic`]: one shim may start the same runtime temporary
@@ -542,10 +547,12 @@ where
         if let Some(config) = &isolated_config {
             args.push(path_arg(config));
         }
-        self.myrmic.run(&args).await?;
+        let output = self.myrmic.run(&args).await?;
+        let zid = started_runtime_zid(&output.stderr, &self.name);
         Ok(Runtime {
             myrmic: self.myrmic.clone(),
             name: self.name,
+            zid,
             tags: self.tags.iter().map(|tag| (*tag).to_owned()).collect(),
         })
     }
@@ -697,6 +704,7 @@ where
 {
     myrmic: Myrmic<B>,
     name: String,
+    zid: zenoh::config::ZenohId,
     tags: Vec<String>,
 }
 
@@ -716,9 +724,25 @@ where
         &self.name
     }
 
-    /// run: myrmic runtimes delete; returns once the runtime is no longer listed
+    /// the zenoh id the runtime runs under; kept across restarts under the same name
+    pub fn zid(&self) -> zenoh::config::ZenohId {
+        self.zid
+    }
+
+    /// run: myrmic runtimes delete; returns once the runtime has exited
     pub async fn delete(self) -> Result<(), Error> {
         self.myrmic.delete_runtime(&self.name).await
+    }
+
+    /// run: myrmic runtimes delete --signal kill; returns once the runtime has exited
+    ///
+    /// The runtime ends abruptly, as on a crash or power loss: it neither says goodbye to the
+    /// swarm nor cleans up.
+    pub async fn kill(self) -> Result<(), Error> {
+        self.myrmic
+            .run(&["runtimes", "delete", "--signal", "kill", &self.name])
+            .await?;
+        Ok(())
     }
 }
 

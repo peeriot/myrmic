@@ -20,6 +20,7 @@ pub mod rack;
 pub mod scenario;
 pub mod sidecar;
 pub mod swarm;
+pub mod swarm2;
 pub mod telemetry_files;
 pub mod wait;
 

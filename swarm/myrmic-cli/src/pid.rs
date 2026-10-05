@@ -120,10 +120,6 @@ impl Pid {
         tokio::fs::remove_file(&self.path).await
     }
 
-    pub fn sigterm(&self) -> anyhow::Result<SignalOutcome> {
-        self.send_signal(libc::SIGTERM)
-    }
-
     /// Sends `sig` to the pid recorded in this file.
     pub fn send_signal(&self, sig: libc::c_int) -> anyhow::Result<SignalOutcome> {
         let pid = match self.read() {

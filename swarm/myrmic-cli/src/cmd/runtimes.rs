@@ -41,7 +41,7 @@ pub enum Cmd {
     Start(start::Start),
     /// Stop one or more runtimes by name.
     ///
-    /// Sends SIGTERM to the runtime.
+    /// Sends SIGTERM to the runtime, or SIGKILL with `--signal kill`.
     #[clap(alias = "remove", alias = "rm", alias = "stop")]
     Delete(delete::Delete),
     /// Print a runtime's log files, optionally following as it grows.
