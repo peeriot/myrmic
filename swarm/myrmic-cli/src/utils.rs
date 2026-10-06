@@ -95,10 +95,14 @@ impl Ctx {
                 .insert_json5("open/return_conditions/connect_scouted", "true")
                 .expect("setting explicit connect return condition cannot fail");
         }
-        if let Some(group) = self.multicast_group {
+        let multicast_group = match self.multicast_group {
+            Some(group) => Some(group),
+            None => multicast_group_from_env()?,
+        };
+        if let Some(group) = multicast_group {
             zenoh_config
                 .insert_json5("scouting/multicast/address", &format!("\"{group}\""))
-                .map_err(|err| anyhow::anyhow!("invalid --multicast-group: {err}"))?;
+                .map_err(|err| anyhow::anyhow!("invalid multicast group {group}: {err}"))?;
         }
 
         let session = zenoh::open(zenoh_config)
@@ -119,6 +123,18 @@ impl Ctx {
         wait_for_nodes(self, &session).await?;
 
         Ok(session)
+    }
+}
+
+/// The multicast group in `MYRMIC_MULTICAST_GROUP`, if set: the default for `--multicast-group`.
+fn multicast_group_from_env() -> anyhow::Result<Option<std::net::SocketAddr>> {
+    match std::env::var("MYRMIC_MULTICAST_GROUP") {
+        Ok(group) => group
+            .parse()
+            .map(Some)
+            .with_context(|| format!("invalid MYRMIC_MULTICAST_GROUP {group:?}")),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(err) => Err(err).context("invalid MYRMIC_MULTICAST_GROUP"),
     }
 }
 

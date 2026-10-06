@@ -46,7 +46,7 @@ open-telemetry = [
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["env"] }
+clap = { workspace = true }
 dialoguer = { workspace = true }
 espflash = { workspace = true, features = ["cli"] }
 log = { workspace = true, features = ["std"] }
@@ -63,7 +63,7 @@ filestore-client = { workspace = true }
 zenoh = { workspace = true, features = ["unstable"] }
 introspection-client = { workspace = true }
 sorg-client = { workspace = true }
-sorg-common = { workspace = true }
+sorg-common = { workspace = true, features = ["clap"] }
 db-client = { workspace = true }
 swarm-gateway = { workspace = true }
 db-commons = { workspace = true }

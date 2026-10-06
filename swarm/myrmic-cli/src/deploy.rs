@@ -138,7 +138,7 @@ pub async fn deploy_app(
 fn describe_restart(policy: &RestartPolicy) -> String {
     format!(
         "{} (max {}, window {}ms, delay {}ms)",
-        models::RestartTypeName::spelling(policy.restart_type),
+        policy.restart_type.spelling(),
         policy.max_restarts,
         policy.window_ms,
         policy.delay_ms

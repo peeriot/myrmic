@@ -9971,6 +9971,7 @@ dependencies = [
  "cell-mailbox",
  "cell-protocol",
  "claims",
+ "clap",
  "db-client",
  "eui48",
  "itertools 0.14.0",

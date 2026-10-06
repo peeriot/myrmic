@@ -72,15 +72,6 @@ impl Platform {
     }
 }
 
-/// the CLI's spelling of `policy` for `myrmic deploy --policy`
-fn policy_arg(policy: RestartType) -> &'static str {
-    match policy {
-        RestartType::Never => "never",
-        RestartType::OnError => "on-error",
-        RestartType::Always => "always",
-    }
-}
-
 /// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
 /// [`MyrmicBackend`]: a binary on the host, on a remote host over SSH, or inside a container.
 ///
@@ -651,7 +642,7 @@ where
             args.extend(["--init", init.as_str(), "--raw"]);
         }
         if let Some(policy) = self.policy {
-            args.extend(["--policy", policy_arg(policy)]);
+            args.extend(["--policy", policy.spelling()]);
         }
         let output = self.myrmic.run(&args).await?;
         let sri = Sri::of_path(&self.srn)

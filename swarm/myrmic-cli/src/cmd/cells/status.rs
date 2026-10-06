@@ -8,7 +8,6 @@ use sorg_common::{RestartType, root_restart};
 
 use crate::args::Ctx;
 use crate::live::{self, Phase, Pops};
-use crate::models::RestartTypeName;
 use crate::render::{BOLD, DIMMED, NONE, RESET, styled_id, unique_prefix_lengths, width};
 
 #[cfg(test)]
@@ -206,12 +205,12 @@ fn policy_label(
     policies: &HashMap<Sri, RestartType>,
 ) -> &'static str {
     if let Some(&restart_type) = policies.get(&entry.sri) {
-        return RestartTypeName::spelling(restart_type);
+        return restart_type.spelling();
     }
 
     let is_root = instance.is_some_and(|i| i.lineage.parent.is_none());
     if is_root && matches!(entry.kind, PlacementKind::Wasm { .. }) {
-        return RestartTypeName::spelling(RestartType::Never);
+        return RestartType::Never.spelling();
     }
 
     NONE

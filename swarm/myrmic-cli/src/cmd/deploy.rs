@@ -54,8 +54,8 @@ pub struct Deploy {
     /// `on-error` (also spelled `onerror`), or `always`. Crash-loop bounds keep
     /// their defaults. On an app deploy this overrides the `restart` declared
     /// in the app-spec YAML; bridges have no restart policy.
-    #[clap(long, value_name = "POLICY")]
-    policy: Option<models::RestartTypeName>,
+    #[clap(long, value_name = "POLICY", hide_possible_values = true)]
+    policy: Option<sorg_common::RestartType>,
 }
 
 pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
@@ -83,7 +83,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
     let path = determine_wd(&ctx, path)?;
     let tags = sorg_common::RequirementTags::new(tags);
     let init = resolve_init(init, raw, init_file)?;
-    let restart = policy.map(models::RestartTypeName::to_policy);
+    let restart = policy.map(sorg_common::RestartPolicy::with_default_bounds);
 
     let resolved = PathType::from_path(&path)?;
     if target.is_some() && !matches!(resolved.1, PathType::Toml) {
