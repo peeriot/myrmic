@@ -12,6 +12,7 @@ pub use backend::local::LocalBinary;
 pub use backend::ssh::SshBinary;
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
+use myrmic_build::PlatformFamily;
 use sorg_common::RestartType;
 
 use crate::{
@@ -51,25 +52,6 @@ pub enum Error {
     /// the CLI succeeded, but the state it leads to did not show up in time
     #[error("timed out waiting for {waited_for}")]
     Timeout { waited_for: String },
-}
-
-/// A build platform for `myrmic deploy --platform`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Platform {
-    /// the host runtime (Wasmtime)
-    Linux,
-    /// Espressif riscv32imac boards (ESP32-C5, ESP32-C6, ESP32-C61)
-    Riscv32imac,
-}
-
-impl Platform {
-    /// the CLI's spelling of the platform
-    fn cli_name(self) -> &'static str {
-        match self {
-            Self::Linux => "linux",
-            Self::Riscv32imac => "riscv32imac",
-        }
-    }
 }
 
 /// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
@@ -577,7 +559,7 @@ where
     cell: CellSpec<B>,
     srn: String,
     tags: &'a [&'a str],
-    platforms: Option<&'a [Platform]>,
+    platforms: Option<&'a [PlatformFamily]>,
     init: Option<&'a [u8]>,
     policy: Option<RestartType>,
 }
@@ -600,7 +582,7 @@ where
     }
 
     /// `--platform`: the platforms a cell crate is built for; defaults to the CLI's (`linux`)
-    pub fn platforms(mut self, platforms: &'a [Platform]) -> Self {
+    pub fn platforms(mut self, platforms: &'a [PlatformFamily]) -> Self {
         self.platforms = Some(platforms);
         self
     }
@@ -626,7 +608,7 @@ where
         let platforms = self.platforms.map(|platforms| {
             platforms
                 .iter()
-                .map(|platform| platform.cli_name())
+                .map(|platform| platform.name())
                 .collect::<Vec<_>>()
                 .join(",")
         });

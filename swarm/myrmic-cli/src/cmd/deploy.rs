@@ -1,8 +1,8 @@
 use anyhow::Context as _;
+use myrmic_build::PlatformFamily;
 
 use crate::args::Ctx;
 use crate::models::{self, DeployInput, http, mqtt};
-use crate::platforms::Platform;
 use crate::utils::{PathType, determine_wd};
 use crate::{deploy, determine_name};
 
@@ -108,7 +108,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
         (path, PathType::Yaml) => deploy_yaml(ctx, &path, name, tags, restart).await?,
         (path, PathType::Toml) => {
             let cargo_target = target.unwrap_or(models::CargoTarget::Auto);
-            let platforms = Platform::parse_list(platform.as_deref())?;
+            let platforms = PlatformFamily::parse_list(platform.as_deref())?;
             deploy::deploy_toml(
                 ctx,
                 name,

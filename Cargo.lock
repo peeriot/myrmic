@@ -6755,6 +6755,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "aot-compiler",
+ "cell-protocol",
  "claims",
  "esp-firmware-build",
  "heck",

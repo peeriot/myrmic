@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use myrmic_build::firmware;
+use myrmic_build::{PlatformFamily, firmware};
 use sorg_common::{HttpBridgeApi, MqttBridge, RequirementTags, RestartPolicy};
 
 use crate::args::Ctx;
 use crate::{build, models, nest};
 
-use crate::platforms::Platform;
 use anyhow::Context as _;
 
 /// The per-root knobs a direct cell deploy carries: the `#[init]` argument
@@ -62,7 +61,7 @@ pub async fn deploy_toml(
     name: Option<String>,
     tags: RequirementTags,
     path: &std::path::Path,
-    platforms: &[Platform],
+    platforms: &[PlatformFamily],
     cargo_target: models::CargoTarget,
     mut root: RootConfig,
 ) -> anyhow::Result<()> {

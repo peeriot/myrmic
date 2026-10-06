@@ -242,7 +242,7 @@ fn start_detached(
         }
         fork::Fork::Child => {
             drop(reader);
-            let status = StatusPipe::install(writer);
+            let status = StatusPipe::install_hook(writer);
             let result =
                 become_daemon().and_then(|()| run(ctx, pid, swarm, name, zid, Some(&status)));
             if let Err(err) = result {
@@ -298,7 +298,7 @@ struct StatusPipe {
 }
 
 impl StatusPipe {
-    fn install(writer: std::io::PipeWriter) -> Self {
+    fn install_hook(writer: std::io::PipeWriter) -> Self {
         let writer = Arc::new(Mutex::new(Some(writer)));
         let previous_hook = std::panic::take_hook();
         let hook_writer = Arc::clone(&writer);
