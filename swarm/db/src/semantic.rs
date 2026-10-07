@@ -10,8 +10,21 @@ pub use spareval;
 pub use oxrdf::Term as OxTerm;
 use spargebra::SparqlParser;
 
+mod depth;
 mod term;
 pub mod unify;
+
+/// Parsing, planning and evaluating recurse up to [`depth::MAX_DEPTH`] times,
+/// using at most ~60 KB a step in debug builds and far less in release ones.
+const STACK_SIZE: usize = 32 << 20;
+const STACK_RED_ZONE: usize = 16 << 20;
+
+/// Runs `f` with at least [`STACK_RED_ZONE`] of stack. No thread has that
+/// much to spare, so in practice `f` runs on a fresh [`STACK_SIZE`] segment
+/// (a few microseconds to map) unless already inside one.
+pub(crate) fn with_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, f)
+}
 
 #[derive(Debug)]
 pub struct Update {
@@ -20,14 +33,15 @@ pub struct Update {
 
 impl Update {
     pub fn parse(update: &str, base_iri: Option<&str>) -> anyhow::Result<Self> {
+        depth::check(update).context("unable to parse update")?;
+
         let mut parser = SparqlParser::new();
 
         if let Some(base_iri) = base_iri {
             parser = parser.with_base_iri(base_iri).context("invalid base iri")?;
         }
-        let update = parser
-            .parse_update(update)
-            .context("unable to parse update")?;
+        let update =
+            with_stack(|| parser.parse_update(update)).context("unable to parse update")?;
 
         Ok(Self { raw: update })
     }
@@ -62,14 +76,14 @@ pub struct Query {
 
 impl Query {
     pub fn parse(query: &str, base_iri: Option<&str>) -> anyhow::Result<Self> {
+        depth::check(query).context("unable to parse query")?;
+
         let mut parser = SparqlParser::new();
 
         if let Some(base_iri) = base_iri {
             parser = parser.with_base_iri(base_iri).context("invalid base iri")?;
         }
-        let query = parser
-            .parse_query(query)
-            .context("unable to parse update")?;
+        let query = with_stack(|| parser.parse_query(query)).context("unable to parse query")?;
 
         Ok(query.into())
     }
