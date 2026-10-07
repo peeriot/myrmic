@@ -74,7 +74,7 @@ pub struct ModbusBridge {
     pub host: String,
     pub port: u16,
     pub unit_id: Option<u8>,
-    #[serde(with = "myrmic_common::codegen::bridge_api::human_duration::option")]
+    #[serde(with = "myrmic_common::human_duration::option")]
     pub timeout: Option<std::time::Duration>,
 
     pub poll: Vec<WireModbusPoll>,

@@ -31,4 +31,5 @@ pub mod gateway;
 /// mismatch.
 pub use signal_layer_types as signal_layer;
 
+pub mod human_duration;
 pub mod types;
