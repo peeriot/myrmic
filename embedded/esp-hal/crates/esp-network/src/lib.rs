@@ -16,6 +16,8 @@ mod session;
 mod zenoh_client;
 
 pub use clock::wall_time;
-pub use session::{CONNECTED, SESSION_LEASE, connection, init_stack, zenoh_session};
+pub use session::{
+    CONNECTED, SESSION_LEASE, WifiCredentials, connection, init_stack, zenoh_session,
+};
 pub use zenoh_client::client as zenoh_client;
 pub use zenoh_nano::session::Session;

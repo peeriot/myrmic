@@ -45,6 +45,23 @@
 //!
 //! Everything still on the board when `setup` returns is started for you.
 //!
+//! # WiFi credentials
+//!
+//! The board uses `WIFI_SSID` and `WIFI_PASS` from the build environment by
+//! default. A firmware can replace them during setup:
+//!
+//! ```ignore
+//! use esp_firmware::{Board, WifiCredentials};
+//!
+//! #[esp_firmware::main]
+//! async fn setup(board: &mut Board) {
+//!     let credentials = WifiCredentials::new("my-network", "my-password");
+//!     assert!(board.set_wifi_credentials(credentials), "WiFi was taken");
+//! }
+//! ```
+//!
+//! The credentials apply to the first connection and all reconnect attempts.
+//!
 //! # Taps and outlets
 //!
 //! The two directions across the cell boundary. A [`Tap`] is a value the
@@ -118,6 +135,7 @@ mod ble;
 pub use board::Board;
 pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
 pub use config::Config;
+pub use esp_common::esp_network::WifiCredentials;
 pub use outlet::Outlet;
 pub use status::{NodeStatus, StatusWatch, status, status_watch};
 pub use tap::{DeclareError, EventTap, Tap};
@@ -257,8 +275,8 @@ pub fn start(board: Board, spawner: Spawner) {
     #[cfg(not(feature = "ble"))]
     let _ = parts.bt;
 
-    if let Some(wifi) = parts.wifi {
-        net::start_thread(wifi, &config);
+    if let Some((wifi, credentials)) = parts.wifi {
+        net::start_thread(wifi, credentials, &config);
     } else {
         log::warn!("[esp-firmware] no WiFi: this node joins no swarm");
     }
