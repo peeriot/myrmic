@@ -69,7 +69,9 @@ impl DeployTransaction {
             // attempt would cancel the restart for good. Specs this deploy
             // wrote itself are erased just below.
             if row.is_some() {
-                rt.release_cell_resources(sri, false).await;
+                for leftover in rt.release_cell_resources(sri, false).await {
+                    warn!("rollback: failed to release '{sri}' {leftover}");
+                }
             }
             if self.wrote_specs.contains(sri)
                 && let Err(err) = sorg_common::root_restart::erase_spec(&rt.session, sri).await

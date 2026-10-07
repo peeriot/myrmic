@@ -9,15 +9,23 @@
 //! departure at once (a closed session, or an expired link lease); this hands
 //! that knowledge to the store.
 
-use zenoh::sample::SampleKind;
+use std::time::Duration;
+
+use zenoh::{liveliness::LivelinessToken, sample::SampleKind};
 
 use db_commons::topics::liveliness;
 
 use super::StoreContext;
 
+/// How often the token is reconciled with whether the store accepts writes.
+const AVAILABILITY_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Declares this node's token and forgets each peer whose token is deleted,
 /// until the store shuts down. The token is undeclared on the way out so a
 /// graceful shutdown signals the departure before the session closes.
+///
+/// The token is also withdrawn while the store refuses writes, so peers stop
+/// vouching for this node at once rather than after `PEER_TTL`.
 pub(super) async fn watch(context: StoreContext) {
     let me = context.id();
     let session = context.session.clone();
@@ -35,21 +43,24 @@ pub(super) async fn watch(context: StoreContext) {
         }
     };
 
-    let token = match session
-        .liveliness()
-        .declare_token(liveliness::format(me))
-        .await
-    {
-        Ok(token) => token,
-        Err(err) => {
-            tracing::error!("unable to declare the db liveliness token: {err}");
-            return;
-        }
-    };
+    let mut token = None;
+    let mut availability = tokio::time::interval(AVAILABILITY_CHECK_INTERVAL);
+    availability.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         let sample = tokio::select! {
             () = shutdown.cancelled() => break,
+            _ = availability.tick() => {
+                match (context.store.is_unavailable(), token.take()) {
+                    (true, Some(held)) => {
+                        tracing::warn!("[{me}] withdrawing the db liveliness token while the store refuses writes");
+                        undeclare(held).await;
+                    }
+                    (false, None) => token = declare(&session, me).await,
+                    (_, held) => token = held,
+                }
+                continue;
+            }
             sample = subscriber.recv_async() => match sample {
                 Ok(sample) => sample,
                 Err(_) => break,
@@ -69,6 +80,26 @@ pub(super) async fn watch(context: StoreContext) {
         }
     }
 
+    if let Some(token) = token {
+        undeclare(token).await;
+    }
+}
+
+async fn declare(session: &zenoh::Session, me: uhlc::ID) -> Option<LivelinessToken> {
+    match session
+        .liveliness()
+        .declare_token(liveliness::format(me))
+        .await
+    {
+        Ok(token) => Some(token),
+        Err(err) => {
+            tracing::error!("unable to declare the db liveliness token: {err}");
+            None
+        }
+    }
+}
+
+async fn undeclare(token: LivelinessToken) {
     if let Err(err) = token.undeclare().await {
         tracing::debug!("unable to undeclare the db liveliness token: {err}");
     }

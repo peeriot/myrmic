@@ -86,3 +86,6 @@ harness = false
 [[bench]]
 name = "tx"
 harness = false
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

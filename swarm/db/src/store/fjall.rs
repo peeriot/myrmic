@@ -44,13 +44,59 @@ struct PeerScope {
     last_seen_at: Instant,
 }
 
-/// `M` is the metadata type carried by this store's transactions,
-/// see [`Transaction`].
-pub struct Store<M = ()> {
+/// How often the supervisor checks whether fjall has poisoned the database.
+const POISON_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Free space the data directory needs before a poisoned database is reopened.
+/// Reopening onto a still-full disk would only poison it again, and drops the
+/// reads the poisoned instance can still serve.
+const REOPEN_MIN_FREE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// A reopen that is poisoned again within this window doubles the wait before the next one.
+const REOPEN_SETTLE: Duration = Duration::from_mins(5);
+const REOPEN_MAX_BACKOFF: Duration = Duration::from_mins(5);
+
+/// Returned while the database is poisoned or being reopened.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "the database is unavailable: a storage failure (most likely a full disk) poisoned it; it reopens once space is freed"
+)]
+pub struct Unavailable;
+
+/// A commit lost to a concurrent transaction. Safe to retry.
+#[derive(Debug, thiserror::Error)]
+#[error("Transaction encountered concurrent changes and wasn't applied.")]
+pub struct Conflict;
+
+/// The open fjall database. Swapped out wholesale when a poisoned database is reopened.
+struct Backend {
     /// The manager of things like conflict detection, etc
     db: fjall::OptimisticTxDatabase,
     /// The actual LSM tree that we use to store the data.
     ks: fjall::OptimisticTxKeyspace,
+}
+
+impl Backend {
+    fn open(directory: &std::path::Path, temporary: bool) -> Result<Self> {
+        let db = fjall::OptimisticTxDatabase::builder(directory)
+            .temporary(temporary)
+            .open()
+            .context("unable to open database")?;
+
+        let ks = db
+            .keyspace("base", Default::default)
+            .context("unable to create keyspace")?;
+
+        Ok(Self { db, ks })
+    }
+}
+
+/// `M` is the metadata type carried by this store's transactions,
+/// see [`Transaction`].
+pub struct Store<M = ()> {
+    /// `None` while a poisoned database is being reopened.
+    backend: Arc<std::sync::RwLock<Option<Backend>>>,
+    directory: std::path::PathBuf,
 
     /// Active remote transactions.
     /// This only tracks _remote_ transactions, not on-going local transactions.
@@ -77,8 +123,8 @@ pub struct Store<M = ()> {
 impl<M> Clone for Store<M> {
     fn clone(&self) -> Self {
         let Self {
-            db,
-            ks,
+            backend,
+            directory,
             transactions,
             peer_frontiers,
             replication_handles,
@@ -89,8 +135,8 @@ impl<M> Clone for Store<M> {
         } = self;
 
         Self {
-            db: db.clone(),
-            ks: ks.clone(),
+            backend: backend.clone(),
+            directory: directory.clone(),
             transactions: transactions.clone(),
             peer_frontiers: peer_frontiers.clone(),
             replication_handles: replication_handles.clone(),
@@ -127,20 +173,14 @@ impl<M: Send + Sync + 'static> Store<M> {
             (Some(tmp), dir)
         };
 
-        let store = fjall::OptimisticTxDatabase::builder(directory)
-            .temporary(tmp.is_some())
-            .open()
-            .context("unable to open database")?;
-
-        let ks = store
-            .keyspace("base", Default::default)
-            .context("unable to create keyspace")?;
+        let temporary = tmp.is_some();
+        let backend = Backend::open(&directory, temporary)?;
 
         let shutdown = tokio_util::sync::CancellationToken::new();
 
         let store = Self {
-            db: store,
-            ks,
+            backend: Arc::new(std::sync::RwLock::new(Some(backend))),
+            directory,
             clock: lcs,
             transactions: Default::default(),
             peer_frontiers: Default::default(),
@@ -167,6 +207,10 @@ impl<M: Send + Sync + 'static> Store<M> {
                         () = shutdown.cancelled() => break,
                     }
 
+                    if store.is_unavailable() {
+                        continue;
+                    }
+
                     // GC scans and deletes synchronously; run it off the async
                     // workers so queryables stay responsive while it works.
                     let gc = tokio::task::spawn_blocking({
@@ -190,7 +234,130 @@ impl<M: Send + Sync + 'static> Store<M> {
             }
         });
 
+        // A temporary database deletes itself when dropped, so it can't be reopened.
+        if !temporary {
+            tokio::spawn(store.clone().supervise_poisoning());
+        }
+
         Ok(store)
+    }
+
+    /// Whether the database currently refuses writes.
+    pub fn is_unavailable(&self) -> bool {
+        self.backend
+            .read()
+            .expect("backend lock poisoned")
+            .as_ref()
+            .is_none_or(|backend| backend.db.inner().is_poisoned())
+    }
+
+    /// fjall poisons the database on any failed write, and a poisoned database
+    /// refuses every write until it is opened again. Once there is room on
+    /// disk, drop it and reopen it in place, as a runtime restart would.
+    async fn supervise_poisoning(self) {
+        let shutdown = self.shutdown_token();
+        let mut backoff = POISON_CHECK_INTERVAL;
+        let mut last_reopen: Option<Instant> = None;
+
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(POISON_CHECK_INTERVAL) => (),
+                () = shutdown.cancelled() => return,
+            }
+
+            if !self.is_unavailable() {
+                continue;
+            }
+
+            tracing::error!(
+                "the database is poisoned and refuses writes; it reopens once {} has at least {} MiB free",
+                self.directory.display(),
+                REOPEN_MIN_FREE_BYTES / 1024 / 1024,
+            );
+
+            // Poisoned again soon after the last reopen: the cause hasn't gone away.
+            backoff = match last_reopen {
+                Some(at) if at.elapsed() < REOPEN_SETTLE => (backoff * 2).min(REOPEN_MAX_BACKOFF),
+                _ => POISON_CHECK_INTERVAL,
+            };
+
+            let mut wait = backoff;
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(wait) => (),
+                    () = shutdown.cancelled() => return,
+                }
+
+                // A poisoned database still serves reads, which a reopen onto
+                // a full disk would throw away. A failed reopen already did,
+                // so from then on there is nothing left to wait for.
+                let has_database = self
+                    .backend
+                    .read()
+                    .expect("backend lock poisoned")
+                    .is_some();
+                if has_database {
+                    match free_bytes(&self.directory) {
+                        Ok(free) if free >= REOPEN_MIN_FREE_BYTES => (),
+                        Ok(_) => continue,
+                        Err(err) => {
+                            tracing::warn!(
+                                "unable to read free disk space: {err}; reopening anyway"
+                            );
+                        }
+                    }
+                }
+
+                match self.reopen().await {
+                    Ok(()) => {
+                        tracing::info!(
+                            "the poisoned database was reopened and accepts writes again"
+                        );
+                        last_reopen = Some(Instant::now());
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::error!("unable to reopen the poisoned database: {err:#}");
+                        wait = POISON_CHECK_INTERVAL;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn reopen(&self) -> Result<()> {
+        let old = self.backend.write().expect("backend lock poisoned").take();
+        drop(old);
+
+        // Remote transactions hold the old database open; fjall won't open it
+        // again until every handle is gone.
+        self.transactions.clear();
+
+        let directory = self.directory.clone();
+        let backend = tokio::task::spawn_blocking(move || {
+            // Local transactions in flight still hold the old database for a moment.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match Backend::open(&directory, false) {
+                    Err(err)
+                        if Instant::now() < deadline
+                            && matches!(
+                                err.downcast_ref::<fjall::Error>(),
+                                Some(fjall::Error::Locked)
+                            ) =>
+                    {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    result => break result,
+                }
+            }
+        })
+        .await
+        .context("the reopen task failed")??;
+
+        *self.backend.write().expect("backend lock poisoned") = Some(backend);
+
+        Ok(())
     }
 
     /// Returns a token that is cancelled when the store is shut down.
@@ -220,14 +387,41 @@ impl<M: Send + Sync + 'static> Store<M> {
     }
 }
 
+#[cfg(unix)]
+fn free_bytes(path: &std::path::Path) -> std::io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+
+    // SAFETY: `path` is NUL-terminated and `stat` is only read once statvfs filled it.
+    let stat = unsafe {
+        if libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        stat.assume_init()
+    };
+
+    #[allow(clippy::useless_conversion)]
+    Ok(u64::from(stat.f_bavail) * u64::from(stat.f_frsize))
+}
+
+#[cfg(not(unix))]
+fn free_bytes(_path: &std::path::Path) -> std::io::Result<u64> {
+    Ok(u64::MAX)
+}
+
 impl<M: Send + Sync + 'static> Store<M> {
     pub fn begin_local(&self, opts: &TransactionOptions) -> Result<Transaction<M>> {
         // fjall technically has a read-only mode, but it's a different type, so we'd have to use something to bridge them.
         // For now, we just hope people don't edit stuff...
         let ts = self.clock.new_timestamp();
 
-        let ks = self.ks.clone();
-        let tx = self.db.write_tx()?;
+        let (ks, tx) = {
+            let backend = self.backend.read().expect("backend lock poisoned");
+            let backend = backend.as_ref().ok_or(Unavailable)?;
+            (backend.ks.clone(), backend.db.write_tx()?)
+        };
 
         let tx = Transaction::start(ks, tx, ts, opts);
 

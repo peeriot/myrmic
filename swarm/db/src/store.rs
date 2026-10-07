@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-pub use fjall::{RemoteTx, Store, Transaction};
+pub use fjall::{Conflict, RemoteTx, Store, Transaction, Unavailable};
 
 pub mod fjall;
 

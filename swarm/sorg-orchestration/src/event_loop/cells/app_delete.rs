@@ -45,10 +45,7 @@ impl Runtime {
                     zenoh_err!("orch failed to reply to app delete query", zen_err)
                 })?;
         } else {
-            let err_msg = format!(
-                "app delete partially failed (retry to clean up): {}",
-                errors.join("; ")
-            );
+            let err_msg = format!("app delete partially failed: {}", errors.join("; "));
             warn!("{err_msg}");
             let _ = query.reply_err(err_msg.as_bytes().to_vec()).await;
         }
