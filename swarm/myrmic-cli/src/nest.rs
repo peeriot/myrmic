@@ -258,6 +258,7 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
 
 #[cfg(test)]
 mod tests {
+    use myrmic_common::human_duration::NonZeroDuration;
     use sorg_common::{
         ModbusByteOrder, ModbusRegister, ModbusWritableRegister, WireModbusPoll, WireModbusWrite,
     };
@@ -279,7 +280,7 @@ mod tests {
                 value: "${f32:celsius}".parse().unwrap(),
                 byte_order: ModbusByteOrder::Cdab,
                 unit_id: None,
-                interval: std::time::Duration::from_secs(1),
+                interval: NonZeroDuration::new(std::time::Duration::from_secs(1)).unwrap(),
                 on_change: true,
             }],
             read: vec![],

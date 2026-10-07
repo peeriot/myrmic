@@ -46,7 +46,7 @@ fn modbus_spec_parses_all_three_entry_kinds() {
     assert_eq!(poll.address, 100);
     assert_eq!(poll.value.0, ModbusValueTemplate::F32("celsius".into()));
     assert_eq!(poll.byte_order, ModbusByteOrder::Cdab);
-    assert_eq!(poll.interval, Duration::from_secs(1));
+    assert_eq!(poll.interval.get(), Duration::from_secs(1));
     assert!(poll.on_change);
 
     let [read] = spec.read.as_slice() else {
@@ -169,7 +169,7 @@ fn modbus_durations_are_written_with_their_unit() {
     let spec = modbus_spec(
         r#"poll: [{ id: t, register: input, address: 0, value: "${u16:v}", interval: 250ms }]"#,
     );
-    assert_eq!(spec.poll[0].interval, Duration::from_millis(250));
+    assert_eq!(spec.poll[0].interval.get(), Duration::from_millis(250));
 
     // A bare number would leave the unit to guess.
     let yaml = r#"{ name: p, host: h, poll: [{ id: t, register: input, address: 0, value: "${u16:v}", interval: 250 }] }"#;

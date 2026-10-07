@@ -104,7 +104,7 @@ poll:
         assert_eq!(poll.register, ModbusRegister::Input);
         assert_eq!(poll.address, 7);
         assert_eq!(poll.value, ModbusValueTemplate::F32("celsius".into()));
-        assert_eq!(poll.interval, std::time::Duration::from_millis(250));
+        assert_eq!(poll.interval.get(), std::time::Duration::from_millis(250));
     }
 
     #[test]

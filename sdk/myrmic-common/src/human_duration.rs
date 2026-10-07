@@ -49,3 +49,44 @@ pub mod option {
             .transpose()
     }
 }
+
+/// A [`Duration`] that is not zero, as [`NonZeroU64`](core::num::NonZeroU64) is a
+/// `u64` that is not zero. Written like any other duration here; `0s` does not
+/// parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NonZeroDuration(Duration);
+
+impl NonZeroDuration {
+    /// `duration`, unless it is zero.
+    pub const fn new(duration: Duration) -> Option<Self> {
+        if duration.is_zero() {
+            None
+        } else {
+            Some(Self(duration))
+        }
+    }
+
+    /// The duration, which is not zero.
+    pub const fn get(self) -> Duration {
+        self.0
+    }
+}
+
+impl From<NonZeroDuration> for Duration {
+    fn from(duration: NonZeroDuration) -> Self {
+        duration.0
+    }
+}
+
+impl serde::Serialize for NonZeroDuration {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        serialize(&self.0, ser)
+    }
+}
+
+impl<'de> Deserialize<'de> for NonZeroDuration {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        Self::new(deserialize(de)?)
+            .ok_or_else(|| serde::de::Error::custom("duration must be greater than 0"))
+    }
+}

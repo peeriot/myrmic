@@ -6,9 +6,7 @@ use std::future::Future;
 use sorg_common::WireModbusPoll;
 use tokio::time::MissedTickBehavior;
 
-use super::codec::ModbusValue;
-use super::connection::Connection;
-use super::point::Point;
+use super::{codec::ModbusValue, connection::Connection, point::Point};
 
 /// Polls `entry` until the returned future is dropped: reads it every
 /// `interval` and hands the event name and payload to `publish`.
@@ -27,7 +25,7 @@ pub(crate) async fn poll<P, F>(
 {
     let point = Point::of_poll(&entry, default_unit);
 
-    let mut interval = tokio::time::interval(entry.interval);
+    let mut interval = tokio::time::interval(entry.interval.get());
     // A slow device must not cause a burst of reads once it answers again.
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -74,6 +72,7 @@ fn payload<R>(point: &Point<R>, value: ModbusValue) -> Vec<u8> {
 mod tests {
     use std::time::Duration;
 
+    use myrmic_common::human_duration::NonZeroDuration;
     use sorg_common::{ModbusByteOrder, ModbusRegister};
     use tokio::sync::mpsc;
 
@@ -92,7 +91,7 @@ mod tests {
             value: "${i16:celsius}".parse().unwrap(),
             byte_order: ModbusByteOrder::Abcd,
             unit_id: None,
-            interval: Duration::from_millis(10),
+            interval: NonZeroDuration::new(Duration::from_millis(10)).unwrap(),
             on_change,
         }
     }

@@ -150,6 +150,7 @@ impl std::fmt::Display for CellConfig {
 mod tests {
     use super::*;
     use cell_protocol::Sri;
+    use myrmic_common::human_duration::NonZeroDuration;
 
     #[test]
     fn new_deployment_defaults_to_never_restart() {
@@ -200,7 +201,7 @@ mod tests {
                 value: "${f32:celsius}".parse().unwrap(),
                 byte_order: crate::ModbusByteOrder::Cdab,
                 unit_id: None,
-                interval: std::time::Duration::from_secs(1),
+                interval: NonZeroDuration::new(std::time::Duration::from_secs(1)).unwrap(),
                 on_change: true,
             }],
             read: vec![],

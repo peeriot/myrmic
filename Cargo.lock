@@ -10071,6 +10071,7 @@ dependencies = [
  "futures",
  "introspection-client",
  "module-examples-common",
+ "myrmic-common",
  "postcard",
  "serde",
  "serde_json",

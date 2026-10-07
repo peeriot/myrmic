@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use cell_protocol::{Gen, PlacementEntry, PlacementKind};
 use claims::{assert_err, assert_none, assert_ok};
+use myrmic_common::human_duration::NonZeroDuration;
 use sorg_common::{
     BodyTemplate, DeploymentError, FenceOutcome, HttpBridgeApi, ModbusBridge, ModbusByteOrder,
     ModbusRegister, ModbusWritableRegister, MqttBridge, PlacementClaimOutcome, RequirementTags,
@@ -232,7 +233,7 @@ async fn modbus_bridge_deploy_round_trip_undeploy() {
             value: "${u16:level}".parse().unwrap(),
             byte_order: ModbusByteOrder::Abcd,
             unit_id: None,
-            interval: std::time::Duration::from_millis(50),
+            interval: NonZeroDuration::new(std::time::Duration::from_millis(50)).unwrap(),
             on_change: true,
         }],
         read: vec![],

@@ -90,6 +90,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use myrmic_common::human_duration::NonZeroDuration;
     use sorg_tests::ModbusMockHandle;
 
     #[test]
@@ -101,7 +102,7 @@ mod tests {
             value: "${f32:celsius}".parse().unwrap(),
             byte_order: ModbusByteOrder::Cdab,
             unit_id: None,
-            interval: std::time::Duration::from_secs(1),
+            interval: NonZeroDuration::new(std::time::Duration::from_secs(1)).unwrap(),
             on_change: false,
         };
         let read = WireModbusRead {

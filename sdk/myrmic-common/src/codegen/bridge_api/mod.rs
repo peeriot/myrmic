@@ -9,7 +9,7 @@ pub use crate::{
             BodyTemplate, ModbusValueTemplate, ParseInto, ResponseHeaderTemplate, TemplateSegments,
         },
     },
-    human_duration,
+    human_duration::{self, NonZeroDuration},
 };
 
 #[cfg(test)]
@@ -204,7 +204,6 @@ impl UserModbusBridge {
     ///   value in the register tables,
     /// - ids are unique across all entries, since they become the names of the
     ///   generated commands and events,
-    /// - a poll interval is not zero,
     /// - the host is not empty.
     pub fn validate(&self) -> Result<(), String> {
         if self.host.trim().is_empty() {
@@ -238,13 +237,6 @@ impl UserModbusBridge {
             }
         }
 
-        if let Some(poll) = self.poll.iter().find(|p| p.interval.is_zero()) {
-            return Err(format!(
-                "modbus poll `{}`: `interval` must be greater than 0",
-                poll.id
-            ));
-        }
-
         Ok(())
     }
 }
@@ -264,8 +256,7 @@ pub struct ModbusPollRaw<Value> {
     pub byte_order: ModbusByteOrder,
     #[serde(default = "Default::default")]
     pub unit_id: Option<u8>,
-    #[serde(with = "human_duration")]
-    pub interval: Duration,
+    pub interval: NonZeroDuration,
     /// Publish only when the value differs from the last one published.
     #[serde(default = "Default::default")]
     pub on_change: bool,
