@@ -40,6 +40,9 @@ pub(crate) fn quantity(template: &ModbusValueTemplate) -> u16 {
 
 impl ModbusValue {
     /// Decodes the entries read for `template`.
+    ///
+    /// A `NaN` or infinite `f32` is rejected: JSON has no such numbers, so a cell
+    /// could not receive it in its `f32` field.
     pub(crate) fn decode(
         template: &ModbusValueTemplate,
         order: ModbusByteOrder,
@@ -63,7 +66,11 @@ impl ModbusValue {
                 Self::I32(two_words(words, order)?.cast_signed())
             }
             (ModbusValueTemplate::F32(_), Cells::Words(words)) => {
-                Self::F32(f32::from_bits(two_words(words, order)?))
+                let value = f32::from_bits(two_words(words, order)?);
+                if !value.is_finite() {
+                    return Err(format!("f32 value {value} has no JSON representation"));
+                }
+                Self::F32(value)
             }
             (template, cells) => {
                 return Err(format!("cannot decode {template:?} from {cells:?}"));
@@ -104,8 +111,8 @@ impl ModbusValue {
         })
     }
 
-    /// The JSON a cell receives for this value. A non-finite `f32` has no JSON
-    /// representation and becomes `null`.
+    /// The JSON a cell receives for this value. Only a value from [`Self::decode`]
+    /// or [`Self::from_json`] goes here, so an `f32` is always finite.
     pub(crate) fn to_json(self) -> serde_json::Value {
         match self {
             Self::Bool(v) => v.into(),
@@ -114,7 +121,8 @@ impl ModbusValue {
             Self::U32(v) => v.into(),
             Self::I32(v) => v.into(),
             Self::F32(v) => serde_json::Number::from_f64(f64::from(v))
-                .map_or(serde_json::Value::Null, serde_json::Value::Number),
+                .expect("a decoded f32 is finite")
+                .into(),
         }
     }
 }
@@ -245,6 +253,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_float_json_cannot_carry() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let words = ModbusValue::F32(value).encode(ABCD);
+            let err = ModbusValue::decode(&t("${f32:celsius}"), ABCD, &words).unwrap_err();
+            assert!(err.contains("no JSON representation"), "{err}");
+        }
+    }
+
+    #[test]
     fn encoding_is_the_inverse_of_decoding() {
         let cases = [
             ("${bool:v}", ModbusValue::Bool(true)),
@@ -295,9 +312,5 @@ mod tests {
         assert_eq!(ModbusValue::Bool(true).to_json(), serde_json::json!(true));
         assert_eq!(ModbusValue::I32(-7).to_json(), serde_json::json!(-7));
         assert_eq!(ModbusValue::F32(21.5).to_json(), serde_json::json!(21.5));
-        assert_eq!(
-            ModbusValue::F32(f32::NAN).to_json(),
-            serde_json::Value::Null
-        );
     }
 }
