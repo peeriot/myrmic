@@ -7,7 +7,7 @@ pub use myrmic_common::codegen::bridge_api::{
 pub fn convert(cell_name: String, bridge: UserModbusBridge) -> anyhow::Result<ModbusBridge> {
     bridge
         .validate()
-        .map_err(|err| anyhow::anyhow!("invalid modbus bridge `{}`: {err}", bridge.name))?;
+        .map_err(|err| anyhow::anyhow!("invalid modbus bridge `{cell_name}`: {err}"))?;
 
     let UserModbusBridge {
         name: _,
