@@ -11,11 +11,14 @@
 
 use std::time::Duration;
 
-use sorg_common::{ModbusRegister, ModbusServerAddress, ModbusWritableRegister};
 use tokio::sync::{mpsc, oneshot};
-use tokio_modbus::client::{Context, Reader as _, Writer as _, tcp};
-use tokio_modbus::slave::SlaveContext as _;
-use tokio_modbus::{ExceptionCode, Slave};
+use tokio_modbus::{
+    ExceptionCode, Slave,
+    client::{Context, Reader as _, Writer as _, tcp},
+    slave::SlaveContext as _,
+};
+
+use sorg_common::{ModbusRegister, ModbusServerAddress, ModbusWritableRegister};
 
 use super::codec::Cells;
 use crate::wasm::cell::state::DropHandle;
@@ -207,7 +210,7 @@ async fn execute_write(
             words => context.write_multiple_registers(address, words).await,
         },
         (register, cells) => {
-            return Err(Error::Failed(format!(
+            return Err(Error::Unexpected(format!(
                 "cannot write {cells:?} to {register:?}"
             )));
         }
