@@ -96,7 +96,7 @@ impl Runtime {
             PlacementKind::Placeholder => {}
         }
 
-        self.release_cell_resources(cell_sri, true).await;
+        let mut leftovers = self.release_cell_resources(cell_sri, true).await;
 
         match remove_placement(&self.session, cell_sri, gen_id).await? {
             FenceOutcome::Applied | FenceOutcome::Absent => {}
@@ -107,11 +107,21 @@ impl Runtime {
         }
         // Embedded cells have no exec-side cleanup to erase their instance
         // row; for Linux cells this races the exec's own erase, so an absent
-        // row is expected. A miss leaves a corpse row the spawn gate supersedes.
+        // row is expected and not an error.
         if let Err(err) =
             sorg_common::instance_registry::erase_instance(&self.session, cell_sri, gen_id).await
         {
-            warn!("undeploy: erasing instance row '{cell_sri}': {err}");
+            leftovers.push(format!("instance row: {err}"));
+        }
+
+        // The cell is gone and, with its placement released, a retry has
+        // nothing left to act on; the caller still must not hear of a clean
+        // removal. The leftovers are the reconcilers' to drop.
+        if !leftovers.is_empty() {
+            bail!(
+                "cell '{cell_sri}' was undeployed, but some of its records could not be removed: {}",
+                leftovers.join("; ")
+            );
         }
         Ok(())
     }
@@ -126,17 +136,24 @@ impl Runtime {
     /// and erasing it on a failed attempt would cancel the restart for good.
     /// The rollback erases only the specs it wrote itself.
     ///
-    /// Best-effort — a cell that is going away must not be kept alive by a
-    /// failing cleanup. Gateways also drop routes whose owner has lost its
-    /// placement, so a missed route here is corrected within a reconcile.
-    pub(super) async fn release_cell_resources(&self, cell_sri: &Sri, erase_spec: bool) {
+    /// Every step runs regardless — a cell that is going away must not be kept
+    /// alive by a failing cleanup — and what could not be removed is returned.
+    /// Gateways also drop routes whose owner has lost its placement, so a
+    /// missed route here is corrected within a reconcile.
+    pub(super) async fn release_cell_resources(
+        &self,
+        cell_sri: &Sri,
+        erase_spec: bool,
+    ) -> Vec<String> {
+        let mut leftovers = vec![];
+
         if erase_spec {
             match sorg_common::root_restart::erase_spec(&self.session, cell_sri).await {
                 Ok(true) => {
                     tracing::debug!("removed restart spec owned by '{cell_sri}'",);
                 }
                 Ok(false) => {}
-                Err(err) => warn!("failed to remove restart spec for '{cell_sri}': {err}"),
+                Err(err) => leftovers.push(format!("restart spec: {err}")),
             }
         }
         match gateway_config::deregister_cell_routes(&self.session, cell_sri).await {
@@ -147,7 +164,7 @@ impl Runtime {
                 );
             }
             Ok(_) => {}
-            Err(err) => warn!("failed to release gateway routes for '{cell_sri}': {err}"),
+            Err(err) => leftovers.push(format!("gateway routes: {err}")),
         }
 
         match gateway_config::purge_cell_assets(&self.session, cell_sri).await {
@@ -155,8 +172,10 @@ impl Runtime {
                 tracing::debug!("purged {count} gateway asset(s) owned by '{cell_sri}'");
             }
             Ok(_) => {}
-            Err(err) => warn!("failed to purge gateway assets for '{cell_sri}': {err}"),
+            Err(err) => leftovers.push(format!("gateway assets: {err}")),
         }
+
+        leftovers
     }
 
     pub(super) async fn teardown_cell_on_exec(

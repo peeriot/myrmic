@@ -8,6 +8,8 @@ use db_commons::models::{TbOrderBy, TsOrderBy};
 use skey::StoreKey;
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+mod poisoning;
 mod replication;
 mod semantic;
 mod snapshots;

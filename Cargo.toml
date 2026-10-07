@@ -465,7 +465,7 @@ vecmap-rs = "0.2.4"
 
 byteorder = "1.5.0"
 memchr = "2.7.5"
-fjall = { git = "https://github.com/peeriot/fjall.git", rev = "04e2ad70" }
+fjall = { git = "https://github.com/peeriot/fjall.git", rev = "589d861e" }
 #fjall = { path = "../fjall" }
 #fjall = { version = "3.1.5" }
 tempfile = { version = "3.17.1", default-features = false }

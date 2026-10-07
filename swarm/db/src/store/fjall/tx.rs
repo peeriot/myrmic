@@ -1110,10 +1110,12 @@ impl<M> Transaction<M> {
             self.insert(&sp, &meta)?;
         }
 
-        self.tx.commit()?.map_err(|_err| {
-            anyhow::anyhow!("Transaction encountered concurrent changes and wasn't applied.")
-        })?;
-        Ok(())
+        match self.tx.commit() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(fjall::Conflict)) => Err(super::Conflict.into()),
+            Err(fjall::Error::Poisoned) => Err(super::Unavailable.into()),
+            Err(err) => Err(err.into()),
+        }
     }
 
     pub fn rollback(self) {

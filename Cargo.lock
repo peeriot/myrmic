@@ -2533,6 +2533,7 @@ dependencies = [
  "educe",
  "fjall",
  "flume 0.11.1",
+ "libc",
  "oxiri",
  "oxrdf",
  "oxsdatatypes",
@@ -4521,8 +4522,8 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "fjall"
-version = "3.1.5"
-source = "git+https://github.com/peeriot/fjall.git?rev=04e2ad70#04e2ad704c63e1e4a9da1821fc215c3e3081d7b2"
+version = "3.1.12"
+source = "git+https://github.com/peeriot/fjall.git?rev=589d861e#589d861e2439f974d0b7bbfd5402ea2be619999d"
 dependencies = [
  "byteorder-lite",
  "byteview",
