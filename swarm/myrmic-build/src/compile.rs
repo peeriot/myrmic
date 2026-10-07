@@ -21,7 +21,7 @@ const TARGET: &str = "wasm32v1-none";
 /// new` ships a `rust-toolchain.toml` pinning this channel and declaring the
 /// `wasm32v1-none` target (see the `new` template); the pin is rendered from here to keep a
 /// single source of truth.
-pub const TOOLCHAIN: &str = "1.97.0";
+pub const TOOLCHAIN: &str = "1.98.1";
 
 const DEFAULT_STACK_SIZE: usize = 32 * 1024;
 const DEFAULT_INITIAL_MEMORY: usize = 64 * 1024;

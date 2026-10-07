@@ -37,12 +37,7 @@ async fn deployed_is_rejected() {
     let swarm = sorg_tests::swarm_config!("full.jsonnet");
     let cell_class = "dummy";
     let cell_sri = "test-deployed-erase";
-    sorg_tests::build_and_register_cell_class(
-        "../../tests/fixtures/dummy_cell",
-        cell_class,
-        &swarm,
-    )
-    .await;
+    sorg_tests::register_fixture_class("../../tests/fixtures/dummy_cell", cell_class, &swarm).await;
     let test_app = crate::integration::spawn_full_test_app_with_swarm(swarm).await;
     let sorg = sorg_client(test_app.session());
     let sri = Sri::from_target(cell_sri).unwrap();

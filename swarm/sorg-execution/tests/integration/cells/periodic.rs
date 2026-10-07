@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use claims::assert_ok;
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -22,7 +22,7 @@ const PERIOD_MS: u64 = 50;
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn periodic_macro_emits_events() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-periodic-macro-logic",
         "periodic_macro",
         &swarm,
@@ -48,7 +48,7 @@ async fn periodic_macro_emits_events() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn periodic_macro_respects_period() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-periodic-macro-logic",
         "periodic_macro",
         &swarm,
@@ -96,7 +96,7 @@ async fn periodic_macro_respects_period() {
 async fn fixed_delay_defers_next_tick_until_handler_returns() {
     sorg_tests::enable_test_logging("info");
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-periodic-fixed-delay-logic",
         "periodic_fixed_delay",
         &swarm,
@@ -150,13 +150,13 @@ async fn fixed_delay_defers_next_tick_until_handler_returns() {
 async fn fixed_delay_does_not_starve_other_timers() {
     sorg_tests::enable_test_logging("info");
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-periodic-fixed-delay-logic",
         "periodic_fixed_delay",
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-periodic-macro-logic",
         "periodic_macro",
         &swarm,

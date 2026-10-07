@@ -445,7 +445,7 @@ which = "8.0.2"
 libc = "0.2.186"
 
 tryhard = "0.5.2"
-wasmtime = "49.0.1"
+wasmtime = "49.0.2"
 
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 
@@ -634,18 +634,18 @@ myrmic-build = { path = "swarm/myrmic-build" }
 myrmic-flash = { path = "swarm/myrmic-flash" }
 
 # Zenoh
-zenoh = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false, features = [
+zenoh = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false, features = [
     "tracing-instrument",
 ] }
-zenoh-result = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-protocol = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-keyexpr = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-buffers = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-util = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-codec = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh-plugin-trait = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763", default-features = false }
-zenoh_backend_traits = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
-zenoh-plugin-storage-manager = { git = "https://github.com/peeriot/zenoh.git", rev = "bdf4c763" }
+zenoh-result = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false }
+zenoh-protocol = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false }
+zenoh-keyexpr = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false }
+zenoh-buffers = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false }
+zenoh-util = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940" }
+zenoh-codec = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false }
+zenoh-plugin-trait = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940", default-features = false }
+zenoh_backend_traits = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940" }
+zenoh-plugin-storage-manager = { git = "https://github.com/peeriot/zenoh.git", rev = "cfff4940" }
 
 wamr-rust-sdk = { git = "https://github.com/peeriot/wamr-rust-sdk.git", branch = "fvs-no-std-support", default-features = false }
 

@@ -20,6 +20,7 @@ db-client = { workspace = true, features = ["zenoh"] }
 futures = { workspace = true }
 introspection-client = { workspace = true }
 introspection-common = { workspace = true }
+myrmic-build = { workspace = true }
 postcard = { workspace = true }
 rand = { workspace = true }
 reqwest = { version = "0.13.3", features = ["query", "json"] }
@@ -33,6 +34,7 @@ tar = { workspace = true }
 tempfile = { workspace = true }
 test-control-client = { workspace = true }
 test-control-common = { workspace = true }
+thiserror = { workspace = true }
 tryhard = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "sync", "rt"] }
 uuid = { workspace = true, features = ["v4"] }

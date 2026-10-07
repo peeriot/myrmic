@@ -100,6 +100,7 @@ fn deferred_writes_commit_in_one_round_trip() {
     with_linked_sessions(async |sess_a, sess_b| {
         let replies = [Ok(tx_apply::Response {
             tx: None,
+            node: NODE_ID,
             last: None,
         })];
 
@@ -142,10 +143,12 @@ fn a_read_flushes_the_writes_before_it() {
         let replies = [
             Ok(tx_apply::Response {
                 tx: Some(TX),
+                node: NODE_ID,
                 last: Some(tb_get::Response { value: None }.into()),
             }),
             Ok(tx_apply::Response {
                 tx: None,
+                node: NODE_ID,
                 last: None,
             }),
         ];

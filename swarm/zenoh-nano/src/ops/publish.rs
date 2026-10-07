@@ -77,6 +77,7 @@ impl<'a, S: AsRef<str>> Publisher<'a, S> {
                     ext_qos: NQoSType::PUSH,
                     ext_tstamp: None,
                     ext_nodeid: NodeIdType::DEFAULT,
+                    ext_ts_stack: None,
                     payload: PushBody::Put(Put {
                         timestamp: self.clock.and_then(Clock::timestamp),
                         encoding: {

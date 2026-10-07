@@ -1,7 +1,7 @@
 //! helper functions for communicating with the test-sidecar over its HTTP API
 use std::path::PathBuf;
 
-use bollard::Docker;
+use crate::docker::DockerDaemon;
 use introspection_common::v1::NodeStatus;
 use serde::de::DeserializeOwned;
 
@@ -46,7 +46,7 @@ impl<'u> Sidecar<'u> {
     /// Build the test-sidecar docker image with tag `tag` from `sidecar_dockerfile`, placing
     /// the sidecar binary (as `test-sidecar`) in the build context.
     pub async fn build(
-        docker: &Docker,
+        docker: &DockerDaemon,
         sidecar_dockerfile: impl Into<PathBuf>,
         sidecar_binary: impl Into<PathBuf>,
         tag: &str,

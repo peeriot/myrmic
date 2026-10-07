@@ -16,7 +16,7 @@ use std::time::Duration;
 use claims::assert_ok;
 use module_examples_common::Temperature;
 use serde::Deserialize;
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -40,7 +40,7 @@ struct CountChanged {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn room_returns_default_temperature() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
     let mut temp_q = test_app.subscribe_cell_event("temperature").await;
@@ -60,7 +60,7 @@ pub async fn room_returns_default_temperature() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn room_set_and_get_temperature() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
     let mut temp_q = test_app.subscribe_cell_event("temperature").await;
@@ -87,8 +87,8 @@ pub async fn room_set_and_get_temperature() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn thermostat_sets_temperature() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
-    build_and_register_cell_class(
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class(
         "../../tests/fixtures/cell-thermostat-logic",
         "thermostat",
         &swarm,
@@ -124,9 +124,8 @@ const COUNTER_CALLER_SRI: &str = "counter_caller_cell";
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn counter_caller_increments_via_api() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-counter-logic", "counter", &swarm)
-        .await;
-    build_and_register_cell_class(
+    register_fixture_class("../../tests/fixtures/cell-counter-logic", "counter", &swarm).await;
+    register_fixture_class(
         "../../tests/fixtures/cell-counter-caller-logic",
         "counter_caller",
         &swarm,
@@ -172,8 +171,8 @@ const NESTED_CALLER_SRI: &str = "nested_caller_cell";
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn nested_caller_reads_nested_value() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-nested-logic", "nested", &swarm).await;
-    build_and_register_cell_class(
+    register_fixture_class("../../tests/fixtures/cell-nested-logic", "nested", &swarm).await;
+    register_fixture_class(
         "../../tests/fixtures/cell-nested-caller-logic",
         "nested_caller",
         &swarm,
@@ -208,7 +207,7 @@ const EVENT_PUB_SRI: &str = "event_pub_cell";
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn event_pub_publishes_event() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-event-pub-logic",
         "event_pub",
         &swarm,
@@ -234,13 +233,13 @@ const EVENT_SUB_SRI: &str = "event_sub_cell";
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn event_sub_forwards_event() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-event-pub-logic",
         "event_pub",
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-event-sub-logic",
         "event_sub",
         &swarm,
@@ -279,13 +278,13 @@ const FF_RECEIVER_SRI: &str = "ff_receiver_cell";
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn ff_macro_non_blocking_with_ordered_delivery() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-ff-receiver-logic",
         "ff_receiver",
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-ff-sender-logic",
         "ff_sender",
         &swarm,
@@ -320,13 +319,13 @@ pub async fn ff_macro_non_blocking_with_ordered_delivery() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn ff_macro_no_args_command() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-ff-receiver-logic",
         "ff_receiver",
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-ff-sender-logic",
         "ff_sender",
         &swarm,
@@ -366,13 +365,13 @@ const CB_RECEIVER_SRI: &str = "cb_receiver_cell";
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn cb_macro_happy_path() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-cb-receiver-logic",
         "cb_receiver",
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-cb-sender-logic",
         "cb_sender",
         &swarm,
@@ -408,13 +407,13 @@ pub async fn cb_macro_happy_path() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn cb_macro_no_args_void_return() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-cb-receiver-logic",
         "cb_receiver",
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-cb-sender-logic",
         "cb_sender",
         &swarm,
@@ -453,7 +452,7 @@ pub async fn cb_macro_no_args_void_return() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn cb_macro_optional_callback_from_a_non_cell_caller() {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-cb-receiver-logic",
         "cb_receiver",
         &swarm,

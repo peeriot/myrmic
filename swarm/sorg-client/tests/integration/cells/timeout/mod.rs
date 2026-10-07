@@ -4,7 +4,7 @@ use cell_protocol::Sri;
 use claims::{assert_err, assert_ok};
 use sorg_client::{Client as SorgClient, Config};
 use sorg_common::RequirementTags;
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_full_test_app_with_swarm;
 
@@ -24,7 +24,7 @@ fn sorg_client_with_timeout(session: &zenoh::Session, timeout: Duration) -> Sorg
 
 async fn spawn_test_app_with_slow_init_cell() -> (sorg_tests::TestApp, zenoh::Session) {
     let swarm = swarm_config!("full_slow_init.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/slow-init-cell-logic",
         CELL_CLASS,
         &swarm,

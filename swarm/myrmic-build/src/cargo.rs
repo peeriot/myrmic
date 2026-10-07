@@ -387,7 +387,7 @@ mod tests {
         };
         assert!(release_is_nightly(&version("1.99.0-nightly")));
         assert!(release_is_nightly(&version("1.99.0-dev")));
-        assert!(!release_is_nightly(&version("1.97.0")));
+        assert!(!release_is_nightly(&version("1.98.1")));
         assert!(!release_is_nightly(&version("1.98.0-beta.3")));
         assert!(!release_is_nightly(
             "cargo 1.99.0-nightly (abc 2026-08-06)\n"

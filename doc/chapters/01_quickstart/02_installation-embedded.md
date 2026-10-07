@@ -37,13 +37,13 @@ The host C toolchain from the [Installation](./01_installation.md) page (`build-
 
 ### The embedded Rust toolchain
 
-Firmware compiles for `riscv32imac-unknown-none-elf` with the same pinned stable toolchain as cells. You do not install it by hand: a firmware crate scaffolded by `myrmic new --firmware`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the toolchain and the target. You will see a line like `the missing active toolchain 1.97.0 has been auto-installed` the first time.
+Firmware compiles for `riscv32imac-unknown-none-elf` with the same pinned stable toolchain as cells. You do not install it by hand: a firmware crate scaffolded by `myrmic new --firmware`, on its first `myrmic build`, ships a `rust-toolchain.toml` that prompts `rustup` to auto-install the toolchain and the target. You will see a line like `the missing active toolchain 1.98.1 has been auto-installed` the first time.
 
 As with cells, the pinned version is the release tested for the current Myrmic release and moves forward with each release. To install it ahead of that first build - on an offline machine, or just to keep the build output quiet - the steps are optional:
 
 ```sh
-rustup toolchain install 1.97.0
-rustup target add riscv32imac-unknown-none-elf --toolchain 1.97.0
+rustup toolchain install 1.98.1
+rustup target add riscv32imac-unknown-none-elf --toolchain 1.98.1
 ```
 
 #### Building on a nightly toolchain

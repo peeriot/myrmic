@@ -169,8 +169,8 @@ impl Runtime {
             Event::InfoQuery(query) => self.provide_info(query).await,
             Event::CellDeployQuery(query) => self.deploy_cell(query).await,
             Event::CellUndeployQuery(query) => self.undeploy_cell(query).await,
-            Event::CellExited(sri) => {
-                self.handle_cell_exited(sri);
+            Event::CellExited(sri, gen_id) => {
+                self.handle_cell_exited(sri, gen_id);
                 Ok(())
             }
             Event::VerifyPass => {

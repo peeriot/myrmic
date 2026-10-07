@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use bollard::{Docker, body_full, query_parameters::BuildImageOptionsBuilder};
+use bollard::{body_full, query_parameters::BuildImageOptionsBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 
-use crate::docker::managed::ManagedContainer;
+use crate::docker::{DockerDaemon, managed::ManagedContainer};
 
 /// a thin wrapper around docker images identified by their tag
 pub struct Image {
@@ -20,7 +20,7 @@ impl Image {
     /// create image by building it from `dockerfile` with an in-memory tar build context
     /// containing the given `files` as `(host path, name in context)` pairs
     pub async fn build(
-        docker: &Docker,
+        docker: &DockerDaemon,
         image_tag: impl Into<String>,
         dockerfile: &Path,
         files: &[(&Path, &str)],
@@ -56,14 +56,14 @@ impl Image {
     }
 
     /// start the docker container with idle command
-    pub async fn run_idle(&self, docker: Docker, name: &str) -> ManagedContainer {
+    pub async fn run_idle(&self, docker: DockerDaemon, name: &str) -> ManagedContainer {
         ManagedContainer::run(self, docker, &["sh", "-c", "tail -f /dev/null"], &[], name).await
     }
 
     /// start the docker container with specified command
     pub async fn run_command(
         &self,
-        docker: Docker,
+        docker: DockerDaemon,
         command: &[&str],
         name: &str,
     ) -> ManagedContainer {

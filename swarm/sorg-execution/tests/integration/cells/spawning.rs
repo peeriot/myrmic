@@ -4,7 +4,7 @@ use cell_protocol::{BlobHash, Sri};
 use claims::{assert_ok, assert_some};
 use myrmic_common::cells::{ClassRef, SpawnRequest};
 use sorg_client::Client;
-use sorg_tests::{TestApp, build_and_register_cell_class, swarm_config};
+use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -31,13 +31,13 @@ fn expected_child_sri() -> Sri {
 /// the test app and a client for further queries.
 async fn setup() -> (TestApp, Client) {
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-spawn-child",
         "spawn_child",
         &swarm,
     )
     .await;
-    build_and_register_cell_class("../../tests/fixtures/cell-spawner", "spawner", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-spawner", "spawner", &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let client = Client::new(test_app.session().clone());
 

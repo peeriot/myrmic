@@ -51,6 +51,12 @@ const REPL_MSGS_RECV: &str = "repl_msgs_recv";
 const REPL_ANNOUNCE_HEADS: &str = "repl_announce_heads";
 const REPL_ANNOUNCE_BASELINES: &str = "repl_announce_baselines";
 const REPL_ANNOUNCE_SCOPES: &str = "repl_announce_scopes";
+const REPL_ANNOUNCE_REASONS: &str = "repl_announce_reasons";
+const REPL_ANNOUNCE_REASON_BYTES: &str = "repl_announce_reason_bytes";
+const REPL_PROBE_REASONS: &str = "repl_probe_reasons";
+const REPL_MSG_BYTES_SENT: &str = "repl_msg_bytes_sent";
+const REPL_MSG_BYTES_RECV: &str = "repl_msg_bytes_recv";
+const REPL_SERVED_BYTES: &str = "repl_served_bytes";
 const REPL_HANDLE_QUEUE_NANOS: &str = "repl_handle_queue_nanos";
 const REPL_HANDLE_NANOS: &str = "repl_handle_nanos";
 const REPL_HANDLED: &str = "repl_handled";
@@ -183,6 +189,19 @@ pub struct ReplicationMetrics {
     pub announce_queue_nanos: u64,
     pub announce_nanos: u64,
     pub announces_handled: u64,
+    /// Announces published, by the sender's role and why they went out, and
+    /// their encoded bytes the same way.
+    pub announces_replica: AnnounceReasons,
+    pub announces_offload: AnnounceReasons,
+    pub announce_bytes_replica: AnnounceReasons,
+    pub announce_bytes_offload: AnnounceReasons,
+    /// Encoded announce bytes published, and received summed over every
+    /// receiver — the latter is what the network carries.
+    pub announce_bytes_sent: u64,
+    pub announce_bytes_recv: u64,
+    /// Probes published, by the sender's role and why.
+    pub probes_replica: ProbeReasons,
+    pub probes_offload: ProbeReasons,
     /// How old pulled rows were on arrival, against how many arrived. The
     /// bisection for the wait: an age in milliseconds means the data arrives
     /// promptly and the recipient is not looking, an age in seconds means
@@ -306,6 +325,68 @@ impl TurnSplit {
     }
 }
 
+/// One role's announces by why they went out — see
+/// `db::replication::AnnounceReason`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AnnounceReasons {
+    pub tick: u64,
+    pub commit: u64,
+    pub probe: u64,
+    pub pull: u64,
+    pub wake: u64,
+}
+
+impl AnnounceReasons {
+    fn add(&mut self, reason: &str, value: u64) {
+        match reason {
+            "tick" => self.tick += value,
+            "commit" => self.commit += value,
+            "probe" => self.probe += value,
+            "pull" => self.pull += value,
+            "wake" => self.wake += value,
+            _ => {}
+        }
+    }
+
+    fn delta_since(self, before: Self) -> Self {
+        Self {
+            tick: counter_delta("announce_tick", self.tick, before.tick),
+            commit: counter_delta("announce_commit", self.commit, before.commit),
+            probe: counter_delta("announce_probe", self.probe, before.probe),
+            pull: counter_delta("announce_pull", self.pull, before.pull),
+            wake: counter_delta("announce_wake", self.wake, before.wake),
+        }
+    }
+}
+
+/// One role's probes by why they went out — see
+/// `db::replication::ProbeReason`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ProbeReasons {
+    pub solicit: u64,
+    pub repair: u64,
+    pub gossip: u64,
+}
+
+impl ProbeReasons {
+    fn add(&mut self, reason: &str, value: u64) {
+        match reason {
+            "solicit" => self.solicit += value,
+            "repair" => self.repair += value,
+            "gossip" => self.gossip += value,
+            _ => {}
+        }
+    }
+
+    fn delta_since(self, before: Self) -> Self {
+        Self {
+            solicit: counter_delta("probe_solicit", self.solicit, before.solicit),
+            repair: counter_delta("probe_repair", self.repair, before.repair),
+            gossip: counter_delta("probe_gossip", self.gossip, before.gossip),
+        }
+    }
+}
+
 /// One role's share of the cell-scope pulls: how many, and the chunks moved.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RolePulls {
@@ -349,11 +430,14 @@ pub struct ServedPulls {
     pub age_nanos: u64,
     pub age_skewed: u64,
     pub pages_full: u64,
+    /// Encoded bytes of the pages served.
+    pub bytes: u64,
 }
 
 impl ServedPulls {
     fn delta_since(self, before: Self) -> Self {
         Self {
+            bytes: counter_delta("served_bytes", self.bytes, before.bytes),
             pulls: counter_delta("served_pulls", self.pulls, before.pulls),
             chunks: counter_delta("served_chunks", self.chunks, before.chunks),
             age_nanos: counter_delta("served_age_nanos", self.age_nanos, before.age_nanos),
@@ -395,6 +479,33 @@ impl ReplicationMetrics {
                     }
                     (REPL_HANDLE_NANOS, Some("ANNOUNCE")) => out.announce_nanos += value,
                     (REPL_HANDLED, Some("ANNOUNCE")) => out.announces_handled += value,
+                    (REPL_MSG_BYTES_SENT, Some("ANNOUNCE")) => out.announce_bytes_sent += value,
+                    (REPL_MSG_BYTES_RECV, Some("ANNOUNCE")) => out.announce_bytes_recv += value,
+                    (REPL_ANNOUNCE_REASONS, _) => {
+                        let reason = string_attr(&dp.attributes, "reason").unwrap_or_default();
+                        if replica {
+                            out.announces_replica.add(reason, value);
+                        } else {
+                            out.announces_offload.add(reason, value);
+                        }
+                    }
+                    (REPL_ANNOUNCE_REASON_BYTES, _) => {
+                        let reason = string_attr(&dp.attributes, "reason").unwrap_or_default();
+                        if replica {
+                            out.announce_bytes_replica.add(reason, value);
+                        } else {
+                            out.announce_bytes_offload.add(reason, value);
+                        }
+                    }
+                    (REPL_PROBE_REASONS, _) => {
+                        let reason = string_attr(&dp.attributes, "reason").unwrap_or_default();
+                        if replica {
+                            out.probes_replica.add(reason, value);
+                        } else {
+                            out.probes_offload.add(reason, value);
+                        }
+                    }
+                    (REPL_SERVED_BYTES, _) => out.served_mut(cells).bytes += value,
                     (REPL_APPLIED, _) => out.applied += value,
                     (REPL_APPLIED_AGE_NANOS, _) => out.applied_age_nanos += value,
                     (REPL_APPLIED_AGE_SKEWED, _) => out.applied_age_skewed += value,
@@ -505,6 +616,26 @@ impl ReplicationMetrics {
                 self.announces_handled,
                 before.announces_handled,
             ),
+            announces_replica: self.announces_replica.delta_since(before.announces_replica),
+            announces_offload: self.announces_offload.delta_since(before.announces_offload),
+            announce_bytes_replica: self
+                .announce_bytes_replica
+                .delta_since(before.announce_bytes_replica),
+            announce_bytes_offload: self
+                .announce_bytes_offload
+                .delta_since(before.announce_bytes_offload),
+            announce_bytes_sent: counter_delta(
+                "announce_bytes_sent",
+                self.announce_bytes_sent,
+                before.announce_bytes_sent,
+            ),
+            announce_bytes_recv: counter_delta(
+                "announce_bytes_recv",
+                self.announce_bytes_recv,
+                before.announce_bytes_recv,
+            ),
+            probes_replica: self.probes_replica.delta_since(before.probes_replica),
+            probes_offload: self.probes_offload.delta_since(before.probes_offload),
             applied: counter_delta("applied", self.applied, before.applied),
             applied_age_nanos: counter_delta(
                 "applied_age_nanos",

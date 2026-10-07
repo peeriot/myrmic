@@ -5,7 +5,7 @@
 use claims::{assert_err, assert_ok};
 use sorg_common::gateway_config::{list_cell_assets, list_gateway_routes};
 use sorg_common::{CellConfig, CellDeployment, DeployRequest, DeploymentError};
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 use zenoh::Session;
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
@@ -48,7 +48,7 @@ async fn assets_owned_by(session: &Session, sri: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn deploy_keeps_gateway_resources() {
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(GATEWAY_LOGIC, GATEWAY_CLASS, &swarm).await;
+    register_fixture_class(GATEWAY_LOGIC, GATEWAY_CLASS, &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
     test_app
@@ -71,7 +71,7 @@ async fn deploy_keeps_gateway_resources() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn rollback_releases_gateway_resources() {
     let swarm = swarm_config!("cells/cells.jsonnet");
-    build_and_register_cell_class(GATEWAY_LOGIC, GATEWAY_CLASS, &swarm).await;
+    register_fixture_class(GATEWAY_LOGIC, GATEWAY_CLASS, &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
     test_app
         .register_raw_class(FAILING_CLASS, vec![0xFF, 0xFF])

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use bollard::Docker;
+use crate::docker::DockerDaemon;
 
 use crate::docker::image::Image;
 
@@ -20,7 +20,7 @@ impl SwarmImage {
     /// (as `swarm`) and any `extra_files` (`(host path, name in context)` pairs) in the build
     /// context.
     pub async fn build(
-        docker: &Docker,
+        docker: &DockerDaemon,
         swarm_dockerfile: impl Into<PathBuf>,
         swarm_binary: impl Into<PathBuf>,
         tag: &str,

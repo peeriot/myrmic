@@ -15,16 +15,13 @@ use cell_protocol::replication::{
     replication_scope,
 };
 use cell_protocol::{PLACEMENT_TABLE, PlacementEntry, placement_scope};
-use db::store::TransactionOptions;
 use db_client::PolledTable;
 use db_commons::models;
 use db_commons::models::locate::HolderState;
 
 use super::{OffloadKind, StoreContext};
 
-/// Backstop cadence. Entries arriving by replication raise no local table
-/// event, so the poll — not the subscription — is what makes a remote change
-/// take effect.
+/// Backstop cadence, for table events that never arrive.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// How long a live full-replica peer without a custody row must be observed
@@ -81,10 +78,25 @@ pub async fn run(context: StoreContext, db: db_client::v1::Client, tags: LiveTag
     let mut quiet_since: HashMap<models::Scope, Instant> = HashMap::new();
 
     loop {
-        match desired(&context, &db, &tags.get()).await {
-            Ok(desired) => {
+        let config = match read_config(&db, polled.latest(&replication_scope())).await {
+            Ok((entries, custody)) => desired(&db, entries, &tags.get())
+                .await
+                .map(|desired| (desired, custody)),
+            Err(err) => Err(err),
+        };
+
+        match config {
+            Ok((desired, custody)) => {
                 reconcile(&context, &mut active, desired).await;
-                custody_pass(&context, &active, &always, &mut suspects, &mut quiet_since).await;
+                custody_pass(
+                    &context,
+                    &custody,
+                    &active,
+                    &always,
+                    &mut suspects,
+                    &mut quiet_since,
+                )
+                .await;
             }
             Err(err) => tracing::warn!("unable to read replication configuration: {err}"),
         }
@@ -108,24 +120,17 @@ const REPLICAS_QUIET_FOR: Duration = Duration::from_secs(30);
 /// rendezvous winner, and re-arms a drain whose deference target vanished.
 async fn custody_pass(
     context: &StoreContext,
+    rows: &[CustodyRow],
     active: &HashSet<models::Subject>,
     always: &[models::Subject],
     suspects: &mut HashMap<(models::Scope, models::NodeId), Instant>,
     quiet_since: &mut HashMap<models::Scope, Instant>,
 ) {
-    let rows: Vec<CustodyRow> = match read_table(context, &replication_scope(), CUSTODY_TABLE) {
-        Ok(rows) => rows,
-        Err(err) => {
-            tracing::warn!("unable to read the custody table: {err}");
-            return;
-        }
-    };
-
     let me: models::NodeId = context.id().to_le_bytes();
     let now = Instant::now();
 
     let mut custodians: HashMap<&models::Scope, HashSet<models::NodeId>> = HashMap::new();
-    for row in &rows {
+    for row in rows {
         custodians.entry(&row.scope).or_default().insert(row.node);
     }
 
@@ -255,14 +260,10 @@ fn judge_custody(
 /// Every subject this node should be replicating, per the current
 /// configuration.
 async fn desired(
-    context: &StoreContext,
     db: &db_client::v1::Client,
+    entries: Vec<ReplicaEntry>,
     tags: &[String],
 ) -> anyhow::Result<HashSet<models::Subject>> {
-    // The configuration lives in `sys`, which this node always replicates, so
-    // it is already on local disk.
-    let entries: Vec<ReplicaEntry> = read_table(context, &replication_scope(), REPLICATION_TABLE)?;
-
     let matched: Vec<ReplicaEntry> = entries
         .into_iter()
         .filter(|entry| entry.matches(tags))
@@ -305,11 +306,7 @@ async fn read_placements(db: &db_client::v1::Client) -> anyhow::Result<Vec<Place
         .map_err(|err| anyhow::anyhow!("unable to reach a node holding the placements: {err}"))?
         .map_err(|err| anyhow::anyhow!("unable to list the placements: {}", err.message))?;
 
-    Ok(response
-        .entities
-        .iter()
-        .filter_map(|(id, value)| decode_row(id, value, "placement"))
-        .collect())
+    Ok(decode_rows(&response, "placement"))
 }
 
 fn selects_an_app(entries: &[ReplicaEntry]) -> bool {
@@ -351,21 +348,75 @@ fn expand(
         .collect()
 }
 
-/// Reads and decodes every row of `table` from the local store.
-fn read_table<T: serde::de::DeserializeOwned>(
-    context: &StoreContext,
-    scope: &models::Scope,
-    table: &str,
-) -> anyhow::Result<Vec<T>> {
-    let mut tx = context.store.begin_local(&TransactionOptions::read())?;
+/// Reads the replication entries and custody rows through the swarm.
+///
+/// A change's table event arrives well before replication brings the change
+/// here, so a read of the local copy on that wake misses it and the change
+/// waits out the poll. Routed at the event's `version`, the read lands on a
+/// node already holding it — normally the one that committed it.
+async fn read_config(
+    db: &db_client::v1::Client,
+    version: Option<models::Version>,
+) -> anyhow::Result<(Vec<ReplicaEntry>, Vec<CustodyRow>)> {
+    async fn list_both(
+        client: &db_client::v1::Client,
+        tx_id: models::TxId,
+    ) -> zenoh::Result<(
+        Result<models::tb_list::Response, models::tb_list::Error>,
+        Result<models::tb_list::Response, models::tb_list::Error>,
+    )> {
+        let list = |table: &str| models::tb_list::Request {
+            id: tx_id,
+            op: models::tb_list::Op {
+                scope: replication_scope(),
+                table: String::from(table),
+                cursor: None,
+                limit: None,
+                order: None,
+            },
+        };
 
-    let key = db::domain::Key::new_scope(&scope.namespace, &scope.database, &scope.schema);
-    let rows = tx.tb_list(key.table(table), None, None, None)?;
+        let entries = client.send(list(REPLICATION_TABLE)).await?;
+        let custody = client.send(list(CUSTODY_TABLE)).await?;
 
-    Ok(rows
+        Ok((entries, custody))
+    }
+
+    let read = match version {
+        Some(version) => match db.read_tx_at(replication_scope(), version, list_both).await {
+            Ok(read) => Ok(read),
+            // The only holder at that version may have gone since; any copy
+            // beats skipping this pass.
+            Err(err) => {
+                tracing::debug!("no holder of the configuration at {version}: {err}");
+                db.read_tx_in(replication_scope(), list_both).await
+            }
+        },
+        None => db.read_tx_in(replication_scope(), list_both).await,
+    };
+
+    let (entries, custody) =
+        read.map_err(|err| anyhow::anyhow!("unable to reach the db: {err}"))?;
+    let entries = entries
+        .map_err(|err| anyhow::anyhow!("unable to list replication sets: {}", err.message))?;
+    let custody =
+        custody.map_err(|err| anyhow::anyhow!("unable to list custody rows: {}", err.message))?;
+
+    Ok((
+        decode_rows(&entries, REPLICATION_TABLE),
+        decode_rows(&custody, CUSTODY_TABLE),
+    ))
+}
+
+fn decode_rows<T: serde::de::DeserializeOwned>(
+    response: &models::tb_list::Response,
+    what: &str,
+) -> Vec<T> {
+    response
+        .entities
         .iter()
-        .filter_map(|(id, value)| decode_row(id, value, table))
-        .collect())
+        .filter_map(|(id, value)| decode_row(id, value, what))
+        .collect()
 }
 
 /// One malformed row shouldn't stall replication for the rest, so it's logged
@@ -395,19 +446,34 @@ async fn reconcile(
         context.start_replication(subject.clone()).await;
     }
 
-    let mut stopped = false;
-    for subject in active.difference(&desired) {
+    let dropped: Vec<models::Subject> = active.difference(&desired).cloned().collect();
+    for subject in &dropped {
         let (namespace, database, schema) = subject.as_keyexprs();
         tracing::info!("no longer replicating {namespace}/{database}/{schema}");
         context.store.stop_replication(subject);
-        stopped = true;
     }
 
     // A stopped subject's local data must not stay stranded; offer it up now
-    // rather than waiting for the stray-scan backstop.
-    if stopped {
+    // rather than waiting for the stray-scan backstop. What a dropped subject
+    // covers is a full copy, and stays findable until its successor has it —
+    // including through a hidden drain already running for it, left over from
+    // rows that landed before this node started replicating. Exposed after
+    // the starts, as a commit or the stray sweep can start a hidden drain for
+    // a dropped scope while the scan runs, and starting a drain that is
+    // already running does nothing.
+    if !dropped.is_empty() {
         for scope in super::stray_scopes(context).await {
-            context.start_offload(scope, OffloadKind::Hidden);
+            let kind = if dropped.iter().any(|subject| subject.contains(&scope)) {
+                OffloadKind::Dropped
+            } else {
+                OffloadKind::Hidden
+            };
+            context.start_offload(scope, kind);
+        }
+        for scope in context.store.offloading_scopes() {
+            if dropped.iter().any(|subject| subject.contains(&scope)) {
+                context.expose_offload(&scope);
+            }
         }
     }
 

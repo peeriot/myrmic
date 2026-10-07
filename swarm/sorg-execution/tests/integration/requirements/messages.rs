@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use cell_protocol::Sri;
 use claims::assert_ok;
-use sorg_tests::{build_and_register_cell_class, enable_test_logging, swarm_config};
+use sorg_tests::{enable_test_logging, register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -29,14 +29,14 @@ fn expected_event(cell_name: &str, count: u32) -> String {
 /// Requirement 1: Per-cell independent queuing (#376)
 ///
 /// Messages to different cells are queued and processed independently.
-/// Cell A (no delay) processes two messages before cell B (50ms delay)
+/// Cell A (no delay) processes two messages before cell B (100ms delay)
 /// finishes its first.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 pub async fn per_cell_independent_queuing() {
     // Arrange — build the cell module and deploy two instances
     enable_test_logging("warn");
     let swarm = swarm_config!("requirements/messages/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-counter-delay-logic",
         COUNTER_CELL_NAME,
         &swarm,
@@ -71,7 +71,7 @@ pub async fn per_cell_independent_queuing() {
         .command_send(SRI_A, "process", Some(payload_0.clone()))
         .await;
 
-    // t=250ms: send to A(0) and B(200)
+    // t=250ms: send to A(0) and B(100)
     tokio::time::sleep(Duration::from_millis(240)).await;
     test_app
         .command_send(SRI_A, "process", Some(payload_0.clone()))
@@ -113,13 +113,13 @@ pub async fn sequential_processing_per_cell() {
     // Arrange — build both cell modules and deploy them
     enable_test_logging("warn");
     let swarm = swarm_config!("requirements/messages/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-seq-helper-logic",
         SEQ_HELPER_NAME,
         &swarm,
     )
     .await;
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-seq-main-logic",
         SEQ_MAIN_NAME,
         &swarm,
@@ -170,7 +170,7 @@ pub async fn cross_cell_parallelism() {
     // Arrange — build the cell module and deploy two instances
     enable_test_logging("warn");
     let swarm = swarm_config!("requirements/messages/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-counter-delay-logic",
         COUNTER_CELL_NAME,
         &swarm,

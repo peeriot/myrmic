@@ -82,9 +82,6 @@ fn validate_function_name_component(input: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
-
-    // Note to run tests in this crate, we need to run them with `cargo test --target x86_64-unknown-linux-gnu -Z build-std=`
-
     use super::validate_function_name_component;
     use claims::{assert_err, assert_ok};
 

@@ -34,8 +34,8 @@ You need all of these whether you installed the CLI from a package or built it y
   To install these ahead of that first build - on an offline machine, or just to keep the build output quiet - the steps are optional:
 
   ```sh
-  rustup toolchain install 1.97.0
-  rustup target add wasm32v1-none --toolchain 1.97.0
+  rustup toolchain install 1.98.1
+  rustup target add wasm32v1-none --toolchain 1.98.1
   ```
 
 - **A C toolchain.** A cell compiles to WebAssembly, but cargo still compiles and links every dependency's build script as a native binary for your machine. rustup ships no linker, so without one `myrmic build` stops before it starts the build, with `no C linker found`.

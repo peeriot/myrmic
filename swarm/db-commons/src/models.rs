@@ -1368,7 +1368,7 @@ pub mod sem_describe {
 pub mod tx_apply {
     use core::time::Duration;
 
-    use super::{String, TxId, TxOp, TxOpResponse, Vec, tx_begin};
+    use super::{NodeId, String, TxId, TxOp, TxOpResponse, Vec, tx_begin};
 
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     pub struct Request {
@@ -1400,12 +1400,18 @@ pub mod tx_apply {
         KeepOpen,
         /// Commit, publishing the table events the ops recorded.
         Commit,
+        /// Roll back, keeping nothing: the ops run only for what they return.
+        /// A read in one round trip, with no transaction left to close.
+        Rollback,
     }
 
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     pub struct Response {
         /// The open transaction, present iff the application left one open.
         pub tx: Option<TxId>,
+        /// The node that applied the ops — where a routed application landed,
+        /// whether or not it left a transaction open.
+        pub node: NodeId,
         /// The final op's response — the tail rule on the wire. The client
         /// guarantees by construction that a value somebody needs is last.
         pub last: Option<TxOpResponse>,

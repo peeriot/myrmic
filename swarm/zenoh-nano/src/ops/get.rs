@@ -273,6 +273,7 @@ async fn send_get<'a, M: RawMutex>(
                 ext_qos: NQoSType::REQUEST,
                 ext_tstamp: None,
                 ext_nodeid: NodeIdType::default(),
+                ext_ts_stack: None,
                 ext_target: QueryTarget::default(),
                 ext_budget: None,
                 ext_timeout: Some(timeout),

@@ -16,6 +16,34 @@ pub struct CellArtifact {
 }
 
 impl CellArtifact {
+    /// build the cell crate in `cell_dir` for linux through `myrmic_build`, as `myrmic build`
+    /// does, and name the class after the wasm file cargo produced
+    pub async fn build(cell_dir: PathBuf) -> Self {
+        // cargo runs synchronously; keep it off the async runtime's worker threads
+        tokio::task::spawn_blocking(move || {
+            let wasm_path = myrmic_build::build(
+                &cell_dir.join("Cargo.toml"),
+                myrmic_build::Platform::Linux,
+                &myrmic_build::CargoTarget::Auto,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to build the cell in {}: {err:#}",
+                    cell_dir.display()
+                )
+            })
+            .wasm;
+            let name = wasm_path
+                .file_name()
+                .expect("cargo reports the wasm artifact as a file path")
+                .to_string_lossy()
+                .into_owned();
+            Self { name, wasm_path }
+        })
+        .await
+        .unwrap_or_else(|err| std::panic::resume_unwind(err.into_panic()))
+    }
+
     /// register the wasm module as a class artifact in the class registry reachable via `session`
     pub async fn register(&self, session: &Session) {
         let bytes = tokio::fs::read(&self.wasm_path)

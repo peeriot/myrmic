@@ -22,7 +22,7 @@ Build a cell crate, a workspace of cells, or an application suite from source.
 
 If `PATH` is not provided, the current directory is used.
 
-All cell builds run in release mode for the `wasm32v1-none` target using `cargo +1.97.0` internally. Firmware builds use the same toolchain for the `riscv32imac-unknown-none-elf` target. A cell or firmware crate that pins its own toolchain in a `rust-toolchain.toml` builds with that pin instead, and when the pin is a nightly toolchain, `-Z build-std=core,alloc` is added. Set the `CARGO` environment variable to use a specific `cargo` binary.
+All cell builds run in release mode for the `wasm32v1-none` target using `cargo +1.98.1` internally. Firmware builds use the same toolchain for the `riscv32imac-unknown-none-elf` target. A cell or firmware crate that pins its own toolchain in a `rust-toolchain.toml` builds with that pin instead, and when the pin is a nightly toolchain, `-Z build-std=core,alloc` is added. Set the `CARGO` environment variable to use a specific `cargo` binary.
 
 To learn about the application specification file, see [Cell and Application Configuration](../01_configuration/02_cell-and-application-configuration.md).
 

@@ -2,7 +2,7 @@
 //! runtime's id and effective tag set.
 
 use claims::assert_ok;
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -17,7 +17,7 @@ pub async fn cell_reads_runtime_id_and_tags() {
     // Arrange — build the runtime-tags cell, start a Linux swarm, subscribe to
     // the event it reports on.
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-runtime-tags-logic",
         "runtime_tags",
         &swarm,

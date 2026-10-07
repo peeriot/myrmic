@@ -11,7 +11,7 @@ use claims::{assert_err, assert_ok};
 use module_examples_common::Temperature;
 use sorg_client::Client;
 use sorg_common::{CellFailureKind, DeploymentError, RequirementTags};
-use sorg_tests::{build_and_register_cell_class, swarm_config};
+use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -30,7 +30,7 @@ const NO_INIT_CLASS: &str = "no_init.wasm";
 pub async fn deploy_without_stored_state_runs_init() {
     // Arrange — build room cell (registers class), start swarm, no create_instance
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
     let mut temp_q = test_app.subscribe_cell_event("temperature").await;
 
@@ -56,7 +56,7 @@ pub async fn deploy_without_stored_state_runs_init() {
 pub async fn deploy_with_init_arguments_seeds_state() {
     // Arrange — build room cell (registers class), start swarm
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
     let mut temp_q = test_app.subscribe_cell_event("temperature").await;
     let client = Client::new(test_app.session().clone());
@@ -95,7 +95,7 @@ pub async fn deploy_with_init_arguments_seeds_state() {
 pub async fn deploy_without_stored_state_init_fails() {
     // Arrange — build failing-init cell (registers class), start swarm
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-failing-init-logic",
         "failing_init",
         &swarm,
@@ -137,7 +137,7 @@ pub async fn deploy_without_stored_state_init_fails() {
 pub async fn redeploy_preserves_state_and_skips_init() {
     // Arrange — build room cell, start swarm
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
+    register_fixture_class("../../tests/fixtures/cell-room-logic", "room", &swarm).await;
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
 
     // First deploy — init runs, temp=20
@@ -174,7 +174,7 @@ pub async fn redeploy_preserves_state_and_skips_init() {
 pub async fn redeploy_after_failed_init_retries_init() {
     // Arrange — build failing-init cell, start swarm
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class(
+    register_fixture_class(
         "../../tests/fixtures/cell-failing-init-logic",
         "failing_init",
         &swarm,
@@ -232,8 +232,7 @@ pub async fn redeploy_after_failed_init_retries_init() {
 pub async fn deploy_without_stored_state_no_init() {
     // Arrange — build no-init cell (registers class), start swarm
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
-    build_and_register_cell_class("../../tests/fixtures/cell-no-init-logic", "no_init", &swarm)
-        .await;
+    register_fixture_class("../../tests/fixtures/cell-no-init-logic", "no_init", &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
     // Act — deploy the cell (no pre-stored state, no init)
