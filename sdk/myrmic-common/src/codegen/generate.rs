@@ -402,7 +402,7 @@ fn json_ref_type(root: &Ts, name: &str, type_idents: &BTreeMap<String, Ts>) -> T
 /// become event payload types (implementing `myrmic_sdk::CellEvent`).
 pub fn mqtt_bridge(root: &Ts, api: UserMqttBridge) -> Result<Ts, String> {
     let cell_api = convert_mqtt(api)?;
-    Ok(cell_api_tokens(root, &cell_api, Vec::new()))
+    Ok(cell_api_tokens(root, &cell_api))
 }
 
 /// Modbus `poll` entries become event payload types (implementing
@@ -412,13 +412,39 @@ pub fn mqtt_bridge(root: &Ts, api: UserMqttBridge) -> Result<Ts, String> {
 ///
 /// `read` entries become `<id>` client methods taking a `Callback`, like HTTP
 /// endpoints; see [`modbus_read`] for the reply the callback receives.
-pub fn modbus_bridge(root: &Ts, mut api: UserModbusBridge) -> Result<Ts, String> {
-    let reads = std::mem::take(&mut api.read)
+pub fn modbus_bridge(root: &Ts, api: UserModbusBridge) -> Result<Ts, String> {
+    let reads = api
+        .read
         .iter()
         .map(|read| modbus_read(root, read))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
+    let (read_defs, mut methods): (Vec<_>, Vec<_>) = reads.into_iter().unzip();
     let cell_api = convert_modbus(api)?;
-    Ok(cell_api_tokens(root, &cell_api, reads))
+
+    let mut type_defs = Vec::new();
+    if let Some(types) = &cell_api.types {
+        for (name, ty) in types {
+            type_defs.push(struct_def(root, name, ty, /* event */ None));
+        }
+    }
+
+    let mut event_defs = Vec::new();
+    for (name, event) in &cell_api.events {
+        event_defs.push(struct_def(root, name, event.as_ref(), Some(name)));
+    }
+
+    for (name, cmd) in &cell_api.commands {
+        methods.extend(command_methods(root, name, cmd));
+    }
+
+    let client = client_struct(&cell_api.cell, &methods);
+
+    Ok(quote! {
+        #(#type_defs)*
+        #(#event_defs)*
+        #(#read_defs)*
+        #client
+    })
 }
 
 /// The types and the client method for one Modbus `read` entry `<id>`:
@@ -553,12 +579,8 @@ fn client_struct(bridge_name: &str, methods: &[Ts]) -> Ts {
 // MQTT: template-placeholder -> cell_api -> tokens
 // ---------------------------------------------------------------------------
 
-/// Generates the struct/event types and client for a `CellApi` (MQTT and
-/// Modbus path), plus `extra` pairs of type definitions and client method for
-/// what the `CellApi` model has no shape for.
-fn cell_api_tokens(root: &Ts, api: &CellApi, extra: Vec<(Ts, Ts)>) -> Ts {
-    let (extra_defs, mut methods): (Vec<_>, Vec<_>) = extra.into_iter().unzip();
-
+/// Generates the struct/event types and client for a `CellApi` (MQTT path).
+fn cell_api_tokens(root: &Ts, api: &CellApi) -> Ts {
     let mut type_defs = Vec::new();
     if let Some(types) = &api.types {
         for (name, ty) in types {
@@ -571,6 +593,7 @@ fn cell_api_tokens(root: &Ts, api: &CellApi, extra: Vec<(Ts, Ts)>) -> Ts {
         event_defs.push(struct_def(root, name, event.as_ref(), Some(name)));
     }
 
+    let mut methods = Vec::new();
     for (name, cmd) in &api.commands {
         methods.extend(command_methods(root, name, cmd));
     }
@@ -580,7 +603,6 @@ fn cell_api_tokens(root: &Ts, api: &CellApi, extra: Vec<(Ts, Ts)>) -> Ts {
     quote! {
         #(#type_defs)*
         #(#event_defs)*
-        #(#extra_defs)*
         #client
     }
 }
