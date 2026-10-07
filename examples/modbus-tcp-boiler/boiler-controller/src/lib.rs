@@ -5,7 +5,8 @@
 //! - the setpoint is read from the boiler once, when the first reading arrives,
 //! - the setpoint is changed through this cell, with `set_setpoint`: it writes
 //!   the new value to the boiler and regulates to it from then on,
-//! - the burner is switched by writing its coil.
+//! - the burner is switched by writing its coil, and its state arrives as the
+//!   polled `burner` event whenever it changes.
 #![no_std]
 
 use myrmic_sdk::{Callback, Metadata, Result, db::state::State};
@@ -21,6 +22,7 @@ const HYSTERESIS: f32 = 2.0;
 
 /// The setpoint the controller regulates to; `None` until it is known.
 const SETPOINT_STATE: State<Option<i16>> = State::new_const("setpoint");
+/// Whether the burner burns, as the boiler last reported it; unset until it has.
 const BURNING_STATE: State<bool> = State::new_const("burning");
 
 /// A new setpoint, in °C.
@@ -37,19 +39,20 @@ fn boiler_temperature(_md: Metadata, event: BoilerTemperature) -> Result<()> {
     };
 
     let setpoint = f32::from(setpoint);
-    let burning = BURNING_STATE.load()?.unwrap_or_default();
 
     let burn = if event.celsius < setpoint - HYSTERESIS {
         true
     } else if event.celsius > setpoint + HYSTERESIS {
         false
     } else {
-        burning
+        // Within the hysteresis the burner stays as it is.
+        return Ok(());
     };
 
-    if burn != burning {
+    // Not saved here: the `burner` event reports what the boiler made of the
+    // write. Until it does, a later reading may switch the burner once more.
+    if BURNING_STATE.load()? != Some(burn) {
         BOILER_CLIENT.burner_on(BurnerOn { on: burn })?;
-        BURNING_STATE.save(&burn)?;
         let _ = myrmic_sdk::info!(
             "burner {} at {:.1} °C",
             if burn { "on" } else { "off" },
@@ -59,6 +62,13 @@ fn boiler_temperature(_md: Metadata, event: BoilerTemperature) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Takes the burner's state from the boiler, so that it cannot drift from what
+/// the controller believes: a write may fail, or someone else may switch it.
+#[myrmic_sdk::evt]
+fn burner(_md: Metadata, event: Burner) -> Result<()> {
+    BURNING_STATE.save(&event.on)
 }
 
 /// Changes the setpoint: writes it to the boiler, and regulates to it from the
