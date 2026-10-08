@@ -29,7 +29,9 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// connection attempts are accepted and immediately dropped when the cap is
 /// reached (S1: no unbounded spawn growth / FD exhaustion).  A per-connection
 /// handshake timeout of `HANDSHAKE_TIMEOUT_SECS` seconds defends against
-/// slow-loris attacks.
+/// slow-loris attacks; request reads AND response writes are bounded by
+/// `REQUEST_TIMEOUT_SECS`, so a peer that stalls either direction of the
+/// exchange releases its connection slot.
 pub async fn serve(
     listener: UnixListener,
     store: Arc<dyn TapStore>,
@@ -60,20 +62,25 @@ pub async fn serve(
     }
 }
 
-async fn handle_connection(
-    mut stream: tokio::net::UnixStream,
+/// Generic over the stream so tests can drive the handler over an in-memory
+/// pipe and exercise stall scenarios deterministically.
+pub(crate) async fn handle_connection<S>(
+    stream: S,
     store: Arc<dyn TapStore>,
     outlets: Option<Arc<dyn OutletStore>>,
-) -> Result<(), crate::framing::FrameError> {
+) -> Result<(), crate::framing::FrameError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     use tokio::io::AsyncWriteExt;
 
     use crate::PROTOCOL_VERSION;
-    use crate::framing::{decode_frame, read_frame, write_frame};
+    use crate::framing::{decode_frame, read_frame};
     use crate::types::{Request, Response};
 
     // ── Handshake ─────────────────────────────────────────────────────────
     // Apply a timeout to the Hello read to defend against slow-loris (S1).
-    let (mut reader, mut writer) = stream.split();
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let frame = tokio::time::timeout(
         tokio::time::Duration::from_secs(HANDSHAKE_TIMEOUT_SECS),
         read_frame(&mut reader),
@@ -85,19 +92,21 @@ async fn handle_connection(
     match req {
         Request::Hello { protocol_version } => {
             if protocol_version == PROTOCOL_VERSION {
-                write_frame(
+                write_frame_bounded(
                     &mut writer,
                     &Response::HelloOk {
                         version: PROTOCOL_VERSION,
                     },
+                    HANDSHAKE_TIMEOUT_SECS,
                 )
                 .await?;
             } else {
-                write_frame(
+                write_frame_bounded(
                     &mut writer,
                     &Response::HelloRejected {
                         supported_version: PROTOCOL_VERSION,
                     },
+                    HANDSHAKE_TIMEOUT_SECS,
                 )
                 .await?;
                 // Flush and close.
@@ -118,7 +127,12 @@ async fn handle_connection(
 
     // ── Request loop ──────────────────────────────────────────────────────
     // Apply a per-request idle read timeout (S1): a client that completes the
-    // Hello but then stalls mid-frame would otherwise hold a permit indefinitely.
+    // Hello but then stalls mid-frame would otherwise hold a permit
+    // indefinitely.  The read bound alone cannot defend the slot, though: a
+    // client that keeps pipelining requests while never reading responses
+    // keeps the read side healthy, and an unbounded response write would then
+    // park this task — permit held — for as long as the peer's buffers stay
+    // full.  The response write is therefore bounded by the same value.
     loop {
         let frame = tokio::time::timeout(
             tokio::time::Duration::from_secs(REQUEST_TIMEOUT_SECS),
@@ -129,8 +143,33 @@ async fn handle_connection(
         let req: Request = decode_frame(&frame)?;
 
         let resp = dispatch_request(req, &*store, outlets.as_deref());
-        write_frame(&mut writer, &resp).await?;
+        write_frame_bounded(&mut writer, &resp, REQUEST_TIMEOUT_SECS).await?;
     }
+}
+
+/// Write a frame under `bound_secs`, failing closed on expiry.
+///
+/// A peer that cannot accept a response within the bound is
+/// indistinguishable from a dead one, and an unbounded write would park the
+/// connection task — and its [`MAX_CONNECTIONS`] permit — forever, a wedge
+/// the read timeout can never reach because pipelined requests keep the read
+/// side healthy.  Expiry drops the connection like any other frame error.
+async fn write_frame_bounded<W, T>(
+    writer: &mut W,
+    value: &T,
+    bound_secs: u64,
+) -> Result<(), crate::framing::FrameError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+    T: serde::Serialize,
+{
+    tokio::time::timeout(
+        tokio::time::Duration::from_secs(bound_secs),
+        crate::framing::write_frame(writer, value),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "response write timeout"))??;
+    Ok(())
 }
 
 fn dispatch_request(
