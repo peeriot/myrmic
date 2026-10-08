@@ -29,7 +29,7 @@ pub struct Ctx {
     /// `224.0.0.224:7446`, e.g. to keep a set of runtimes apart from the
     /// others on the host. The runtimes must scout on the same group
     /// (`zenoh.scouting.multicast.address` in their config). Without this
-    /// flag, `MYRMIC_MULTICAST_GROUP` sets the group.
+    /// flag, `DEFAULT_MYRMIC_MULTICAST_GROUP` sets the group.
     #[clap(
         long,
         value_name = "ADDRESS:PORT",

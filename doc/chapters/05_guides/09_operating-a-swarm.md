@@ -28,7 +28,7 @@ myrmic --connect tcp/192.0.2.10:7447 cells status
 
 The runtime must be configured to listen on that reachable endpoint under its `zenoh` configuration.
 
-To keep a set of runtimes on one host apart from the others, for example for testing, give them their own multicast group under `zenoh.scouting.multicast.address` in their configuration, and point the CLI at it with `--multicast-group` (or `MYRMIC_MULTICAST_GROUP`):
+To keep a set of runtimes on one host apart from the others, for example for testing, give them their own multicast group under `zenoh.scouting.multicast.address` in their configuration, and point the CLI at it with `--multicast-group` (or `DEFAULT_MYRMIC_MULTICAST_GROUP`):
 
 ```bash
 myrmic --multicast-group 239.1.2.3:7446 cells status

@@ -91,7 +91,7 @@ impl Myrmic<LocalBinary> {
     /// it sees no other runtime, so tests using it can run in parallel.
     ///
     /// The shim gets its own state directories and its own multicast group, on which its
-    /// runtimes scout and every CLI call (through `MYRMIC_MULTICAST_GROUP`) and
+    /// runtimes scout and every CLI call (through `DEFAULT_MYRMIC_MULTICAST_GROUP`) and
     /// [`Self::connect_session`] discover them, the same way as on the default group.
     /// [`RuntimeBuilder::config`] is not available, the shim generates the config itself.
     pub fn local_isolated() -> Self {
@@ -353,15 +353,16 @@ where
 
     /// `program args` as a host command from the backend, inside the isolation, if any: its
     /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, and its multicast group as
-    /// `MYRMIC_MULTICAST_GROUP`, which the CLI takes like `--multicast-group`. Every program the shim starts goes
-    /// through here, so the CLI inherits the isolation also when it is exec'd by `sh`.
+    /// `DEFAULT_MYRMIC_MULTICAST_GROUP`, which the CLI takes like `--multicast-group`. Every
+    /// program the shim starts goes through here, so the CLI inherits the isolation also when
+    /// it is exec'd by `sh`.
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut command = self.backend.command(program, args);
         if let Some(isolation) = &self.isolation {
             command
                 .env("XDG_DATA_HOME", isolation.dir.path().join("data"))
                 .env("XDG_RUNTIME_DIR", isolation.dir.path().join("run"))
-                .env("MYRMIC_MULTICAST_GROUP", &isolation.multicast_group);
+                .env("DEFAULT_MYRMIC_MULTICAST_GROUP", &isolation.multicast_group);
         }
         command
     }

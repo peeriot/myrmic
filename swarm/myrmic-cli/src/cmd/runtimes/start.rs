@@ -179,9 +179,8 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
 /// How long a detached start waits for the daemon's status before killing it. Longer than the
 /// swarm's own plugin startup timeout, so a daemon stuck there reports that itself; the margin
 /// covers starting zenoh, which that timeout doesn't.
-const STARTUP_TIMEOUT: Duration = swarm::PLUGIN_STARTUP_TIMEOUT
-    .checked_add(Duration::from_secs(10))
-    .expect("the startup timeout fits a Duration");
+const STARTUP_TIMEOUT: Duration =
+    swarm::PLUGIN_STARTUP_TIMEOUT.saturating_add(Duration::from_secs(10));
 
 /// The first byte of the status on the readiness pipe; a failure's message follows it.
 const STATUS_READY: u8 = 0;

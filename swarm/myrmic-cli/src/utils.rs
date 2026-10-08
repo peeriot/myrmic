@@ -126,15 +126,16 @@ impl Ctx {
     }
 }
 
-/// The multicast group in `MYRMIC_MULTICAST_GROUP`, if set: the default for `--multicast-group`.
+/// The multicast group in `DEFAULT_MYRMIC_MULTICAST_GROUP`, if set: the default for
+/// `--multicast-group`.
 fn multicast_group_from_env() -> anyhow::Result<Option<std::net::SocketAddr>> {
-    match std::env::var("MYRMIC_MULTICAST_GROUP") {
+    match std::env::var("DEFAULT_MYRMIC_MULTICAST_GROUP") {
         Ok(group) => group
             .parse()
             .map(Some)
-            .with_context(|| format!("invalid MYRMIC_MULTICAST_GROUP {group:?}")),
+            .with_context(|| format!("invalid DEFAULT_MYRMIC_MULTICAST_GROUP {group:?}")),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(err) => Err(err).context("invalid MYRMIC_MULTICAST_GROUP"),
+        Err(err) => Err(err).context("invalid DEFAULT_MYRMIC_MULTICAST_GROUP"),
     }
 }
 
