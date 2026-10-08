@@ -218,7 +218,8 @@ impl ChipBackend for Esp32Backend {
                 });
                 new_params.push(quote! { #param_ident: #pin_ty, });
                 constructions.push(quote! {
-                    let #field_ident = esp_hal::gpio::Flex::new(#param_ident);
+                    let mut #field_ident = esp_hal::gpio::Flex::new(#param_ident);
+                    #field_ident.set_input_enable(true);
                 });
                 field_inits.push(quote! { #field_ident, });
                 macro_args.push(quote! { $p.#gpio_field, });
