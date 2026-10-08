@@ -1,0 +1,33 @@
+id: adxl345
+category: sensor-drivers
+description: >
+  Analog Devices ADXL345 3-axis digital accelerometer over I2C.
+  Reports acceleration on the X, Y, and Z axes.
+
+requires:
+  buses:
+    - transport: i2c
+
+outputs:
+  - name: x
+    type: f32
+    unit: g
+  - name: y
+    type: f32
+    unit: g
+  - name: z
+    type: f32
+    unit: g
+
+config_schema:
+  i2c_addr:
+    scope: hardware
+    rust_type: u8
+    default: 0x53
+    description: "I2C address of the ADXL345"
+
+  sample_interval_ms:
+    scope: application
+    rust_type: u64
+    default: 20
+    description: "Polling interval in milliseconds"
