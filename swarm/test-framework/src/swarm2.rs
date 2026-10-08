@@ -198,7 +198,7 @@ where
     /// it has exactly one holder.
     pub async fn scope_holder(&self, scope: &Scope) -> S {
         let holders =
-            db_client::replica_v1::Client::new(&self.session, Subject::Scope(scope.clone()))
+            db_client::replica_v1::Client::new(&self.session, &Subject::Scope(scope.clone()))
                 .expect("failed to open a db replica client")
                 .locate(scope, None)
                 .await
