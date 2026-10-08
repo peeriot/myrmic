@@ -24,6 +24,8 @@ pub mod codegen;
 pub mod db;
 #[cfg(feature = "db")]
 pub mod gateway;
+#[cfg(feature = "human-duration")]
+pub mod human_duration;
 
 /// Re-exports `myrmic-signal-layer-types` as `signal_layer`, making it part of
 /// this crate's public API: a consumer mixing two `myrmic-common` majors built
@@ -31,5 +33,4 @@ pub mod gateway;
 /// mismatch.
 pub use signal_layer_types as signal_layer;
 
-pub mod human_duration;
 pub mod types;
