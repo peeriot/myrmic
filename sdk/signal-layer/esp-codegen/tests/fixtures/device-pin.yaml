@@ -1,0 +1,19 @@
+# Fixture (d): a source whose device wires an optional pin.
+# CCS811 with its `nint` line → exercises the device-pin construction in the
+# board peripherals and the pin parameter of the source task.
+# Used by esp-codegen tests; see tests/golden.rs. No expected file is kept.
+pipeline:
+  id: golden-device-pin
+
+sources:
+  - id: air_quality
+    device: ccs811
+    config:
+      sample_interval_ms: 10000
+      meas_mode: Every10s
+
+taps:
+  - name: eco2
+    kind: retained
+    type: f32
+    source: air_quality.eco2
