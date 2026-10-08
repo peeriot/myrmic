@@ -79,6 +79,11 @@ impl ModbusBridgeHandle {
             let publish = move |event: String, payload: Vec<u8>| {
                 let sorg = sorg.clone();
                 async move {
+                    tracing::debug!(
+                        event,
+                        payload = %String::from_utf8_lossy(&payload),
+                        "modbus event"
+                    );
                     if let Err(err) = sorg.publish_cell_event(&event, Some(payload)).await {
                         tracing::warn!("unable to publish modbus event `{event}`: {err}");
                     }

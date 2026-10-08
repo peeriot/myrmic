@@ -108,12 +108,16 @@ async fn run(server: ModbusServerAddress, timeout: Duration, mut jobs: mpsc::Rec
         // A requester that gave up waiting has dropped its receiver; that is fine.
         match job {
             Job::Read(read, reply) => {
-                let result = within(timeout, execute_read(&server, &mut context, read)).await;
+                let result =
+                    within(timeout, execute_read(&server, &mut context, read.clone())).await;
+                tracing::debug!(?read, ?result, "modbus read");
                 forget_if_broken(&mut context, &result);
                 let _ = reply.send(result);
             }
             Job::Write(write, reply) => {
-                let result = within(timeout, execute_write(&server, &mut context, write)).await;
+                let result =
+                    within(timeout, execute_write(&server, &mut context, write.clone())).await;
+                tracing::debug!(?write, ?result, "modbus write");
                 forget_if_broken(&mut context, &result);
                 let _ = reply.send(result);
             }
