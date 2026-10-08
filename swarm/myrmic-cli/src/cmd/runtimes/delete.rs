@@ -72,10 +72,17 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
                 );
                 wait_for_exit(&pid, p)?;
             }
-            SignalOutcome::Stale(p) => {
+            SignalOutcome::Unreachable => {
+                anyhow::bail!(
+                    "runtime {:?} is running in another pid namespace; stop it from there",
+                    pid.file_stem()
+                );
+            }
+            SignalOutcome::Stale => {
                 crate::warn!(
                     ctx,
-                    "no process with pid {p}; removing stale pid file {}",
+                    "runtime {:?} is not running; removing stale pid file {}",
+                    pid.file_stem(),
                     pid.path.display()
                 );
                 if let Err(err) = pid.remove() {
@@ -101,11 +108,11 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
 
 /// Wait for a signalled runtime's process to exit, then remove its PID file.
 ///
-/// Waits on the process, not on the file: the runtime removes its PID file as
-/// soon as it receives the SIGTERM, before it has shut down and released its
-/// resources (e.g. its listen port). A SIGTERM can also arrive during daemon
-/// startup before the runtime installs its shutdown handler; in that case the
-/// process exits without cleaning up the file.
+/// Waits on the process, not on the lock: the runtime lets go of its PID file
+/// as soon as it receives the SIGTERM, before it has shut down and released
+/// its resources (e.g. its listen port). A SIGTERM can also arrive during
+/// daemon startup before the runtime installs its shutdown handler; in that
+/// case the process exits without cleaning up the file.
 fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     while process_is_alive(process) {
@@ -118,10 +125,9 @@ fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    if let Err(err) = pid.remove()
-        && err.kind() != std::io::ErrorKind::NotFound
-    {
-        return Err(anyhow::Error::new(err));
+    match pid.status() {
+        PidStatus::Stale => pid.remove(),
+        // Removed on shutdown, or taken over by a runtime started since.
+        PidStatus::Absent | PidStatus::Running(_) | PidStatus::Unreachable => Ok(()),
     }
-    Ok(())
 }
