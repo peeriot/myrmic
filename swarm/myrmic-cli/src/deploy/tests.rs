@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use cell_protocol::Sri;
 use sorg_common::{
-    BodyTemplate, CellConfig, CellDeployment, DeployRequest, HttpBridgeApi, MqttBridge,
-    RequirementTags, RestartPolicy, RestartType, WireHttpEndpoint, WireHttpRequestTemplate,
-    WireHttpResponseVariant, WireMqttEgress, WireMqttIngress,
+    BodyTemplate, CellConfig, CellDeployment, DeployRequest, HttpBridgeApi, ModbusBridge,
+    MqttBridge, RequirementTags, RestartPolicy, RestartType, WireHttpEndpoint,
+    WireHttpRequestTemplate, WireHttpResponseVariant, WireMqttEgress, WireMqttIngress,
 };
 
 use crate::args::Ctx;
@@ -98,6 +98,7 @@ fn build_deploy_request_matches_integration_test() {
                 )]),
             }],
         }],
+        modbus_bridges: vec![],
     };
 
     let expected = DeployRequest::new(vec![
@@ -198,6 +199,7 @@ fn override_restart_replaces_every_instance_policy() {
         classes: HashMap::new(),
         mqtt_bridges: vec![],
         http_bridges: vec![],
+        modbus_bridges: vec![],
     };
 
     let policy = RestartTypeName::Always.to_policy();
@@ -230,10 +232,47 @@ fn undeclared_restart_deploys_as_never() {
         )]),
         mqtt_bridges: vec![],
         http_bridges: vec![],
+        modbus_bridges: vec![],
     };
 
     let request = build_deploy_request(&info).expect("build deploy request");
     assert_eq!(request.cells[0].restart, RestartPolicy::default());
+}
+
+/// A Modbus bridge of an app deploys like the other bridges: as a cell of the
+/// app, addressed by the SRI of its name, and placed on a Linux runtime.
+#[test]
+fn modbus_bridge_deploys_as_a_linux_cell_of_the_app() {
+    let bridge = ModbusBridge {
+        cell_name: "plc".to_owned(),
+        host: "plc.local".to_owned(),
+        port: 502,
+        unit_id: None,
+        timeout: None,
+        poll: vec![],
+        read: vec![],
+        write: vec![],
+    };
+    let info = AppInfo {
+        name: "plant".to_owned(),
+        instances: vec![],
+        classes: HashMap::new(),
+        mqtt_bridges: vec![],
+        http_bridges: vec![],
+        modbus_bridges: vec![bridge.clone()],
+    };
+
+    let expected = DeployRequest::new(vec![
+        CellDeployment::new(
+            Sri::from_uuid(cell_protocol::sri_of_path("plc").unwrap()),
+            CellConfig::ModbusBridge(bridge),
+        )
+        .with_tags(RequirementTags::new(vec!["linux"]))
+        .with_app(Some("plant".to_owned())),
+    ]);
+
+    let request = build_deploy_request(&info).expect("build deploy request");
+    assert_eq!(request, expected);
 }
 
 /// The override message spells out the bounds, so a same-trigger override does

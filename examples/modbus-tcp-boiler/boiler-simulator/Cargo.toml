@@ -1,0 +1,21 @@
+[package]
+name = "boiler-simulator"
+version.workspace = true
+edition.workspace = true
+license = "MIT-0"
+authors = ["slowtec GmbH <post@slowtec.de>"]
+publish.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+env_logger = "0.11.11"
+log = "0.4.34"
+
+[dependencies.tokio]
+version = "1.53.1"
+features = ["macros", "net", "rt-multi-thread", "time"]
+
+[dependencies.tokio-modbus]
+version = "0.17.0"
+default-features = false
+features = ["tcp-server"]

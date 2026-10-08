@@ -1,0 +1,30 @@
+name: http
+base_url: http://localhost:10000
+types:
+  definitions:
+    SendMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    TestResponse:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+endpoints:
+  - id: send_message
+    request:
+      method: POST
+      path: /messages
+      body: "${json:SendMessageRequest}"
+    response:
+      200: "${json:TestResponse}"
+  - id: test
+    request:
+      method: GET
+      path: /test
+    response:
+      200: "${json:TestResponse}"

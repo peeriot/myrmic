@@ -400,3 +400,35 @@ fn repo_path_resolves_to_the_known_crate_dir() {
 fn cargo_dep_rejects_a_missing_path() {
     assert!(Repo::from_str("does/not/exist").is_err());
 }
+
+#[test]
+fn bridge_input_tells_the_three_bridge_kinds_apart() {
+    // `BridgeInput` tries every spec type and panics if two of them accept the
+    // same file, so each kind must parse as itself and only as itself.
+    let mqtt = "{ name: m, broker_url: 'mqtt://b', ingress: [], egress: [] }";
+    let http = "{ name: h, base_url: 'http://h', endpoints: [] }";
+    let modbus = "{ name: p, host: plc }";
+
+    assert!(matches!(
+        BridgeInput::from_str(mqtt).unwrap(),
+        BridgeInput::Mqtt(_)
+    ));
+    assert!(matches!(
+        BridgeInput::from_str(http).unwrap(),
+        BridgeInput::Http(_)
+    ));
+    assert!(matches!(
+        BridgeInput::from_str(modbus).unwrap(),
+        BridgeInput::Modbus(_)
+    ));
+}
+
+#[test]
+fn deploy_input_takes_a_modbus_bridge_spec() {
+    let modbus = "{ name: p, host: plc }";
+
+    assert!(matches!(
+        DeployInput::from_str(modbus).unwrap(),
+        DeployInput::Modbus(_)
+    ));
+}

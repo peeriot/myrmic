@@ -1,0 +1,24 @@
+name: plc-bridge
+host: 192.168.1.50
+port: 502
+unit_id: 1
+timeout: 1s
+poll:
+  - id: boiler_temperature
+    register: input
+    address: 100
+    value: "${f32:celsius}"
+    byte_order: cdab
+    interval: 1s
+    on_change: true
+read:
+  - id: read_setpoint
+    register: holding
+    address: 200
+    value: "${i16:setpoint}"
+write:
+  - id: pump_on
+    register: coil
+    address: 5
+    value: "${bool:on}"
+    unit_id: 2

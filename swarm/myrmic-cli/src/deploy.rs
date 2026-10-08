@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use myrmic_build::firmware;
-use sorg_common::{HttpBridgeApi, MqttBridge, RequirementTags, RestartPolicy};
+use sorg_common::{HttpBridgeApi, ModbusBridge, MqttBridge, RequirementTags, RestartPolicy};
 
 use crate::args::Ctx;
 use crate::{build, models, nest};
@@ -54,6 +54,24 @@ pub async fn deploy_mqtt_bridge(
             .with_context(|| format!("unable to deploy mqtt bridge '{}'", bridge.cell_name))?;
         crate::info!(ctx, "deployed {} (sri {sri})", bridge.cell_name);
     }
+    Ok(())
+}
+
+pub async fn deploy_modbus_bridge(
+    ctx: Ctx,
+    session: &zenoh::Session,
+    bridge: ModbusBridge,
+    tags: RequirementTags,
+) -> anyhow::Result<()> {
+    let tags = ensure_linux_tag(tags);
+    let sorg = ctx.sorg(session.clone());
+    let sri = cell_protocol::Sri::of_path(&bridge.cell_name)
+        .map_err(|e| anyhow::anyhow!("invalid bridge name '{}': {e}", bridge.cell_name))?;
+    let name = bridge.cell_name.clone();
+    sorg.deploy_modbus_bridge(sri, bridge, tags)
+        .await
+        .with_context(|| format!("unable to deploy modbus bridge '{name}'"))?;
+    crate::info!(ctx, "deployed {name} (sri {sri})");
     Ok(())
 }
 
@@ -445,6 +463,17 @@ pub fn build_deploy_request(info: &build::AppInfo) -> anyhow::Result<sorg_common
             sorg_common::CellDeployment::new(
                 derive(&api.cell_name)?,
                 sorg_common::CellConfig::HttpBridge(api.clone()),
+            )
+            .with_tags(linux_tag.clone())
+            .with_app(Some(app.clone())),
+        );
+    }
+
+    for bridge in &info.modbus_bridges {
+        cells.push(
+            sorg_common::CellDeployment::new(
+                derive(&bridge.cell_name)?,
+                sorg_common::CellConfig::ModbusBridge(bridge.clone()),
             )
             .with_tags(linux_tag.clone())
             .with_app(Some(app.clone())),

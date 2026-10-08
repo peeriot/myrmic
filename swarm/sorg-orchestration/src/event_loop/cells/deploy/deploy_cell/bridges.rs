@@ -1,4 +1,4 @@
-//! Native deploy of HTTP/MQTT bridge cells.
+//! Native deploy of HTTP/MQTT/Modbus bridge cells.
 //!
 //! Bridge cells only need a zenoh session and a mailbox listener, not a WASM execution
 //! runtime, so they are spawned directly on the orchestrator: no manifest, no operator
@@ -13,10 +13,11 @@ use std::time::Duration;
 
 use cell_protocol::{PlacementKind, Sri};
 use sorg_common::{
-    HttpBridgeApi, HttpBridgeRecord, MqttBridge, MqttBridgeDef, MqttBridgeRecord,
+    HttpBridgeApi, HttpBridgeRecord, ModbusBridge, MqttBridge, MqttBridgeDef, MqttBridgeRecord,
     MqttBrokerAddress, MqttConnection, bail, custom_err,
 };
 use sorg_execution::bridge::http::HttpBridgeHandle;
+use sorg_execution::bridge::modbus::ModbusBridgeHandle;
 use sorg_execution::bridge::mqtt::MqttBridgeHandle;
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -110,6 +111,27 @@ impl Runtime {
             .init()
             .await
             .map_err(|err| custom_err!("failed to spawn mqtt bridge '{sri}': {err}"))?;
+
+        Ok(register_bridge_cell(sri, async move { handle.run().await }))
+    }
+
+    pub(super) async fn deploy_modbus_bridge(
+        &self,
+        sri: &Sri,
+        bridge: ModbusBridge,
+    ) -> Result<PlacementKind> {
+        // The bridge cell is named by the SRI it is deployed under, whatever the
+        // deploy request called it.
+        let bridge = ModbusBridge {
+            cell_name: sri.to_string(),
+            ..bridge
+        };
+
+        let mut handle = ModbusBridgeHandle::new(bridge, &self.session, MAILBOX_POLL_INTERVAL);
+        handle
+            .init()
+            .await
+            .map_err(|err| custom_err!("failed to spawn modbus bridge '{sri}': {err}"))?;
 
         Ok(register_bridge_cell(sri, async move { handle.run().await }))
     }
