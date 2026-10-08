@@ -805,7 +805,7 @@ async fn handoff_timing() {
 
     let client = Client::new(&source);
     let scope = bench_scope();
-    let replica = db_client::replica_v1::Client::new(&source, Subject::Scope(scope.clone()))
+    let replica = db_client::replica_v1::Client::new(&source, &Subject::Scope(scope.clone()))
         .expect("unable to create replica client");
 
     write_entry_on(&client, source_id, &entry_for(&source)).await;
@@ -927,7 +927,7 @@ async fn a_drain_being_pulled_from_does_not_escalate() {
 
     let client = Client::new(&source);
     let scope = bench_scope();
-    let replica = db_client::replica_v1::Client::new(&source, Subject::Scope(scope.clone()))
+    let replica = db_client::replica_v1::Client::new(&source, &Subject::Scope(scope.clone()))
         .expect("unable to create replica client");
 
     write_entry_on(&client, source_id, &entry_for(&source)).await;

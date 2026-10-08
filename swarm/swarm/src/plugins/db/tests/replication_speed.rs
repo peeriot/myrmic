@@ -240,7 +240,7 @@ async fn measure_catch_up(nodes: &[Node], client: &Client, scope: &Scope) {
         value_bytes: 256,
         rows_per_tx: 500,
     };
-    let replica = db_client::replica_v1::Client::new(&nodes[0].0, Subject::Scope(scope.clone()))
+    let replica = db_client::replica_v1::Client::new(&nodes[0].0, &Subject::Scope(scope.clone()))
         .expect("unable to create replica client");
 
     replicate_onto(client, scope, &[&nodes[0].0, &nodes[1].0]).await;
@@ -367,7 +367,7 @@ async fn replication_speed() {
     println!("== replication speed ({NODES} nodes) ==");
     measure_catch_up(&nodes, &client, &scope).await;
 
-    let replica = db_client::replica_v1::Client::new(&nodes[0].0, Subject::Scope(scope.clone()))
+    let replica = db_client::replica_v1::Client::new(&nodes[0].0, &Subject::Scope(scope.clone()))
         .expect("unable to create replica client");
     let (events_tx, events) = flume::unbounded();
     let _sub = client

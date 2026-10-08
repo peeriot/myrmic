@@ -76,7 +76,12 @@ impl StoreContext {
 
             self.rearm_offload(scope);
         } else {
-            self.start_offload(scope.clone(), super::OffloadKind::Sink);
+            self.start_offload(scope.clone(), super::OffloadKind::Sink)
+                .map_err(|err| {
+                    tracing::warn!("unable to hold scope {scope}: {err}");
+
+                    format!("unable to hold scope {scope}")
+                })?;
         }
 
         Ok(())
@@ -113,8 +118,8 @@ impl StoreContext {
 
             if self.store.is_offloading(&scope) {
                 self.nudge_offload(&scope);
-            } else {
-                self.start_offload(scope, super::OffloadKind::Hidden);
+            } else if let Err(err) = self.start_offload(scope.clone(), super::OffloadKind::Hidden) {
+                tracing::warn!("unable to offload {scope}: {err}");
             }
         }
 

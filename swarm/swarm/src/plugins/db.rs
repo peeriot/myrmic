@@ -3,6 +3,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
+use zenoh::key_expr::KeyExpr;
+use zenoh::pubsub::Subscriber;
+use zenoh::query::Queryable;
 use zenoh::{Result as ZResult, Session};
 
 use config::{Config, StoreConfig};
@@ -11,6 +14,7 @@ use crate::plugins::MyrmicCtx;
 use db::replication::AnnounceReason;
 use db::store::TransactionOptions;
 use db::store::fjall::RemoteTx;
+use db_client::replica_v1::Client as ReplicaClient;
 use db_commons::models;
 
 mod apply;
@@ -71,7 +75,7 @@ impl crate::plugins::MyrmicPlugin for Plugin {
         handle.spawn(liveliness::watch(context.clone()));
 
         for subject in replica_sets::unconditional() {
-            context.start_replication(subject).await;
+            context.start_replication(subject).await?;
         }
 
         handle.spawn(replica_sets::run(
@@ -95,7 +99,10 @@ impl crate::plugins::MyrmicPlugin for Plugin {
                     }
 
                     for scope in stray_scopes(&context).await {
-                        context.start_offload(scope, OffloadKind::Hidden);
+                        if let Err(err) = context.start_offload(scope.clone(), OffloadKind::Hidden)
+                        {
+                            tracing::warn!("unable to offload {scope}: {err}");
+                        }
                     }
                 }
             }
@@ -159,6 +166,8 @@ fn build_store(config: StoreConfig, hlc: Arc<uhlc::HLC>) -> db::store::fjall::St
 /// Tables an open transaction has inserted into, carried as the
 /// transaction's metadata. Published as events once it durably commits.
 type TxEvents = HashSet<(models::Scope, models::Table)>;
+
+type Replicator = db::replication::Replicator<replication::ZenohTransport, TxEvents>;
 
 const DEFAULT_TX_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
 
@@ -378,57 +387,21 @@ impl StoreContext {
     ///
     /// A retiring [`OffloadKind::Unwinding`] drain deletes this node's custody
     /// row: the coverage confirmation is what ends the custody it recorded.
-    pub fn start_offload(&self, scope: models::Scope, kind: OffloadKind) {
+    ///
+    /// # Errors
+    ///
+    /// When `scope` does not form valid key expressions; nothing is registered.
+    pub fn start_offload(&self, scope: models::Scope, kind: OffloadKind) -> ZResult<()> {
         let subject = models::Subject::Scope(scope.clone());
         let transport =
-            replication::ZenohTransport::new(&self.session, &subject, &self.store, "offload");
+            replication::ZenohTransport::new(&self.session, &subject, &self.store, "offload")?;
 
         let replica_client = transport.client.clone();
 
         let Some(repl) = self.store.offload(transport, scope.clone()) else {
             // Already offloading, or replication covers the scope.
-            return;
+            return Ok(());
         };
-
-        // Inbound: serve changeset requests and direct pulls, watch announces
-        // for coverage.
-        self.handle.spawn({
-            let handle = self.handle.clone();
-            let repl = repl.clone();
-            let context = self.clone();
-            let subject = subject.clone();
-
-            async move {
-                // Held until the drain stops, then dropped to undeclare it.
-                let _sync_queryable = context.declare_sync(&subject, repl.clone()).await;
-
-                let _sub = replica_client
-                    .subscribe({
-                        let repl = repl.clone();
-                        let handle = handle;
-
-                        move |sender, msg, bytes| {
-                            let kind = msg.name();
-                            metrics::record_msg_recv(kind, bytes);
-
-                            // Taken before the spawn, so the gap to the task
-                            // actually running is measured rather than assumed.
-                            let queued_at = std::time::Instant::now();
-                            let fut = repl.clone().handle_message(sender, msg);
-
-                            handle.spawn(async move {
-                                let queued = queued_at.elapsed();
-                                let started = std::time::Instant::now();
-                                fut.await;
-                                metrics::record_handled(kind, queued, started.elapsed());
-                            });
-                        }
-                    })
-                    .await;
-
-                repl.stopped().await;
-            }
-        });
 
         let signals = Arc::new(DrainSignals::default());
         self.offload_signals
@@ -436,22 +409,53 @@ impl StoreContext {
             .expect("signal map poisoned")
             .insert(scope.clone(), signals.clone());
 
-        self.handle
-            .spawn(drive_offload(self.clone(), repl, scope, kind, signals));
+        // Inbound: serve changeset requests and direct pulls, watch announces
+        // for coverage.
+        self.handle.spawn({
+            let context = self.clone();
+
+            async move {
+                let declared = context.declare_offload(&replica_client, &repl).await;
+                let Ok((_sync_queryable, _sub)) = declared.inspect_err(|err| {
+                    tracing::error!(
+                        "[{}] unable to offload {scope}: {err}",
+                        context.session.zid()
+                    );
+                }) else {
+                    // drive_offload never ran, so this stop is no retirement:
+                    // no custody row is touched, nothing is released.
+                    forget_drain_signals(&context, &scope, &signals);
+                    repl.confirm_shutdown();
+
+                    return;
+                };
+
+                let locate_ke = replica_client.locate_keyexpr().clone();
+                context.handle.spawn(drive_offload(
+                    context.clone(),
+                    repl.clone(),
+                    scope,
+                    kind,
+                    signals,
+                    locate_ke,
+                ));
+
+                // Held until the drain stops, then dropped to undeclare them.
+                repl.stopped().await;
+            }
+        });
+
+        Ok(())
     }
 
-    /// Declares the direct catch-up queryable for `subject`: answers pull
-    /// pages and coverage checks against this holder.
-    async fn declare_sync(
-        &self,
-        subject: &models::Subject,
-        repl: db::replication::Replicator<replication::ZenohTransport, TxEvents>,
-    ) -> zenoh::query::Queryable<()> {
+    /// Declares the direct catch-up queryable on `ke`: answers pull pages and
+    /// coverage checks against this holder.
+    ///
+    /// # Errors
+    ///
+    /// When zenoh refuses the declaration.
+    async fn declare_sync(&self, ke: KeyExpr<'static>, repl: Replicator) -> ZResult<Queryable<()>> {
         use db_commons::models::replication::sync;
-
-        let me = self.session.zid();
-        let (namespace, database, schema) = subject.as_keyexprs();
-        let ke = db_commons::topics::replica_sync::format(me, namespace, database, schema);
 
         let handle = self.handle.clone();
         let context = self.clone();
@@ -544,16 +548,19 @@ impl StoreContext {
                 });
             })
             .await
-            .expect("unable to declare sync queryable")
     }
 
     /// Declares the locate queryable answering "who holds this scope?" for
     /// `locate_ke`, replying with this node's `state`.
+    ///
+    /// # Errors
+    ///
+    /// When zenoh refuses the declaration.
     async fn declare_locate(
         &self,
-        locate_ke: String,
+        locate_ke: KeyExpr<'static>,
         state: models::locate::HolderState,
-    ) -> zenoh::query::Queryable<()> {
+    ) -> ZResult<Queryable<()>> {
         let store = self.store.clone();
         let handle = self.handle.clone();
         let node_id: models::NodeId = self.id().to_le_bytes();
@@ -565,7 +572,6 @@ impl StoreContext {
                 handle.spawn(async move { handle_locate(&store, node_id, state, query).await });
             })
             .await
-            .expect("unable to declare locate queryable")
     }
 
     /// Makes this node a provisional replica for `scope`: records its own
@@ -608,7 +614,8 @@ impl StoreContext {
         }
 
         self.start_replication(models::Subject::Scope(scope.clone()))
-            .await;
+            .await
+            .map_err(|err| anyhow::anyhow!(err))?;
 
         Ok(())
     }
@@ -644,34 +651,33 @@ impl StoreContext {
         Ok(())
     }
 
-    pub async fn start_replication(&self, subject: models::Subject) {
+    /// Starts replicating `subject` here.
+    ///
+    /// # Errors
+    ///
+    /// When `subject` does not form valid key expressions, nothing is
+    /// registered. When a declaration fails afterwards (a failing session),
+    /// the fresh replicator is stopped again before returning.
+    pub async fn start_replication(&self, subject: models::Subject) -> ZResult<()> {
         let me = self.session.zid();
+        // Validates every key expression for `subject` before the store
+        // registers anything.
         let transport =
-            replication::ZenohTransport::new(&self.session, &subject, &self.store, "replica");
+            replication::ZenohTransport::new(&self.session, &subject, &self.store, "replica")?;
 
         let replica_client = transport.client.clone();
-
-        // Built before `subject` is consumed by `replicate`.
-        let (namespace, database, schema) = subject.as_keyexprs();
-        let locate_ke = db_commons::topics::replica_query::format(namespace, database, schema);
         let repl_subject = subject.clone();
 
         let Some(repl) = self.store.replicate(transport, subject) else {
             // No changes needed.
-            return;
+            return Ok(());
         };
 
-        // A client-facing queryable answering "who holds this scope at >= V?".
-        // Declared per replicated subject so zenoh routes locate queries only to
-        // nodes replicating a covering subject. Declared eagerly (before we
-        // return) so a caller that has just requested replication can rely on it.
-        let queryable = self
-            .declare_locate(locate_ke, models::locate::HolderState::Replica)
-            .await;
-
-        // Answers direct pulls and the coverage checks draining offloaders
-        // retire on; held alongside the locate queryable.
-        let sync_queryable = self.declare_sync(&repl_subject, repl.clone()).await;
+        // Nothing has seen the replicator yet, so stopping it is a clean undo.
+        let (queryable, sync_queryable, sub) = self
+            .declare_replica(&replica_client, &repl)
+            .await
+            .inspect_err(|_| repl.confirm_shutdown())?;
 
         // @TODO (peeriot/swarm#788) jezza - 01 Apr 2026: I'm basically recreating a task manager here.
         //  I'd love to have a general task manager, and be able to tie it to something.
@@ -679,7 +685,6 @@ impl StoreContext {
 
         // This handles outgoing messages, and will shutdown when the replicator is shutting down.
         self.handle.spawn({
-            let handle = self.handle.clone();
             let repl = repl.clone();
             let subject = repl_subject.clone();
 
@@ -687,32 +692,7 @@ impl StoreContext {
                 // Held until the replicator stops, then dropped to undeclare them.
                 let _queryable = queryable;
                 let _sync_queryable = sync_queryable;
-                let repl = repl;
-                let handle = handle;
-
-                let _sub = replica_client
-                    .subscribe({
-                        let repl = repl.clone();
-                        let handle = handle;
-
-                        move |sender, msg, bytes| {
-                            let kind = msg.name();
-                            metrics::record_msg_recv(kind, bytes);
-
-                            // Taken before the spawn, so the gap to the task
-                            // actually running is measured rather than assumed.
-                            let queued_at = std::time::Instant::now();
-                            let fut = repl.clone().handle_message(sender, msg);
-
-                            handle.spawn(async move {
-                                let queued = queued_at.elapsed();
-                                let started = std::time::Instant::now();
-                                fut.await;
-                                metrics::record_handled(kind, queued, started.elapsed());
-                            });
-                        }
-                    })
-                    .await;
+                let _sub = sub;
 
                 // Whoever already holds the scope — typically a drain handing
                 // it over — announced before this node was listening, and
@@ -793,6 +773,72 @@ impl StoreContext {
                 }
             }
         });
+
+        Ok(())
+    }
+
+    /// Declares what a replicator of the subject serves and hears: the locate
+    /// queryable on top of what an offloader declares.
+    async fn declare_replica(
+        &self,
+        client: &ReplicaClient,
+        repl: &Replicator,
+    ) -> ZResult<(Queryable<()>, Queryable<()>, Subscriber<()>)> {
+        // Declared per replicated subject so zenoh routes locate queries only
+        // to nodes replicating a covering subject.
+        let queryable = self
+            .declare_locate(
+                client.locate_keyexpr().clone(),
+                models::locate::HolderState::Replica,
+            )
+            .await?;
+
+        // Answers direct pulls and the coverage checks draining offloaders
+        // retire on; held alongside the locate queryable.
+        let (sync_queryable, sub) = self.declare_offload(client, repl).await?;
+
+        Ok((queryable, sync_queryable, sub))
+    }
+
+    /// Declares what an offloader serves and hears: the sync queryable and the
+    /// replica subscription.
+    async fn declare_offload(
+        &self,
+        client: &ReplicaClient,
+        repl: &Replicator,
+    ) -> ZResult<(Queryable<()>, Subscriber<()>)> {
+        let sync_queryable = self
+            .declare_sync(client.sync_keyexpr().clone(), repl.clone())
+            .await?;
+
+        let sub = client
+            .subscribe(on_replica_message(repl.clone(), self.handle.clone()))
+            .await?;
+
+        Ok((sync_queryable, sub))
+    }
+}
+
+/// The callback of a replica subscription: hands each message to `repl`.
+fn on_replica_message(
+    repl: Replicator,
+    handle: Handle,
+) -> impl Fn(uhlc::ID, models::ReplicaMessage, usize) + Send + Sync + 'static {
+    move |sender, msg, bytes| {
+        let kind = msg.name();
+        metrics::record_msg_recv(kind, bytes);
+
+        // Taken before the spawn, so the gap to the task actually running is
+        // measured rather than assumed.
+        let queued_at = std::time::Instant::now();
+        let fut = repl.clone().handle_message(sender, msg);
+
+        handle.spawn(async move {
+            let queued = queued_at.elapsed();
+            let started = std::time::Instant::now();
+            fut.await;
+            metrics::record_handled(kind, queued, started.elapsed());
+        });
     }
 }
 
@@ -818,10 +864,11 @@ const NUDGE_DEBOUNCE: Duration = Duration::from_millis(50);
 /// coverage — deletes the custody row its promotion recorded.
 async fn drive_offload(
     context: StoreContext,
-    repl: db::replication::Replicator<replication::ZenohTransport, TxEvents>,
+    repl: Replicator,
     scope: models::Scope,
     kind: OffloadKind,
     signals: Arc<DrainSignals>,
+    locate_ke: KeyExpr<'static>,
 ) {
     let me = context.session.zid();
 
@@ -830,7 +877,7 @@ async fn drive_offload(
     let mut queryable = if matches!(kind, OffloadKind::Hidden) {
         None
     } else {
-        Some(declare_drain_locate(&context, &scope).await)
+        declare_drain_locate(&context, &locate_ke).await
     };
 
     // A fresh drain's peer view is empty until a replica's next periodic
@@ -942,7 +989,7 @@ async fn drive_offload(
                 Some(AnnounceReason::Wake)
             }
             () = signals.findable.notified(), if queryable.is_none() => {
-                queryable = Some(declare_drain_locate(&context, &scope).await);
+                queryable = declare_drain_locate(&context, &locate_ke).await;
                 Some(AnnounceReason::Wake)
             }
             // Escalation is for data no replica is coming for; one pulling
@@ -1010,18 +1057,26 @@ fn forget_drain_signals(context: &StoreContext, scope: &models::Scope, own: &Arc
     }
 }
 
-/// A drain's locate queryable: it answers as a [`Draining`] holder.
+/// A drain's locate queryable: it answers as a [`Draining`] holder. A failed
+/// declaration is logged and leaves the drain unfindable until the next
+/// `findable` wake retries; the drain works otherwise.
 ///
 /// [`Draining`]: models::locate::HolderState::Draining
 async fn declare_drain_locate(
     context: &StoreContext,
-    scope: &models::Scope,
-) -> zenoh::query::Queryable<()> {
-    let locate_ke =
-        db_commons::topics::replica_query::format(&scope.namespace, &scope.database, &scope.schema);
-    context
-        .declare_locate(locate_ke, models::locate::HolderState::Draining)
+    locate_ke: &KeyExpr<'static>,
+) -> Option<Queryable<()>> {
+    match context
+        .declare_locate(locate_ke.clone(), models::locate::HolderState::Draining)
         .await
+    {
+        Ok(queryable) => Some(queryable),
+        Err(err) => {
+            tracing::warn!("unable to declare the drain locate {locate_ke}: {err}");
+
+            None
+        }
+    }
 }
 
 /// The scopes this node holds outside every subject it replicates, or nothing
