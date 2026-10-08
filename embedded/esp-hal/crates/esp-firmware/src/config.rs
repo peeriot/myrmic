@@ -3,6 +3,8 @@
 
 use core::time::Duration;
 
+use esp_common::esp_network::WifiBuffers;
+
 /// Thread stacks and scheduling priorities for the firmware's threads.
 ///
 /// The defaults are the values the shipped firmware is validated at. They are
@@ -52,6 +54,10 @@ pub struct Config {
     /// Priority of the WAMR thread. Lowest, so embassy can preempt the cell.
     pub wasm_priority: u32,
 
+    /// WiFi driver buffer counts. Can be used to tune the internal RAM consumption, which is
+    /// particularly important in SoCs with limited resources.
+    pub wifi_buffers: WifiBuffers,
+
     /// The silence this node asks observers to tolerate: three renewal periods,
     /// so a couple of dropped radio rounds never declare it dead.
     pub node_lease_ttl: Duration,
@@ -72,6 +78,11 @@ impl Default for Config {
             ble_host_priority: 30,
             net_priority: 1,
             wasm_priority: 0,
+            wifi_buffers: WifiBuffers {
+                static_rx: 4,
+                dynamic_rx: 32,
+                dynamic_tx: 32,
+            },
             node_lease_ttl: Duration::from_mins(1),
             node_lease_renewal_interval: Duration::from_secs(20),
         }
