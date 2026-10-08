@@ -1,0 +1,21 @@
+[package]
+name = "fan-controller"
+version.workspace = true
+edition.workspace = true
+license = "MIT-0"
+authors = ["slowtec GmbH <post@slowtec.de>"]
+publish.workspace = true
+
+[package.metadata.myrmic]
+heap_size = 65_536
+# The types `import!` generates and their JSON code need more room than heap
+# and stack alone leave; the build rounds this up by one page.
+initial_memory = 131_072
+max_memory = 131_072
+
+[dependencies]
+serde = { workspace = true }
+
+[dependencies.myrmic-sdk]
+workspace = true
+features = ["cells", "cell-init", "db", "alloc"]

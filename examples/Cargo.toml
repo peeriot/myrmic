@@ -10,7 +10,8 @@ members = [
     "site-control/site",
     "site-control/climate-agent",
     "site-control/dashboard",
-    "modbus-tcp-boiler/*"
+    "modbus-tcp-boiler/*",
+    "modbus-tcp-remote-io/*"
 ]
 exclude = ["site-control/pipeline"]
 

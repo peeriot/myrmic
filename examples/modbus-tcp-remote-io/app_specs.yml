@@ -1,0 +1,11 @@
+name: modbus-tcp-remote-io
+
+classes:
+  - id: ur20
+    spec: ur20-modbus-tcp-bridge.yml
+  - id: fan-controller
+    build: ./fan-controller
+
+instances:
+  - bridge: ur20
+  - class: fan-controller
