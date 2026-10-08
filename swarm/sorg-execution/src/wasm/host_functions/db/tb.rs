@@ -13,7 +13,7 @@ use wasmtime::Caller;
 use crate::wasm::{
     cell::state::CellState,
     host_functions::{
-        db::{apply, defer, key_name, transform_scope},
+        db::{apply, defer, entity_id, key_name, transform_scope},
         decode, encode, tri,
     },
 };
@@ -54,6 +54,9 @@ pub(crate) async fn tb_insert(
 
     let scope = tri!(transform_scope(&mut caller, scope));
     tri!(key_name(&table));
+    if let Some(eid) = &eid {
+        tri!(entity_id(eid));
+    }
 
     let inserted = tri!(
         apply(
@@ -101,6 +104,9 @@ pub(crate) async fn tb_append(
 
     let scope = tri!(transform_scope(&mut caller, scope));
     tri!(key_name(&table));
+    if let Some(eid) = &eid {
+        tri!(entity_id(eid));
+    }
 
     defer(
         &mut caller,
@@ -154,6 +160,7 @@ pub(crate) async fn tb_get(
 
     let scope = tri!(transform_scope(&mut caller, scope));
     tri!(key_name(&table));
+    tri!(entity_id(&eid));
 
     let got = tri!(apply(&mut caller, tb_get::Op { scope, table, eid }).await);
     let response = TbGetResponse { value: got.value };
@@ -186,6 +193,9 @@ pub(crate) async fn tb_list(
 
     let scope = tri!(transform_scope(&mut caller, scope));
     tri!(key_name(&table));
+    if let Some(WasmCursor::After(eid) | WasmCursor::At(eid)) = &cursor {
+        tri!(entity_id(eid));
+    }
     let cursor = cursor.map(transform_cursor);
     let order = order.map(transform_order);
 
@@ -231,6 +241,7 @@ pub(crate) async fn tb_delete(
 
     let scope = tri!(transform_scope(&mut caller, scope));
     tri!(key_name(&table));
+    tri!(entity_id(&eid));
 
     defer(&mut caller, tb_delete::Op { scope, table, eid })
 }
