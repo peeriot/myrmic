@@ -1,0 +1,11 @@
+name: modbus-tcp-remote-io
+
+classes:
+  - id: ur20
+    spec: ur20-modbus-tcp-bridge.yml
+  - id: temperature-controller
+    build: ./temperature-controller
+
+instances:
+  - bridge: ur20
+  - class: temperature-controller

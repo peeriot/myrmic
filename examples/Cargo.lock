@@ -973,6 +973,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "temperature-controller"
+version = "0.1.0"
+dependencies = [
+ "myrmic-sdk",
+ "serde",
+]
+
+[[package]]
 name = "textus"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1102,6 +1110,17 @@ name = "unsafe-libyaml-norway"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
+
+[[package]]
+name = "ur20-simulator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "log",
+ "tokio",
+ "tokio-modbus",
+]
 
 [[package]]
 name = "utf8parse"
