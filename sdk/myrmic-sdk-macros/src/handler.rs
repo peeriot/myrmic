@@ -259,13 +259,24 @@ fn parse_name_override(attr: TokenStream) -> syn::Result<Option<LitStr>> {
     Ok(name)
 }
 
+/// Mirrors `myrmic_common::cells::MAX_NAME_LEN`, which sits behind a feature
+/// this crate does not enable.
+const MAX_NAME_LEN: usize = 128;
+
 /// A `name` override becomes the tail of an `extern "C"` symbol, so it must be a
-/// valid function-name component: non-empty ASCII alphanumerics/underscores.
+/// valid function-name component: non-empty, at most [`MAX_NAME_LEN`] bytes of ASCII
+/// alphanumerics/underscores.
 /// This mirrors the host-side check in `myrmic_common::cells::names`.
 fn validate_name(lit: &LitStr) -> syn::Result<()> {
     let value = lit.value();
     if value.is_empty() {
         return Err(syn::Error::new_spanned(lit, "`name` cannot be empty"));
+    }
+    if value.len() > MAX_NAME_LEN {
+        return Err(syn::Error::new_spanned(
+            lit,
+            format!("`name` cannot be longer than {MAX_NAME_LEN} bytes"),
+        ));
     }
     if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(syn::Error::new_spanned(
@@ -280,6 +291,18 @@ fn validate_name(lit: &LitStr) -> syn::Result<()> {
 mod tests {
     use super::*;
     use quote::quote;
+
+    #[test]
+    fn name_override_is_bounded_like_the_host_check() {
+        let at_bound = LitStr::new(&"a".repeat(MAX_NAME_LEN), proc_macro2::Span::call_site());
+        let past_bound = LitStr::new(
+            &"a".repeat(MAX_NAME_LEN + 1),
+            proc_macro2::Span::call_site(),
+        );
+
+        assert!(validate_name(&at_bound).is_ok());
+        assert!(validate_name(&past_bound).is_err());
+    }
 
     fn expand(kind: Kind) -> String {
         let item = quote! {
