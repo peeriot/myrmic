@@ -1,17 +1,3 @@
-//! A simulated boiler that speaks Modbus TCP, so the Modbus bridge can be tried
-//! without hardware. It maps three values:
-//!
-//! | Table            | Address         | Value                                   |
-//! |------------------|-----------------|-----------------------------------------|
-//! | input registers  | 0x0100, 0x0101  | water temperature in °C, `f32`, `abcd`  |
-//! | coil             | 0x0005          | burner on/off                           |
-//! | holding register | 0x0200          | setpoint in °C, `i16`                   |
-//!
-//! While the burner is on the water heats up by 1 °C per second, while it is
-//! off it cools down by 0.3 °C per second, but not below the room it stands in.
-//!
-//! Usage: `boiler-simulator [ADDRESS]`, listening on `127.0.0.1:5020` by default.
-
 use std::{
     future,
     net::SocketAddr,
@@ -37,7 +23,7 @@ const HEATING_PER_SECOND: f32 = 1.0;
 const COOLING_PER_SECOND: f32 = 0.3;
 const TICK: Duration = Duration::from_millis(100);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Boiler {
     temperature: f32,
     burner: bool,
@@ -45,58 +31,68 @@ struct Boiler {
 }
 
 impl Boiler {
-    fn tick(&mut self) {
+    fn tick(self) -> Self {
         let seconds = TICK.as_secs_f32();
-        self.temperature = if self.burner {
+        let temperature = if self.burner {
             self.temperature + HEATING_PER_SECOND * seconds
         } else {
             (self.temperature - COOLING_PER_SECOND * seconds).max(ROOM_TEMPERATURE)
         };
+        Self {
+            temperature,
+            ..self
+        }
     }
 
-    fn call(&mut self, request: Request<'_>) -> Result<Response, ExceptionCode> {
-        let response = match request {
+    fn call(self, request: Request<'_>) -> Result<(Self, Response), ExceptionCode> {
+        let answer = match request {
             Request::ReadInputRegisters(ADDRESS_TEMPERATURE, 2) => {
                 log::debug!("Read temperature: {:.1} °C", self.temperature);
                 let bits = self.temperature.to_bits();
                 let words = vec![(bits >> 16) as u16, bits as u16];
-                Response::ReadInputRegisters(words)
+                (self, Response::ReadInputRegisters(words))
             }
             Request::ReadCoils(ADDRESS_BURNER, 1) => {
                 log::debug!("Read burner: {}", self.burner);
-                Response::ReadCoils(vec![self.burner])
+                (self, Response::ReadCoils(vec![self.burner]))
             }
             Request::WriteSingleCoil(ADDRESS_BURNER, on) => {
                 log::debug!("Write burner: {on}");
-                if on != self.burner {
-                    log::info!(
-                        "burner {} at {:.1} °C",
-                        if on { "on" } else { "off" },
-                        self.temperature
-                    );
-                }
-                self.burner = on;
-                Response::WriteSingleCoil(ADDRESS_BURNER, on)
+                let boiler = Self { burner: on, ..self };
+                (boiler, Response::WriteSingleCoil(ADDRESS_BURNER, on))
             }
             Request::ReadHoldingRegisters(ADDRESS_SETPOINT, 1) => {
                 log::debug!("Read setpoint: {} °C", self.setpoint);
-                Response::ReadHoldingRegisters(vec![self.setpoint as u16])
+                let words = vec![self.setpoint as u16];
+                (self, Response::ReadHoldingRegisters(words))
             }
             Request::WriteSingleRegister(ADDRESS_SETPOINT, word) => {
                 log::debug!("Write setpoint: {} °C", word as i16);
-                self.setpoint = word as i16;
-                log::info!("setpoint {} °C", self.setpoint);
-                Response::WriteSingleRegister(ADDRESS_SETPOINT, word)
+                let setpoint = word as i16;
+                let boiler = Self { setpoint, ..self };
+                let response = Response::WriteSingleRegister(ADDRESS_SETPOINT, word);
+                (boiler, response)
             }
-            // Anything else, like a device that does not map the address.
             request => {
                 log::debug!("Refuse unmapped request: {request:?}");
                 return Err(ExceptionCode::IllegalDataAddress);
             }
         };
 
-        log::debug!("New boiler state:\n{self:#?}");
-        Ok(response)
+        Ok(answer)
+    }
+}
+
+fn log_changes(before: &Boiler, after: &Boiler) {
+    if after.burner != before.burner {
+        log::info!(
+            "burner {} at {:.1} °C",
+            if after.burner { "on" } else { "off" },
+            after.temperature
+        );
+    }
+    if after.setpoint != before.setpoint {
+        log::info!("setpoint {} °C", after.setpoint);
     }
 }
 
@@ -110,7 +106,14 @@ impl Service for BoilerService {
     type Future = future::Ready<Result<Response, ExceptionCode>>;
 
     fn call(&self, request: Self::Request) -> Self::Future {
-        future::ready(self.0.lock().unwrap().call(request))
+        let mut boiler = self.0.lock().unwrap();
+        let answer = boiler.call(request).map(|(next, response)| {
+            log_changes(&boiler, &next);
+            log::debug!("New boiler state:\n{next:#?}");
+            *boiler = next;
+            response
+        });
+        future::ready(answer)
     }
 }
 
@@ -138,7 +141,8 @@ async fn main() -> anyhow::Result<()> {
             let mut interval = tokio::time::interval(TICK);
             loop {
                 interval.tick().await;
-                boiler.lock().unwrap().tick();
+                let mut boiler = boiler.lock().unwrap();
+                *boiler = boiler.tick();
             }
         }
     });

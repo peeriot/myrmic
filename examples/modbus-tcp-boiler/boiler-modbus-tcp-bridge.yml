@@ -1,16 +1,13 @@
-# The boiler `boiler-simulator` simulates, as the Modbus bridge sees it.
 name: boiler
 host: 127.0.0.1
 port: 5020
 
 poll:
-  # Published as the `boiler_temperature` event.
   - id: boiler_temperature
     register: input
     address: 0x0100
     value: "${f32:celsius}"
     interval: 1s
-    # Published as the `burner` event.
   - id: burner
     register: coil
     address: 0x0005

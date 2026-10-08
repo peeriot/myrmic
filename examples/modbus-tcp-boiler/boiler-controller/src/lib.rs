@@ -1,59 +1,32 @@
-//! Boiler controller: keeps the water of the simulated boiler around its
-//! setpoint by switching the burner, all through the Modbus bridge.
-//!
-//! - the water temperature arrives as the polled `boiler_temperature` event,
-//! - the setpoint is read from the boiler once, when the first reading arrives,
-//! - the setpoint is changed through this cell, with `set_setpoint`: it writes
-//!   the new value to the boiler and regulates to it from then on,
-//! - the burner is switched by writing its coil, and its state arrives as the
-//!   polled `burner` event whenever it changes.
 #![no_std]
 
-use myrmic_sdk::{Callback, Metadata, Result, db::state::State};
+use myrmic_sdk::{self as sdk, Callback, Metadata, Result, db::state::State};
+use serde::{Deserialize, Serialize};
 
-myrmic_sdk::import!("../boiler-modbus-tcp-bridge.yml");
+sdk::import!("../boiler-modbus-tcp-bridge.yml");
 
-/// The bridge, by the name the application deploys it under.
 const BOILER_CLIENT: BoilerClient = BoilerClient::new("boiler");
 
-/// How far the water may drift from the setpoint before the burner switches:
-/// without it, the burner would flicker on and off at the setpoint.
-const HYSTERESIS: f32 = 2.0;
+const HYSTERESIS_CELSIUS: f32 = 2.0;
 
-/// The setpoint the controller regulates to; `None` until it is known.
-const SETPOINT_STATE: State<Option<i16>> = State::new_const("setpoint");
-/// Whether the burner burns, as the boiler last reported it; unset until it has.
-const BURNING_STATE: State<bool> = State::new_const("burning");
+const SETPOINT_STATE: State<i16> = State::new_const("setpoint");
+const REPORTED_BURNING_STATE: State<bool> = State::new_const("burning");
 
-/// A new setpoint, in °C.
-#[derive(serde::Serialize, serde::Deserialize, myrmic_sdk::Message)]
+#[derive(Serialize, Deserialize, sdk::Message)]
 struct Setpoint {
     setpoint: i16,
 }
 
-#[myrmic_sdk::evt]
+#[sdk::evt]
 fn boiler_temperature(_md: Metadata, event: BoilerTemperature) -> Result<()> {
-    let Some(setpoint) = SETPOINT_STATE.load()?.flatten() else {
-        // Not known yet: ask, and decide on a later reading.
+    let Some(setpoint) = SETPOINT_STATE.load()? else {
         return BOILER_CLIENT.read_setpoint(Callback::of::<setpoint_read>());
     };
 
-    let setpoint = f32::from(setpoint);
-
-    let burn = if event.celsius < setpoint - HYSTERESIS {
-        true
-    } else if event.celsius > setpoint + HYSTERESIS {
-        false
-    } else {
-        // Within the hysteresis the burner stays as it is.
-        return Ok(());
-    };
-
-    // Not saved here: the `burner` event reports what the boiler made of the
-    // write. Until it does, a later reading may switch the burner once more.
-    if BURNING_STATE.load()? != Some(burn) {
+    let reported_burning = REPORTED_BURNING_STATE.load()?;
+    if let Some(burn) = burner_switch(event.celsius, setpoint, reported_burning) {
         BOILER_CLIENT.burner_on(BurnerOn { on: burn })?;
-        let _ = myrmic_sdk::info!(
+        let _ = sdk::info!(
             "burner {} at {:.1} °C",
             if burn { "on" } else { "off" },
             event.celsius
@@ -64,44 +37,84 @@ fn boiler_temperature(_md: Metadata, event: BoilerTemperature) -> Result<()> {
     Ok(())
 }
 
-/// Takes the burner's state from the boiler, so that it cannot drift from what
-/// the controller believes: a write may fail, or someone else may switch it.
-#[myrmic_sdk::evt]
-fn burner(_md: Metadata, event: Burner) -> Result<()> {
-    BURNING_STATE.save(&event.on)
+fn burner_switch(celsius: f32, setpoint: i16, reported_burning: Option<bool>) -> Option<bool> {
+    let setpoint = f32::from(setpoint);
+    let burn = if celsius < setpoint - HYSTERESIS_CELSIUS {
+        true
+    } else if celsius > setpoint + HYSTERESIS_CELSIUS {
+        false
+    } else {
+        return None;
+    };
+
+    (reported_burning != Some(burn)).then_some(burn)
 }
 
-/// Changes the setpoint: writes it to the boiler, and regulates to it from the
-/// next reading on. Going through the controller, rather than writing to the
-/// boiler directly, keeps the two in step.
-#[myrmic_sdk::cmd]
+#[sdk::evt]
+fn burner(_md: Metadata, event: Burner) -> Result<()> {
+    REPORTED_BURNING_STATE.save(&event.on)
+}
+
+#[sdk::cmd]
 fn set_setpoint(_md: Metadata, new: Setpoint) -> Result<()> {
     BOILER_CLIENT.set_setpoint(SetSetpoint {
         setpoint: new.setpoint,
     })?;
-    SETPOINT_STATE.save(&Some(new.setpoint))?;
-    let _ = myrmic_sdk::info!("setpoint {} °C", new.setpoint).ok();
+    SETPOINT_STATE.save(&new.setpoint)?;
+    let _ = sdk::info!("setpoint {} °C", new.setpoint).ok();
 
     Ok(())
 }
 
-#[myrmic_sdk::cmd]
+#[sdk::cmd]
 fn setpoint_read(_md: Metadata, reply: ReadSetpointReply) -> Result<()> {
     match reply {
         ReadSetpointReply::Ok(value) => {
-            // A setpoint set in the meantime is newer than the one read.
-            if SETPOINT_STATE.load()?.flatten().is_none() {
-                SETPOINT_STATE.save(&Some(value.setpoint))?;
-                let _ = myrmic_sdk::info!("setpoint {} °C", value.setpoint).ok();
+            let setpoint_set_meanwhile = SETPOINT_STATE.load()?.is_some();
+            if !setpoint_set_meanwhile {
+                SETPOINT_STATE.save(&value.setpoint)?;
+                let _ = sdk::info!("setpoint {} °C", value.setpoint).ok();
             }
         }
         ReadSetpointReply::Exception(code) => {
-            let _ = myrmic_sdk::warn!("boiler refused to read the setpoint: {code}").ok();
+            let _ = sdk::warn!("boiler refused to read the setpoint: {code}").ok();
         }
         ReadSetpointReply::Failed(reason) => {
-            let _ = myrmic_sdk::warn!("boiler did not answer: {reason}").ok();
+            let _ = sdk::warn!("boiler did not answer: {reason}").ok();
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switches_on_below_the_hysteresis() {
+        assert_eq!(burner_switch(57.9, 60, Some(false)), Some(true));
+    }
+
+    #[test]
+    fn switches_off_above_the_hysteresis() {
+        assert_eq!(burner_switch(62.1, 60, Some(true)), Some(false));
+    }
+
+    #[test]
+    fn leaves_the_burner_within_the_hysteresis() {
+        assert_eq!(burner_switch(61.0, 60, Some(true)), None);
+        assert_eq!(burner_switch(59.0, 60, Some(false)), None);
+    }
+
+    #[test]
+    fn leaves_a_burner_that_already_is_as_it_should_be() {
+        assert_eq!(burner_switch(50.0, 60, Some(true)), None);
+    }
+
+    #[test]
+    fn switches_a_burner_not_reported_yet() {
+        assert_eq!(burner_switch(50.0, 60, None), Some(true));
+        assert_eq!(burner_switch(70.0, 60, None), Some(false));
+    }
 }
