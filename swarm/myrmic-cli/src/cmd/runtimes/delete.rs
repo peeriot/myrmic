@@ -72,10 +72,17 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
                 );
                 wait_for_exit(&pid, p)?;
             }
-            SignalOutcome::Stale(p) => {
+            SignalOutcome::Unreachable => {
+                anyhow::bail!(
+                    "runtime {:?} is running in another pid namespace; stop it from there",
+                    pid.file_stem()
+                );
+            }
+            SignalOutcome::Stale => {
                 crate::warn!(
                     ctx,
-                    "no process with pid {p}; removing stale pid file {}",
+                    "runtime {:?} is not running; removing stale pid file {}",
+                    pid.file_stem(),
                     pid.path.display()
                 );
                 if let Err(err) = pid.remove() {
@@ -106,23 +113,20 @@ fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match pid.status() {
-            PidStatus::Running(_) if Instant::now() < deadline => {
+            PidStatus::Running(_) | PidStatus::Unreachable if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            PidStatus::Running(_) => {
+            PidStatus::Running(_) | PidStatus::Unreachable => {
                 anyhow::bail!(
                     "runtime {:?} (pid {process}) did not stop within 10 seconds",
                     pid.file_stem()
                 );
             }
-            PidStatus::Stale(_) | PidStatus::Absent => {
-                if let Err(err) = pid.remove()
-                    && err.kind() != std::io::ErrorKind::NotFound
-                {
-                    return Err(anyhow::Error::new(err));
-                }
+            PidStatus::Stale => {
+                pid.remove()?;
                 return Ok(());
             }
+            PidStatus::Absent => return Ok(()),
         }
     }
 }

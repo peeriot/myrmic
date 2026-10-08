@@ -58,8 +58,9 @@ pub fn handle(ctx: &Ctx, cmd: List) -> anyhow::Result<()> {
 fn print_pid_row(pid: &Pid) {
     let status = match pid.status() {
         PidStatus::Running(p) => format!("running\tpid={p}"),
-        PidStatus::Stale(p) => format!("stale\tpid={p}"),
-        PidStatus::Absent => "invalid\tpid=?".to_owned(),
+        PidStatus::Unreachable => "running\tpid=? (another pid namespace)".to_owned(),
+        PidStatus::Stale => "stale\tpid=-".to_owned(),
+        PidStatus::Absent => "unreadable\tpid=?".to_owned(),
     };
     println!("{}\t{status}", pid.file_stem());
 }
