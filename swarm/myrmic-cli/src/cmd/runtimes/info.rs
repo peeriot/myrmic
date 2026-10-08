@@ -32,7 +32,8 @@ pub fn handle(_ctx: Ctx, cmd: Info) -> anyhow::Result<()> {
     let pid_path = pid_path.unwrap_or_else(|| default_pid_dir(super::DEFAULT_PID_DIR));
     let status = match Pid::from_args(&pid_path, &name)?.status() {
         PidStatus::Running(pid) => format!("running (pid {pid})"),
-        PidStatus::Stale(_) | PidStatus::Absent => String::from("stopped"),
+        PidStatus::Unreachable => String::from("running (in another pid namespace)"),
+        PidStatus::Stale | PidStatus::Absent => String::from("stopped"),
     };
 
     println!("runtime   {name} ({id})");
