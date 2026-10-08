@@ -5,14 +5,19 @@ pub fn handle(cmd: &crate::cmd::Spawn) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    rt.block_on(async move {
-        let spawned = swarm.wait_in_place().await.unwrap();
+    let result = rt.block_on(async move {
+        let mut spawned = swarm.wait_in_place().await?;
 
-        let _ = tokio::signal::ctrl_c().await.ok();
+        let result = tokio::select! {
+            _ = tokio::signal::ctrl_c() => Ok(()),
+            err = spawned.plugin_failure() => Err(err),
+        };
 
         tracing::info!("Shutting down");
 
         spawned.kill_async().await;
+
+        result
     });
 
     let graceful_shutdown = cmd.graceful_shutdown;
@@ -23,5 +28,5 @@ pub fn handle(cmd: &crate::cmd::Spawn) -> anyhow::Result<()> {
 
     tracing::info!("Killed!");
 
-    Ok(())
+    result
 }
