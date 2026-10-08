@@ -333,6 +333,14 @@ pub fn is_nightly(dir: &Path, toolchain: Option<&str>) -> anyhow::Result<bool> {
     Ok(release_is_nightly(&version))
 }
 
+/// Sets `flags` as the rustflags for the target `target_var` names, and clears
+/// `RUSTFLAGS` and `CARGO_ENCODED_RUSTFLAGS`, which cargo would apply instead.
+pub fn set_target_rustflags(cmd: &mut Command, target_var: &str, flags: &str) {
+    cmd.env(target_var, flags);
+    cmd.env_remove("RUSTFLAGS");
+    cmd.env_remove("CARGO_ENCODED_RUSTFLAGS");
+}
+
 /// A file cargo reported as the output of a `compiler-artifact` message.
 pub struct Artifact {
     pub path: PathBuf,
@@ -412,5 +420,26 @@ mod tests {
     fn artifacts_in_ignores_other_messages() {
         assert!(artifacts_in(r#"{"reason":"build-script-executed","package_id":"x"}"#).is_empty());
         assert!(artifacts_in("not json").is_empty());
+    }
+
+    #[test]
+    fn set_target_rustflags_clears_the_flags_that_take_precedence() {
+        let mut cmd = Command::new("cargo");
+        cmd.env("RUSTFLAGS", "-Cinstrument-coverage")
+            .env("CARGO_ENCODED_RUSTFLAGS", "-Cinstrument-coverage");
+        set_target_rustflags(&mut cmd, "TARGET_RUSTFLAGS", "-C lto");
+
+        let envs: Vec<(&str, Option<&str>)> = cmd
+            .get_envs()
+            .map(|(key, value)| (key.to_str().unwrap(), value.and_then(|v| v.to_str())))
+            .collect();
+        assert_eq!(
+            envs,
+            vec![
+                ("CARGO_ENCODED_RUSTFLAGS", None),
+                ("RUSTFLAGS", None),
+                ("TARGET_RUSTFLAGS", Some("-C lto")),
+            ]
+        );
     }
 }

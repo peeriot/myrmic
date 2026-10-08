@@ -10,6 +10,7 @@ use cell_protocol::{
 use cfg_match::cfg_match;
 use db_client::v1::models::{BlobResponse, Id, tb_insert};
 use db_client::v1::{Client, models as db_models};
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
@@ -216,12 +217,15 @@ async fn deploy_once(
         any(feature = "esp32c5", feature = "esp32c6", feature = "esp32c61") => ArtifactLocation::aot(class_name, ArtifactPlatform::Riscv32imac).into_parts(),
         _ => compile_error!("Missing SoC variant selection");
     };
+    // Signalled on every received chunk; the transfer is aborted once it stalls for longer than
+    // `CHUNK_STALL_TIMEOUT`, however long the whole transfer takes
+    let progress = Signal::<CriticalSectionRawMutex, ()>::new();
+    // Shadow reference so the async block can capture it without moving it
+    let progress = &progress;
     let fetch = client.read_tx_in(scope.clone(), async move |client, id| {
-        // We choose a size that doesn't impact massively on RAM
-        const CHUNK: usize = 4_096;
         let mut current_offset = 0u64;
 
-        loop {
+        while current_offset < u64::from(len_to_transfer) {
             // Make sure we have a slot ready for the runtime handler, or the channel
             // being busy is going to cause our DB request to timeout
             while wasm_transfer.is_full() {
@@ -236,70 +240,46 @@ async fn deploy_once(
                         path: path.clone(),
                         range: Some(db_models::ChunkRange {
                             offset: current_offset,
-                            length: CHUNK as u64,
+                            length: CHUNK_SIZE as u64,
                         }),
                     },
                 })
                 .await?
                 .map_err(|e| zerror!("{}", e.message))?;
 
-            match res.blob {
-                // Make sure the response passes all our expectations
-                Some(BlobResponse {
-                    blob,
-                    range:
-                        Some(db_models::ChunkRange {
-                            offset: blob_offset,
-                            ..
-                        }),
-                    total_len,
-                    ..
-                }) if (1..=CHUNK).contains(&blob.len())
-                    && blob_offset == current_offset
-                    && total_len == u64::from(len_to_transfer) =>
-                {
-                    log::trace!(
-                        "[db] Received chunk: offset={}, length={}",
-                        blob_offset,
-                        blob.len()
-                    );
-                    current_offset += blob.len() as u64;
-                    match current_offset.cmp(&total_len) {
-                        // More chunks to come
-                        Ordering::Less => {
-                            wasm_transfer.send(WasmTransfer::Chunk(blob)).await;
-                        }
-                        // This was the last chunk
-                        Ordering::Equal => {
-                            wasm_transfer.send(WasmTransfer::End(blob)).await;
-                            break;
-                        }
-                        Ordering::Greater => {
-                            log::error!("[db] Received more data than expected");
-                            wasm_transfer.send(WasmTransfer::Abort).await;
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    log::error!("[db] No/Invalid blob found");
-                    wasm_transfer.send(WasmTransfer::Abort).await;
-                    break;
-                }
+            if forward_chunk(
+                res.blob,
+                &mut current_offset,
+                len_to_transfer,
+                wasm_transfer,
+                progress,
+            )
+            .await
+            .is_err()
+            {
+                break;
             }
         }
 
         Ok(())
     });
 
-    match with_timeout(Duration::from_secs(20), fetch).await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(err)) => {
+    let stall = async {
+        while with_timeout(CHUNK_STALL_TIMEOUT, progress.wait())
+            .await
+            .is_ok()
+        {}
+    };
+
+    match select(fetch, stall).await {
+        Either::First(Ok(())) => Ok(()),
+        Either::First(Err(err)) => {
             wasm_transfer.send(WasmTransfer::Abort).await;
 
             Err(DeployError::DbUnreachable(err))
         }
-        Err(_) => {
+        Either::Second(()) => {
+            log::warn!("[db] No WASM chunk received for {CHUNK_STALL_TIMEOUT:?}");
             wasm_transfer.send(WasmTransfer::Abort).await;
 
             Err(DeployError::DbTimedOut)
@@ -459,3 +439,70 @@ async fn fetch_metadata(
         Err(_) => Err(DeployError::DbTimedOut),
     }
 }
+
+/// Validates a received module chunk and forwards it to the runtime handler. Fails if the chunk
+/// is invalid, in which case the transfer has been aborted
+async fn forward_chunk(
+    blob: Option<BlobResponse>,
+    current_offset: &mut u64,
+    len_to_transfer: u32,
+    wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
+    progress: &Signal<CriticalSectionRawMutex, ()>,
+) -> Result<(), ()> {
+    match blob {
+        // Make sure the response passes all our expectations
+        Some(BlobResponse {
+            blob,
+            range:
+                Some(db_models::ChunkRange {
+                    offset: blob_offset,
+                    ..
+                }),
+            total_len,
+            ..
+        }) if (1..=CHUNK_SIZE).contains(&blob.len())
+            && blob_offset == *current_offset
+            && total_len == u64::from(len_to_transfer) =>
+        {
+            log::trace!(
+                "[db] Received chunk: offset={}, length={}",
+                blob_offset,
+                blob.len()
+            );
+            progress.signal(());
+            *current_offset += blob.len() as u64;
+            match (*current_offset).cmp(&total_len) {
+                // More chunks to come
+                Ordering::Less => {
+                    wasm_transfer.send(WasmTransfer::Chunk(blob)).await;
+
+                    Ok(())
+                }
+                // This was the last chunk
+                Ordering::Equal => {
+                    wasm_transfer.send(WasmTransfer::End(blob)).await;
+
+                    Ok(())
+                }
+                Ordering::Greater => {
+                    log::error!("[db] Received more data than expected");
+                    wasm_transfer.send(WasmTransfer::Abort).await;
+
+                    Err(())
+                }
+            }
+        }
+        _ => {
+            log::error!("[db] No/Invalid blob found");
+            wasm_transfer.send(WasmTransfer::Abort).await;
+
+            Err(())
+        }
+    }
+}
+
+/// Size of a module chunk requested from the DB, chosen so it doesn't impact massively on RAM
+const CHUNK_SIZE: usize = 4_096;
+
+/// How long the module transfer may go without receiving a chunk before it is aborted
+const CHUNK_STALL_TIMEOUT: Duration = Duration::from_secs(10);

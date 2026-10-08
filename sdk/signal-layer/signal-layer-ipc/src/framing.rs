@@ -42,9 +42,13 @@ where
 /// Write one postcard-serialized value as a length-prefixed frame.
 ///
 /// The length prefix and payload are serialized into a single buffer and sent
-/// with one `write_all` call, ensuring the frame is written atomically — a
-/// cancellation or partial-write between prefix and payload cannot desync the
-/// stream.
+/// with one `write_all` call, so the frame is atomic *with respect to
+/// errors*: it either lands whole or the call fails, never leaving a
+/// successful call half-written.  This is NOT a cancellation guarantee — if
+/// the future is dropped mid-write (e.g. by a caller-side timeout), the bytes
+/// already accepted stay on the wire, and the caller must drop the connection
+/// to keep the framing boundary (see the teardown guard in the client's
+/// `send_recv`).
 pub async fn write_frame<W, T>(writer: &mut W, value: &T) -> Result<(), FrameError>
 where
     W: AsyncWrite + Unpin,
@@ -52,8 +56,9 @@ where
 {
     let payload = postcard::to_allocvec(value)?;
     let len = u32::try_from(payload.len()).map_err(|_| FrameError::TooLarge(u32::MAX))?;
-    // Serialize length prefix + payload into one contiguous buffer so that a
-    // single write_all is all-or-nothing (B2b).
+    // Serialize length prefix + payload into one contiguous buffer, so a
+    // single write_all is all-or-nothing with respect to errors (B2b).  A
+    // dropped future is not covered by this — see the doc comment above.
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_le_bytes());
     frame.extend_from_slice(&payload);

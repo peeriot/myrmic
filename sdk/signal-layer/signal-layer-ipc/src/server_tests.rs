@@ -647,3 +647,107 @@ async fn malformed_frame_closes_connection() {
         .expect("read after malformed frame");
     assert_eq!(n, 0, "expected EOF after malformed frame");
 }
+
+// ── Response-write wedge: a stalled reader must not hold its slot forever ────
+
+/// A tap whose retained payload dwarfs the in-memory pipe used in the test
+/// below, so the server's response write cannot complete while the client
+/// refuses to read.
+struct BigRetainedStore;
+
+impl TapStore for BigRetainedStore {
+    fn resolve(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
+    fn read_retained(&self, _h: u32) -> StoreRead {
+        StoreRead::Value {
+            timestamp_ms: 0,
+            bytes: vec![0u8; 4096],
+        }
+    }
+
+    fn take_event(&self, _h: u32) -> StoreRead {
+        StoreRead::Empty
+    }
+
+    fn list_len(&self) -> u32 {
+        0
+    }
+
+    fn list_entry(&self, _index: u32) -> Option<(String, u8)> {
+        None
+    }
+
+    fn type_id(&self, _h: u32) -> Option<u32> {
+        None
+    }
+}
+
+/// A client that keeps the read side of the protocol healthy but never reads
+/// responses must not hold its connection slot forever: the per-request read
+/// timeout can never fire for such a client, so the response write must carry
+/// its own bound.
+///
+/// Strategy: run `handle_connection` over an in-memory duplex pair whose
+/// buffer (64 bytes) is far smaller than one 4096-byte response frame.
+/// Complete the handshake, send one `TapReadRetained`, then never read again:
+/// the server accepts the request and parks inside the response `write_all`.
+/// With paused time, advance past `REQUEST_TIMEOUT_SECS` (30 s): with the
+/// write bound the connection task has finished — permit released — while
+/// without it the task stays parked indefinitely.
+#[tokio::test(start_paused = true)]
+async fn wedged_response_write_closes_connection_within_timeout() {
+    let store: Arc<dyn TapStore> = Arc::new(BigRetainedStore);
+    let (mut client_end, server_end) = tokio::io::duplex(64);
+
+    let server = tokio::spawn(crate::server::handle_connection(server_end, store, None));
+
+    // Handshake over the in-memory pipe.
+    write_frame(
+        &mut client_end,
+        &Request::Hello {
+            protocol_version: PROTOCOL_VERSION,
+        },
+    )
+    .await
+    .expect("write Hello");
+    let frame = read_frame(&mut client_end)
+        .await
+        .expect("read HelloOk frame");
+    let resp: Response = decode_frame(&frame).expect("decode HelloOk");
+    assert_eq!(
+        resp,
+        Response::HelloOk {
+            version: PROTOCOL_VERSION
+        }
+    );
+
+    // One request whose response cannot fit the pipe; then go silent.  The
+    // read side stays "healthy" in protocol terms — the wedge is on the
+    // write side, which no timeout covered before the fix.
+    write_frame(&mut client_end, &Request::TapReadRetained { handle: 0 })
+        .await
+        .expect("write request");
+
+    // Let the server read the request and run into the wedged write.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+
+    // Advance virtual time past REQUEST_TIMEOUT_SECS (30 s), second by
+    // second, so the task can register its write timeout before it fires.
+    for _ in 0..35 {
+        if server.is_finished() {
+            break;
+        }
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+    }
+
+    assert!(
+        server.is_finished(),
+        "a wedged response write must cost the connection within REQUEST_TIMEOUT_SECS"
+    );
+    let _ = server.await;
+}
