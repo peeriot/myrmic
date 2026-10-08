@@ -7,7 +7,7 @@ boiler is simulated.
 | Part | What it is | Responsibility |
 | --- | --- | --- |
 | boiler-simulator | Host program | A boiler that speaks Modbus TCP: water temperature, burner, setpoint |
-| boiler-modbus-tcp-bridge.yml | Modbus bridge | Polls the temperature, reads and writes the setpoint, switches the burner |
+| boiler-modbus-tcp-bridge.yml | Modbus bridge | Polls the temperature and the burner, reads and writes the setpoint, switches the burner |
 | boiler-controller | Cell | Switches the burner so the water stays within 2 °C of the setpoint |
 
 The simulated boiler maps:
