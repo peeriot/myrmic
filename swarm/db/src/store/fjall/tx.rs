@@ -54,6 +54,21 @@ const VERSION_INDEX_TAG: u8 = b'^';
 /// triggers a one-time backfill.
 pub(crate) const VERSION_INDEX_FLAG: &[u8] = b"!vidx1";
 
+/// Longest key lsm-tree takes; it panics on anything longer.
+const MAX_KEY_LEN: usize = u16::MAX as usize;
+
+/// Refuses a key lsm-tree would panic on (reads included), so an over-long
+/// name (or a peer's encoded key) fails the call instead of the process.
+fn check_key_len(key: &[u8]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        key.len() <= MAX_KEY_LEN,
+        "key of {} bytes exceeds the {MAX_KEY_LEN} byte limit",
+        key.len(),
+    );
+
+    Ok(())
+}
+
 /// Index row key: `^ ‖ ts.be ‖ <full data key>` (empty value). Every data row
 /// of a version lands in one contiguous range, so per-version operations
 /// (changeset serving, chunk deletion) need not scan the whole scope.
@@ -208,6 +223,7 @@ impl<M> Transaction<M> {
         V: serde::Serialize,
     {
         let key = key.encode().context("unable to encode key")?;
+        check_key_len(&key)?;
         let value = postcard::to_allocvec(value).context("unable to serialise value")?;
 
         self.insert_raw(&key, &value);
@@ -333,20 +349,27 @@ impl<M> Transaction<M> {
         let mark = key.len();
         {
             encode(&mut key, ts, KeyKind::Deletion);
+            let index_key = version_index_key(ts, &key);
+            // Before the take below: lsm-tree panics on a long key read too.
+            check_key_len(&index_key)?;
             let _drop = self.take_raw(key.as_slice())?;
-            self.delete_raw(&version_index_key(ts, &key));
+            self.delete_raw(&index_key);
         }
         key.truncate(mark);
 
-        self.insert_at_raw(key, value, ts);
-        Ok(())
+        self.insert_at_raw(key, value, ts)
     }
 
     /// Bypasses lookup check, only used by replication
-    fn insert_at_raw(&mut self, mut key: Vec<u8>, value: &[u8], ts: u64) {
+    fn insert_at_raw(&mut self, mut key: Vec<u8>, value: &[u8], ts: u64) -> anyhow::Result<()> {
         encode(&mut key, ts, KeyKind::Insertion);
-        self.insert_raw(&version_index_key(ts, &key), b"");
+        let index_key = version_index_key(ts, &key);
+        check_key_len(&index_key)?;
+
+        self.insert_raw(&index_key, b"");
         self.insert_raw(key.as_slice(), value);
+
+        Ok(())
     }
 
     fn put_at<'a, S>(&mut self, key: &S, value: &[u8], ts: u64) -> anyhow::Result<()>
@@ -358,9 +381,10 @@ impl<M> Transaction<M> {
         Ok(())
     }
 
-    fn erase_raw(&mut self, key: Vec<u8>) {
+    fn erase_raw(&mut self, key: Vec<u8>) -> anyhow::Result<()> {
         let (ts, _me) = self.split_ts();
-        self.erase_at_raw(key, ts);
+
+        self.erase_at_raw(key, ts)
     }
 
     fn erase<'a, S>(&mut self, key: &S) -> anyhow::Result<()>
@@ -368,14 +392,19 @@ impl<M> Transaction<M> {
         S: skey::StoreKey<'a>,
     {
         let key = key.encode()?;
-        self.erase_raw(key);
-        Ok(())
+
+        self.erase_raw(key)
     }
 
-    fn erase_at_raw(&mut self, mut key: Vec<u8>, ts: u64) {
+    fn erase_at_raw(&mut self, mut key: Vec<u8>, ts: u64) -> anyhow::Result<()> {
         encode(&mut key, ts, KeyKind::Deletion);
-        self.insert_raw(&version_index_key(ts, &key), b"");
+        let index_key = version_index_key(ts, &key);
+        check_key_len(&index_key)?;
+
+        self.insert_raw(&index_key, b"");
         self.insert_raw(key.as_slice(), b"");
+
+        Ok(())
     }
 
     fn erase_at<'a, S>(&mut self, key: &S, ts: u64) -> anyhow::Result<()>
@@ -383,8 +412,8 @@ impl<M> Transaction<M> {
         S: skey::StoreKey<'a>,
     {
         let key = key.encode()?;
-        self.erase_at_raw(key, ts);
-        Ok(())
+
+        self.erase_at_raw(key, ts)
     }
 
     #[expect(
@@ -403,6 +432,7 @@ impl<M> Transaction<M> {
     }
 
     fn get_from_raw(&self, key: &[u8], ts: u64) -> anyhow::Result<Option<(Slice, Slice)>> {
+        check_key_len(key)?;
         let it = self.prefix_of(key);
 
         for guard in it {
@@ -1060,9 +1090,9 @@ impl<M> Transaction<M> {
 
         for (key, value) in entries {
             if let Some(value) = value {
-                self.insert_at_raw(key.clone(), value, ts);
+                self.insert_at_raw(key.clone(), value, ts)?;
             } else {
-                self.erase_at_raw(key.clone(), ts);
+                self.erase_at_raw(key.clone(), ts)?;
             }
         }
 

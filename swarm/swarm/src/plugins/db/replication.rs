@@ -19,13 +19,18 @@ impl ZenohTransport {
     /// # Errors
     ///
     /// When `subject` does not form valid key expressions, see
-    /// [`ReplicaClient::new`].
+    /// [`ReplicaClient::new`], or is a single scope the db refuses: no replica
+    /// could serve it.
     pub fn new<M: Send + Sync + 'static>(
         session: &Session,
         subject: &Subject,
         store: &db::store::fjall::Store<M>,
         role: &'static str,
     ) -> ZResult<Self> {
+        if let Subject::Scope(scope) = subject {
+            scope.check().map_err(zenoh::Error::from)?;
+        }
+
         let client = ReplicaClient::new(session, subject)?;
 
         let store = store.clone();

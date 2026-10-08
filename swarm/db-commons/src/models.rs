@@ -183,6 +183,23 @@ impl Scope {
             schema: schema.into(),
         }
     }
+
+    /// Refuses a scope any of whose segments fails [`check_segment`].
+    ///
+    /// # Errors
+    ///
+    /// A message naming the first offending segment and the rule it breaks.
+    pub fn check(&self) -> Result<(), String> {
+        [
+            ("namespace", &self.namespace),
+            ("database", &self.database),
+            ("schema", &self.schema),
+        ]
+        .into_iter()
+        .try_for_each(|(what, segment)| {
+            check_segment(segment).map_err(|err| alloc::format!("{what} {err}"))
+        })
+    }
 }
 
 impl Default for Scope {
@@ -273,6 +290,8 @@ impl Subject {
         }
     }
 
+    /// Whether `scope` falls under this subject. Pure membership: a scope from
+    /// a peer is checked ([`Scope::check`]) before it is looked up.
     pub fn contains(&self, scope: &Scope) -> bool {
         match self {
             Self::Namespace(ns) => &scope.namespace == ns,
@@ -1626,5 +1645,41 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn a_scope_the_db_cannot_key_is_refused() {
+        let long = "s".repeat(MAX_SEGMENT_LEN + 1);
+        let at_bound = "s".repeat(MAX_SEGMENT_LEN);
+
+        assert!(Scope::new(at_bound.as_str(), "d", "s").check().is_ok());
+        // The host stamps verbatim `@` chunks itself (the event bus).
+        assert!(Scope::new("cells", "@events", "x").check().is_ok());
+
+        for bad in [
+            Scope::new(long.as_str(), "d", "s"),
+            Scope::new("n", long.as_str(), "s"),
+            Scope::new("n", "d", long.as_str()),
+            Scope::new("n", "d", "x?"),
+            Scope::new("n", "d", "x#"),
+            Scope::new("*", "d", "s"),
+            Scope::new("n", "$*", "s"),
+            Scope::new("n", "d", "a/b"),
+            Scope::new("", "d", "s"),
+            Scope::new("n", "", "s"),
+            Scope::new("n", "d", ""),
+        ] {
+            assert!(bad.check().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_subject_contains_by_membership_alone() {
+        let scope = Scope::new("n", "d", "x?");
+
+        assert!(Subject::Namespace("n".into()).contains(&scope));
+        assert!(Subject::Database("n".into(), "d".into()).contains(&scope));
+        assert!(Subject::Scope(scope.clone()).contains(&scope));
+        assert!(!Subject::Namespace("m".into()).contains(&scope));
     }
 }

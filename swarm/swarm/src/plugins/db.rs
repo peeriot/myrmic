@@ -85,13 +85,16 @@ impl crate::plugins::MyrmicPlugin for Plugin {
         ));
 
         // Backstop for stray scopes the commit-time hook can't see: data held
-        // from before a configuration change or an earlier run. Sleep-first,
+        // from before a configuration change or an earlier run. Counts the
+        // stored scopes the db now refuses once at start. Sleep-first,
         // so the replication watcher settles before anything is offered up.
         handle.spawn({
             let context = context.clone();
             let shutdown = context.store.shutdown_token();
 
             async move {
+                warn_refused_scopes(&context).await;
+
                 loop {
                     tokio::select! {
                         () = tokio::time::sleep(STRAY_SCAN_INTERVAL) => (),
@@ -1097,6 +1100,20 @@ async fn stray_scopes(context: &StoreContext) -> Vec<models::Scope> {
     }
 }
 
+/// Warns once about stored scopes the db no longer accepts. Only the count is
+/// logged: the names themselves can be arbitrarily long.
+async fn warn_refused_scopes(context: &StoreContext) {
+    let store = context.store.clone();
+    match tokio::task::spawn_blocking(move || store.refused_scope_count()).await {
+        Ok(Ok(0)) => (),
+        Ok(Ok(count)) => tracing::warn!(
+            "{count} stored scope(s) fail the db's name rules and are never replicated or offloaded"
+        ),
+        Ok(Err(err)) => tracing::warn!("unable to count refused scopes: {err}"),
+        Err(err) => tracing::warn!("refused scope count failed: {err}"),
+    }
+}
+
 /// The sync points this node holds for `scope`, or an empty snapshot if the
 /// scan fails — releasing nothing is always the safe answer.
 async fn held_sync_points(
@@ -1235,6 +1252,10 @@ async fn handle_locate(
             }
         };
     let scope = models::Scope::new(namespace, database, schema);
+    if let Err(err) = scope.check() {
+        tracing::debug!("dropping locate for an invalid scope: {err}");
+        return;
+    }
 
     let Some(req) = db_commons::query::parse_query::<models::locate::Request>(&query) else {
         // parse_query logs the failure.
