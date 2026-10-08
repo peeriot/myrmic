@@ -80,6 +80,10 @@ fn workspace_member_app_build_finds_workspace_target_wasm() {
         .arg("build")
         .arg("app.yml")
         .env_remove("RUSTFLAGS")
+        // The assertions below look for the workspace's own `target/`, which
+        // a target directory set in the environment would move elsewhere.
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_BUILD_TARGET_DIR")
         .output()
         .expect("failed to run myrmic build for workspace app");
 

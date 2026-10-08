@@ -1,10 +1,13 @@
+use std::{collections::HashSet, time::Duration};
+
 use anyhow::Context as _;
 use serde::Deserialize;
+
+use myrmic_common::human_duration;
 use sorg_common::{HttpBridgeConfig, MqttBridgeConfig, RestartPolicy, RestartType};
-use std::collections::HashSet;
-use std::time::Duration;
 
 pub mod http;
+pub mod modbus;
 pub mod mqtt;
 
 #[cfg(test)]
@@ -170,22 +173,10 @@ pub struct RestartExpanded {
     pub restart_type: RestartTypeName,
     #[serde(default)]
     pub max: Option<u32>,
-    #[serde(default, deserialize_with = "de_human_duration")]
+    #[serde(default, deserialize_with = "human_duration::option::deserialize")]
     pub window: Option<Duration>,
-    #[serde(default, deserialize_with = "de_human_duration")]
+    #[serde(default, deserialize_with = "human_duration::option::deserialize")]
     pub delay: Option<Duration>,
-}
-
-fn de_human_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    match Option::<String>::deserialize(deserializer)? {
-        Some(s) => humantime::parse_duration(&s)
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-        None => Ok(None),
-    }
 }
 
 impl RestartSpec {
@@ -432,6 +423,7 @@ try_from_yaml_enum! {
     pub enum BridgeInput {
         Mqtt(mqtt::UserMqttBridge),
         Http(http::UserHttpBridgeApi),
+        Modbus(modbus::UserModbusBridge),
     }
 }
 
@@ -446,6 +438,7 @@ try_from_yaml_enum! {
         App(App),
         Mqtt(mqtt::UserMqttBridge),
         Http(http::UserHttpBridgeApi),
+        Modbus(modbus::UserModbusBridge),
         MqttNest(MqttBridgeConfig),
         HttpEgressNest(HttpBridgeConfig),
     }
@@ -460,6 +453,7 @@ impl DeployInput {
             DeployInput::App(_) => true,
             DeployInput::Mqtt(_)
             | DeployInput::Http(_)
+            | DeployInput::Modbus(_)
             | DeployInput::MqttNest(_)
             | DeployInput::HttpEgressNest(_) => false,
         }

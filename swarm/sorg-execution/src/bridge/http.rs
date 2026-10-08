@@ -4,17 +4,17 @@ use std::time::Duration;
 
 use reqwest::header::CONTENT_TYPE;
 use sorg_common::{
-    BodyTemplate, HttpBridgeApi, HttpBridgeRecord, OutgoingMessage, ResponseHeaderTemplate,
+    BodyTemplate, HttpBridgeApi, HttpBridgeRecord, ResponseHeaderTemplate,
     WireHttpResponseTemplate, WireHttpResponseVariant, custom_err, status_variant_name,
 };
 use tokio::sync::{Barrier, Notify};
 use tokio::time::timeout;
 use zenoh::Session;
 
-use cell_protocol::{MailboxCommand, Sri};
-use myrmic_common::cells::Command;
+use cell_protocol::MailboxCommand;
 
 use crate::bridge::consumer::spawn_bridge_command_consumer;
+use crate::bridge::reply;
 use crate::payload::{Marker, get_val, resolve_segments_as_string};
 use crate::wasm::cell::state::DropHandle;
 
@@ -160,14 +160,9 @@ async fn handle_message(
 
     let mut obj = crate::payload::parse_payload_object(payload.as_slice())?;
 
-    // The generated client rides its callback command name in a reserved
-    // `__callback` field; strip it before matching request placeholders so it
-    // isn't rejected as unknown. Other callers omit it and stay fire-and-forget.
-    let callback = match obj.remove("__callback") {
-        Some(serde_json::Value::String(name)) => Some(name),
-        Some(_) => return Err(custom_err!("`__callback` must be a string"))?,
-        None => None,
-    };
+    // Strip the callback before matching request placeholders so it isn't
+    // rejected as unknown. Callers without one stay fire-and-forget.
+    let callback = reply::take_callback(&mut obj)?;
 
     let vals = {
         let mut markers = Marker::collect(&req.path);
@@ -279,21 +274,7 @@ async fn handle_message(
 
     let reply = build_reply(&response_template, status_code.as_u16(), response).await?;
 
-    let command =
-        Command::new(callback).map_err(|err| custom_err!("invalid callback name: {}", err))?;
-    let mut message = OutgoingMessage::command(&Sri::from_uuid(sender), &command, Some(reply))
-        .map_err(|err| custom_err!("unable to build reply command: {}", err))?;
-    if let Ok(bridge) = Sri::from_target(&api.cell_name) {
-        message.attach_sender(Some(bridge.as_uuid()));
-    }
-    message
-        .send_via_db(&db, None)
-        .await
-        .map_err(|err| custom_err!("unable to deliver reply: {}", err))?;
-
-    tracing::debug!("delivered response to callback `{}`", command.as_ref());
-
-    Ok(())
+    reply::deliver(&db, &api.cell_name, sender, callback, reply).await
 }
 
 /// Builds the JSON reply the caller's generated `<Endpoint>Reply` enum decodes,

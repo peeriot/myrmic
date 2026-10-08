@@ -1,0 +1,25 @@
+name: ur20
+host: 192.168.0.222
+
+poll:
+  - id: temperature
+    register: input
+    address: 0x0001
+    value: "${i16:tenths}"
+    interval: 1s
+  - id: rtd_module
+    register: holding
+    address: 0x2A02
+    value: "${u32:id}"
+    interval: 10s
+  - id: do_module
+    register: holding
+    address: 0x2A04
+    value: "${u32:id}"
+    interval: 10s
+
+write:
+  - id: fan_on
+    register: coil
+    address: 0x8000
+    value: "${bool:on}"

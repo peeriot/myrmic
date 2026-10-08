@@ -6,10 +6,12 @@ pub(crate) mod restart;
 pub(crate) mod tags;
 
 pub use bridges::{
-    BodyTemplate, HttpBridgeApi, HttpBridgeConfig, HttpBridgeRecord, MqttBridge, MqttBridgeConfig,
-    MqttBridgeDef, MqttBridgeRecord, ResponseHeaderTemplate, TemplateSegment, TemplateSegments,
-    WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseTemplate, WireHttpResponseVariant,
-    WireMqttEgress, WireMqttIngress, status_variant_name,
+    BodyTemplate, HttpBridgeApi, HttpBridgeConfig, HttpBridgeRecord, ModbusBridge, ModbusByteOrder,
+    ModbusRegister, ModbusServerAddress, ModbusValueTemplate, ModbusWritableRegister, MqttBridge,
+    MqttBridgeConfig, MqttBridgeDef, MqttBridgeRecord, ResponseHeaderTemplate, TemplateSegment,
+    TemplateSegments, WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseTemplate,
+    WireHttpResponseVariant, WireModbusPoll, WireModbusRead, WireModbusWrite, WireMqttEgress,
+    WireMqttIngress, status_variant_name,
 };
 pub use restart::{RestartPolicy, RestartType, should_restart};
 pub use tags::{RequirementTag, RequirementTags};
@@ -129,6 +131,7 @@ pub enum CellConfig {
     Wasm { class: String },
     HttpBridge(HttpBridgeApi),
     MqttBridge(MqttBridge),
+    ModbusBridge(ModbusBridge),
 }
 
 impl std::fmt::Display for CellConfig {
@@ -137,6 +140,7 @@ impl std::fmt::Display for CellConfig {
             CellConfig::Wasm { class } => format!("Wasm({})", class),
             CellConfig::HttpBridge(bridge) => format!("Http({})", bridge.base_url),
             CellConfig::MqttBridge(bridge) => format!("Mqtt({})", bridge.broker),
+            CellConfig::ModbusBridge(bridge) => format!("Modbus({})", bridge.server_address()),
         };
         f.write_str(&details)
     }
@@ -146,6 +150,7 @@ impl std::fmt::Display for CellConfig {
 mod tests {
     use super::*;
     use cell_protocol::Sri;
+    use myrmic_common::human_duration::NonZeroDuration;
 
     #[test]
     fn new_deployment_defaults_to_never_restart() {
@@ -177,5 +182,45 @@ mod tests {
         let bytes = postcard::to_allocvec(&d).unwrap();
         let back: CellDeployment = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back.restart, policy);
+    }
+
+    #[test]
+    fn modbus_bridge_survives_postcard_round_trip() {
+        // postcard is not self-describing, so every optional and defaulted field of
+        // the spec entries has to line up exactly on both ends.
+        let bridge = ModbusBridge {
+            cell_name: "plant/plc".to_owned(),
+            host: "plc.local".to_owned(),
+            port: 502,
+            unit_id: Some(1),
+            timeout: None,
+            poll: vec![crate::WireModbusPoll {
+                id: "temperature".to_owned(),
+                register: crate::ModbusRegister::Input,
+                address: 100,
+                value: "${f32:celsius}".parse().unwrap(),
+                byte_order: crate::ModbusByteOrder::Cdab,
+                unit_id: None,
+                interval: NonZeroDuration::new(std::time::Duration::from_secs(1)).unwrap(),
+                on_change: true,
+            }],
+            read: vec![],
+            write: vec![crate::WireModbusWrite {
+                id: "pump_on".to_owned(),
+                register: crate::ModbusWritableRegister::Coil,
+                address: 5,
+                value: "${bool:on}".parse().unwrap(),
+                byte_order: crate::ModbusByteOrder::Abcd,
+                unit_id: Some(2),
+            }],
+        };
+        let d = CellDeployment::new(
+            Sri::of_path("plant/plc").unwrap(),
+            CellConfig::ModbusBridge(bridge),
+        );
+
+        let bytes = postcard::to_allocvec(&d).unwrap();
+        let back: CellDeployment = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, d);
     }
 }

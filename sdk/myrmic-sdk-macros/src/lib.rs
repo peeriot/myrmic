@@ -7,8 +7,8 @@
 //! - [`monitor`] turns a function into the cell's `on_cell_lost` export.
 //! - [`Message`] derives the `Decoder`/`Encoder` impls a command, event, or
 //!   init payload type needs.
-//! - `import!` reads a bridge spec file (MQTT or HTTP) and generates a typed
-//!   client for it.
+//! - `import!` reads a bridge spec file (MQTT, HTTP or Modbus) and generates
+//!   a typed client for it.
 //!
 //! `myrmic-sdk` re-exports every one of these under its own name, so a cell
 //! depends on `myrmic-sdk` rather than on this crate directly:
@@ -173,8 +173,8 @@ pub fn derive_message(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///
 /// Takes one or more string-literal paths, resolved relative to the crate's
 /// `CARGO_MANIFEST_DIR`. Each file describes a *bridge* - a runtime-provided
-/// cell fronting an HTTP API or an MQTT broker - and expands to everything
-/// needed to talk to it type-safely:
+/// cell fronting an HTTP API, an MQTT broker or a Modbus TCP server - and
+/// expands to everything needed to talk to it type-safely:
 ///
 /// - Rust structs for the payload types the spec declares, deriving
 ///   `serde::Serialize`/`Deserialize` and `myrmic_sdk::Message`. The derives
@@ -195,6 +195,13 @@ pub fn derive_message(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
 ///   - **MQTT ingress** - no method; each entry becomes an event payload type
 ///     implementing `CellEvent`, so an `#[evt]` handler receives messages
 ///     arriving from the broker.
+///   - **Modbus write** - `fn <id>(&self, value: <Id>) -> Result<()>`,
+///     writing the value to the entry's register.
+///   - **Modbus read** - `fn <id>(&self, cb: Callback<<Id>Reply>) -> Result<()>`.
+///     The callback receives `Ok(<Id>Value)`, the `Exception` code the device
+///     answered with, or `Failed` with the reason no answer came.
+///   - **Modbus poll** - no method; like an MQTT ingress, each entry becomes an
+///     event payload type the bridge publishes as it polls the value.
 ///
 /// The spec file is registered as a build input, so editing it re-runs the
 /// code generation.

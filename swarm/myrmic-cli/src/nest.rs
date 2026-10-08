@@ -3,7 +3,7 @@ use crate::args::Ctx;
 use crate::build::{AppInfo, CellClass};
 use crate::models::CellInstance;
 
-use sorg_common::{HttpBridgeConfig, MqttBridgeConfig};
+use sorg_common::{HttpBridgeConfig, ModbusBridge, MqttBridgeConfig};
 
 use anyhow::Context as _;
 use sha2::Digest;
@@ -101,6 +101,12 @@ pub fn write(ctx: &Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result
         entries.push(archive::Entry::virt("./http-bridges.json", content));
     }
 
+    if !info.modbus_bridges.is_empty() {
+        let content = serde_json::to_string_pretty(&info.modbus_bridges)
+            .context("unable to serialise modbus bridges")?;
+        entries.push(archive::Entry::virt("./modbus-bridges.json", content));
+    }
+
     archive::write(path, &entries)?;
 
     crate::info!(ctx, "wrote nest archive: {}", path.display());
@@ -126,6 +132,7 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
     let mut instance_map: HashMap<String, String> = HashMap::new();
     let mut mqtt: Option<MqttBridgeConfig> = None;
     let mut http: Option<HttpBridgeConfig> = None;
+    let mut modbus: Vec<ModbusBridge> = Vec::new();
     let mut app_name: Option<String> = None;
     let mut hash_paths: HashMap<String, PathBuf> = HashMap::new();
 
@@ -166,6 +173,12 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
                 entry.read_to_string(&mut buf)?;
                 http =
                     Some(serde_json::from_str(&buf).context("unable to parse http-bridges.json")?);
+            }
+            "modbus-bridges.json" => {
+                let mut buf = String::new();
+                entry.read_to_string(&mut buf)?;
+                modbus =
+                    serde_json::from_str(&buf).context("unable to parse modbus-bridges.json")?;
             }
             hash => {
                 let out = extract_dir.join(hash);
@@ -239,5 +252,62 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
         classes,
         mqtt_bridges: mqtt.map(|c| c.bridges).unwrap_or_default(),
         http_bridges: http.map(|c| c.api).unwrap_or_default(),
+        modbus_bridges: modbus,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use myrmic_common::human_duration::NonZeroDuration;
+    use sorg_common::{
+        ModbusByteOrder, ModbusRegister, ModbusWritableRegister, WireModbusPoll, WireModbusWrite,
+    };
+
+    use super::*;
+
+    #[test]
+    fn modbus_bridges_survive_a_nest() {
+        let bridge = ModbusBridge {
+            cell_name: "plc".to_owned(),
+            host: "plc.local".to_owned(),
+            port: 502,
+            unit_id: Some(1),
+            timeout: None,
+            poll: vec![WireModbusPoll {
+                id: "temperature".to_owned(),
+                register: ModbusRegister::Input,
+                address: 100,
+                value: "${f32:celsius}".parse().unwrap(),
+                byte_order: ModbusByteOrder::Cdab,
+                unit_id: None,
+                interval: NonZeroDuration::new(std::time::Duration::from_secs(1)).unwrap(),
+                on_change: true,
+            }],
+            read: vec![],
+            write: vec![WireModbusWrite {
+                id: "pump_on".to_owned(),
+                register: ModbusWritableRegister::Coil,
+                address: 5,
+                value: "${bool:on}".parse().unwrap(),
+                byte_order: ModbusByteOrder::Abcd,
+                unit_id: None,
+            }],
+        };
+        let info = AppInfo {
+            name: "plant".to_owned(),
+            instances: vec![],
+            classes: HashMap::new(),
+            mqtt_bridges: vec![],
+            http_bridges: vec![],
+            modbus_bridges: vec![bridge.clone()],
+        };
+        let path = std::env::temp_dir().join(format!("myrmic-nest-{}.nest", uuid::Uuid::new_v4()));
+
+        let ctx = Ctx::default();
+        write(&ctx, &path, info).unwrap();
+        let back = read(&ctx, &path);
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(back.unwrap().modbus_bridges, vec![bridge]);
+    }
 }

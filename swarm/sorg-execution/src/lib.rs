@@ -9,14 +9,16 @@ mod spawn;
 mod supervision;
 mod wasm;
 
-/// The mailbox-native HTTP/MQTT bridge handles.
+/// The mailbox-native HTTP/MQTT/Modbus bridge handles.
 ///
 /// Public so the orchestration plugin can spawn them directly by SRI (native bridge
 /// cell deploy), instead of routing through the operator/deployment engine.
 pub mod bridge {
     pub(crate) mod consumer;
     pub mod http;
+    pub mod modbus;
     pub mod mqtt;
+    pub(crate) mod reply;
 }
 
 pub use error::{Error, Result};

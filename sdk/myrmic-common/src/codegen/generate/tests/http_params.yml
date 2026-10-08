@@ -1,0 +1,11 @@
+name: spacetraders
+base_url: https://api.spacetraders.io
+endpoints:
+  - id: negotiate_contract
+    request:
+      method: POST
+      path: "/my/ships/${string:ship}/negotiate/contract"
+      headers:
+        authorization: "Bearer ${db:keys/secrets/spacetraders@token}"
+    response:
+      200: "${json:body}"

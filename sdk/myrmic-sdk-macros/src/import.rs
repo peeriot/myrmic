@@ -45,6 +45,9 @@ fn import_inner(input: Ts, root: &Ts) -> Result<Ts, syn::Error> {
         let tokens = match input {
             ImportInput::Mqtt(v) => generate::mqtt_bridge(root, v),
             ImportInput::Http(v) => generate::http_bridge(root, v),
+            // What the types cannot express, e.g. ids that would collide as
+            // generated names, is checked before anything is generated.
+            ImportInput::Modbus(v) => v.validate().and_then(|()| generate::modbus_bridge(root, v)),
         }
         .map_err(|err| syn::Error::new(path_lit.span(), err))?;
 
@@ -94,5 +97,34 @@ mod tests {
             text.contains("http-bridge.yml"),
             "include_bytes! should reference the resolved spec path:\n{text}"
         );
+    }
+
+    #[test]
+    fn imports_a_modbus_bridge_spec() {
+        let out = import_inner(
+            quote! { "tests/data/modbus-bridge.yml" },
+            &quote! { ::myrmic_sdk },
+        )
+        .expect("fixture should generate");
+
+        syn::parse2::<syn::File>(out.clone()).expect("import! output should be a valid Rust file");
+
+        let text = out.to_string();
+        assert!(text.contains("BoilerClient"), "{text}");
+        assert!(text.contains("BoilerTemperature"), "{text}");
+        assert!(text.contains("ReadSetpointReply"), "{text}");
+        assert!(text.contains("PumpOn"), "{text}");
+    }
+
+    #[test]
+    fn rejects_an_invalid_modbus_bridge_spec() {
+        // A `bool` in a holding register parses, but `validate` refuses it.
+        let err = import_inner(
+            quote! { "tests/data/invalid-modbus-bridge.yml" },
+            &quote! { ::myrmic_sdk },
+        )
+        .expect_err("an invalid spec must not generate");
+
+        assert!(err.to_string().contains("pump_on"), "{err}");
     }
 }

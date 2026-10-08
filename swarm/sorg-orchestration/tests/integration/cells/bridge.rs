@@ -1,24 +1,33 @@
 //! Native bridge cell tests, driven on the standalone cell path (`deploy_http_bridge`/
-//! `deploy_mqtt_bridge`/`undeploy_cell`), not through an app deployment. These are the
-//! early-verification signal for the native bridge rebuild: a deploy -> round-trip ->
-//! undeploy cycle for both bridge kinds, plus the deploy/undeploy edge cases.
+//! `deploy_mqtt_bridge`/`deploy_modbus_bridge`/`undeploy_cell`), not through an app
+//! deployment. These are the early-verification signal for the native bridge rebuild: a
+//! deploy -> round-trip -> undeploy cycle for each bridge kind, plus the deploy/undeploy
+//! edge cases.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use cell_protocol::{Gen, PlacementEntry, PlacementKind};
 use claims::{assert_err, assert_none, assert_ok};
+use myrmic_common::human_duration::NonZeroDuration;
 use sorg_common::{
-    BodyTemplate, DeploymentError, FenceOutcome, HttpBridgeApi, MqttBridge, PlacementClaimOutcome,
-    RequirementTags, WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseVariant,
-    WireMqttIngress, claim_placement, commit_placement,
+    BodyTemplate, DeploymentError, FenceOutcome, HttpBridgeApi, ModbusBridge, ModbusByteOrder,
+    ModbusRegister, ModbusWritableRegister, MqttBridge, PlacementClaimOutcome, RequirementTags,
+    WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseVariant, WireModbusPoll,
+    WireModbusWrite, WireMqttIngress, claim_placement, commit_placement,
 };
-use sorg_tests::{HttpMockHandle, swarm_config};
+use sorg_tests::{HttpMockHandle, ModbusMockHandle, swarm_config};
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
 
 const HTTP_BRIDGE_SRI: &str = "standalone_http_bridge";
 const MQTT_BRIDGE_SRI: &str = "standalone_mqtt_bridge";
+const MODBUS_BRIDGE_SRI: &str = "standalone_modbus_bridge";
+
+// The tests of one process share a swarm network (see `sorg_tests::swarm`), so each
+// test deploys under names no concurrently running test uses.
+const COLLIDING_BRIDGE_SRI: &str = "colliding_http_bridge";
+const COLLIDING_APP: &str = "colliding_mqtt_bridge";
 
 fn http_bridge_api(cell_name: &str, base_url: &str) -> HttpBridgeApi {
     HttpBridgeApi {
@@ -193,6 +202,127 @@ async fn mqtt_bridge_deploy_round_trip_undeploy() {
     assert_none!(assert_ok!(event_queue.try_receive().await));
 }
 
+/// Deploy a Modbus bridge cell natively against an in-process Modbus server, see a polled
+/// value arrive as a cell event and a commanded value land in the server, then undeploy
+/// and verify the bridge neither polls nor takes commands anymore.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn modbus_bridge_deploy_round_trip_undeploy() {
+    const POLL_EVENT: &str = "standalone_modbus_level";
+    const WRITE_COMMAND: &str = "standalone_modbus_setpoint";
+    const LEVEL_ADDRESS: u16 = 10;
+    const SETPOINT_ADDRESS: u16 = 20;
+
+    // Arrange — orch + exec + db, plus a Modbus server with a value to poll
+    let swarm = swarm_config!("cells/cells.jsonnet");
+    let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    let sorg = sorg_client::Client::new(test_app.session().clone());
+
+    let server = ModbusMockHandle::start().await;
+    server.set_input_registers(LEVEL_ADDRESS, &[42]);
+
+    let bridge = ModbusBridge {
+        cell_name: MODBUS_BRIDGE_SRI.to_owned(),
+        host: server.address().host,
+        port: server.address().port,
+        unit_id: None,
+        timeout: None,
+        poll: vec![WireModbusPoll {
+            id: POLL_EVENT.to_owned(),
+            register: ModbusRegister::Input,
+            address: LEVEL_ADDRESS,
+            value: "${u16:level}".parse().unwrap(),
+            byte_order: ModbusByteOrder::Abcd,
+            unit_id: None,
+            interval: NonZeroDuration::new(std::time::Duration::from_millis(50)).unwrap(),
+            on_change: true,
+        }],
+        read: vec![],
+        write: vec![WireModbusWrite {
+            id: WRITE_COMMAND.to_owned(),
+            register: ModbusWritableRegister::Holding,
+            address: SETPOINT_ADDRESS,
+            value: "${u16:setpoint}".parse().unwrap(),
+            byte_order: ModbusByteOrder::Abcd,
+            unit_id: None,
+        }],
+    };
+
+    // The bridge polls as soon as it is up, so listen before deploying.
+    let mut event_queue = test_app.subscribe_cell_event(POLL_EVENT).await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    // Act I — deploy the bridge cell directly, no application wrapper
+    assert_ok!(
+        sorg.deploy_modbus_bridge(
+            to_sri(MODBUS_BRIDGE_SRI),
+            bridge,
+            RequirementTags::default()
+        )
+        .await
+    );
+
+    // Assert I — registered natively, keyed by its own sri
+    assert!(test_app.is_cell_registered(MODBUS_BRIDGE_SRI).await);
+    let entry = assert_ok!(sorg.get_placement(&to_sri(MODBUS_BRIDGE_SRI)).await)
+        .expect("modbus bridge cell should be registered after deploy");
+    let PlacementKind::Bridge { sri } = &entry.kind else {
+        panic!("expected Bridge placement, got {:?}", entry.kind);
+    };
+    assert_eq!(sri, &to_sri(MODBUS_BRIDGE_SRI));
+
+    // Assert II — the polled register arrives as a cell event, keyed by the field name
+    // of its value template
+    let received = assert_ok!(event_queue.receive().await);
+    let payload = String::from_utf8(received).expect("event payload should be utf8 json");
+    assert_eq!(payload, r#"{"level":42}"#);
+
+    // Act III — command a write (fire-and-forget)
+    test_app
+        .command_send(
+            MODBUS_BRIDGE_SRI,
+            WRITE_COMMAND,
+            Some(br#"{"setpoint": 215}"#.to_vec()),
+        )
+        .await;
+
+    // Assert III — the value lands in the server's holding register. The command is
+    // async, so poll until it does.
+    let mut written = None;
+    for _ in 0..25 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        written = server.holding_registers(SETPOINT_ADDRESS, 1);
+        if written.is_some() {
+            break;
+        }
+    }
+    assert_eq!(written, Some(vec![215]));
+
+    // Act IV — undeploy the native bridge cell
+    test_app.undeploy_cell(MODBUS_BRIDGE_SRI).await;
+
+    // Assert IV — deregistered, rejects commands, and a changed register no longer
+    // produces an event
+    assert!(!test_app.is_cell_registered(MODBUS_BRIDGE_SRI).await);
+    let err = assert_err!(
+        test_app
+            .try_command_send(
+                MODBUS_BRIDGE_SRI,
+                WRITE_COMMAND,
+                Some(br#"{"setpoint": 7}"#.to_vec()),
+            )
+            .await,
+        "commanding an undeployed bridge should be rejected"
+    )
+    .to_string();
+    assert!(
+        err.contains("has no placement"),
+        "expected a 'has no placement' error, got: {err}"
+    );
+    server.set_input_registers(LEVEL_ADDRESS, &[43]);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_none!(assert_ok!(event_queue.try_receive().await));
+}
+
 /// Deploying a second bridge under an sri already claimed by a live bridge is rejected as
 /// an explicit `DuplicateSri` deploy error — not a panic or a silent half-spawn — and the
 /// first bridge is left untouched.
@@ -209,26 +339,26 @@ async fn bridge_deploy_sri_collision() {
 
     assert_ok!(
         sorg.deploy_http_bridge(
-            to_sri(HTTP_BRIDGE_SRI),
-            http_bridge_api(HTTP_BRIDGE_SRI, mock_server.url()),
+            to_sri(COLLIDING_BRIDGE_SRI),
+            http_bridge_api(COLLIDING_BRIDGE_SRI, mock_server.url()),
             RequirementTags::default(),
         )
         .await
     );
-    assert!(test_app.is_cell_registered(HTTP_BRIDGE_SRI).await);
+    assert!(test_app.is_cell_registered(COLLIDING_BRIDGE_SRI).await);
 
     // Act — attempt to deploy a second (mqtt) bridge under the same sri.
     // Its app name must differ from the first bridge's so the collision is
     // decided by the sri claim, not the app-name guard that precedes it.
     let colliding_bridge = MqttBridge {
-        cell_name: MQTT_BRIDGE_SRI.to_owned(),
+        cell_name: COLLIDING_APP.to_owned(),
         broker: "mqtt://localhost:1883".to_owned(),
         ingress: vec![],
         egress: vec![],
     };
     let err = assert_err!(
         sorg.deploy_mqtt_bridge(
-            to_sri(HTTP_BRIDGE_SRI),
+            to_sri(COLLIDING_BRIDGE_SRI),
             colliding_bridge,
             RequirementTags::default()
         )
@@ -240,9 +370,9 @@ async fn bridge_deploy_sri_collision() {
     let DeploymentError::DuplicateSri { sri } = &err else {
         panic!("expected DuplicateSri, got: {err:?}");
     };
-    assert_eq!(*sri, to_sri(HTTP_BRIDGE_SRI));
+    assert_eq!(*sri, to_sri(COLLIDING_BRIDGE_SRI));
 
-    let entry = assert_ok!(sorg.get_placement(&to_sri(HTTP_BRIDGE_SRI)).await)
+    let entry = assert_ok!(sorg.get_placement(&to_sri(COLLIDING_BRIDGE_SRI)).await)
         .expect("first bridge should still be registered after the rejected collision");
     assert!(
         matches!(entry.kind, PlacementKind::Bridge { .. }),
@@ -253,7 +383,7 @@ async fn bridge_deploy_sri_collision() {
     // Assert — the first bridge is still live: commanding it still fires its outbound call.
     // (Fire-and-forget, so poll the mock rather than await a response.)
     test_app
-        .command_send(HTTP_BRIDGE_SRI, "fetch_data", None)
+        .command_send(COLLIDING_BRIDGE_SRI, "fetch_data", None)
         .await;
     let mut hits = 0;
     for _ in 0..25 {
