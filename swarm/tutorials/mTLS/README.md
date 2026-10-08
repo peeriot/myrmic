@@ -2,7 +2,9 @@
 
 This setup launches a swarm-based test environment using Docker Compose with prebuilt artifacts and locally created certificates to enable mutual TLS between all nodes.
 
-mTLS can use end-entity certificates containing either domain names or IP addresses in the Subject Alternative Name (SAN) field. If a domain name is used, the listen statement must match that name; otherwise, use the corresponding IP address. Be aware that `0.0.0.0` and `[::]` bindings can update dynamically (for example, due to IPv6 privacy extensions), while the certificate values remain static. Using domain names also requires a functional DNS mechanism in addition to HELO/SCOUT.
+mTLS can use end-entity certificates containing either domain names or IP addresses in the Subject Alternative Name (SAN) field. The name a dialler verifies is the host part of the endpoint it dialled, so whatever the peers put in their `connect` endpoints has to appear in the certificate. Using domain names also requires a functional DNS mechanism in addition to HELO/SCOUT.
+
+> **This setup listens on named endpoints (`tls/${HOSTNAME}:...`), and that shape does not survive a node changing its IP address.** A named listen endpoint is resolved once at startup and the socket is bound to the address that came back, so after a move it accepts nothing and only a restart clears it. That is fine here, because these containers keep their addresses for the life of the environment. Do not copy the shape onto nodes whose addresses can move: those listen on `tls/0.0.0.0:<port>` or `tls/[::]:<port>` and carry the name in the certificate and in their peers' `connect` endpoints instead. Note that a node listening on an unspecified address announces itself as IP literals, which change with the host, so a certificate with `iPAddress` SANs goes stale on a move whatever the listen endpoint looks like. See [Addresses that change](../../../doc/chapters/11_security.md#addresses-that-change).
 
 You can also use variables inside the configuration templates, such as `${HOSTNAME}`, to dynamically adapt settings for different nodes or environments.
 
