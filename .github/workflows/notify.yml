@@ -13,17 +13,39 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, labeled]
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created]
 
 jobs:
   dispatch:
     name: Dispatch
     # Unset in a repository not wired up yet: do nothing rather than fail. A draft
     # pull request has nothing to report until it is marked ready.
-    if: vars.CI_REPO != '' && !github.event.pull_request.draft
+    if: >-
+      vars.CI_REPO != '' && !github.event.pull_request.draft &&
+      (github.event_name != 'issue_comment' ||
+        (github.event.issue.pull_request && contains(github.event.comment.body, '/e2e')))
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
+      - name: Read the command
+        id: command
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ github.event.comment.body }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if ! grep -qE '^[[:space:]]*/e2e[[:space:]]*$' <<<"$BODY"; then
+            echo "run=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" \
+            --jq '"head_sha=\(.head.sha)\ndraft=\(.draft)"' >>"$GITHUB_OUTPUT"
+
       - uses: actions/create-github-app-token@v2
         id: token
+        if: steps.command.outputs.run != 'false'
         with:
           app-id: ${{ vars.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_SECRET }}
@@ -31,18 +53,19 @@ jobs:
           repositories: ${{ vars.CI_REPO }}
 
       - name: Tell CI there is work
+        if: steps.command.outputs.run != 'false'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           TARGET: ${{ github.repository_owner }}/${{ vars.CI_REPO }}
           # Post against the sha the pull request shows, not the merge result.
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ steps.command.outputs.head_sha || github.event.pull_request.head.sha || github.sha }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           PRIVATE: ${{ github.event.repository.private }}
-          DRAFT: ${{ github.event.pull_request.draft }}
-          HIL: ${{ contains(github.event.pull_request.labels.*.name, 'hil') }}
+          DRAFT: ${{ steps.command.outputs.draft || github.event.pull_request.draft }}
+          HIL: ${{ contains(github.event.pull_request.labels.*.name, 'hil') || contains(github.event.issue.labels.*.name, 'hil') }}
           REVIEW: ${{ github.event.review.state }}
-          # How the reviewer relates to the repository, e.g. MEMBER or NONE.
-          REVIEWER: ${{ github.event.review.author_association }}
+          # How the reviewer or commenter relates to the repository, e.g. MEMBER or NONE.
+          REVIEWER: ${{ github.event.review.author_association || github.event.comment.author_association }}
         run: |
           set -euo pipefail
           gh api -X POST "/repos/${TARGET}/dispatches" \
