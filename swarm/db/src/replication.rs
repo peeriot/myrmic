@@ -359,7 +359,24 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         }
     }
 
-    pub async fn handle_message(self, sender: uhlc::ID, msg: ReplicaMessage) {
+    /// The receipt time is taken when this is called, not when the returned
+    /// future first runs: handling can sit queued for seconds, and a peer's
+    /// departure noticed in between must outrank its older news.
+    pub fn handle_message(self, sender: uhlc::ID, msg: ReplicaMessage) -> impl Future<Output = ()> {
+        let received_at = Instant::now();
+
+        async move {
+            self.handle_message_received_at(sender, msg, received_at)
+                .await;
+        }
+    }
+
+    async fn handle_message_received_at(
+        self,
+        sender: uhlc::ID,
+        msg: ReplicaMessage,
+        received_at: Instant,
+    ) {
         let me = self.store.node_id();
 
         if me == sender {
@@ -371,8 +388,8 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         let result = match msg {
             ReplicaMessage::Probe(probe) => self.handle_probe(probe).await,
             ReplicaMessage::Announce(announce) => match self.mode {
-                ReplicaMode::Full => self.handle_announce(sender, announce).await,
-                ReplicaMode::Offload => self.handle_coverage(sender, announce).await,
+                ReplicaMode::Full => self.handle_announce(sender, announce, received_at).await,
+                ReplicaMode::Offload => self.handle_coverage(sender, announce, received_at).await,
             },
             ReplicaMessage::ChangeSetReq(req) => self.handle_cs_req(req).await,
             ReplicaMessage::ChangeSet(cs) => match self.mode {
@@ -566,7 +583,12 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         }
     }
 
-    async fn handle_announce(&self, sender: uhlc::ID, announce: Announce) -> anyhow::Result<()> {
+    async fn handle_announce(
+        &self,
+        sender: uhlc::ID,
+        announce: Announce,
+        received_at: Instant,
+    ) -> anyhow::Result<()> {
         let me = self.store.node_id();
         let peer = sender.to_le_bytes();
 
@@ -650,7 +672,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         }
 
         self.store
-            .record_peer_frontier(peer, their_known, full_replica);
+            .record_peer_frontier(peer, their_known, full_replica, received_at);
 
         Ok(())
     }
@@ -667,7 +689,12 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// Only explicitly announced heads count: a floored announce's elided
     /// prefix cannot vouch for individual versions, so old holdings retire off
     /// the full announces our own announce's probe solicits.
-    async fn handle_coverage(&self, sender: uhlc::ID, announce: Announce) -> anyhow::Result<()> {
+    async fn handle_coverage(
+        &self,
+        sender: uhlc::ID,
+        announce: Announce,
+        received_at: Instant,
+    ) -> anyhow::Result<()> {
         // The frontier checked is exactly what the announce vouched for, so
         // it is also exactly what a retirement on it may release.
         let covered = if announce.full_replica {
@@ -693,13 +720,15 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             None
         };
 
-        self.store.record_peer_frontier(
+        let vouched = self.store.record_peer_frontier(
             sender.to_le_bytes(),
             announce.known,
             announce.full_replica,
+            received_at,
         );
 
-        if let Some(points) = covered {
+        // Coverage from a peer that has since left is no coverage.
+        if let Some(points) = covered.filter(|_| vouched) {
             let me = self.store.node_id();
             let (namespace, database, schema) = self.subject.as_keyexprs();
             tracing::debug!(

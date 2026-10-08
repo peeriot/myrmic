@@ -60,6 +60,10 @@ pub struct Store<M = ()> {
     /// Entries older than [`PEER_TTL`] are ignored when computing catch-up state.
     peer_frontiers: CMap<models::NodeId, PeerEntry>,
 
+    /// When each recently departed peer's liveliness token went. Fences off
+    /// its announces received before then, still queued when it left.
+    departed: CMap<models::NodeId, Instant>,
+
     replication_handles: CMap<models::Subject, crate::replication::ReplicationHandle>,
 
     /// Running offloaders, keyed by the scope being drained.
@@ -81,6 +85,7 @@ impl<M> Clone for Store<M> {
             ks,
             transactions,
             peer_frontiers,
+            departed,
             replication_handles,
             offload_handles,
             clock,
@@ -93,6 +98,7 @@ impl<M> Clone for Store<M> {
             ks: ks.clone(),
             transactions: transactions.clone(),
             peer_frontiers: peer_frontiers.clone(),
+            departed: departed.clone(),
             replication_handles: replication_handles.clone(),
             offload_handles: offload_handles.clone(),
             clock: clock.clone(),
@@ -144,6 +150,7 @@ impl<M: Send + Sync + 'static> Store<M> {
             clock: lcs,
             transactions: Default::default(),
             peer_frontiers: Default::default(),
+            departed: Default::default(),
             replication_handles: Default::default(),
             offload_handles: Default::default(),
             shutdown,
@@ -715,39 +722,65 @@ impl<M: Send + Sync + 'static> Store<M> {
         });
     }
 
-    /// Merges an announce's per-scope state into what we know of `peer`.
-    /// Scopes the announce doesn't mention keep their previous entries (and
-    /// their previous timestamps, so they expire on their own).
+    /// Merges an announce's per-scope state into what we know of `peer`, as
+    /// seen at `received_at`. Scopes the announce doesn't mention keep their
+    /// previous entries (and their previous timestamps, so they expire on
+    /// their own), as do scopes a later-received announce already refreshed.
+    /// An announce received before `peer` departed is dropped, and `false`
+    /// says so: nothing it vouched for may be acted on.
     pub(crate) fn record_peer_frontier(
         &self,
         peer: models::NodeId,
         known: VecMap<models::Scope, ScopeAnnounce>,
         full_replica: bool,
-    ) {
-        let now = Instant::now();
-        let mut entry = self
-            .peer_frontiers
-            .entry(peer)
-            .or_insert_with(|| PeerEntry {
-                scopes: VecMap::new(),
-            });
+        received_at: Instant,
+    ) -> bool {
+        // Checked under the entry's lock: `forget_peer` marks the departure
+        // before it removes the entry, so it cannot slip in between.
+        let entry = self.peer_frontiers.entry(peer);
+
+        if self
+            .departed
+            .get(&peer)
+            .is_some_and(|left_at| received_at <= *left_at)
+        {
+            return false;
+        }
+
+        let mut entry = entry.or_insert_with(|| PeerEntry {
+            scopes: VecMap::new(),
+        });
 
         for (scope, announce) in known {
+            if entry
+                .scopes
+                .get(&scope)
+                .is_some_and(|held| held.last_seen_at > received_at)
+            {
+                continue;
+            }
             entry.scopes.insert(
                 scope,
                 PeerScope {
                     announce,
                     full_replica,
-                    last_seen_at: now,
+                    last_seen_at: received_at,
                 },
             );
         }
+
+        true
     }
 
     /// Drops everything `peer` announced. For a peer known to be gone — its
     /// liveliness token was deleted — whose entries would otherwise stay
     /// vouched for until `PEER_TTL` expires.
     pub fn forget_peer(&self, peer: &models::NodeId) {
+        let now = Instant::now();
+        // An announce received longer ago than `PEER_TTL` is expired anyway.
+        self.departed
+            .retain(|_, left_at| now.duration_since(*left_at) <= PEER_TTL);
+        self.departed.insert(*peer, now);
         self.peer_frontiers.remove(peer);
     }
 

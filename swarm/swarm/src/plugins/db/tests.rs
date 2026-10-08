@@ -13,6 +13,7 @@ use db_commons::models::events::TableEvent;
 use db_commons::models::{self, Scope, Subject};
 
 mod handoff_timing;
+mod partition;
 mod replication_speed;
 
 const TABLE: &str = "letters";
