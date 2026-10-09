@@ -5,11 +5,16 @@ use tokio::task::JoinHandle;
 use zenoh::internal::runtime::Runtime;
 use zenoh::{Session, Wait};
 
+use crate::plugins::first_ended;
+
+pub(crate) type PluginTasks = Vec<(&'static str, JoinHandle<zenoh::Result<()>>)>;
+
 pub struct SwarmSession {
     pub session: Session,
     pub runtime: Runtime,
     telemetry_guard: Option<Arc<swarm_telemetry::Guard>>,
     telemetry_control_handle: Option<tokio::task::AbortHandle>,
+    plugins: PluginTasks,
 }
 
 impl SwarmSession {
@@ -18,12 +23,14 @@ impl SwarmSession {
         runtime: Runtime,
         telemetry_guard: Option<Arc<swarm_telemetry::Guard>>,
         telemetry_control_handle: Option<tokio::task::AbortHandle>,
+        plugins: PluginTasks,
     ) -> Self {
         Self {
             session,
             runtime,
             telemetry_guard,
             telemetry_control_handle,
+            plugins,
         }
     }
 }
@@ -48,7 +55,7 @@ impl Deref for SwarmSession {
 // fulled `Spawned`.
 pub struct Spawning {
     pub kill_signal: DropSender,
-    pub handle: JoinHandle<SwarmSession>,
+    pub handle: JoinHandle<anyhow::Result<SwarmSession>>,
 }
 
 impl Spawning {
@@ -65,7 +72,7 @@ impl Spawning {
         Ok(Spawned {
             kill_signal,
             kill_on_drop: false,
-            session: handle.await?,
+            session: handle.await??,
         })
     }
 }
@@ -88,6 +95,13 @@ impl Spawned {
 
     pub fn telemetry_guard(&self) -> Option<&swarm_telemetry::Guard> {
         self.session.telemetry_guard.as_deref()
+    }
+
+    /// Resolves when a plugin task ended. Every plugin runs until shutdown, so
+    /// any end (`Ok`, `Err`, panic) is a failure. Stop polling it before
+    /// requesting a shutdown; resolves once.
+    pub async fn plugin_failure(&mut self) -> anyhow::Error {
+        anyhow::anyhow!("plugin {}", first_ended(&mut self.session.plugins).await)
     }
 
     pub fn kill(&self) {
