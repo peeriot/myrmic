@@ -34,6 +34,13 @@ pub struct Start {
     #[clap(long = "name", short = 'n')]
     pub name: Option<String>,
 
+    /// Zone to discover peers through, in addition to local multicast scouting.
+    ///
+    /// Runtimes sharing a zone id find each other over the internet and
+    /// connect directly, so a swarm can span networks.
+    #[clap(long = "zone", short = 'z')]
+    pub zone: Option<String>,
+
     /// Capability tag to advertise on this runtime. Repeatable.
     ///
     /// Tags are merged with any tags defined in the configuration file.
@@ -55,6 +62,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         detached,
         pid_path,
         name,
+        zone,
         tags,
         tmp,
         path,
@@ -87,32 +95,8 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         pid.path.display()
     );
 
-    let mut config = if let Some(path) = path {
-        let input = std::fs::read_to_string(&path)
-            .with_context(|| format!("unable to read configuration file: {}", path.display()))?;
-
-        serde_yaml::from_str::<swarm::SwarmConfig>(&input).map_err(|err| {
-            anyhow::anyhow!(
-                "unable to parse configuration file [{}]: {}",
-                path.display(),
-                err
-            )
-        })?
-    } else {
-        SwarmConfig::default()
-    };
-
-    // Set some myrmic defaults.
-    config.plugins.orchestration = Some(config.plugins.orchestration.unwrap_or_default());
-
-    // A named runtime keeps its zenoh id across restarts (recorded in the
-    // platform data folder), so the swarm sees the same node come back
-    // rather than a stranger with the old node's cells.
-    let zid = stable_zid(&ctx, name)?;
-    config
-        .zenoh
-        .set_id(Some(zid))
-        .map_err(|err| anyhow::anyhow!("failed to set runtime id: {err:?}"))?;
+    let mut config = load_config(path)?;
+    let zid = configure_identity(&ctx, &mut config, name, zone)?;
 
     {
         let mut db = config.plugins.db.take().unwrap_or_default();
@@ -190,6 +174,63 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
 
         result
     })
+}
+
+/// The runtime configuration: the given file, else the defaults, with the
+/// myrmic plugins switched on.
+fn load_config(path: Option<PathBuf>) -> anyhow::Result<SwarmConfig> {
+    let mut config = if let Some(path) = path {
+        let input = std::fs::read_to_string(&path)
+            .with_context(|| format!("unable to read configuration file: {}", path.display()))?;
+
+        // @TODO jezza - 07 Oct 2026: At some point, we need to replace the swarm config here with a "MyrmicConfig"
+        //  which should be a higher level configuration.
+
+        serde_yaml::from_str::<SwarmConfig>(&input).map_err(|err| {
+            anyhow::anyhow!(
+                "unable to parse configuration file [{}]: {}",
+                path.display(),
+                err
+            )
+        })?
+    } else {
+        SwarmConfig::default()
+    };
+
+    config.plugins.orchestration = Some(config.plugins.orchestration.unwrap_or_default());
+
+    Ok(config)
+}
+
+/// Pins the runtime's zenoh identity and, if given, the zone it discovers
+/// peers through. Returns the runtime's stable id.
+fn configure_identity(
+    ctx: &Ctx,
+    config: &mut SwarmConfig,
+    name: &str,
+    zone: Option<String>,
+) -> anyhow::Result<ZenohId> {
+    // A named runtime keeps its zenoh id across restarts (recorded in the
+    // platform data folder), so the swarm sees the same node come back
+    // rather than a stranger with the old node's cells.
+    let zid = stable_zid(ctx, name)?;
+    config
+        .zenoh
+        .set_id(Some(zid))
+        .map_err(|err| anyhow::anyhow!("failed to set runtime id: {err:?}"))?;
+
+    if let Some(zone) = zone {
+        let zone_id: zenoh::config::ZoneId = zone
+            .try_into()
+            .map_err(|err| anyhow::anyhow!("invalid zone id: {err}"))?;
+
+        config
+            .zenoh
+            .set_zone(Some(zenoh::config::ZoneConf::Id(zone_id)))
+            .map_err(|err| anyhow::anyhow!("failed to set zone: {err:?}"))?;
+    }
+
+    Ok(zid)
 }
 
 /// Waits for a shutdown signal.
