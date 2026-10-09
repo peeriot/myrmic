@@ -9,7 +9,7 @@ myrmic cells classes list
 ```
 
 ## Description
-List all cell classes registered in the swarm. Each entry shows the class name and the hash of its registered wasm binary, and any AOT artifacts with the target platform, the hash of the compiled native binary, and the hash of the metadata file.
+List all cell classes registered in the swarm. Each entry shows the names bound to the class (as synonyms, `a = b`, or the start of its hash if it has none), its hash, and its kind: a wasm class with its AOT compilations per platform and the classes it spawns, or an AOT binary with its platform.
 
 ## Options
 `-v` / `--verbose`

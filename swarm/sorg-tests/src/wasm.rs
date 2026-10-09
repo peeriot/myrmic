@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use cell_protocol::{AddMode, ClassArtifact};
 use swarm::spawn::Spawned;
 
 /// Env var through which the `build-cell-fixtures` nextest setup script hands
@@ -64,15 +63,9 @@ fn prebuilt_cell_wasm(logic_crate_path: impl Into<PathBuf>) -> PathBuf {
 
 async fn register_class_artifact(wasm_path: &str, class_name: &str, db_swarm: &Spawned) {
     let bytes = std::fs::read(wasm_path).expect("failed to read wasm file");
-    let artifact = ClassArtifact::Wasm(bytes);
-    sorg_common::class_registry::add_class_artifact(
-        db_swarm.session(),
-        class_name,
-        artifact,
-        AddMode::Force,
-    )
-    .await
-    .expect("failed to register class artifact");
+    sorg_common::class_registry::add_class(db_swarm.session(), class_name, bytes, vec![])
+        .await
+        .expect("failed to register class");
 }
 
 fn module_name_from_path(path: impl AsRef<Path>) -> String {

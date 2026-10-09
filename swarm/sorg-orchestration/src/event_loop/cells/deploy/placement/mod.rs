@@ -5,7 +5,7 @@ mod triage;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
-use cell_protocol::{ClassInfo, RuntimeId, Sri};
+use cell_protocol::{BlobHash, ClassInfo, RuntimeId, Sri};
 use sorg_common::{
     CellConfig, CellDeployment, DeploymentError, ExecRuntimeInfo, class_registry, exec_registry,
     list_placements, node_lease, supervision::SupervisionTiming,
@@ -49,7 +49,7 @@ impl PlacementRequest {
 /// system, prior to the deployment we are currently doing
 pub(crate) struct PlacementContext {
     execs: Vec<ExecRuntimeInfo>,
-    class_info: HashMap<String, ClassInfo>,
+    class_info: HashMap<BlobHash, ClassInfo>,
     /// For each runtime, the SRIs of the cells currently hosted on it.
     cells_per_runtime: HashMap<RuntimeId, Vec<Sri>>,
 }
@@ -59,7 +59,7 @@ impl PlacementContext {
         &self.execs
     }
 
-    pub(crate) fn class_info(&self) -> &HashMap<String, ClassInfo> {
+    pub(crate) fn class_info(&self) -> &HashMap<BlobHash, ClassInfo> {
         &self.class_info
     }
 
@@ -94,11 +94,11 @@ impl PlacementContext {
             u64::try_from(SupervisionTiming::default().margin.as_millis()).unwrap_or(u64::MAX);
         let execs = drop_stale_execs(execs, &leases, now_ms, margin_ms);
 
-        let class_names: Vec<String> = request
+        let classes: Vec<BlobHash> = request
             .cells()
             .iter()
             .filter_map(|cell| match cell.config {
-                CellConfig::Wasm { ref class } => Some(class.clone()),
+                CellConfig::Wasm { class } => Some(class),
                 _ => None,
             })
             .collect();
@@ -114,7 +114,7 @@ impl PlacementContext {
         // for a class registered moments earlier, or with a row whose artifact
         // set was one write behind. Both come back looking like a problem with
         // the class or the runtimes, and neither is one.
-        let class_info = class_registry::get_class_infos(session, &class_names)
+        let class_info = class_registry::get_class_infos(session, &classes)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read class registry: {err}"))?;
 
@@ -258,13 +258,11 @@ fn decide_cell_placement(
     // runtime is considered. Checked after the empty-registry case, because a
     // swarm with no runtimes cannot run the deploy whatever the class is.
     let unknown_class = request.cells().iter().find_map(|cell| match cell.config {
-        CellConfig::Wasm { ref class } if !context.class_info().contains_key(class) => Some(class),
+        CellConfig::Wasm { class } if !context.class_info().contains_key(&class) => Some(class),
         _ => None,
     });
     if let Some(class) = unknown_class {
-        return Err(DeploymentError::UnknownClass {
-            class: class.clone(),
-        });
+        return Err(DeploymentError::UnknownClass { class });
     }
 
     let embedded_nodes: HashSet<RuntimeId> = context

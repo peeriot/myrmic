@@ -3,7 +3,7 @@ use claims::{assert_err, assert_ok};
 use cell_protocol::{Gen, Sri};
 use sorg_common::{FenceOutcome, RequirementTags};
 
-use super::{CLASS_NAME, INSTANCE_SRI, SEEDED_GEN, seed_instance, sorg_client};
+use super::{INSTANCE_SRI, SEEDED_GEN, seed_instance, sorg_client};
 use crate::integration::spawn_db_test_app;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -13,7 +13,7 @@ async fn happy_path() {
     let sri = Sri::from_target(INSTANCE_SRI).unwrap();
 
     // Arrange — seed an instance
-    seed_instance(test_app.session(), &sri, CLASS_NAME).await;
+    seed_instance(test_app.session(), &sri).await;
 
     // Act
     assert_eq!(
@@ -41,11 +41,11 @@ async fn deployed_is_rejected() {
     let test_app = crate::integration::spawn_full_test_app_with_swarm(swarm).await;
     let sorg = sorg_client(test_app.session());
     let sri = Sri::from_target(cell_sri).unwrap();
-    let class_name = format!("{cell_class}.wasm");
+    let class = test_app.class_id(&format!("{cell_class}.wasm")).await;
 
     // Arrange — deploy the cell (this registers the instance)
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy should succeed"
     );
@@ -79,7 +79,7 @@ async fn other_generation_is_refused() {
     let test_app = spawn_db_test_app().await;
     let sorg = sorg_client(test_app.session());
     let sri = Sri::from_target(INSTANCE_SRI).unwrap();
-    seed_instance(test_app.session(), &sri, CLASS_NAME).await;
+    seed_instance(test_app.session(), &sri).await;
 
     // Act — an erase issued for another incarnation of the same SRI
     let outcome = assert_ok!(sorg.erase_instance(&sri, Gen::from_parts(2, 1)).await);

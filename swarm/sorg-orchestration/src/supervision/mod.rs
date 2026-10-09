@@ -615,7 +615,7 @@ mod tests {
     fn instance(s: Sri, parent: Option<Sri>, detached: bool) -> CellInstance {
         CellInstance {
             sri: s,
-            class_name: "c".into(),
+            class: cell_protocol::BlobHash::of(b"c"),
             gen_id: Gen::from_parts(1, 1),
             lineage: cell_protocol::SpawnLineage {
                 parent,
@@ -900,14 +900,18 @@ mod tests {
     }
 
     fn root_spec(name: &str, restart_type: RestartType, max: u32) -> CellDeployment {
-        CellDeployment::new(sri(name), CellConfig::Wasm { class: "c".into() }).with_restart(
-            RestartPolicy {
-                restart_type,
-                max_restarts: max,
-                window_ms: 60_000,
-                delay_ms: 1_000,
+        CellDeployment::new(
+            sri(name),
+            CellConfig::Wasm {
+                class: cell_protocol::BlobHash::of(b"c"),
             },
         )
+        .with_restart(RestartPolicy {
+            restart_type,
+            max_restarts: max,
+            window_ms: 60_000,
+            delay_ms: 1_000,
+        })
     }
 
     fn entry_gen(s: Sri, node: RuntimeId, gen_id: Gen) -> PlacementEntry {

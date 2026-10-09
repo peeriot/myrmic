@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use cell_protocol::{ArtifactPlatform, BlobHash};
 use myrmic_build::{PlatformFamily, firmware};
 use sorg_common::{HttpBridgeApi, MqttBridge, RequirementTags, RestartPolicy};
 
@@ -201,11 +202,13 @@ async fn deploy_app_info(
 
     let sorg = ctx.sorg(session.clone());
 
+    let mut class_ids = HashMap::with_capacity(info.classes.len());
     for class in info.classes.values() {
-        upload_class_artifacts(ctx.clone(), &sorg, &class.name, class).await?;
+        let id = upload_class_artifacts(ctx.clone(), &sorg, &class.name, class).await?;
+        class_ids.insert(class.name.clone(), id);
     }
 
-    let request = build_deploy_request(&info)?;
+    let request = build_deploy_request(&info, &class_ids)?;
     if request.cells.is_empty() {
         crate::warn!(ctx, "no cells to deploy; '{}' not deployed", info.name);
     } else {
@@ -253,46 +256,36 @@ pub async fn deploy_nest(
     deploy_app_info(ctx, info, restart).await
 }
 
-/// Uploads everything a class build produced — the wasm plus any AOT pair — and
-/// registers it under `class_name`, which differs from `class.name` when a
-/// single-cell deploy registers the class under the SRN it was given.
+/// Uploads everything a class build produced — the wasm plus any AOT binary —
+/// as one class, and binds `class_name` to it: that differs from `class.name`
+/// when a single-cell deploy names the class after the SRN it was given.
+/// Returns the class id.
 async fn upload_class_artifacts(
     ctx: Ctx,
     sorg: &sorg_client::Client,
     class_name: &str,
     class: &build::CellClass,
-) -> anyhow::Result<()> {
-    use cell_protocol::{AddMode, ArtifactPlatform, ClassArtifact};
+) -> anyhow::Result<BlobHash> {
+    let Some(wasm_path) = &class.wasm_path else {
+        anyhow::bail!("class '{class_name}' has no wasm build artifact");
+    };
+    let wasm = std::fs::read(wasm_path)
+        .with_context(|| format!("unable to read {}", wasm_path.display()))?;
 
-    if let Some(wasm_path) = &class.wasm_path {
-        let binary = std::fs::read(wasm_path)
-            .with_context(|| format!("unable to read {}", wasm_path.display()))?;
-        sorg.add_class_artifact(class_name, ClassArtifact::Wasm(binary), AddMode::Force)
-            .await
-            .with_context(|| format!("unable to add wasm for class '{class_name}'"))?;
-        crate::debug!(ctx, "uploaded wasm for class '{class_name}'");
-    }
-
-    if let Some((aot_path, meta_path)) = &class.riscv32imac {
-        let aot_blob = std::fs::read(aot_path)
+    let mut aots = vec![];
+    if let Some(aot_path) = &class.riscv32imac {
+        let aot = std::fs::read(aot_path)
             .with_context(|| format!("unable to read {}", aot_path.display()))?;
-        let meta_blob = std::fs::read(meta_path)
-            .with_context(|| format!("unable to read {}", meta_path.display()))?;
-        sorg.add_class_artifact(
-            class_name,
-            ClassArtifact::Aot {
-                platform: ArtifactPlatform::Riscv32imac,
-                aot_blob,
-                meta_blob,
-            },
-            AddMode::Force,
-        )
-        .await
-        .with_context(|| format!("unable to add esp32c6 artifacts for class '{class_name}'"))?;
-        crate::debug!(ctx, "uploaded esp32c6 artifacts for class '{class_name}'");
+        aots.push((ArtifactPlatform::Riscv32imac, aot));
     }
 
-    Ok(())
+    let id = sorg
+        .add_class(class_name, wasm, aots)
+        .await
+        .with_context(|| format!("unable to add class '{class_name}'"))?;
+    crate::debug!(ctx, "uploaded class '{class_name}' ({})", id.to_hex());
+
+    Ok(id)
 }
 
 /// Deploys a standalone `.wasm` file as a single cell, resolving any spawn
@@ -327,10 +320,6 @@ pub async fn deploy_cell(
     tags: RequirementTags,
     root: RootConfig,
 ) -> anyhow::Result<()> {
-    if class.wasm_path.is_none() {
-        anyhow::bail!("no wasm build artifact for cell '{sri}', unable to deploy");
-    }
-
     // Extend the default timeout when attempting to deploy to non-linux systems.
     // (They typically take their sweet time...)
     let ctx = {
@@ -350,27 +339,23 @@ pub async fn deploy_cell(
 
     let sorg = ctx.sorg(session.clone());
 
-    // `sri` here is the human-readable SRN. The class keeps that name; the
+    // `sri` here is the human-readable SRN. The class is named after it; the
     // instance's address is the SRI deterministically derived from it, so the
     // deployed cell is addressable by UUID (and, via resolution, by the SRN).
     let cell_sri = cell_protocol::Sri::of_path(sri)
         .map_err(|e| anyhow::anyhow!("invalid cell name '{sri}': {e}"))?;
 
-    upload_class_artifacts(ctx.clone(), &sorg, sri, class).await?;
+    let class = upload_class_artifacts(ctx.clone(), &sorg, sri, class).await?;
 
     crate::info!(ctx, "deploying cell (srn = {sri}, sri = {cell_sri})");
 
     // A standalone cell is the root of its own app, named after its SRN.
-    let cell = sorg_common::CellDeployment::new(
-        cell_sri,
-        sorg_common::CellConfig::Wasm {
-            class: sri.to_owned(),
-        },
-    )
-    .with_tags(tags)
-    .with_arguments(root.arguments)
-    .with_app(Some(sri.to_owned()))
-    .with_restart(root.restart);
+    let cell = sorg_common::CellDeployment::new(cell_sri, sorg_common::CellConfig::Wasm { class })
+        .with_tags(tags)
+        .with_arguments(root.arguments)
+        .with_app(Some(sri.to_owned()))
+        .with_lineage(root_lineage(sri))
+        .with_restart(root.restart);
 
     let response = sorg
         .deploy_cells(sorg_common::DeployRequest::new(vec![cell]))
@@ -391,7 +376,20 @@ pub async fn deploy_cell(
     Ok(())
 }
 
-pub fn build_deploy_request(info: &build::AppInfo) -> anyhow::Result<sorg_common::DeployRequest> {
+/// The lineage of a cell the CLI deploys as a root: no parent, and its SRN as
+/// the name, since the SRI derived from it can't be turned back into it.
+fn root_lineage(srn: &str) -> sorg_common::SpawnLineage {
+    sorg_common::SpawnLineage {
+        local_name: Some(srn.to_owned()),
+        ..sorg_common::SpawnLineage::default()
+    }
+}
+
+/// `class_ids` maps each class name in `info` to the id it was uploaded as.
+pub fn build_deploy_request(
+    info: &build::AppInfo,
+    class_ids: &HashMap<String, BlobHash>,
+) -> anyhow::Result<sorg_common::DeployRequest> {
     // App cells are addressed by the SRI derived from their SRN, exactly like a
     // single-cell deploy — so the same name reaches the same cell whether it is
     // deployed alone or as part of an app. Every cell carries the app name, so
@@ -406,13 +404,11 @@ pub fn build_deploy_request(info: &build::AppInfo) -> anyhow::Result<sorg_common
         .instances
         .iter()
         .map(|instance| {
-            let class = &info.classes[&instance.id];
+            let class = class_ids[&info.classes[&instance.id].name];
             let srn = instance.srn.as_deref().unwrap_or(&instance.id);
             let cell = sorg_common::CellDeployment::new(
                 derive(srn)?,
-                sorg_common::CellConfig::Wasm {
-                    class: class.name.clone(),
-                },
+                sorg_common::CellConfig::Wasm { class },
             );
             let cell = if instance.tags.is_empty() {
                 cell
@@ -422,6 +418,7 @@ pub fn build_deploy_request(info: &build::AppInfo) -> anyhow::Result<sorg_common
             Ok(cell
                 .with_arguments(instance.arguments.clone())
                 .with_app(Some(app.clone()))
+                .with_lineage(root_lineage(srn))
                 .with_restart(instance.restart.clone().unwrap_or_default()))
         })
         .collect::<anyhow::Result<_>>()?;

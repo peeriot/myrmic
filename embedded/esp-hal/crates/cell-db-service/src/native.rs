@@ -19,8 +19,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use cell_protocol::{
-    CellInstance, Gen, INSTANCE_REGISTRY_TABLE, PLACEMENT_TABLE, PlacementEntry, PlacementKind,
-    SpawnLineage, Sri, instance_registry_scope, placement_scope,
+    CellInstance, Gen, INSTANCE_REGISTRY_TABLE, NATIVE_FIRMWARE_CLASS, PLACEMENT_TABLE,
+    PlacementEntry, PlacementKind, SpawnLineage, Sri, instance_registry_scope, placement_scope,
 };
 use db_client::v1::models::tb_insert;
 use db_client::v1::{Client, models::Scope};
@@ -31,10 +31,6 @@ use zenoh_nano::scout::ZenohIdProto;
 use zenoh_result::zerror;
 
 use crate::service::DEFAULT_TIMEOUT;
-
-/// The class name a native cell is reported under. It has no WASM class — the
-/// firmware *is* the implementation — but tooling expects a name to show.
-const NATIVE_CLASS: &str = "<firmware>";
 
 /// A cell this node's firmware implements.
 #[derive(Debug, Clone)]
@@ -89,7 +85,7 @@ pub(crate) async fn claim(
         native.sri,
         &CellInstance {
             sri: native.sri,
-            class_name: NATIVE_CLASS.to_owned(),
+            class: NATIVE_FIRMWARE_CLASS,
             gen_id,
             lineage: SpawnLineage {
                 // A native cell is a root: nothing spawned it, so nothing

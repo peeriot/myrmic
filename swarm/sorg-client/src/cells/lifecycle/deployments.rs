@@ -1,4 +1,4 @@
-use cell_protocol::{PlacementEntry, Sri};
+use cell_protocol::{BlobHash, PlacementEntry, Sri};
 use sorg_common::{
     DeployRequest, DeployResponse, DeploymentError, HttpBridgeApi, MqttBridge, RequirementTags,
     SpawnLineage, delete_application, deploy_cells, deploy_wasm_cell, get_placement,
@@ -24,10 +24,10 @@ impl Client {
     }
 
     /// Deploys a cell by SRI. The instance must already exist in the
-    /// instance registry; the class name is looked up from there.
+    /// instance registry; the class is looked up from there.
     pub async fn deploy_cell(&self, cell_sri: Sri, tags: RequirementTags) -> Result<()> {
         let instance = self.inspect_instance(&cell_sri).await?;
-        self.deploy_wasm_cell(cell_sri, &instance.class_name, tags)
+        self.deploy_wasm_cell(cell_sri, instance.class, tags)
             .await
             .map_err(sorg_common::Error::custom)?;
         Ok(())
@@ -39,10 +39,10 @@ impl Client {
     pub async fn deploy_wasm_cell(
         &self,
         cell_sri: Sri,
-        class_name: &str,
+        class: BlobHash,
         tags: RequirementTags,
     ) -> std::result::Result<(), DeploymentError> {
-        self.deploy_wasm_cell_with_arguments(cell_sri, class_name, tags, None, None)
+        self.deploy_wasm_cell_with_arguments(cell_sri, class, tags, None, None)
             .await
     }
 
@@ -54,7 +54,7 @@ impl Client {
     pub async fn deploy_wasm_cell_with_arguments(
         &self,
         cell_sri: Sri,
-        class_name: &str,
+        class: BlobHash,
         tags: RequirementTags,
         arguments: Option<Vec<u8>>,
         app: Option<String>,
@@ -62,7 +62,7 @@ impl Client {
         deploy_wasm_cell(
             self.session(),
             cell_sri,
-            class_name,
+            class,
             tags,
             self.config.query_timeout(),
             // Cells deployed through the client are roots (CLI / app); the

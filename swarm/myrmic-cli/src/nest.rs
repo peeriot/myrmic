@@ -48,9 +48,7 @@ pub fn write(ctx: &Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result
             // because we don't have a way to inform the sorg which one to pick, we're just ignoring the esp stuff for now.
             // _but_ we're still supporting the original linux blob path, because that's supported by sorg.
             let hash = store_blob!(a_wasm_path);
-            let (aot, meta) = a_esp32_c6.unzip();
-            let _hash = store_blob!(aot);
-            let _hash = store_blob!(meta);
+            let _hash = store_blob!(a_esp32_c6);
 
             if let Some(hash) = hash {
                 class_map.insert(id, hash);

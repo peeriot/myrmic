@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cell_protocol::{ArtifactPlatform, ClassInfo, RuntimeId, RuntimeKind, Sri};
+use cell_protocol::{ArtifactPlatform, BlobHash, ClassInfo, RuntimeId, RuntimeKind, Sri};
 use sorg_common::{
     ArtifactKind, CellConfig, CellDeployment, CellInfeasibility, ExecRuntimeInfo, RejectionReason,
     RuntimeRejection, TagRequirement, check_tag_requirements,
@@ -110,28 +110,31 @@ fn tags_rejection(runtime: &ExecRuntimeInfo, cell: &CellDeployment) -> Option<Re
 fn artifact_rejection(
     cell: &CellDeployment,
     runtime: &ExecRuntimeInfo,
-    class_info: &HashMap<String, ClassInfo>,
+    class_info: &HashMap<BlobHash, ClassInfo>,
 ) -> Option<RejectionReason> {
-    let CellConfig::Wasm { ref class } = cell.config else {
+    let CellConfig::Wasm { class } = cell.config else {
         return None;
     };
-    let info = class_info.get(class);
+    let info = class_info.get(&class);
 
     match runtime.runtime_kind() {
         RuntimeKind::Linux => {
-            let has_wasm = info.is_some_and(|i| i.wasm_hash.is_some());
-            if has_wasm {
+            if let Some(ClassInfo::Wasm { .. }) = info {
                 None
             } else {
                 Some(RejectionReason::MissingArtifact(ArtifactKind::Wasm))
             }
         }
         RuntimeKind::Esp32c5 | RuntimeKind::Esp32c6 | RuntimeKind::Esp32c61 => {
-            let has_aot = info.is_some_and(|i| {
-                i.artifacts
-                    .iter()
-                    .any(|a| a.platform == ArtifactPlatform::Riscv32imac)
-            });
+            // A wasm class compiled for the platform, or an AOT-only class
+            // built for it.
+            let has_aot = match info {
+                Some(ClassInfo::Wasm { aot, .. }) => {
+                    aot.contains_key(&ArtifactPlatform::Riscv32imac)
+                }
+                Some(ClassInfo::Aot { platform, .. }) => *platform == ArtifactPlatform::Riscv32imac,
+                None => false,
+            };
             if has_aot {
                 None
             } else {

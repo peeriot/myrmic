@@ -1,8 +1,8 @@
 //! Module implementing the loading of the Wasm binaries
 
-use cell_protocol::ArtifactLocation;
+use cell_protocol::{BlobHash, class_blob_id, class_registry_scope};
 use db_client::Session;
-use db_client::v1::{Client as DbClient, models::path_resolve};
+use db_client::v1::{Client as DbClient, models::blob_resolve};
 use sorg_common::{bail, custom_err};
 use wasmtime::{Engine, ExternType, Instance, Linker, Module, Store};
 
@@ -10,15 +10,15 @@ use crate::{Result, wasm::cell::state::CellState};
 
 pub(crate) async fn load_module_cell(
     session: &Session,
-    class_name: &str,
+    class: BlobHash,
     engine: &Engine,
     store: &mut Store<CellState>,
     linker: &Linker<CellState>,
 ) -> Result<Instance> {
-    let binary = load_wasm_binary_from_class(session, class_name).await?;
+    let binary = load_wasm_binary_from_class(session, class).await?;
 
     let module = Module::from_binary(engine, &binary)?;
-    check_memory_export(&module, class_name)?;
+    check_memory_export(&module, &class.to_hex())?;
 
     let instance = linker
         .instantiate_async(store, &module)
@@ -29,20 +29,18 @@ pub(crate) async fn load_module_cell(
 
 pub(crate) async fn load_wasm_binary_from_class(
     session: &Session,
-    class_name: &str,
+    class: BlobHash,
 ) -> Result<Vec<u8>> {
     let db = DbClient::new(session);
-    let (scope, path) = ArtifactLocation::wasm(class_name).into_parts();
 
     let response = db
-        .read_tx_in(scope.clone(), {
+        .read_tx_in(class_registry_scope(), {
             async move |client, tx| {
                 client
-                    .send(path_resolve::Request {
+                    .send(blob_resolve::Request {
                         id: tx,
-                        op: path_resolve::Op {
-                            scope,
-                            path,
+                        op: blob_resolve::Op {
+                            blob_id: class_blob_id(class),
                             range: None,
                         },
                     })
@@ -51,11 +49,11 @@ pub(crate) async fn load_wasm_binary_from_class(
         })
         .await
         .map_err(|err| custom_err!("unable to query class registry: {err}"))?
-        .map_err(|err| custom_err!("class registry path_resolve error: {}", err.message))?;
+        .map_err(|err| custom_err!("class registry blob_resolve error: {}", err.message))?;
 
     let blob = response
         .blob
-        .ok_or_else(|| custom_err!("no wasm artifact found for class '{class_name}'"))?;
+        .ok_or_else(|| custom_err!("no wasm artifact found for class {}", class.to_hex()))?;
 
     Ok(blob.blob)
 }

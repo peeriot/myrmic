@@ -235,9 +235,12 @@ Linux) path:
 **File:** [`crates/cell-db-service/src/myrmic.rs`](crates/cell-db-service/src/myrmic.rs)
 
 `create_runtime_info` reports what the device *is* to the swarm. Add `esp32*` arms setting the human name (`"ESP32-*"`)
-and `Target::Esp32*`. Also add the target arms in
-[`crates/cell-db-service/src/deploy.rs`](crates/cell-db-service/src/deploy.rs)
-so the device fetches the AOT + `.meta` artifacts scoped to its own ISA class (`ArtifactTarget::Riscv32im*`).
+and `Target::Esp32*`. The device itself needs no target arms to deploy: the orchestrator picks the AOT binary for the
+device's ISA class and sends its id, which
+[`crates/cell-db-service/src/deploy.rs`](crates/cell-db-service/src/deploy.rs) fetches as is. A new ISA class
+(`ArtifactPlatform`) has to be mapped from the runtime kind where the orchestrator picks it: `artifact_rejection` in
+`swarm/sorg-orchestration/src/event_loop/cells/deploy/placement/preprocessing/mod.rs` and
+`swarm/sorg-orchestration/src/event_loop/cells/deploy/deploy_cell/embedded.rs`.
 
 ### 12. HIL tests
 

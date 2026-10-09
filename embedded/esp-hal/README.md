@@ -67,8 +67,8 @@ trampolines and RAM requirements for executable code while leaving the WASM modu
 
 The AOT module is not compiled into the firmware — it is stored in a dedicated flash region and loaded at runtime by
 `wasm-storage` (either written out-of-band with `espflash write-bin`, or delivered over the air). Use the `aot-compiler`
-tool (in `sdk/tools/aot-compiler`) to produce it — it wraps `wamrc` with the correct flags per target and also
-generates the `.meta` file required by the firmware loader.
+tool (in `sdk/tools/aot-compiler`) to produce it — it wraps `wamrc` with the correct flags per target. A deploy sends
+the device the module's hash and CRC, from which it writes the metadata the loader checks.
 
 For example, say that we want to load the `blinky` example from the `../tests/fixtures` directory and run it on
 the ESP32-C6. One should:
@@ -84,8 +84,8 @@ $ myrmic flash --monitor
 
 `aot-compiler` requires `wamrc` to be on `$PATH` ([build instructions](https://wamr.gitbook.io/document/wamr-in-practice/tutorial/build-tutorial/build_wamrc))
 and to be built from the WAMR version 2.4.4.
-It automatically passes `--xip` and the correct `--cpu-features` for the selected target, and writes both
-`<name>.aot` and `<name>.meta` to the output directory.
+It automatically passes `--xip` and the correct `--cpu-features` for the selected target, and writes `<name>.aot` to
+the output directory.
 
 The flags it encodes per target are:
 

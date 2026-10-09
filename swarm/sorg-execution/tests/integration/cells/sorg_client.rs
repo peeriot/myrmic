@@ -22,7 +22,7 @@ pub async fn deploy_cell_via_client() {
         client
             .deploy_wasm_cell(
                 Sri::from_target(ROOM_SRI).unwrap(),
-                "room.wasm",
+                test_app.class_id("room.wasm").await,
                 RequirementTags::default()
             )
             .await
@@ -49,7 +49,7 @@ pub async fn undeploy_cell_via_client() {
         client
             .deploy_wasm_cell(
                 Sri::from_target(ROOM_SRI).unwrap(),
-                "room.wasm",
+                test_app.class_id("room.wasm").await,
                 RequirementTags::default()
             )
             .await

@@ -1,4 +1,4 @@
-use cell_protocol::PlacementKind;
+use cell_protocol::{BlobHash, PlacementKind};
 use claims::{assert_err, assert_ok};
 use sorg_common::{
     CellConfig, CellDeployment, DeployRequest, DeploymentError, HttpBridgeApi, RejectionReason,
@@ -16,13 +16,8 @@ const TAG_CPU: &str = "cpu";
 const TAG_SENSOR: &str = "sensor";
 const TAG_FPGA: &str = "fpga";
 
-fn wasm_cell(sri: &str) -> CellDeployment {
-    CellDeployment::new(
-        to_sri(sri),
-        CellConfig::Wasm {
-            class: "tagged_cell.wasm".to_owned(),
-        },
-    )
+fn wasm_cell(sri: &str, class: BlobHash) -> CellDeployment {
+    CellDeployment::new(to_sri(sri), CellConfig::Wasm { class })
 }
 
 fn deploy_request(cells: Vec<CellDeployment>) -> DeployRequest {
@@ -56,10 +51,11 @@ async fn single_tag_match() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let tags = RequirementTags::new(vec![TAG_GPU]);
-    let request = deploy_request(vec![wasm_cell(CELL_SRI).with_tags(tags.clone())]);
+    let request = deploy_request(vec![wasm_cell(CELL_SRI, class).with_tags(tags.clone())]);
 
     // Act — deploy an app with one gpu-tagged cell
     let response = assert_ok!(sorg.deploy_cells(request).await);
@@ -95,10 +91,11 @@ async fn multi_tag_and_match() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let tags = RequirementTags::new(vec![TAG_GPU, TAG_SENSOR]);
-    let request = deploy_request(vec![wasm_cell(CELL_SRI).with_tags(tags.clone())]);
+    let request = deploy_request(vec![wasm_cell(CELL_SRI, class).with_tags(tags.clone())]);
 
     // Act — deploy an app with one cell requiring both tags
     assert_ok!(sorg.deploy_cells(request).await);
@@ -126,9 +123,10 @@ async fn untagged_placeable_anywhere() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
-    let request = deploy_request(vec![wasm_cell(CELL_SRI)]);
+    let request = deploy_request(vec![wasm_cell(CELL_SRI, class)]);
 
     // Act — deploy an untagged cell
     assert_ok!(sorg.deploy_cells(request).await);
@@ -150,9 +148,10 @@ async fn untagged_cells_spread_across_nodes() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
-    let request = deploy_request(vec![wasm_cell("cell_a"), wasm_cell("cell_b")]);
+    let request = deploy_request(vec![wasm_cell("cell_a", class), wasm_cell("cell_b", class)]);
 
     // Act — deploy two untagged cells
     assert_ok!(sorg.deploy_cells(request).await);
@@ -182,12 +181,13 @@ async fn untagged_spreads_off_tagged_node() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let gpu_tags = RequirementTags::new(vec![TAG_GPU]);
     let request = deploy_request(vec![
-        wasm_cell("pinned").with_tags(gpu_tags.clone()),
-        wasm_cell("free"),
+        wasm_cell("pinned", class).with_tags(gpu_tags.clone()),
+        wasm_cell("free", class),
     ]);
 
     // Act — deploy one pinned + one free cell
@@ -226,10 +226,11 @@ async fn unplaceable_tag_absent() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let request = deploy_request(vec![
-        wasm_cell(CELL_SRI).with_tags(RequirementTags::new(vec![TAG_FPGA])),
+        wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_FPGA])),
     ]);
 
     // Act — deploy a cell requiring a tag no runtime has
@@ -271,10 +272,11 @@ async fn unplaceable_and_not_satisfiable() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let request = deploy_request(vec![
-        wasm_cell(CELL_SRI).with_tags(RequirementTags::new(vec![TAG_GPU, TAG_CPU])),
+        wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_GPU, TAG_CPU])),
     ]);
 
     // Act — deploy a cell requiring both tags (no single runtime has both)
@@ -359,13 +361,14 @@ async fn standalone_single_tag_match() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let tags = RequirementTags::new(vec![TAG_GPU]);
 
     // Act — load a standalone cell with a gpu tag requirement
     assert_ok!(
-        sorg.deploy_wasm_cell(to_sri(CELL_SRI), "tagged_cell.wasm", tags.clone())
+        sorg.deploy_wasm_cell(to_sri(CELL_SRI), class, tags.clone())
             .await
     );
 
@@ -393,13 +396,14 @@ async fn standalone_unplaceable() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — load a standalone cell requiring a tag no runtime has
     let err = assert_err!(
         sorg.deploy_wasm_cell(
             to_sri(CELL_SRI),
-            "tagged_cell.wasm",
+            class,
             RequirementTags::new(vec![TAG_FPGA])
         )
         .await,
