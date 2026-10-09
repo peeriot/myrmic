@@ -7,6 +7,7 @@
 //! after all its cells are gone.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use cell_protocol::{CellInstance, Gen, PlacementEntry, RuntimeId, Sri};
@@ -166,16 +167,25 @@ pub(crate) fn plan_hygiene(
     plan
 }
 
+/// The lease tracker shared by the lease watcher, hygiene and placement.
+pub(crate) type SharedLeaseTracker = Arc<Mutex<LeaseTracker>>;
+
+/// Locks the shared tracker. It holds plain data, so a poisoned lock is
+/// recovered: a panic mid-update leaves at worst one stale observation.
+pub(crate) fn lock_tracker(tracker: &SharedLeaseTracker) -> MutexGuard<'_, LeaseTracker> {
+    tracker.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Watches node leases and runs hygiene as leader. Spawned once per
 /// orchestrator; non-leaders keep observing leases (warm tracker) but act on
 /// nothing.
 pub(crate) fn spawn_lease_watcher(
     session: Session,
     state: State,
+    tracker: SharedLeaseTracker,
     timing: SupervisionTiming,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut tracker = LeaseTracker::new();
         let mut gate = ExpiryGate::new(timing.margin);
         // A missing lease row measures silence from the first miss; the
         // gate's threshold is only its teardown deadline.
@@ -195,8 +205,11 @@ pub(crate) fn spawn_lease_watcher(
                 }
             };
             let now = Instant::now();
-            for (id, lease) in &leases {
-                tracker.observe(*id, lease.seq, Duration::from_millis(lease.ttl_ms), now);
+            {
+                let mut tracker = lock_tracker(&tracker);
+                for (id, lease) in &leases {
+                    tracker.observe(*id, lease.seq, Duration::from_millis(lease.ttl_ms), now);
+                }
             }
             let leased: HashSet<RuntimeId> = leases.iter().map(|(id, _)| *id).collect();
 
@@ -213,12 +226,15 @@ pub(crate) fn spawn_lease_watcher(
             // lease measures from the last seq advance; a missing lease row
             // from when it was first missed.
             let mut silence: HashMap<RuntimeId, Duration> = HashMap::new();
-            for node in &placed {
-                if let Some(stale) = tracker.stale_for(*node, now) {
-                    silence.insert(*node, stale);
+            let mut teardown_ready = {
+                let tracker = lock_tracker(&tracker);
+                for node in &placed {
+                    if let Some(stale) = tracker.stale_for(*node, now) {
+                        silence.insert(*node, stale);
+                    }
                 }
-            }
-            let mut teardown_ready = gate.ready(&tracker.expired(now), now);
+                gate.ready(&tracker.expired(now), now)
+            };
 
             for (node, silent) in absence_gate.silences(&lease_missing(&placed, &leased), now) {
                 // A prior observation's silence is the better (longer-armed)
@@ -246,7 +262,7 @@ pub(crate) fn spawn_lease_watcher(
                     &silence,
                     &teardown_ready,
                     &cells,
-                    &mut tracker,
+                    &tracker,
                     &timing,
                 )
                 .await;
@@ -262,7 +278,7 @@ async fn run_hygiene(
     silence: &HashMap<RuntimeId, Duration>,
     teardown_ready: &[RuntimeId],
     cells: &[PlacementEntry],
-    tracker: &mut LeaseTracker,
+    tracker: &SharedLeaseTracker,
     timing: &SupervisionTiming,
 ) {
     let instances = match instance_registry::list_instances(session).await {
@@ -273,11 +289,14 @@ async fn run_hygiene(
         }
     };
 
-    let node_ttls: HashMap<RuntimeId, Duration> = cells
-        .iter()
-        .filter_map(placement_node)
-        .filter_map(|node| tracker.ttl_of(node).map(|ttl| (node, ttl)))
-        .collect();
+    let node_ttls: HashMap<RuntimeId, Duration> = {
+        let tracker = lock_tracker(tracker);
+        cells
+            .iter()
+            .filter_map(placement_node)
+            .filter_map(|node| tracker.ttl_of(node).map(|ttl| (node, ttl)))
+            .collect()
+    };
     let plan = plan_hygiene(
         silence,
         teardown_ready,
@@ -363,10 +382,10 @@ async fn run_hygiene(
         }
         // The lease row goes last: while any placement row still exists, the
         // expired lease must remain as evidence (missing-row rule).
-        if let Err(err) = node_lease::delete_lease(session, *id).await {
-            warn!("hygiene: deleting lease '{id}' failed: {err}");
+        match node_lease::delete_lease(session, *id).await {
+            Ok(()) => lock_tracker(tracker).forget(*id),
+            Err(err) => warn!("hygiene: deleting lease '{id}' failed: {err}"),
         }
-        tracker.forget(*id);
     }
 }
 

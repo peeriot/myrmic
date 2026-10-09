@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use sorg_common::{PoisonRcv, SorgPayload, bail, custom_err, poison_channel, set_up_queryable};
+use sorg_common::{
+    PoisonRcv, SorgPayload, bail, custom_err, poison_channel, set_up_queryable,
+    supervision::LeaseTracker,
+};
 use tracing::{Level, debug, info, span, warn};
 use zenoh::Session;
 
@@ -46,14 +49,21 @@ pub async fn spawn(
         ))
     };
 
+    let lease_tracker = Arc::new(Mutex::new(LeaseTracker::new()));
     let _lease_watcher = crate::supervision::spawn_lease_watcher(
         session.clone(),
         orch_state.clone(),
+        lease_tracker.clone(),
         sorg_common::supervision::SupervisionTiming::default(),
     );
 
-    let (client, handle_event_loop) =
-        set_up_event_loop(session.clone(), orch_state, config, poison_rcv_event_loop);
+    let (client, handle_event_loop) = set_up_event_loop(
+        session.clone(),
+        orch_state,
+        config,
+        lease_tracker,
+        poison_rcv_event_loop,
+    );
 
     // set up the handler for the leaving and joining of other nodes
     monitor_orch_nodes(session.clone(), client.handle()).await?;
