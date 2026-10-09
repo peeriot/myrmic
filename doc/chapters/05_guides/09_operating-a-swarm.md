@@ -20,13 +20,22 @@ From another terminal, `myrmic runtimes list` confirms it independently: a runti
 
 Runtimes find each other on their own. Every runtime that can reach the others on the network joins one swarm, with no explicit join step, so two machines on the same segment form a swarm whether or not you intended it. `myrmic network status` shows the nodes a runtime currently sees. See the [`myrmic network status` reference](../10_reference/02_myrmic-cli/07_network/01_status.md) for synopsis, options and examples.
 
-On a host where multicast is blocked, point the CLI at a Zenoh listener on a runtime instead. This skips multicast discovery for that invocation; repeat `--connect` to provide fallback endpoints:
+On a host where multicast is blocked, point the CLI at a Zenoh listener on a runtime instead. The CLI then attaches to that runtime as a client: it skips multicast discovery, listens on nothing itself, and fails at once if the endpoint cannot be reached. Repeat `--connect` to provide fallback endpoints, tried in order:
 
 ```bash
 myrmic --connect tcp/192.0.2.10:7447 cells status
 ```
 
 The runtime must be configured to listen on that reachable endpoint under its `zenoh` configuration.
+
+When the runtime is on another network altogether, give it a zone and name that zone to the CLI. Runtimes started with `--zone` find each other through a lighthouse service and connect over iroh, so one swarm can span networks. The CLI with `--zone` looks the zone's members up the same way and attaches to one of them as a client. Multicast discovery still runs alongside, so on the runtime's own network it wins the race:
+
+```bash
+myrmic runtimes start --zone my-zone --detached
+myrmic --zone my-zone cells status
+```
+
+The zone id admits a runtime to the zone, so treat it as a shared secret. `--connect`, `--multicast-group` and `--zone` only matter to commands that talk to the swarm; a local command such as `myrmic runtimes list` or `myrmic build` ignores them and warns that it did.
 
 To keep a set of runtimes on one host apart from the others, for example for testing, give them their own multicast group under `zenoh.scouting.multicast.address` in their configuration, and point the CLI at it with `--multicast-group` (or `DEFAULT_MYRMIC_MULTICAST_GROUP`):
 
