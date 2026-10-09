@@ -76,9 +76,25 @@ impl Swarm {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 #[tracing::instrument(skip_all, fields(mode = %config.zenoh.mode().unwrap_or_default(), id = ?config.zenoh.id()))]
 async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> spawn::SwarmSession {
+    // Boxed: the whole startup is one large future.
+    match Box::pin(start_session(config, drop_rx)).await {
+        Ok(session) => session,
+        Err(err) => {
+            // Logged before panicking: a detached runtime's stderr goes nowhere,
+            // so its log file is the only place the operator can find the cause.
+            tracing::error!("Failed to start: {err:#}");
+            panic!("Failed to start: {err:#}");
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn start_session(
+    config: SwarmConfig,
+    drop_rx: DropNotifier,
+) -> anyhow::Result<spawn::SwarmSession> {
     tracing::info!("Creating session");
 
     let SwarmConfig {
@@ -91,16 +107,18 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> spawn::SwarmSessio
         .insert_json5("timestamping/enabled", "true")
         .expect("valid timestamping config");
 
+    keep_listening_past_failures(&mut zenoh);
+
     let mut runtime = zenoh::internal::runtime::RuntimeBuilder::new(zenoh)
         .build()
         .await
-        .expect("Failed to create runtime");
+        .map_err(|err| anyhow::anyhow!("Failed to create runtime: {err}"))?;
 
     let dyn_runtime = zenoh::internal::runtime::DynamicRuntime::from(runtime.clone());
 
     let session = zenoh::session::init(dyn_runtime.clone())
         .await
-        .expect("Unable to initialise session");
+        .map_err(|err| anyhow::anyhow!("Unable to initialise session: {err}"))?;
 
     let handle = tokio::runtime::Handle::current();
 
@@ -201,14 +219,19 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> spawn::SwarmSessio
         |p| p.embedded_log.clone(),
     );
 
-    runtime.start().await.expect("Failed to start runtime");
+    runtime
+        .start()
+        .await
+        .map_err(|err| anyhow::anyhow!("Failed to start runtime: {err}"))?;
+
+    report_listeners(&runtime).await?;
 
     let fut = futures_util::future::join_all(
         ready_signals
             .into_iter()
             .map(|n| async move { n.notified().await }),
     );
-    assert!(
+    anyhow::ensure!(
         timeout(PLUGIN_STARTUP_TIMEOUT, fut).await.is_ok(),
         "startup timed out [took longer than {:?}]",
         PLUGIN_STARTUP_TIMEOUT
@@ -221,7 +244,51 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> spawn::SwarmSessio
 
     tracing::info!("Session created");
 
-    spawn::SwarmSession::new(session, runtime, telemetry_guard, telemetry_control_handle)
+    Ok(spawn::SwarmSession::new(
+        session,
+        runtime,
+        telemetry_guard,
+        telemetry_control_handle,
+    ))
+}
+
+/// Lets zenoh try every listen endpoint instead of stopping at the first it can't open
+/// (`tcp/[::]:0` on a kernel booted with `ipv6.disable=1`, say), unless the config chose otherwise.
+/// [`report_listeners`] then reports the ones that failed.
+fn keep_listening_past_failures(zenoh: &mut zenoh::Config) {
+    let unset = zenoh
+        .get_json("listen/exit_on_failure")
+        .is_ok_and(|value| value == "null");
+
+    if unset {
+        zenoh
+            .insert_json5("listen/exit_on_failure", "false")
+            .expect("valid listen config");
+    }
+}
+
+/// Logs every listen endpoint zenoh failed to open, and fails when it opened none.
+async fn report_listeners(runtime: &zenoh::internal::runtime::Runtime) -> anyhow::Result<()> {
+    let failures = runtime.listener_failures();
+
+    for (endpoint, reason) in &failures {
+        tracing::error!("Unable to listen on {endpoint}: {reason}");
+    }
+
+    if !failures.is_empty() && runtime.get_listeners().await.is_empty() {
+        let reasons = failures
+            .iter()
+            .map(|(endpoint, reason)| format!("{endpoint}: {reason}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        anyhow::bail!(
+            "no listen endpoint could be opened ({reasons}); set `zenoh.listen.endpoints` to an \
+             address this host supports, e.g. `tcp/0.0.0.0:7447`"
+        );
+    }
+
+    Ok(())
 }
 
 /// Best-effort: registers this process as the replication holder of its own locally-written
@@ -358,4 +425,76 @@ where
     T: serde::de::DeserializeOwned,
 {
     input::eval_file::<T, _>(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TEST-NET-1 (RFC 5737): no host owns it, so listening on it fails anywhere —
+    /// the stand-in for an address family the kernel lacks, which a test host can't
+    /// be made to lack.
+    const UNBINDABLE: &str = "tcp/192.0.2.1:0";
+
+    /// A swarm listening on `endpoints` only, kept off the network so it never
+    /// meets a developer's own runtimes.
+    fn swarm_listening_on(endpoints: &str) -> Swarm {
+        let mut config = SwarmConfig::default();
+        for (key, value) in [
+            ("listen/endpoints", endpoints),
+            ("scouting/multicast/enabled", "false"),
+            ("scouting/gossip/enabled", "false"),
+        ] {
+            config
+                .zenoh
+                .insert_json5(key, value)
+                .unwrap_or_else(|err| panic!("invalid {key}: {err}"));
+        }
+
+        // Spawning installs the process-wide subscriber; silenced, so it does
+        // not log every later test in this binary to stdout.
+        config.telemetry.logs.env_filter = Some(String::from("off"));
+
+        Swarm::new(config)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_swarm_with_nothing_to_listen_on_fails_to_start() {
+        let Err(err) = swarm_listening_on(&format!(r#"["{UNBINDABLE}"]"#))
+            .wait_in_place()
+            .await
+        else {
+            panic!("a swarm with nothing to listen on started");
+        };
+
+        let err = format!("{err:#}");
+        assert!(err.contains(UNBINDABLE), "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_swarm_starts_on_the_endpoints_left() {
+        let spawned = swarm_listening_on(&format!(r#"["{UNBINDABLE}", "tcp/127.0.0.1:0"]"#))
+            .wait_in_place()
+            .await
+            .expect("the loopback endpoint is left to listen on");
+
+        spawned.kill_async().await;
+    }
+
+    #[test]
+    fn an_explicit_exit_on_failure_is_kept() {
+        let exit_on_failure =
+            |config: &zenoh::Config| config.get_json("listen/exit_on_failure").expect("readable");
+
+        let mut config = zenoh::Config::default();
+        keep_listening_past_failures(&mut config);
+        assert_eq!(exit_on_failure(&config), "false");
+
+        let mut config = zenoh::Config::default();
+        config
+            .insert_json5("listen/exit_on_failure", "true")
+            .expect("valid listen config");
+        keep_listening_past_failures(&mut config);
+        assert_eq!(exit_on_failure(&config), "true");
+    }
 }
