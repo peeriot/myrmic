@@ -319,8 +319,8 @@ impl ClockSkewWatch {
 /// tick-based core in [`cell_protocol::supervision`] (the embedded host runs
 /// the same core on its SoC tick). Expiry is measured on the observer's own
 /// monotonic clock from the last seq *advance* it saw; wall clocks and row
-/// timestamps are never compared. First sight counts as an advance, so a
-/// cold-started observer errs late, never early.
+/// timestamps are never compared. First sight starts the staleness clock, so
+/// a cold-started observer errs late, never early.
 #[derive(Debug)]
 pub struct LeaseTracker {
     origin: Instant,
@@ -362,6 +362,11 @@ impl LeaseTracker {
         self.inner
             .stale_for(id, self.ms(now))
             .map(Duration::from_millis)
+    }
+
+    /// Whether the node's seq has moved since this observer first saw it.
+    pub fn has_advanced(&self, id: RuntimeId) -> bool {
+        self.inner.has_advanced(id)
     }
 
     /// The ttl an observed node declared in its last advancing lease.
