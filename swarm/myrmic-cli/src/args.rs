@@ -24,6 +24,19 @@ pub struct Ctx {
     /// discovery. May be supplied more than once for fallback endpoints.
     #[clap(long, value_name = "ENDPOINT", global = true)]
     pub connect: Vec<String>,
+
+    /// Discover runtimes on this multicast group instead of the default
+    /// `224.0.0.224:7446`, e.g. to keep a set of runtimes apart from the
+    /// others on the host. The runtimes must scout on the same group
+    /// (`zenoh.scouting.multicast.address` in their config). Without this
+    /// flag, `DEFAULT_MYRMIC_MULTICAST_GROUP` sets the group.
+    #[clap(
+        long,
+        value_name = "ADDRESS:PORT",
+        conflicts_with = "connect",
+        global = true
+    )]
+    pub multicast_group: Option<std::net::SocketAddr>,
 }
 
 impl Ctx {

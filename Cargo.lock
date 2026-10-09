@@ -6755,6 +6755,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "aot-compiler",
+ "cell-protocol",
  "claims",
  "esp-firmware-build",
  "heck",
@@ -9971,6 +9972,7 @@ dependencies = [
  "cell-mailbox",
  "cell-protocol",
  "claims",
+ "clap",
  "db-client",
  "eui48",
  "itertools 0.14.0",
@@ -10857,6 +10859,7 @@ dependencies = [
  "config 0.15.27",
  "db-client",
  "futures",
+ "hex",
  "introspection-client",
  "introspection-common",
  "myrmic-build",

@@ -112,52 +112,9 @@ pub struct Instance {
 #[serde(untagged)]
 pub enum RestartSpec {
     /// `restart: on-error` — just the trigger, with default bounds.
-    Shorthand(RestartTypeName),
+    Shorthand(RestartType),
     /// `restart: { type: on-error, max: 3, window: 30s, delay: 2s }`.
     Expanded(RestartExpanded),
-}
-
-/// The trigger names accepted for `restart` (in an app spec) and `--policy`
-/// (on the command line), matching [`RestartType`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum RestartTypeName {
-    Never,
-    #[serde(alias = "onerror")]
-    #[value(alias = "onerror")]
-    OnError,
-    Always,
-}
-
-impl RestartTypeName {
-    /// The name `--policy` and an app spec's `restart:` spell this trigger
-    /// with. The one place the CLI renders a trigger, so the deploy warning
-    /// and the `cells` listing cannot drift apart.
-    pub fn spelling(restart_type: RestartType) -> &'static str {
-        match restart_type {
-            RestartType::Never => "never",
-            RestartType::OnError => "on-error",
-            RestartType::Always => "always",
-        }
-    }
-
-    /// The named trigger with [`RestartPolicy`]'s default crash-loop bounds.
-    pub fn to_policy(self) -> RestartPolicy {
-        RestartPolicy {
-            restart_type: self.into(),
-            ..RestartPolicy::default()
-        }
-    }
-}
-
-impl From<RestartTypeName> for RestartType {
-    fn from(name: RestartTypeName) -> Self {
-        match name {
-            RestartTypeName::Never => RestartType::Never,
-            RestartTypeName::OnError => RestartType::OnError,
-            RestartTypeName::Always => RestartType::Always,
-        }
-    }
 }
 
 /// The expanded `restart` map. `type` is required; the bounds fall back to
@@ -167,7 +124,7 @@ impl From<RestartTypeName> for RestartType {
 #[serde(deny_unknown_fields)]
 pub struct RestartExpanded {
     #[serde(rename = "type")]
-    pub restart_type: RestartTypeName,
+    pub restart_type: RestartType,
     #[serde(default)]
     pub max: Option<u32>,
     #[serde(default, deserialize_with = "de_human_duration")]
@@ -194,9 +151,11 @@ impl RestartSpec {
     pub fn to_policy(&self) -> RestartPolicy {
         let defaults = RestartPolicy::default();
         match self {
-            RestartSpec::Shorthand(name) => name.to_policy(),
+            RestartSpec::Shorthand(restart_type) => {
+                RestartPolicy::with_default_bounds(*restart_type)
+            }
             RestartSpec::Expanded(e) => RestartPolicy {
-                restart_type: e.restart_type.into(),
+                restart_type: e.restart_type,
                 max_restarts: e.max.unwrap_or(defaults.max_restarts),
                 window_ms: e.window.map_or(defaults.window_ms, |d| {
                     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
