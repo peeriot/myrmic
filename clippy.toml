@@ -1,1 +1,1 @@
-doc-valid-idents = ["WiFi", "OpenTelemetry", "NimBLE", "SoC"]
+doc-valid-idents = ["WiFi", "OpenTelemetry", "NimBLE", "SoC", "SoCs"]

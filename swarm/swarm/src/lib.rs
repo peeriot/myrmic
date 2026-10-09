@@ -2,6 +2,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+
+use anyhow::Context as _;
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use zenoh::Session;
 
@@ -76,25 +79,9 @@ impl Swarm {
     }
 }
 
-#[tracing::instrument(skip_all, fields(mode = %config.zenoh.mode().unwrap_or_default(), id = ?config.zenoh.id()))]
-async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> spawn::SwarmSession {
-    // Boxed: the whole startup is one large future.
-    match Box::pin(start_session(config, drop_rx)).await {
-        Ok(session) => session,
-        Err(err) => {
-            // Logged before panicking: a detached runtime's stderr goes nowhere,
-            // so its log file is the only place the operator can find the cause.
-            tracing::error!("Failed to start: {err:#}");
-            panic!("Failed to start: {err:#}");
-        }
-    }
-}
-
 #[allow(clippy::too_many_lines)]
-async fn start_session(
-    config: SwarmConfig,
-    drop_rx: DropNotifier,
-) -> anyhow::Result<spawn::SwarmSession> {
+#[tracing::instrument(skip_all, fields(mode = %config.zenoh.mode().unwrap_or_default(), id = ?config.zenoh.id()))]
+async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spawn::SwarmSession> {
     tracing::info!("Creating session");
 
     let SwarmConfig {
@@ -144,8 +131,7 @@ async fn start_session(
         .as_ref()
         .map(|guard| guard.clone().force_flush_queryable(&session));
 
-    let mut handles = vec![];
-    let mut ready_signals = vec![];
+    let mut started = vec![];
 
     let plugins = Arc::new(plugins);
 
@@ -175,9 +161,12 @@ async fn start_session(
                     &handle,
                     |$conf| $configured_body,
                 );
-                if let Some((join_handle, ready)) = init {
-                    handles.push(join_handle);
-                    ready_signals.push(ready);
+                if let Some((task, ready)) = init {
+                    started.push((
+                        <$plugin as plugins::MyrmicPlugin>::DEFAULT_NAME,
+                        ready,
+                        task,
+                    ));
                 }
             }
         };
@@ -226,16 +215,21 @@ async fn start_session(
 
     report_listeners(&runtime).await?;
 
-    let fut = futures_util::future::join_all(
-        ready_signals
-            .into_iter()
-            .map(|n| async move { n.notified().await }),
+    let startup = futures_util::future::try_join_all(
+        started
+            .iter_mut()
+            .map(|(name, ready, task)| plugin_ready(name, ready.clone(), task)),
     );
-    anyhow::ensure!(
-        timeout(PLUGIN_STARTUP_TIMEOUT, fut).await.is_ok(),
-        "startup timed out [took longer than {:?}]",
-        PLUGIN_STARTUP_TIMEOUT
-    );
+    timeout(PLUGIN_STARTUP_TIMEOUT, startup)
+        .await
+        .with_context(|| {
+            format!("startup timed out [took longer than {PLUGIN_STARTUP_TIMEOUT:?}]")
+        })??;
+
+    let plugin_tasks = started
+        .into_iter()
+        .map(|(name, _, task)| (name, task))
+        .collect();
 
     #[cfg(feature = "plugin-db")]
     if telemetry_guard.is_some() {
@@ -249,6 +243,7 @@ async fn start_session(
         runtime,
         telemetry_guard,
         telemetry_control_handle,
+        plugin_tasks,
     ))
 }
 
@@ -390,7 +385,7 @@ fn init_plugin<T>(
     drop_rx: &DropNotifier,
     handle: &tokio::runtime::Handle,
     extractor: for<'a> fn(&'a PluginConfigs) -> Option<T::Config>,
-) -> Option<(tokio::task::JoinHandle<zenoh::Result<()>>, swarm_api::Ready)>
+) -> Option<(JoinHandle<zenoh::Result<()>>, swarm_api::Ready)>
 where
     T: crate::plugins::MyrmicPlugin,
 {
@@ -417,6 +412,25 @@ where
     let fut = <T as plugins::MyrmicPlugin>::main(ctx, conf);
 
     Some((handle.spawn(fut), ready))
+}
+
+/// Resolves once the plugin signalled ready; fails if its task ends first.
+async fn plugin_ready(
+    name: &str,
+    ready: swarm_api::Ready,
+    task: &mut JoinHandle<zenoh::Result<()>>,
+) -> anyhow::Result<()> {
+    tokio::select! {
+        // A stored permit wins: a plugin that got ready and then ended is
+        // reported by `Spawned::plugin_failure`, not as a startup failure.
+        biased;
+        () = ready.notified() => Ok(()),
+        result = task => match result {
+            Ok(Ok(())) => Err(anyhow::anyhow!("plugin {name} stopped before it was ready")),
+            Ok(Err(err)) => Err(anyhow::anyhow!("plugin {name} failed to start: {err}")),
+            Err(err) => Err(anyhow::anyhow!("plugin {name} failed to start: {err}")),
+        },
+    }
 }
 
 #[doc(hidden)]
@@ -496,5 +510,82 @@ mod tests {
             .expect("valid listen config");
         keep_listening_past_failures(&mut config);
         assert_eq!(exit_on_failure(&config), "true");
+    }
+
+    #[tokio::test]
+    async fn ready_then_ok_is_ready() {
+        let ready = swarm_api::Ready::default();
+        ready.notify_one();
+        let mut handle = task(async { Ok(()) });
+        while !handle.is_finished() {
+            tokio::task::yield_now().await;
+        }
+
+        plugin_ready("test", ready, &mut handle)
+            .await
+            .expect("ready wins over an already finished task");
+    }
+
+    #[tokio::test]
+    async fn still_running_and_ready_is_ready() {
+        let ready = swarm_api::Ready::default();
+        let signal = ready.clone();
+        let mut handle = task(async move {
+            signal.notify_one();
+            std::future::pending::<()>().await;
+            Ok(())
+        });
+
+        plugin_ready("test", ready, &mut handle)
+            .await
+            .expect("plugin signalled ready");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn ok_before_ready_fails() {
+        let mut handle = task(async { Ok(()) });
+
+        let err = plugin_ready("test", swarm_api::Ready::default(), &mut handle)
+            .await
+            .expect_err("task ended before ready");
+        assert!(
+            err.to_string()
+                .contains("plugin test stopped before it was ready"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn err_before_ready_fails() {
+        let mut handle = task(async { Err("boom".into()) });
+
+        let err = plugin_ready("test", swarm_api::Ready::default(), &mut handle)
+            .await
+            .expect_err("task failed before ready");
+        assert!(
+            err.to_string()
+                .contains("plugin test failed to start: boom"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn panic_before_ready_fails() {
+        let mut handle = task(async { panic!("boom") });
+
+        let err = plugin_ready("test", swarm_api::Ready::default(), &mut handle)
+            .await
+            .expect_err("task panicked before ready");
+        let message = err.to_string();
+        assert!(message.contains("plugin test failed to start"), "{message}");
+        assert!(message.contains("boom"), "{message}");
+    }
+
+    fn task<F>(fut: F) -> tokio::task::JoinHandle<zenoh::Result<()>>
+    where
+        F: Future<Output = zenoh::Result<()>> + Send + 'static,
+    {
+        tokio::spawn(fut)
     }
 }

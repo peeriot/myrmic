@@ -7,7 +7,7 @@ use zenoh::{Result as ZResult, Session};
 
 use config::{Config, StoreConfig};
 
-use crate::plugins::MyrmicCtx;
+use crate::plugins::{MyrmicCtx, first_ended};
 use db::replication::AnnounceReason;
 use db::store::TransactionOptions;
 use db::store::fjall::RemoteTx;
@@ -68,22 +68,36 @@ impl crate::plugins::MyrmicPlugin for Plugin {
             escalation_timeout,
         );
 
-        handle.spawn(liveliness::watch(context.clone()));
+        let liveliness = handle.spawn({
+            let context = context.clone();
+
+            async move {
+                liveliness::watch(context).await;
+
+                ZResult::Ok(())
+            }
+        });
 
         for subject in replica_sets::unconditional() {
             context.start_replication(subject).await;
         }
 
-        handle.spawn(replica_sets::run(
-            context.clone(),
-            db_client::v1::Client::new(&session),
-            ctx.tags().clone(),
-        ));
+        let replica_sets = handle.spawn({
+            let context = context.clone();
+            let client = db_client::v1::Client::new(&session);
+            let tags = ctx.tags().clone();
+
+            async move {
+                replica_sets::run(context, client, tags).await;
+
+                ZResult::Ok(())
+            }
+        });
 
         // Backstop for stray scopes the commit-time hook can't see: data held
         // from before a configuration change or an earlier run. Sleep-first,
         // so the replication watcher settles before anything is offered up.
-        handle.spawn({
+        let stray_scan = handle.spawn({
             let context = context.clone();
             let shutdown = context.store.shutdown_token();
 
@@ -98,6 +112,8 @@ impl crate::plugins::MyrmicPlugin for Plugin {
                         context.start_offload(scope, OffloadKind::Hidden);
                     }
                 }
+
+                ZResult::Ok(())
             }
         });
 
@@ -118,22 +134,29 @@ impl crate::plugins::MyrmicPlugin for Plugin {
             .await
             .expect("Unable to setup queryable");
 
-        tokio::spawn({
-            let drop_rx = ctx.drop_notifier();
-
-            async move {
-                let _drop = drop_rx.recv_async().await.ok();
-
-                if let Err(err) = queryable.undeclare().await {
-                    tracing::error!("unable to stop db handler: {}", err);
-                }
-                token.cancel();
-            }
-        });
-
         ctx.notify_ready();
 
-        Ok(())
+        let drop_rx = ctx.drop_notifier();
+        let mut tasks = [
+            ("liveliness watch", liveliness),
+            ("replica sets", replica_sets),
+            ("stray scan", stray_scan),
+        ];
+        let result: ZResult<()> = tokio::select! {
+            biased;
+            _ = drop_rx.recv_async() => Ok(()),
+            stopped = first_ended(&mut tasks) => Err(stopped.into()),
+        };
+
+        if let Err(err) = queryable.undeclare().await {
+            tracing::error!("unable to stop db handler: {}", err);
+        }
+        token.cancel();
+        for (_, task) in &tasks {
+            task.abort();
+        }
+
+        result
     }
 }
 
@@ -1255,5 +1278,21 @@ async fn handle_locate(
 
     if let Err(err) = query.reply(query.key_expr(), payload).await {
         tracing::warn!("unable to reply to locate query: {}", err);
+    }
+}
+
+#[cfg(test)]
+impl Plugin {
+    /// Runs `main` as a task and returns once `ready` is signalled. `main` runs
+    /// until shutdown, so a start failure shows up as the task ending first,
+    /// which panics.
+    pub(crate) async fn run_until_ready(ctx: MyrmicCtx, ready: swarm_api::Ready, config: Config) {
+        let mut main = tokio::spawn(<Self as crate::plugins::MyrmicPlugin>::main(ctx, config));
+
+        tokio::select! {
+            biased;
+            () = ready.notified() => {}
+            result = &mut main => panic!("db plugin ended before ready: {result:?}"),
+        }
     }
 }

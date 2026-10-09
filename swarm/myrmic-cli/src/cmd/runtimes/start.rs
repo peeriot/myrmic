@@ -1,6 +1,7 @@
 use std::io::{Read as _, Write as _};
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
+use std::pin::pin;
 use std::str::FromStr;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -395,7 +396,8 @@ fn run(
 }
 
 /// Starts the swarm, reports it ready once every plugin is (the exec plugin only after it
-/// registered and leased, so cells can be placed on it), then waits for a shutdown signal.
+/// registered and leased, so cells can be placed on it), then keeps it up until a shutdown signal
+/// or a plugin failure.
 async fn serve(
     ctx: &Ctx,
     swarm: swarm::Swarm,
@@ -404,14 +406,34 @@ async fn serve(
     status: Option<&StatusPipe>,
 ) -> anyhow::Result<()> {
     let detached = status.is_some();
-    let _guard = swarm.spawn_in_place()?.wait().await?;
+    let mut shutdown = pin!(wait_for_shutdown(detached));
+
+    // Biased so the signal handlers are installed before startup begins.
+    let mut spawned = tokio::select! {
+        biased;
+        result = &mut shutdown => return result,
+        spawned = async { swarm.spawn_in_place()?.wait().await } => spawned?,
+    };
 
     match status {
         Some(status) => status.send(Ok(())),
         None => crate::info!(ctx, "runtime {name:?} ready ({zid})"),
     }
 
-    wait_for_shutdown(detached).await
+    let result = tokio::select! {
+        result = &mut shutdown => result,
+        err = spawned.plugin_failure() => {
+            let err = err.context(format!("runtime {name:?} stopped"));
+            // a detached runtime's stderr is /dev/null and its status was sent as ready
+            tracing::error!("{}", crate::format_error(&err));
+            Err(err)
+        }
+    };
+    if result.is_err() {
+        spawned.kill_async().await;
+    }
+
+    result
 }
 
 /// Waits for a shutdown signal.
