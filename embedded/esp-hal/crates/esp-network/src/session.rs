@@ -82,6 +82,20 @@ pub struct WifiCredentials {
     password: String,
 }
 
+/// WiFi driver buffer counts. Every one of these buffers lives in internal RAM, the budget shared
+/// with the RTOS thread stacks and the BLE controller, so on a tight chip they trade throughput for
+/// headroom.
+#[derive(Debug, Clone, Copy)]
+pub struct WifiBuffers {
+    /// RX buffers allocated once at WiFi init and held for good (~1.6 KB each).
+    pub static_rx: u8,
+    /// Upper bound on RX buffers allocated per received frame. Should be at
+    /// least `static_rx`.
+    pub dynamic_rx: u16,
+    /// Upper bound on TX buffers allocated per transmitted frame.
+    pub dynamic_tx: u16,
+}
+
 impl WifiCredentials {
     /// Create credentials loaded by the application, for example from flash.
     pub fn new(ssid: impl Into<String>, password: impl Into<String>) -> Self {
@@ -135,6 +149,7 @@ const TCP_DIRECT_ADDR: Option<&str> = option_env!("TCP_DIRECT_ADDR");
 pub fn init_stack(
     wifi: WIFI<'static>,
     credentials: &WifiCredentials,
+    buffers: WifiBuffers,
 ) -> (
     WifiController<'static>,
     Stack<'static>,
@@ -150,7 +165,11 @@ pub fn init_stack(
     )]
     let controller = esp_radio::wifi::WifiController::new(
         wifi,
-        ControllerConfig::default().with_initial_config(station_config),
+        ControllerConfig::default()
+            .with_static_rx_buf_num(buffers.static_rx)
+            .with_dynamic_rx_buf_num(buffers.dynamic_rx)
+            .with_dynamic_tx_buf_num(buffers.dynamic_tx)
+            .with_initial_config(station_config),
     )
     .expect("WiFi module cannot be initialized");
     let wifi_interface = esp_radio::wifi::Interface::station();
