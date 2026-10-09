@@ -1,9 +1,8 @@
 use crate::args::Ctx;
 use crate::models::{self, CellInstance};
-use crate::platforms::Platform;
 use crate::utils::PathType;
 use anyhow::Context;
-use myrmic_build::{cargo, firmware, linux_pipeline};
+use myrmic_build::{PlatformFamily, cargo, firmware, linux_pipeline};
 use sorg_common::{HttpBridgeApi, MqttBridge};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -196,12 +195,14 @@ pub fn build_app(
     Ok(info)
 }
 
-/// Maps the app-spec `platforms` field to CLI [`Platform`]s, defaulting to
-/// [`Platform::DEFAULT`] when absent.
-fn parse_platforms(spec: Option<models::PlatformSpec>) -> anyhow::Result<Vec<Platform>> {
+/// Maps the app-spec `platforms` field to CLI [`PlatformFamily`]s, defaulting to
+/// [`PlatformFamily::DEFAULT`] when absent.
+fn parse_platforms(spec: Option<models::PlatformSpec>) -> anyhow::Result<Vec<PlatformFamily>> {
     match spec {
-        None => Ok(Platform::DEFAULT.to_vec()),
-        Some(models::StringOr::String(spec)) => spec.split(',').map(Platform::from_str).collect(),
+        None => Ok(PlatformFamily::DEFAULT.to_vec()),
+        Some(models::StringOr::String(spec)) => {
+            spec.split(',').map(PlatformFamily::from_str).collect()
+        }
         Some(models::StringOr::Type(platforms)) => platforms.iter().map(|p| p.parse()).collect(),
     }
 }
@@ -220,7 +221,7 @@ pub(crate) fn to_build_cargo_target(target: models::CargoTarget) -> myrmic_build
 pub fn build_toml(
     ctx: &Ctx,
     manifest_path: &Path,
-    platforms: &[Platform],
+    platforms: &[PlatformFamily],
     cargo_target: models::CargoTarget,
     runtime_name: Option<&str>,
     features: &firmware::Features,
@@ -274,7 +275,7 @@ pub fn build_toml(
 fn build_member(
     ctx: &Ctx,
     path: &Path,
-    platforms: &[Platform],
+    platforms: &[PlatformFamily],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
     features: &firmware::Features,
@@ -311,12 +312,12 @@ fn build_firmware(
     ctx: &Ctx,
     path: &Path,
     chip: firmware::Chip,
-    platforms: &[Platform],
+    platforms: &[PlatformFamily],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
     features: &firmware::Features,
 ) -> anyhow::Result<()> {
-    if platforms != Platform::DEFAULT {
+    if platforms != PlatformFamily::DEFAULT {
         crate::warn!(
             ctx,
             "--platform is ignored for a firmware crate; the chip ({chip}) comes from \
@@ -347,12 +348,12 @@ fn build_firmware(
 fn build_linux_pipeline(
     ctx: &Ctx,
     path: &Path,
-    platforms: &[Platform],
+    platforms: &[PlatformFamily],
     cargo_target: &myrmic_build::CargoTarget,
     runtime_name: Option<&str>,
     features: &firmware::Features,
 ) -> anyhow::Result<()> {
-    if platforms != Platform::DEFAULT {
+    if platforms != PlatformFamily::DEFAULT {
         crate::warn!(
             ctx,
             "--platform is ignored for a signal-layer pipeline; it builds for the host"
@@ -416,12 +417,12 @@ pub(crate) fn report_layout(ctx: &Ctx, built: &firmware::FirmwareBuild) {
 }
 
 /// Maps the CLI's build platforms to `myrmic-build` platforms
-fn build_platforms(platforms: &[Platform]) -> Vec<myrmic_build::Platform> {
+fn build_platforms(platforms: &[PlatformFamily]) -> Vec<myrmic_build::Platform> {
     platforms
         .iter()
         .map(|platform| match platform {
-            Platform::Linux => myrmic_build::Platform::Linux,
-            Platform::Riscv32imac => myrmic_build::Platform::Esp32c6,
+            PlatformFamily::Linux => myrmic_build::Platform::Linux,
+            PlatformFamily::Riscv32imac => myrmic_build::Platform::Esp32c6,
         })
         .collect()
 }
@@ -429,7 +430,7 @@ fn build_platforms(platforms: &[Platform]) -> Vec<myrmic_build::Platform> {
 fn build_cell(
     ctx: &Ctx,
     path: &Path,
-    platforms: &[Platform],
+    platforms: &[PlatformFamily],
     cargo_target: &myrmic_build::CargoTarget,
     spec_id: Option<&str>,
 ) -> anyhow::Result<Option<CellClass>> {

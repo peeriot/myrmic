@@ -11,6 +11,9 @@
 //!     Guards all of the above for the outlet path plus:
 //!     `init_outlet_registry` (outlets), sink task, pins macro.
 //!
+//! The `device-pin` fixture (CCS811 source with its `nint` line wired) has no
+//! expected file; it backs the targeted assertions below.
+//!
 //! # Updating the expected files
 //!
 //! Run once with `UPDATE_GOLDEN=1` to (re)write the committed expected files:
@@ -51,14 +54,14 @@ fn steps_root() -> PathBuf {
     repo_root().join("signal-modules/steps")
 }
 
-/// Run generation for a named fixture and compare (or write) the expected file.
+/// Run generation for a named fixture.
 ///
 /// `fixture` is the base name without extension (e.g. `"sensors-only"`).
 /// The board manifest is `<fixture>.board.yaml` when that file exists, else the
 /// shared `golden-board.yaml`. A fixture needs its own board when a device would
 /// perturb the other fixtures, since board peripherals are emitted for every
 /// device in the manifest regardless of what the pipeline uses.
-fn check_fixture(fixture: &str) {
+fn generate_fixture(fixture: &str) -> String {
     let per_fixture_board = fixtures_dir().join(format!("{fixture}.board.yaml"));
     let board = if per_fixture_board.exists() {
         per_fixture_board
@@ -66,10 +69,15 @@ fn check_fixture(fixture: &str) {
         fixtures_dir().join("golden-board.yaml")
     };
     let pipeline = fixtures_dir().join(format!("{fixture}.yaml"));
-    let expected_path = fixtures_dir().join(format!("{fixture}.expected.rs"));
 
-    let actual = esp_codegen::generate_esp32(&board, &pipeline, &drivers_root(), &steps_root())
-        .unwrap_or_else(|e| panic!("generation failed for fixture `{fixture}`: {e:#}"));
+    esp_codegen::generate_esp32(&board, &pipeline, &drivers_root(), &steps_root())
+        .unwrap_or_else(|e| panic!("generation failed for fixture `{fixture}`: {e:#}"))
+}
+
+/// Run generation for a named fixture and compare (or write) the expected file.
+fn check_fixture(fixture: &str) {
+    let expected_path = fixtures_dir().join(format!("{fixture}.expected.rs"));
+    let actual = generate_fixture(fixture);
 
     if std::env::var("UPDATE_GOLDEN").is_ok() {
         std::fs::write(&expected_path, &actual).unwrap_or_else(|e| {
@@ -124,6 +132,26 @@ fn golden_pwm_outlet() {
 #[test]
 fn golden_outlet_bearing() {
     check_fixture("outlet-bearing");
+}
+
+/// A device pin outside its bus (an interrupt or data-ready line) is handed to
+/// the driver as a `Flex`, which `Flex::new` leaves with the input buffer off.
+/// The generated construction must enable it, or the driver never sees the
+/// line change.
+#[test]
+fn device_pin_flex_enables_input() {
+    let src = generate_fixture("device-pin");
+
+    let construction = src
+        .find("let mut ccs811_nint = esp_hal::gpio::Flex::new(ccs811_nint_gpio);")
+        .unwrap_or_else(|| panic!("missing ccs811 nint Flex construction in:\n{src}"));
+    let input_enable = src
+        .find("ccs811_nint.set_input_enable(true);")
+        .unwrap_or_else(|| panic!("ccs811 nint input buffer is never enabled in:\n{src}"));
+    assert!(
+        construction < input_enable,
+        "input must be enabled after the Flex is constructed"
+    );
 }
 
 /// Verify that the sensors-only expected output contains the tokens that

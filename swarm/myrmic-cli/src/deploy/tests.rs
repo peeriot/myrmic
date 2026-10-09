@@ -9,7 +9,7 @@ use sorg_common::{
 
 use crate::args::Ctx;
 use crate::build::{AppInfo, CellClass};
-use crate::models::{CellInstance, RestartTypeName};
+use crate::models::CellInstance;
 
 use super::build_deploy_request;
 
@@ -200,7 +200,7 @@ fn override_restart_replaces_every_instance_policy() {
         http_bridges: vec![],
     };
 
-    let policy = RestartTypeName::Always.to_policy();
+    let policy = RestartPolicy::with_default_bounds(RestartType::Always);
     super::override_restart(&Ctx::default(), &mut info, &policy);
 
     for instance in &info.instances {
@@ -241,7 +241,7 @@ fn undeclared_restart_deploys_as_never() {
 #[test]
 fn describe_restart_spells_out_trigger_and_bounds() {
     assert_eq!(
-        super::describe_restart(&RestartTypeName::OnError.to_policy()),
+        super::describe_restart(&RestartPolicy::with_default_bounds(RestartType::OnError)),
         "on-error (max 5, window 60000ms, delay 1000ms)"
     );
 }

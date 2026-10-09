@@ -1,5 +1,10 @@
+use std::io::{Read as _, Write as _};
+use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use cell_protocol::CapabilityTag;
@@ -156,29 +161,226 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
-    let ready_name = String::from(name);
+    let log_dir = config
+        .telemetry
+        .logs
+        .directory
+        .clone()
+        .expect("the log directory is set above");
     let swarm = swarm::Swarm::new(config);
 
     if detached {
-        match fork::daemon(false, false) {
-            Ok(fork::Fork::Child) => {}
-            Ok(fork::Fork::Parent(_)) => unreachable!("fork::daemon never returns Parent"),
-            Err(err) => {
-                anyhow::bail!("unable to create daemon process: {}", err);
+        start_detached(ctx, &pid, swarm, name, zid, &log_dir)
+    } else {
+        run(ctx, &pid, swarm, name, zid, None)
+    }
+}
+
+/// How long a detached start waits for the daemon's status before killing it. Longer than the
+/// swarm's own plugin startup timeout, so a daemon stuck there reports that itself; the margin
+/// covers starting zenoh, which that timeout doesn't.
+const STARTUP_TIMEOUT: Duration =
+    swarm::PLUGIN_STARTUP_TIMEOUT.saturating_add(Duration::from_secs(10));
+
+/// The first byte of the status on the readiness pipe; a failure's message follows it.
+const STATUS_READY: u8 = 0;
+const STATUS_FAILED: u8 = 1;
+
+/// Starts the runtime as a daemon and returns once it is ready. Fails if the daemon reports a
+/// failure or exits without a status, and kills it if it isn't ready within [`STARTUP_TIMEOUT`].
+///
+/// The daemon's stdio goes to /dev/null, so it reports its status through a pipe this process
+/// waits on.
+fn start_detached(
+    ctx: Ctx,
+    pid: &Pid,
+    swarm: swarm::Swarm,
+    name: &str,
+    zid: ZenohId,
+    log_dir: &Path,
+) -> anyhow::Result<()> {
+    let (reader, writer) = std::io::pipe().context("unable to create the readiness pipe")?;
+
+    match fork::fork().context("unable to fork the runtime")? {
+        fork::Fork::Parent(child) => {
+            drop(writer);
+            let status = match read_to_end_timeout(reader, STARTUP_TIMEOUT) {
+                Ok(status) => status,
+                Err(err) if err.kind() == std::io::ErrorKind::TimedOut => {
+                    // The daemon's own pid is unknown here, but it is in the process group
+                    // `setsid` created, whose id is the forked child's pid.
+                    // SAFETY: sending a signal has no memory-safety preconditions.
+                    if unsafe { libc::kill(-child, libc::SIGKILL) } != 0 {
+                        return Err(std::io::Error::last_os_error()).with_context(|| {
+                            format!("unable to kill runtime {name:?}, which didn't become ready")
+                        });
+                    }
+                    anyhow::bail!(
+                        "runtime {name:?} wasn't ready after {STARTUP_TIMEOUT:?}; killed it"
+                    );
+                }
+                Err(err) => return Err(err).context("unable to read the runtime's status"),
+            };
+
+            match status.split_first() {
+                Some((&STATUS_READY, [])) => {
+                    crate::info!(ctx, "runtime {name:?} ready ({zid})");
+                    Ok(())
+                }
+                Some((&STATUS_FAILED, message)) => anyhow::bail!(
+                    "runtime {name:?} failed to start: {}",
+                    std::str::from_utf8(message).expect("the daemon sends a UTF-8 message")
+                ),
+                // killed, say: neither the error path nor the panic hook got to run
+                None => anyhow::bail!(
+                    "runtime {name:?} exited without reporting a status; see its logs in {}",
+                    log_dir.display()
+                ),
+                Some(_) => panic!("invalid status from runtime {name:?}: {status:?}"),
             }
+        }
+        fork::Fork::Child => {
+            drop(reader);
+            let status = StatusPipe::install_hook(writer);
+            let result =
+                become_daemon().and_then(|()| run(ctx, pid, swarm, name, zid, Some(&status)));
+            if let Err(err) = result {
+                // Not returned to main, whose error print would only reach /dev/null; the status
+                // carries it unless the runtime was already ready.
+                status.send(Err(crate::format_error(&err)));
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Reads `reader` to its end, or fails with [`std::io::ErrorKind::TimedOut`] if that takes longer
+/// than `timeout`.
+///
+/// A pipe read can't time out, so the read runs on its own thread; after a timeout, that thread
+/// ends with the pipe.
+fn read_to_end_timeout(
+    mut reader: std::io::PipeReader,
+    timeout: Duration,
+) -> std::io::Result<Vec<u8>> {
+    let (read_tx, read_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut content = vec![];
+        let read = reader.read_to_end(&mut content).map(|_| content);
+        // after a timeout nobody receives anymore, and nothing is left to report to
+        drop(read_tx.send(read));
+    });
+
+    match read_rx.recv_timeout(timeout) {
+        Ok(read) => read,
+        Err(RecvTimeoutError::Timeout) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("nothing to read within {timeout:?}"),
+        )),
+        Err(RecvTimeoutError::Disconnected) => {
+            unreachable!("the reader thread sends before it ends")
+        }
+    }
+}
+
+/// What `std::panic::take_hook` returns.
+type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+/// The daemon's end of the readiness pipe, which carries one status to the starting process.
+///
+/// Until that status is sent, a panic hook sends the panic as a failure, since the daemon's stderr
+/// is /dev/null, and ends the daemon: a runtime that panicked while starting is not one to keep.
+struct StatusPipe {
+    writer: Arc<Mutex<Option<std::io::PipeWriter>>>,
+    previous_hook: Mutex<Option<PanicHook>>,
+}
+
+impl StatusPipe {
+    fn install_hook(writer: std::io::PipeWriter) -> Self {
+        let writer = Arc::new(Mutex::new(Some(writer)));
+        let previous_hook = std::panic::take_hook();
+        let hook_writer = Arc::clone(&writer);
+        std::panic::set_hook(Box::new(move |info| {
+            send_status(&hook_writer, Err(info.to_string()));
+            // the exit code of an unhandled panic
+            std::process::exit(101);
+        }));
+        Self {
+            writer,
+            previous_hook: Mutex::new(Some(previous_hook)),
         }
     }
 
-    // The fork above precedes the runtime, so a full worker pool is fork-safe.
+    /// Sends `status` unless a status was already sent, and reverts the panic hook.
+    fn send(&self, status: Result<(), String>) {
+        send_status(&self.writer, status);
+        let previous_hook = self
+            .previous_hook
+            .lock()
+            .expect("the hook lock is never held across a panic")
+            .take();
+        // None: the readiness report already reverted it, and this is a later failure
+        if let Some(previous_hook) = previous_hook {
+            std::panic::set_hook(previous_hook);
+        }
+    }
+}
+
+/// Writes `status` into the pipe and closes it, unless an earlier status already did (the readiness
+/// report before a later failure, say).
+fn send_status(writer: &Mutex<Option<std::io::PipeWriter>>, status: Result<(), String>) {
+    let writer = writer
+        .lock()
+        .expect("the status lock is never held across a panic")
+        .take();
+    if let Some(mut writer) = writer {
+        let bytes = match status {
+            Ok(()) => vec![STATUS_READY],
+            Err(message) => [&[STATUS_FAILED], message.as_bytes()].concat(),
+        };
+        if let Err(err) = writer.write_all(&bytes) {
+            // the starting process is gone (killed, say). Once the runtime is ready, this goes to
+            // its log file.
+            tracing::warn!("unable to report the status to the starting process: {err}");
+        }
+    }
+}
+
+/// Turns the forked child into the daemon; returns only in the daemon.
+///
+/// `setsid` moves the child into a new session without a controlling terminal, so closing the
+/// terminal (SIGHUP) or Ctrl+C there no longer reaches the runtime. That makes the child a session
+/// leader, which would acquire a controlling terminal again by opening a terminal device (a serial
+/// port, say); the second fork's child is not a session leader, so it can't.
+fn become_daemon() -> anyhow::Result<()> {
+    fork::setsid().context("unable to start a new session")?;
+    fork::chdir().context("unable to change to the root directory")?;
+    fork::redirect_stdio().context("unable to redirect stdio to /dev/null")?;
+
+    match fork::fork().context("unable to fork the daemon")? {
+        // stdio already goes to /dev/null, so exiting flushes nothing anywhere
+        fork::Fork::Parent(_) => std::process::exit(0),
+        fork::Fork::Child => Ok(()),
+    }
+}
+
+/// Runs the runtime until a shutdown signal. `status` is the daemon's status pipe of a detached
+/// start.
+fn run(
+    ctx: Ctx,
+    pid: &Pid,
+    swarm: swarm::Swarm,
+    name: &str,
+    zid: ZenohId,
+    status: Option<&StatusPipe>,
+) -> anyhow::Result<()> {
+    // Any fork precedes the runtime, so a full worker pool is fork-safe.
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     crate::block_on_with(workers, async move {
         pid.write_self().await?;
 
-        let _guard = swarm.spawn_in_place().unwrap();
-
-        crate::info!(ctx, "runtime {ready_name:?} ready ({zid})");
-
-        let result = wait_for_shutdown(detached).await;
+        let result = serve(&ctx, swarm, name, zid, status).await;
 
         if let Err(err) = pid.remove_async().await {
             crate::warn!(
@@ -190,6 +392,26 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
 
         result
     })
+}
+
+/// Starts the swarm, reports it ready once every plugin is (the exec plugin only after it
+/// registered and leased, so cells can be placed on it), then waits for a shutdown signal.
+async fn serve(
+    ctx: &Ctx,
+    swarm: swarm::Swarm,
+    name: &str,
+    zid: ZenohId,
+    status: Option<&StatusPipe>,
+) -> anyhow::Result<()> {
+    let detached = status.is_some();
+    let _guard = swarm.spawn_in_place()?.wait().await?;
+
+    match status {
+        Some(status) => status.send(Ok(())),
+        None => crate::info!(ctx, "runtime {name:?} ready ({zid})"),
+    }
+
+    wait_for_shutdown(detached).await
 }
 
 /// Waits for a shutdown signal.

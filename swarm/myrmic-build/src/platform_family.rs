@@ -1,22 +1,26 @@
-//! Known build platforms.
+//! Platform families: what a cell is built and deployed for (`myrmic build`/`deploy
+//! --platform`). A family can cover several [`Platform`](crate::Platform)s, which name the chip a
+//! runtime runs on: one riscv32imac artifact serves every ESP chip.
 
 use std::str::FromStr;
 
 use cell_protocol::ArtifactPlatform;
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub enum Platform {
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub enum PlatformFamily {
+    /// the host runtime (Wasmtime), running the cell's wasm directly
     Linux,
+    /// Espressif riscv32imac boards (ESP32-C5, ESP32-C6, ESP32-C61), sharing one AOT artifact
     Riscv32imac,
 }
 
-impl Platform {
+impl PlatformFamily {
     pub const DEFAULT: &[Self] = &[Self::Linux];
 
     pub const ALL: &[Self] = &[Self::Linux, Self::Riscv32imac];
 
     /// Parses a `--platform` value: a comma-separated platform list, or
-    /// [`Platform::DEFAULT`] when the flag was omitted.
+    /// [`PlatformFamily::DEFAULT`] when the flag was omitted.
     pub fn parse_list(spec: Option<&str>) -> anyhow::Result<Vec<Self>> {
         match spec {
             Some(spec) => spec.split(',').map(Self::from_str).collect(),
@@ -39,7 +43,7 @@ impl Platform {
     }
 }
 
-impl FromStr for Platform {
+impl FromStr for PlatformFamily {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

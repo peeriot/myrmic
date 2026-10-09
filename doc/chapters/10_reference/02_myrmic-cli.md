@@ -21,6 +21,7 @@ The following environment variables control the behavior of the `myrmic` command
 | Variable | Description | Used by |
 |---|---|---|
 | `CARGO` | Path to the `cargo` executable. Defaults to `cargo` on `PATH`. | [`build`](02_myrmic-cli/03_build.md), [`deploy`](02_myrmic-cli/05_deploy.md) |
+| `DEFAULT_MYRMIC_MULTICAST_GROUP` | Multicast group (`<address>:<port>`) to discover runtimes on instead of the default `224.0.0.224:7446`, like `--multicast-group`. An explicit `--multicast-group` takes precedence. | every command that talks to the swarm |
 | `XDG_RUNTIME_DIR` | Controls where PID files are stored. | [`runtimes start`](02_myrmic-cli/04_runtimes/01_start.md), [`runtimes list`](02_myrmic-cli/04_runtimes/02_list.md), [`runtimes delete`](02_myrmic-cli/04_runtimes/03_delete.md) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | S3 credentials. | [`database export`](02_myrmic-cli/13_database/01_export.md), [`database import`](02_myrmic-cli/13_database/02_import.md) |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` | AWS region for S3. Falls back to `us-east-1`. | [`database export`](02_myrmic-cli/13_database/01_export.md), [`database import`](02_myrmic-cli/13_database/02_import.md) |
