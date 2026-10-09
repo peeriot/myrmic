@@ -7,7 +7,7 @@ use db_commons::models::replication::{ScopeAnnounce, SyncMarker, VecMap};
 use anyhow::{Context, Result};
 use skey::StoreKey;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -648,23 +648,42 @@ impl<M: Send + Sync + 'static> Store<M> {
     }
 
     /// Scopes this node holds sync points for while neither replicating nor
-    /// offloading them — data that would otherwise stay stranded here.
+    /// offloading them — data that would otherwise stay stranded here. A
+    /// scope the db no longer accepts (a legacy row) is left out: no replica
+    /// serves it, so offering it up would only fail on every sweep.
     pub fn stray_scopes(&self) -> Result<Vec<models::Scope>> {
+        Ok(self
+            .stored_scopes()?
+            .into_iter()
+            .filter(|scope| {
+                scope.check().is_ok() && !self.is_replicating(scope) && !self.is_offloading(scope)
+            })
+            .collect())
+    }
+
+    /// How many stored scopes the db no longer accepts: legacy rows that no
+    /// replica or offloader will ever serve.
+    pub fn refused_scope_count(&self) -> Result<usize> {
+        Ok(self
+            .stored_scopes()?
+            .iter()
+            .filter(|scope| scope.check().is_err())
+            .count())
+    }
+
+    fn stored_scopes(&self) -> Result<HashSet<models::Scope>> {
         let tx = self.begin_local(&TransactionOptions::read())?;
         let (lower, upper) = Key::sync_point()
             .range()
             .context("unable to construct sync point range")?;
 
-        let mut scopes = std::collections::HashSet::new();
+        let mut scopes = HashSet::new();
         tx.collect_latest_heads(lower, upper, |scope, _, _| {
             scopes.insert(scope);
             Ok(())
         })?;
 
-        Ok(scopes
-            .into_iter()
-            .filter(|scope| !self.is_replicating(scope) && !self.is_offloading(scope))
-            .collect())
+        Ok(scopes)
     }
 
     /// Whether an active replicator's subject covers `scope`.

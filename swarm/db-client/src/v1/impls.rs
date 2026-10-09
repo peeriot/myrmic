@@ -322,7 +322,7 @@ async fn locate_holder(
 
         #[cfg(feature = "replica")]
         let replica =
-            crate::replica_v1::Client::new(&client.session, Subject::Scope(scope.clone()))?;
+            crate::replica_v1::Client::new(&client.session, &Subject::Scope(scope.clone()))?;
 
         let prefer_full = matches!(access, tx_begin::Access::Write);
 

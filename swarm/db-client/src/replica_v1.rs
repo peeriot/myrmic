@@ -1,6 +1,9 @@
 use db_commons::models::replication;
 use db_commons::models::{ReplicaMessage, Scope, Subject, Version, locate};
+use db_commons::topics::{replica, replica_query, replica_sync};
 use zenoh::Session;
+use zenoh::key_expr::KeyExpr;
+use zenoh::pubsub::Subscriber;
 use zenoh_result::ZResult;
 
 /// The window for one sync request: a pull page or a verify check. Off the
@@ -29,39 +32,59 @@ pub type Located = locate::Response;
 #[derive(Debug, Clone)]
 pub struct Client {
     session: Session,
-    broadcast: String,
-    subject: Subject,
+    /// Where this node broadcasts replica messages for the subject.
+    broadcast: KeyExpr<'static>,
+    /// Where messages addressed to this node arrive.
+    inbox: KeyExpr<'static>,
+    /// This node's locate queryable for the subject.
+    locate: KeyExpr<'static>,
+    /// This node's sync queryable for the subject.
+    sync: KeyExpr<'static>,
 }
 
 impl Client {
-    pub fn new(session: &Session, subject: Subject) -> ZResult<Self> {
+    /// Builds every key expression this node uses for `subject` up front.
+    ///
+    /// # Errors
+    ///
+    /// When the subject's text does not form a valid key expression (a scope
+    /// segment with `?`, `#`, `**`, `$*`, ...). The scope text can come from a
+    /// guest, so this is the check that keeps it from panicking a declaration
+    /// later.
+    pub fn new(session: &Session, subject: &Subject) -> ZResult<Self> {
         let me = session.zid();
-
         let (namespace, db, schema) = subject.as_keyexprs();
-
-        let broadcast = db_commons::topics::replica::format_replica(namespace, db, schema, me, "*");
 
         Ok(Self {
             session: session.clone(),
-            broadcast,
-            subject,
+            broadcast: KeyExpr::try_from(replica::format_replica(namespace, db, schema, me, "*"))?,
+            inbox: KeyExpr::try_from(replica::format_replica(
+                namespace,
+                db,
+                schema,
+                "*",
+                uhlc::ID::from(me),
+            ))?,
+            locate: KeyExpr::try_from(replica_query::format(namespace, db, schema))?,
+            sync: KeyExpr::try_from(replica_sync::format(me, namespace, db, schema))?,
         })
     }
 
-    /// Broadcasts a `ReplicaMessage` to other clients using the same key.
-    /// Broadcasts `msg`, returning its encoded size.
-    pub async fn publish(&self, msg: ReplicaMessage) -> usize {
+    /// Broadcasts `msg` to other clients using the same key, returning its
+    /// encoded size.
+    ///
+    /// # Errors
+    ///
+    /// When zenoh refuses the put (a closing session).
+    pub async fn publish(&self, msg: ReplicaMessage) -> ZResult<usize> {
         tracing::debug!("[{}] sending {}", self.session.zid(), msg.name());
 
         let msg = postcard::to_allocvec(&msg).expect("unable to ser msg");
         let bytes = msg.len();
 
-        self.session
-            .put(&self.broadcast, msg)
-            .await
-            .expect("unable to publish replica message");
+        self.session.put(&self.broadcast, msg).await?;
 
-        bytes
+        Ok(bytes)
     }
 
     /// Asks replicating nodes which of them hold `scope` at at least
@@ -197,32 +220,37 @@ impl Client {
     /// Subscribes to messages addressed to clients with the same key.
     ///
     /// The provided closure is called for each incoming message.
-    pub async fn subscribe<F>(&self, func: F) -> zenoh::pubsub::Subscriber<()>
+    ///
+    /// # Errors
+    ///
+    /// When zenoh refuses the declaration (a closing session).
+    pub async fn subscribe<F>(&self, func: F) -> ZResult<Subscriber<()>>
     where
         // The last argument is the message's encoded size.
         F: Fn(uhlc::ID, ReplicaMessage, usize) + Send + Sync + 'static,
     {
         let me: uhlc::ID = self.session.zid().into();
 
-        let (namespace, db, schema) = self.subject.as_keyexprs();
-
-        let sub_ke = db_commons::topics::replica::format_replica(namespace, db, schema, "*", me);
-
         self.session
-            .declare_subscriber(sub_ke)
-            .callback({
-                let func = func;
-
-                move |sample| {
-                    let func = &func;
-
-                    if let Some((id, msg)) = handle_query(me, &sample) {
-                        func(id, msg, sample.payload().len());
-                    }
+            .declare_subscriber(self.inbox.clone())
+            .callback(move |sample| {
+                if let Some((id, msg)) = handle_query(me, &sample) {
+                    func(id, msg, sample.payload().len());
                 }
             })
             .await
-            .expect("unable to register subscriber")
+    }
+
+    /// This node's locate queryable key for the subject.
+    #[must_use]
+    pub fn locate_keyexpr(&self) -> &KeyExpr<'static> {
+        &self.locate
+    }
+
+    /// This node's sync queryable key for the subject.
+    #[must_use]
+    pub fn sync_keyexpr(&self) -> &KeyExpr<'static> {
+        &self.sync
     }
 }
 

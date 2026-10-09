@@ -190,9 +190,12 @@ async fn custody_pass(
         match judge_custody(me, scope, configured_here, &ripe_configured, &provisionals) {
             CustodyAction::Hold => {
                 // Idempotent; this is what re-applies custody after a restart.
-                context
+                if let Err(err) = context
                     .start_replication(models::Subject::Scope(scope.clone()))
-                    .await;
+                    .await
+                {
+                    tracing::error!("unable to replicate {scope}: {err}");
+                }
             }
             CustodyAction::Convert => {
                 tracing::info!("configuration now carries {scope}; converting its custody");
@@ -205,7 +208,11 @@ async fn custody_pass(
                 context
                     .store
                     .stop_replication(&models::Subject::Scope(scope.clone()));
-                context.start_offload(scope.clone(), OffloadKind::Unwinding { target });
+                if let Err(err) =
+                    context.start_offload(scope.clone(), OffloadKind::Unwinding { target })
+                {
+                    tracing::error!("unable to offload {scope}: {err}");
+                }
             }
         }
     }
@@ -443,7 +450,9 @@ async fn reconcile(
     for subject in desired.difference(active) {
         let (namespace, database, schema) = subject.as_keyexprs();
         tracing::info!("replicating {namespace}/{database}/{schema}");
-        context.start_replication(subject.clone()).await;
+        if let Err(err) = context.start_replication(subject.clone()).await {
+            tracing::error!("unable to replicate {namespace}/{database}/{schema}: {err}");
+        }
     }
 
     let dropped: Vec<models::Subject> = active.difference(&desired).cloned().collect();
@@ -468,7 +477,9 @@ async fn reconcile(
             } else {
                 OffloadKind::Hidden
             };
-            context.start_offload(scope, kind);
+            if let Err(err) = context.start_offload(scope.clone(), kind) {
+                tracing::error!("unable to offload {scope}: {err}");
+            }
         }
         for scope in context.store.offloading_scopes() {
             if dropped.iter().any(|subject| subject.contains(&scope)) {

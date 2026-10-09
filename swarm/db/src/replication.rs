@@ -577,7 +577,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         let their_known = announce.known;
 
         for (scope, their_scope) in &their_known {
-            if !self.subject.contains(scope) {
+            if !self.serves(scope) {
                 continue;
             }
 
@@ -905,7 +905,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         req: &sync::PullRequest,
         page_bytes: usize,
     ) -> anyhow::Result<sync::PullResponse> {
-        if !self.subject.contains(&req.scope) {
+        if !self.serves(&req.scope) {
             anyhow::bail!("scope {} is outside this holder's subject", req.scope);
         }
 
@@ -1050,7 +1050,7 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
     /// version held at the same or a newer epoch. How a draining offloader
     /// verifies a replica before retiring.
     pub fn verify_coverage(&self, req: &sync::VerifyRequest) -> anyhow::Result<bool> {
-        if !self.subject.contains(&req.scope) {
+        if !self.serves(&req.scope) {
             return Ok(false);
         }
 
@@ -1102,9 +1102,9 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
             schema,
         } = &scope;
 
-        if !self.subject.contains(&scope) {
+        if !self.serves(&scope) {
             tracing::warn!(
-                "ignoring changeset request for scope {} outside our subject",
+                "ignoring changeset request for scope {} outside our subject or invalid",
                 scope,
             );
             return Ok(());
@@ -1168,12 +1168,21 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         Ok(())
     }
 
+    /// Whether a peer may ask for `scope`: a valid one under our subject.
+    fn serves(&self, scope: &models::Scope) -> bool {
+        scope.check().is_ok() && self.subject.contains(scope)
+    }
+
     async fn handle_cs(&self, cs: ChangeSet) -> anyhow::Result<()> {
         let ChangeSet {
             tx_id,
             scope,
             chunks,
         } = cs;
+
+        scope
+            .check()
+            .map_err(|err| anyhow::anyhow!("changeset for an invalid scope: {err}"))?;
 
         // @TODO (peeriot/swarm#754) jezza - 01 Apr 2026: Implement this when I have a clearer idea how cross-scope transactions work.
         //  Right now, it's not needed, as the replication process will heal itself anyway.

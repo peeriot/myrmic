@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 pub use ids::{Sri, Srn};
-pub use names::{Command, Event};
+pub use names::{Command, Event, MAX_NAME_LEN};
 pub use naming::{NameError, ROOT_NS, child_sri, resolve_target, sri_of_path, validate_segment};
 
 mod ids;

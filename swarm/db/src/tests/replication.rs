@@ -1280,6 +1280,30 @@ async fn stray_scopes_are_the_unreplicated_ones() {
     assert!(store.stray_scopes().unwrap().is_empty());
 }
 
+/// Data stored under a scope the db now refuses (a legacy row) can never be
+/// served, so it is no stray: offering it up would only warn on every sweep.
+#[tokio::test]
+async fn a_stored_scope_the_db_refuses_is_no_stray() {
+    let store = super::open_tmp();
+
+    let stray = api::Scope::new("e", "db", "schema");
+    add_key(&store, db_scope(&stray), "a", b"1");
+    for refused in [
+        api::Scope::new("e", "db", "x?"),
+        api::Scope::new("e", "db", ""),
+        api::Scope::new(
+            "e",
+            "db",
+            "s".repeat(db_commons::models::MAX_SEGMENT_LEN + 1),
+        ),
+    ] {
+        add_key(&store, db_scope(&refused), "b", b"2");
+    }
+
+    assert_eq!(store.stray_scopes().unwrap(), vec![stray]);
+    assert_eq!(store.refused_scope_count().unwrap(), 3);
+}
+
 fn frontier_at(head: u64) -> ScopeAnnounce {
     let mut heads = ScopeFrontier::new();
     heads.insert(head, (0, [0u8; 16]));
@@ -2054,4 +2078,89 @@ async fn an_announce_carries_a_head_committed_after_the_previous_scan() {
         2,
         "the second announce sees the second commit"
     );
+}
+
+/// A peer names the scope of every request, and the store keys built from it
+/// reach lsm-tree, which panics on a key past 65535 bytes - on reads too.
+/// Every peer-facing entry refuses such a scope, and the replica keeps serving.
+#[tokio::test]
+async fn a_peer_scope_past_the_key_limit_is_refused_not_a_panic() {
+    use db_commons::models::replication::{
+        Announce, ChangeSet, ChangeSetReq, Chunk, SyncMarker, SyncMeta, sync,
+    };
+
+    let subject = domain::Subject::Namespace("d".to_string());
+    let (store, transport, replica) = spawn_replica(&subject);
+    let peer = uhlc::ID::rand();
+
+    for scope in [
+        api::Scope::new("d", "x".repeat(usize::from(u16::MAX) + 1), "s"),
+        api::Scope::new("d", "db", "x".repeat(usize::from(u16::MAX))),
+        api::Scope::new("d", "db", "s*"),
+    ] {
+        let mut known = VecMap::new();
+        known.insert(scope.clone(), frontier_at(1));
+
+        for msg in [
+            ReplicaMessage::Announce(Announce {
+                known,
+                full_replica: true,
+            }),
+            ReplicaMessage::ChangeSetReq(ChangeSetReq {
+                tx_id: None,
+                scope: scope.clone(),
+                since_ts: None,
+                epoch_floors: Default::default(),
+            }),
+            ReplicaMessage::ChangeSet(ChangeSet {
+                tx_id: None,
+                scope: scope.clone(),
+                chunks: vec![Chunk {
+                    id: (1, 1, [0; 16]),
+                    meta: SyncMeta {
+                        parent: None,
+                        parent_epoch: None,
+                        marker: SyncMarker::Mutation,
+                        retention_period: None,
+                    },
+                    entries: Vec::new(),
+                }],
+            }),
+        ] {
+            replica.clone().handle_message(peer, msg).await;
+        }
+
+        let pull = sync::PullRequest {
+            scope: scope.clone(),
+            after: None,
+            since_ts: None,
+            epoch_floors: Default::default(),
+        };
+        assert!(replica.serve_pull(&pull, usize::MAX).is_err());
+
+        let verify = sync::VerifyRequest {
+            scope: scope.clone(),
+            heads: vec![(1, 1)],
+        };
+        assert!(!replica.verify_coverage(&verify).unwrap());
+    }
+
+    assert_eq!(transport.len(), 0, "nothing is served for an invalid scope");
+
+    // Still serving a valid scope.
+    let scope = api::Scope::new("d", "db", "schema");
+    add_key(&store, db_scope(&scope), "k", b"v");
+    replica
+        .clone()
+        .handle_message(
+            peer,
+            ReplicaMessage::ChangeSetReq(ChangeSetReq {
+                tx_id: None,
+                scope,
+                since_ts: None,
+                epoch_floors: Default::default(),
+            }),
+        )
+        .await;
+    assert_eq!(transport.len(), 1);
 }

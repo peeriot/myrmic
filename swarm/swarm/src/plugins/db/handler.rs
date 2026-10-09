@@ -7,7 +7,7 @@ use super::StoreContext;
 use db_commons::models::*;
 use db_commons::query::{Handler, ReplyTimestamp, parse_query};
 
-use super::apply::{apply, format_error};
+use super::apply::{apply, check_row, cursor_id, format_error};
 
 pub async fn handle_query(ctx: StoreContext, query: Query) {
     let Some(req) = parse_query::<DbRequest>(&query) else {
@@ -76,7 +76,12 @@ impl StoreContext {
 
             self.rearm_offload(scope);
         } else {
-            self.start_offload(scope.clone(), super::OffloadKind::Sink);
+            self.start_offload(scope.clone(), super::OffloadKind::Sink)
+                .map_err(|err| {
+                    tracing::warn!("unable to hold scope {scope}: {err}");
+
+                    format!("unable to hold scope {scope}")
+                })?;
         }
 
         Ok(())
@@ -113,8 +118,8 @@ impl StoreContext {
 
             if self.store.is_offloading(&scope) {
                 self.nudge_offload(&scope);
-            } else {
-                self.start_offload(scope, super::OffloadKind::Hidden);
+            } else if let Err(err) = self.start_offload(scope.clone(), super::OffloadKind::Hidden) {
+                tracing::warn!("unable to offload {scope}: {err}");
             }
         }
 
@@ -237,6 +242,17 @@ impl StoreContext {
         ops: Vec<TxOp>,
         finish: tx_apply::Finish,
     ) -> Result<tx_apply::Response, Option<tx_apply::Error>> {
+        if let tx_begin::Constraint::Routed(scope) | tx_begin::Constraint::RoutedAt(scope, _) =
+            &constraint
+        {
+            scope.check().map_err(|message| {
+                Some(tx_apply::Error {
+                    message,
+                    index: None,
+                })
+            })?;
+        }
+
         // Resuming from a version observed on a table event: discovery already
         // routed us here as a caught-up holder, but reassert the bound so a
         // stale route (or the feature-less client that skips discovery) can't
@@ -472,6 +488,9 @@ impl StoreContext {
             order,
             count,
         } = req;
+
+        check_row(&scope, &table, cursor_id(cursor.as_ref()))
+            .map_err(|message| Some(tb_peek::Error { message }))?;
 
         // A private snapshot, opened and closed here: dropping it on any exit
         // path is the rollback.

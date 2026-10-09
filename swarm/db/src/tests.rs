@@ -1371,3 +1371,43 @@ async fn separator_characters_keep_scopes_disjoint() {
         assert_eq!(tx.key_prefix(*scope, "").unwrap(), [i.to_string()]);
     }
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_over_long_encoded_key_is_refused_not_a_panic() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    // The longest row key lsm-tree takes is the version-index row: the data key
+    // plus a 12-byte version trailer, behind a 9-byte tag and version.
+    let overhead = scope.kv("").encode().expect("unable to encode").len() + 12 + 9;
+    let longest = "k".repeat(usize::from(u16::MAX) - overhead);
+    let too_long = "k".repeat(usize::from(u16::MAX) - overhead + 1);
+
+    tx.key_put(scope.kv(&longest), b"v")
+        .expect("a key at the limit is accepted");
+
+    assert!(tx.key_put(scope.kv(&too_long), b"v").is_err());
+    assert!(tx.key_delete(scope.kv(&too_long)).is_err());
+    assert!(
+        tx.key_put(scope.kv(&"k".repeat(usize::from(u16::MAX))), b"v")
+            .is_err()
+    );
+
+    // lsm-tree panics on a read past the cap too.
+    assert!(
+        tx.key_get(scope.kv(&"k".repeat(usize::from(u16::MAX))))
+            .is_err()
+    );
+
+    // The refused writes left the transaction usable and wrote nothing.
+    assert_eq!(
+        tx.key_get(scope.kv(&too_long)).expect("unable to read"),
+        None
+    );
+    tx.key_put(scope.kv("short"), b"v").expect("unable to put");
+    assert_eq!(
+        tx.key_get(scope.kv("short")).expect("unable to read"),
+        Some(b"v".to_vec())
+    );
+}
