@@ -3,17 +3,21 @@ mod preprocessing;
 mod triage;
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use cell_protocol::{ClassInfo, RuntimeId, Sri};
 use sorg_common::{
     CellConfig, CellDeployment, DeploymentError, ExecRuntimeInfo, class_registry, exec_registry,
-    list_placements, node_lease, supervision::SupervisionTiming,
+    list_placements, node_lease,
+    supervision::{LeaseTracker, SupervisionTiming},
 };
 use tracing::debug;
 use zenoh::Session;
 
-use crate::Result;
+use crate::{
+    Result,
+    supervision::{SharedLeaseTracker, lock_tracker},
+};
 
 /// Gap between placement attempts, multiplied by the attempt number, so the four
 /// attempts spend 3.0s in total. The budget stays small because the deploy
@@ -67,7 +71,11 @@ impl PlacementContext {
         &self.cells_per_runtime
     }
 
-    async fn read(session: &Session, request: &PlacementRequest) -> Result<Self> {
+    async fn read(
+        session: &Session,
+        lease_tracker: &SharedLeaseTracker,
+        request: &PlacementRequest,
+    ) -> Result<Self> {
         let execs = exec_registry::list_registered_execs(session)
             .await
             .map_err(|err| sorg_common::custom_err!("failed to read exec registry: {err}"))?;
@@ -92,7 +100,14 @@ impl PlacementContext {
         .unwrap_or(u64::MAX);
         let margin_ms =
             u64::try_from(SupervisionTiming::default().margin.as_millis()).unwrap_or(u64::MAX);
-        let execs = drop_stale_execs(execs, &leases, now_ms, margin_ms);
+        let execs = {
+            let now = Instant::now();
+            let mut tracker = lock_tracker(lease_tracker);
+            for (id, (seq, ttl_ms)) in &leases {
+                tracker.observe(*id, *seq, Duration::from_millis(*ttl_ms), now);
+            }
+            drop_stale_execs(execs, &leases, &tracker, now, now_ms, margin_ms)
+        };
 
         let class_names: Vec<String> = request
             .cells()
@@ -214,7 +229,7 @@ impl Runtime {
         &self,
         request: &PlacementRequest,
     ) -> std::result::Result<Vec<CellPlacement>, DeploymentError> {
-        let context = PlacementContext::read(&self.session, request)
+        let context = PlacementContext::read(&self.session, &self.lease_tracker, request)
             .await
             .map_err(|err| DeploymentError::Internal(err.to_string()))?;
 
@@ -222,24 +237,34 @@ impl Runtime {
     }
 }
 
-/// Drops execs whose liveness lease has gone stale or is missing. `seq` is
-/// the writer's wall-clock time in millis at its last renewal, so a node
-/// silent past its own declared ttl (plus the cluster margin) has almost
-/// certainly died — placing a cell there would only time out on the deploy
-/// and roll back. A `seq` ahead of the reader's clock (skew) counts as fresh,
-/// never dropped. Every live node leases, so an exec with no lease row is
-/// dropped too (dead with the row purged, or not yet clock-synced).
+/// Drops execs whose lease row is missing or whose lease went silent past its
+/// ttl plus margin. A node whose seq the tracker has seen advance is judged on
+/// this observer's monotonic clock, so skew cannot matter; until then the
+/// writer's wall-clock `seq` is compared with the local clock (a future `seq`
+/// counts as fresh).
 fn drop_stale_execs(
     execs: Vec<ExecRuntimeInfo>,
     leases: &HashMap<RuntimeId, (u64, u64)>,
+    tracker: &LeaseTracker,
+    now: Instant,
     now_ms: u64,
     margin_ms: u64,
 ) -> Vec<ExecRuntimeInfo> {
     execs
         .into_iter()
-        .filter(|exec| match leases.get(&exec.id()) {
-            Some((seq, ttl_ms)) => now_ms.saturating_sub(*seq) <= ttl_ms.saturating_add(margin_ms),
-            None => false,
+        .filter(|exec| {
+            let id = exec.id();
+            let Some((seq, ttl_ms)) = leases.get(&id) else {
+                return false;
+            };
+            let monotonic = tracker
+                .has_advanced(id)
+                .then(|| tracker.stale_for(id, now).zip(tracker.ttl_of(id)))
+                .flatten();
+            match monotonic {
+                Some((stale, ttl)) => stale <= ttl.saturating_add(Duration::from_millis(margin_ms)),
+                None => now_ms.saturating_sub(*seq) <= ttl_ms.saturating_add(margin_ms),
+            }
         })
         .collect()
 }
@@ -332,24 +357,27 @@ mod tests {
         ExecRuntimeInfo::new(id, None, ExecutionCapabilities::default())
     }
 
-    /// A node silent past its declared ttl (plus margin) is dropped; a
-    /// freshly renewed node is kept; a node with no lease row at all is
-    /// dropped — every live node leases, so absence is death evidence.
+    /// An observed node silent past its declared ttl (plus margin) is
+    /// dropped; a freshly observed node is kept; a node with no lease row at
+    /// all is dropped - every live node leases, so absence is death evidence.
     #[test]
     fn drops_stale_and_leaseless_execs() {
         let (live, dead, leaseless) = (rt(1), rt(2), rt(3));
-        let now_ms = 100_000;
-        let margin_ms = 15_000;
-        let leases = HashMap::from([
-            (live, (95_000, 45_000)), // renewed 5s ago
-            (dead, (20_000, 45_000)), // renewed 80s ago — past ttl+margin
-        ]);
+        let ttl = Duration::from_secs(45);
+        let t0 = Instant::now();
+        // `live` advanced 5s before `now`, `dead` 80s before.
+        let mut tracker = tracker_at(t0, &[(dead, 1, ttl)]);
+        tracker.observe(live, 0, ttl, t0);
+        tracker.observe(live, 1, ttl, t0 + Duration::from_secs(75));
+        let leases = HashMap::from([(live, (1, 45_000)), (dead, (1, 45_000))]);
 
         let kept: Vec<RuntimeId> = drop_stale_execs(
             vec![exec(live), exec(dead), exec(leaseless)],
             &leases,
-            now_ms,
-            margin_ms,
+            &tracker,
+            t0 + Duration::from_secs(80),
+            100_000,
+            MARGIN_MS,
         )
         .iter()
         .map(ExecRuntimeInfo::id)
@@ -363,18 +391,113 @@ mod tests {
     #[test]
     fn per_node_ttl_extends_the_freshness_deadline() {
         let node = rt(1);
-        let leases = HashMap::from([(node, (20_000, 90_000))]); // 80s silent, 90s ttl
-        let kept = drop_stale_execs(vec![exec(node)], &leases, 100_000, 15_000);
+        let t0 = Instant::now();
+        let tracker = tracker_at(t0, &[(node, 1, Duration::from_secs(90))]);
+        let leases = HashMap::from([(node, (1, 90_000))]);
+
+        let kept = drop_stale_execs(
+            vec![exec(node)],
+            &leases,
+            &tracker,
+            t0 + Duration::from_secs(80), // 80s silent, 90s ttl
+            100_000,
+            MARGIN_MS,
+        );
+
         assert_eq!(kept.len(), 1);
     }
 
-    /// A lease `seq` ahead of the reader's clock (skew) is treated as fresh, so
-    /// clock skew never wrongly drops a live node.
+    /// An unobserved lease `seq` ahead of the reader's clock (skew) is
+    /// treated as fresh, so clock skew never wrongly drops a live node.
     #[test]
     fn future_lease_seq_counts_as_fresh() {
         let node = rt(1);
         let leases = HashMap::from([(node, (130_000, 45_000))]); // 30s ahead of now
-        let kept = drop_stale_execs(vec![exec(node)], &leases, 100_000, 15_000);
+
+        let kept = drop_stale_execs(
+            vec![exec(node)],
+            &leases,
+            &LeaseTracker::new(),
+            Instant::now(),
+            100_000,
+            MARGIN_MS,
+        );
+
         assert_eq!(kept.len(), 1);
+    }
+
+    /// The writer's `seq` is its own wall clock; an observed node is judged
+    /// on the observer's monotonic clock, so a `seq` 5 min behind is fine.
+    #[test]
+    fn an_observed_peer_is_fresh_whatever_its_seq_says() {
+        let node = rt(1);
+        let t0 = Instant::now();
+        let tracker = tracker_at(t0, &[(node, 1, Duration::from_secs(45))]);
+        let leases = HashMap::from([(node, (1_000, 45_000))]); // 300s behind now_ms
+
+        let kept = drop_stale_execs(
+            vec![exec(node)],
+            &leases,
+            &tracker,
+            t0 + Duration::from_secs(5),
+            301_000,
+            MARGIN_MS,
+        );
+
+        assert_eq!(kept.len(), 1);
+    }
+
+    /// Before the lease watcher's first scan nothing is observed, so the
+    /// wall-clock rule applies unchanged (cold-start behaviour).
+    #[test]
+    fn an_unobserved_peer_falls_back_to_the_wall_clock_rule() {
+        let node = rt(1);
+        let leases = HashMap::from([(node, (20_000, 45_000))]); // 80s behind now_ms
+
+        let kept = drop_stale_execs(
+            vec![exec(node)],
+            &leases,
+            &LeaseTracker::new(),
+            Instant::now(),
+            100_000,
+            MARGIN_MS,
+        );
+
+        assert!(kept.is_empty());
+    }
+
+    /// First sight is not an advance: a node seen once with an old seq could
+    /// be long dead, so the wall-clock rule still drops it.
+    #[test]
+    fn a_peer_observed_once_without_advancing_is_judged_by_its_seq() {
+        let node = rt(1);
+        let t0 = Instant::now();
+        let mut tracker = LeaseTracker::new();
+        tracker.observe(node, 20_000, Duration::from_secs(45), t0);
+        let leases = HashMap::from([(node, (20_000, 45_000))]); // 80s behind now_ms
+
+        let kept = drop_stale_execs(
+            vec![exec(node)],
+            &leases,
+            &tracker,
+            t0 + Duration::from_secs(1),
+            100_000,
+            MARGIN_MS,
+        );
+
+        assert!(kept.is_empty());
+    }
+
+    const MARGIN_MS: u64 = 15_000;
+
+    /// A tracker that saw each of `observations` (id, seq, ttl) advance to
+    /// its seq at `t0`.
+    fn tracker_at(t0: Instant, observations: &[(RuntimeId, u64, Duration)]) -> LeaseTracker {
+        let mut tracker = LeaseTracker::new();
+        for (id, seq, ttl) in observations {
+            tracker.observe(*id, seq.saturating_sub(1), *ttl, t0);
+            tracker.observe(*id, *seq, *ttl, t0);
+        }
+        tracker
     }
 }
