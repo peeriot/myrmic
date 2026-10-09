@@ -196,9 +196,10 @@ pub(crate) fn compile_cell(
         .parent()
         .context("cell manifest has no parent directory")?;
 
-    // Cells without a pin fall back to the toolchain this crate declares; a
-    // pinned one builds with its pin, picked up from `current_dir`.
-    let toolchain = (!cargo::has_toolchain_pin(manifest_dir)).then_some(TOOLCHAIN);
+    // Cells without a pin build with the toolchain this crate declares - the
+    // plain `cargo` when it is that one, through rustup otherwise; a pinned one
+    // builds with its pin, picked up from `current_dir`.
+    let toolchain = cargo::toolchain_override(manifest_dir, TOOLCHAIN, TARGET)?;
 
     let mut cmd = Command::new("cargo");
     match toolchain {
