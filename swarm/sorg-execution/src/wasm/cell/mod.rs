@@ -7,7 +7,7 @@ pub(crate) mod cell_task;
 mod observability;
 pub(crate) mod state;
 
-use cell_protocol::{Gen, Sri};
+use cell_protocol::{BlobHash, Gen, Sri};
 use db_client::Session;
 use opentelemetry::trace::SpanContext;
 use sorg_common::{PoisonSnd, SpawnLineage, bail, custom_err};
@@ -134,15 +134,14 @@ pub(crate) async fn run_cell(
     wasm_env: &WasmEnvironment,
     session: &Session,
     sri: Sri,
-    class_name: &str,
+    class: BlobHash,
     gen_id: Gen,
     lineage: SpawnLineage,
     arguments: Option<Vec<u8>>,
     mailbox_poll_interval: Duration,
     mailbox_batch_size: usize,
 ) -> Result<(PoisonSnd, tokio::task::JoinHandle<Result<()>>)> {
-    let event_handlers =
-        event_handlers_from_cell_binary(&wasm_env.engine, session, class_name).await?;
+    let event_handlers = event_handlers_from_cell_binary(&wasm_env.engine, session, class).await?;
 
     let (mut cell_state, msg_rcv, ready_rcv) = CellState::state_and_msg_rcv(
         sri,
@@ -168,7 +167,7 @@ pub(crate) async fn run_cell(
 
     let instance = load_module_cell(
         session,
-        class_name,
+        class,
         &wasm_env.engine,
         &mut store,
         &wasm_env.linker,
@@ -176,7 +175,7 @@ pub(crate) async fn run_cell(
     .await?;
 
     call_cell_inits(
-        &instance, &mut store, session, &sri, class_name, gen_id, &lineage, arguments,
+        &instance, &mut store, session, &sri, class, gen_id, &lineage, arguments,
     )
     .await?;
 
@@ -199,7 +198,7 @@ async fn call_cell_inits(
     store: &mut Store<CellState>,
     session: &Session,
     sri: &Sri,
-    class_name: &str,
+    class: BlobHash,
     gen_id: Gen,
     lineage: &SpawnLineage,
     arguments: Option<Vec<u8>>,
@@ -225,7 +224,7 @@ async fn call_cell_inits(
 
     let record = cell_protocol::CellInstance {
         sri: *sri,
-        class_name: class_name.to_owned(),
+        class,
         gen_id,
         lineage: lineage.clone(),
     };
@@ -307,9 +306,9 @@ async fn call_init(
 pub(crate) async fn event_handlers_from_cell_binary(
     engine: &Engine,
     session: &Session,
-    class_name: &str,
+    class: BlobHash,
 ) -> Result<HashSet<String>> {
-    let binary = load_wasm_binary_from_class(session, class_name).await?;
+    let binary = load_wasm_binary_from_class(session, class).await?;
     let module = Module::from_binary(engine, &binary)?;
 
     let mut event_handlers = HashSet::new();

@@ -12,8 +12,8 @@ use std::str::FromStr;
 pub struct CellClass {
     pub name: String,
     pub wasm_path: Option<PathBuf>,
-    // aot, meta
-    pub riscv32imac: Option<(PathBuf, PathBuf)>,
+    /// The AOT binary for riscv32imac boards.
+    pub riscv32imac: Option<PathBuf>,
 }
 
 pub struct AppInfo {
@@ -468,7 +468,7 @@ fn build_cell(
             myrmic_build::Platform::Esp32c5
             | myrmic_build::Platform::Esp32c6
             | myrmic_build::Platform::Esp32c61 => {
-                riscv32imac = built.aot.map(|a| (a.aot, a.meta));
+                riscv32imac = built.aot;
             }
             myrmic_build::Platform::Linux => {}
         }

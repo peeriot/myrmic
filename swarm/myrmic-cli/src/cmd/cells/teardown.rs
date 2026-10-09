@@ -1,4 +1,5 @@
 use crate::args::Ctx;
+use crate::render::names_by_class;
 use anyhow::Context;
 use myrmic_common::cells::Sri;
 use sorg_common::FenceOutcome;
@@ -9,7 +10,8 @@ pub struct Teardown {
     #[clap(value_name = "SRI/SRN")]
     pub id: String,
 
-    /// Also remove the cell class from the datalayer
+    /// Also remove the cell's class name (a root's SRN) and, once nothing else
+    /// references it, the class
     #[arg(long)]
     pub remove_class: bool,
 }
@@ -37,7 +39,7 @@ pub async fn handle(ctx: Ctx, cmd: Teardown) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to undeploy cell '{id}'"))?;
 
-    let class_name = instance.class_name;
+    let class = instance.class;
 
     // Undeploy erases the instance row itself; this sweeps the corpse left
     // behind if that best-effort erase failed. Fenced by the generation read
@@ -54,16 +56,20 @@ pub async fn handle(ctx: Ctx, cmd: Teardown) -> anyhow::Result<()> {
     }
 
     if remove_class {
-        let instances = client.list_instances().await?;
-        let class_still_used = instances.iter().any(|i| i.class_name == class_name);
-        if class_still_used {
-            println!("Class '{class_name}' kept (other instances still reference it)");
-        } else {
-            client
-                .remove_class(&class_name)
-                .await
-                .with_context(|| format!("failed to remove class '{class_name}'"))?;
+        // A root's deploy named its class after the root's SRN; that label is
+        // this cell's to drop. Any other name belongs to another deploy.
+        if instance.lineage.parent.is_none()
+            && let Some(srn) = &instance.lineage.local_name
+            && client.unbind_class_name(srn, class).await?
+        {
+            println!("Name '{srn}' removed");
         }
+        let removal = client
+            .remove_class_if_unreferenced(class)
+            .await
+            .with_context(|| format!("failed to remove class {}", class.to_hex()))?;
+        let names = names_by_class(client.list_class_names().await?);
+        super::classes::print_removal(class, &removal, &names);
     }
 
     println!("Cell '{id}' torn down");

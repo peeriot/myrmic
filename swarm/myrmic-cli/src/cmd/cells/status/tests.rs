@@ -36,10 +36,44 @@ fn wasm(sri: Sri, runtime: &ExecRuntimeInfo) -> PlacementEntry {
     }
 }
 
+/// A test class id that spells the class's name, so [`show`] can bind every
+/// class to its name without each test building a name table.
+fn class_id(name: &str) -> BlobHash {
+    let mut id = [0; 32];
+    id[..name.len()].copy_from_slice(name.as_bytes());
+    BlobHash::Sha2(id)
+}
+
+/// The name table for the classes of `instances`, each bound to the name its
+/// [`class_id`] spells.
+fn class_names(instances: &[CellInstance]) -> HashMap<BlobHash, Vec<String>> {
+    let classes: HashSet<BlobHash> = instances.iter().map(|i| i.class).collect();
+    names_by_class(
+        classes
+            .into_iter()
+            .map(|class| {
+                let BlobHash::Sha2(id) = class;
+                let name: Vec<u8> = id.into_iter().take_while(|b| *b != 0).collect();
+                (String::from_utf8(name).unwrap(), class)
+            })
+            .collect(),
+    )
+}
+
+/// A fetched snapshot, with every class bound to the name its id spells.
+fn snapshot(
+    cells: Vec<PlacementEntry>,
+    instances: Vec<CellInstance>,
+    policies: HashMap<Sri, RestartType>,
+) -> Snapshot {
+    let names = class_names(&instances);
+    (cells, instances, policies, names)
+}
+
 fn instance(sri: Sri, class: &str, parent: Option<Sri>, local_name: Option<&str>) -> CellInstance {
     CellInstance {
         sri,
-        class_name: class.to_owned(),
+        class: class_id(class),
         gen_id: Gen::from_parts(1, 1),
         lineage: SpawnLineage {
             parent,
@@ -74,7 +108,9 @@ fn show_with_policies(
     styled: bool,
     now: SystemTime,
 ) -> String {
-    render(cells, instances, policies, targets, styled, now, &|_| None)
+    let names = class_names(&instances);
+    let forest = Forest::build(cells, instances, policies, &names);
+    render(&forest, targets, styled, now, &|_| None)
 }
 
 /// A respawn mints a fresh generation, so the age column resets while the
@@ -93,7 +129,7 @@ fn age_column_tracks_the_current_incarnation() {
         entry.gen_id = gen_id;
         show(
             vec![entry],
-            vec![instance(sri("sensor"), "sensor", None, None)],
+            vec![instance(sri("sensor"), "sensor", None, Some("sensor"))],
             &[],
             false,
             now,
@@ -134,7 +170,7 @@ fn tree_fixture() -> (Vec<PlacementEntry>, Vec<CellInstance>) {
         wasm(sri("my-app/gateway"), &rt_a),
     ];
     let instances = vec![
-        instance(sri("my-app"), "my-app", None, None),
+        instance(sri("my-app"), "my-app", None, Some("my-app")),
         instance(
             sri("my-app/gateway"),
             "gateway",
@@ -153,7 +189,7 @@ fn tree_fixture() -> (Vec<PlacementEntry>, Vec<CellInstance>) {
             Some(sri("my-app")),
             Some("worker"),
         ),
-        instance(sri("counter"), "counter", None, None),
+        instance(sri("counter"), "counter", None, Some("counter")),
     ];
 
     (cells, instances)
@@ -317,14 +353,14 @@ fn apped_fixture() -> (Vec<PlacementEntry>, Vec<CellInstance>) {
         beta_root,
     ];
     let instances = vec![
-        instance(sri("beta-app"), "beta-app", None, None),
+        instance(sri("beta-app"), "beta-app", None, Some("beta-app")),
         instance(
             sri("beta-app/worker"),
             "worker",
             Some(sri("beta-app")),
             Some("worker"),
         ),
-        instance(sri("counter"), "counter", None, None),
+        instance(sri("counter"), "counter", None, Some("counter")),
     ];
 
     (cells, instances)
@@ -435,17 +471,22 @@ fn policy_fixture() -> (
         },
     ];
     let instances = vec![
-        instance(sri("always-root"), "always-root", None, None),
-        instance(sri("on-error-root"), "on-error-root", None, None),
-        instance(sri("plain-root"), "plain-root", None, None),
+        instance(sri("always-root"), "always-root", None, Some("always-root")),
+        instance(
+            sri("on-error-root"),
+            "on-error-root",
+            None,
+            Some("on-error-root"),
+        ),
+        instance(sri("plain-root"), "plain-root", None, Some("plain-root")),
         instance(
             sri("plain-root/child"),
             "child",
             Some(sri("plain-root")),
             Some("child"),
         ),
-        instance(sri("restarting"), "restarting", None, None),
-        instance(sri("deploying"), "deploying", None, None),
+        instance(sri("restarting"), "restarting", None, Some("restarting")),
+        instance(sri("deploying"), "deploying", None, Some("deploying")),
         // Deliberately no instance for `claimed`: that is the whole point of
         // the row.
     ];
@@ -504,6 +545,51 @@ fn shows_the_effective_restart_policy() {
     assert_eq!(out, expected_policy_table());
 }
 
+/// A class shows every name bound to it as synonyms, and the start of its id
+/// when it has none; a native firmware cell's class reads `<firmware>`.
+#[test]
+fn class_column_shows_synonyms_or_the_id() {
+    let rt = exec(runtime_id("bbcc112233445566"), "edge");
+    let shared = class_id("probe");
+    let unnamed = BlobHash::Sha2([0xab; 32]);
+    let mut first = instance(sri("first"), "probe", None, Some("first"));
+    first.class = shared;
+    let mut second = instance(sri("second"), "probe", None, Some("second"));
+    second.class = unnamed;
+    let mut native = instance(sri("native"), "probe", None, Some("native"));
+    native.class = cell_protocol::NATIVE_FIRMWARE_CLASS;
+    let names = names_by_class(vec![
+        ("second-deploy".to_owned(), shared),
+        ("first-deploy".to_owned(), shared),
+    ]);
+
+    let forest = Forest::build(
+        vec![
+            wasm(sri("first"), &rt),
+            wasm(sri("second"), &rt),
+            wasm(sri("native"), &rt),
+        ],
+        vec![first, second, native],
+        &HashMap::new(),
+        &names,
+    );
+    let out = render(&forest, &[], false, SystemTime::UNIX_EPOCH, &|_| None);
+
+    let row = |cell: &str| {
+        let start = format!("  {cell} ");
+        out.lines()
+            .find(|l| l.starts_with(&start))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(
+        row("first").contains("first-deploy = second-deploy"),
+        "{out}"
+    );
+    assert!(row("second").contains("abababab "), "{out}");
+    assert!(row("native").contains("<firmware>"), "{out}");
+}
+
 /// A fading row is coloured end to end: the id column's own reset must not
 /// return the rest of the row to normal.
 #[test]
@@ -511,20 +597,16 @@ fn paints_highlighted_rows_end_to_end() {
     let rt = exec(runtime_id("bbcc112233445566"), "edge");
     let cells = vec![wasm(sri("sensor"), &rt), wasm(sri("pump"), &rt)];
     let instances = vec![
-        instance(sri("sensor"), "sensor", None, None),
-        instance(sri("pump"), "pump", None, None),
+        instance(sri("sensor"), "sensor", None, Some("sensor")),
+        instance(sri("pump"), "pump", None, Some("pump")),
     ];
     let fading = sri("sensor");
 
-    let out = render(
-        cells,
-        instances,
-        &HashMap::new(),
-        &[],
-        true,
-        SystemTime::UNIX_EPOCH,
-        &|s| (*s == fading).then_some("<g>"),
-    );
+    let names = class_names(&instances);
+    let forest = Forest::build(cells, instances, &HashMap::new(), &names);
+    let out = render(&forest, &[], true, SystemTime::UNIX_EPOCH, &|s| {
+        (*s == fading).then_some("<g>")
+    });
 
     let row = |name: &str| out.lines().find(|l| l.contains(name)).unwrap().to_owned();
     let sensor = row("sensor");
@@ -551,18 +633,18 @@ fn arrivals_and_departures_fade_through_the_listing() {
     let at = |ms: u64| t0 + Duration::from_millis(ms);
     let rt = exec(runtime_id("bbcc112233445566"), "edge");
     let sensor = || {
-        (
+        snapshot(
             vec![wasm(sri("sensor"), &rt)],
-            vec![instance(sri("sensor"), "sensor", None, None)],
+            vec![instance(sri("sensor"), "sensor", None, Some("sensor"))],
             HashMap::new(),
         )
     };
     let both = || {
-        (
+        snapshot(
             vec![wasm(sri("sensor"), &rt), wasm(sri("pump"), &rt)],
             vec![
-                instance(sri("sensor"), "sensor", None, None),
-                instance(sri("pump"), "pump", None, None),
+                instance(sri("sensor"), "sensor", None, Some("sensor")),
+                instance(sri("pump"), "pump", None, Some("pump")),
             ],
             HashMap::new(),
         )
@@ -601,9 +683,9 @@ fn a_respawn_fades_in_where_it_stands() {
     let incarnation = |gen_id: Gen| {
         let mut entry = wasm(sri("sensor"), &rt);
         entry.gen_id = gen_id;
-        (
+        snapshot(
             vec![entry],
-            vec![instance(sri("sensor"), "sensor", None, None)],
+            vec![instance(sri("sensor"), "sensor", None, Some("sensor"))],
             HashMap::new(),
         )
     };
@@ -629,9 +711,9 @@ fn a_departing_row_keeps_its_policy_through_the_fade() {
     let t0 = Instant::now();
     let rt = exec(runtime_id("bbcc112233445566"), "edge");
     let deployed = || {
-        (
+        snapshot(
             vec![wasm(sri("web"), &rt)],
-            vec![instance(sri("web"), "web", None, None)],
+            vec![instance(sri("web"), "web", None, Some("web"))],
             HashMap::from([(sri("web"), RestartType::Always)]),
         )
     };
@@ -644,7 +726,7 @@ fn a_departing_row_keeps_its_policy_through_the_fade() {
     // the departure.
     for ms in [100, 200] {
         let at = t0 + Duration::from_millis(ms);
-        listing.apply((vec![], vec![], HashMap::new()), at);
+        listing.apply(snapshot(vec![], vec![], HashMap::new()), at);
 
         let row = painted_row(&listing.draw(at, true), "web");
         assert!(row.contains("always"), "{row:?}");

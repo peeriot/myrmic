@@ -1,4 +1,4 @@
-use cell_protocol::{ExecRuntimeInfo, Gen, PlacementKind, Sri};
+use cell_protocol::{BlobHash, ExecRuntimeInfo, Gen, PlacementKind, Sri};
 use sorg_common::{
     SorgPayload, SpawnLineage, WasmCellDeployRequest, bail, topic_execution_cell_deploy, zenoh_err,
 };
@@ -12,7 +12,7 @@ impl Runtime {
     pub(super) async fn deploy_wasm_cell_linux(
         &self,
         cell_sri: &Sri,
-        class_name: &str,
+        class: BlobHash,
         runtime: &ExecRuntimeInfo,
         gen_id: Gen,
         lineage: SpawnLineage,
@@ -20,7 +20,7 @@ impl Runtime {
     ) -> Result<PlacementKind> {
         let exec_request = WasmCellDeployRequest {
             cell_sri: *cell_sri,
-            class_name: class_name.to_owned(),
+            class,
             arguments,
             gen_id,
             lineage,

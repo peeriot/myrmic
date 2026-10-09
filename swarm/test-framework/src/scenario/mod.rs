@@ -517,15 +517,16 @@ impl SwarmTestCtx {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 // The shape that survives once placement reads the class
-                // registry through its own scope: a class with an AOT target is
-                // registered in two writes, and the AOT pair is both the last
-                // one before the deploy query and the largest to replicate. A
-                // holder carrying the wasm row but not the AOT one reports a
-                // class whose artifact list is empty, and `wait_for_class_visible`
-                // is satisfied by the wasm row alone, so the driver-side barrier
-                // does not wait for it either. A runtime eligible on every other
-                // count and lacking only the artifact is a read that arrived
-                // early, not a deployment that cannot work.
+                // registry through its own scope: a test that registers a wasm
+                // class and then adds an AOT binary under its name writes twice,
+                // and the AOT is both the last write before the deploy query and
+                // the largest to replicate. A holder carrying the wasm row but
+                // not the second write reports a class without that AOT, and
+                // `wait_for_class_visible` is satisfied by the wasm row alone,
+                // so the driver-side barrier does not wait for it either. A
+                // runtime eligible on every other count and lacking only the
+                // artifact is a read that arrived early, not a deployment that
+                // cannot work.
                 Err(ref err) if attempt < ATTEMPTS && err.blocked_only_by_missing_artifacts() => {
                     eprintln!(
                         "deploy hit MissingArtifact (attempt {attempt}/{ATTEMPTS}); retrying, \

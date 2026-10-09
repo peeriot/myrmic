@@ -8,7 +8,7 @@
 //! accounting.
 
 use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
@@ -58,8 +58,8 @@ pub enum WasmTransfer {
         metadata: Metadata,
         /// Deployment SRI
         sri: Sri,
-        /// Class Name
-        class_name: String,
+        /// Id of the cell's class: the AOT binary being deployed
+        class: cell_protocol::BlobHash,
         /// Deployment payload (used as args for init)
         payload: Option<Vec<u8>>,
         /// Generation minted for this deploy: the body's fencing identity
@@ -111,7 +111,7 @@ type ModuleItem = (
     *const u8,
     usize,
     Sri,
-    String,
+    cell_protocol::BlobHash,
     cell_protocol::Gen,
     cell_protocol::SpawnLineage,
     Option<Vec<u8>>,
@@ -241,7 +241,7 @@ impl WamrContext {
     ) -> (
         &[u8],
         Sri,
-        String,
+        cell_protocol::BlobHash,
         cell_protocol::Gen,
         cell_protocol::SpawnLineage,
         Option<Vec<u8>>,
@@ -258,12 +258,12 @@ impl WamrContext {
         // safety: We initialized it with what we received from the queue
         let ptr = unsafe { ptr_out.assume_init() };
         // safety: We own the Box now and there's no other pathway that takes ownership of this object
-        let (data, len, sri, class_name, gen_id, lineage, payload) = unsafe { *Box::from_raw(ptr) };
+        let (data, len, sri, class, gen_id, lineage, payload) = unsafe { *Box::from_raw(ptr) };
         // safety: This matches the signature of the Box that was sent
         (
             unsafe { core::slice::from_raw_parts(data, len) },
             sri,
-            class_name,
+            class,
             gen_id,
             lineage,
             payload,
@@ -354,7 +354,7 @@ pub async fn runtime_handler(
         log::info!("Waiting for new incoming module");
         // Load the next incoming module
         let sri;
-        let class_name;
+        let class;
         let payload;
         let gen_id;
         let lineage;
@@ -363,7 +363,7 @@ pub async fn runtime_handler(
             if let WasmTransfer::Start {
                 metadata: new_metadata,
                 sri: new_sri,
-                class_name: new_class_name,
+                class: new_class,
                 payload: new_payload,
                 gen_id: new_gen_id,
                 lineage: new_lineage,
@@ -372,7 +372,7 @@ pub async fn runtime_handler(
             {
                 IDLE.store(false, Ordering::Release);
                 sri = new_sri;
-                class_name = new_class_name;
+                class = new_class;
                 payload = new_payload;
                 gen_id = new_gen_id;
                 lineage = new_lineage;
@@ -409,7 +409,7 @@ pub async fn runtime_handler(
                 module_slice.as_ptr(),
                 module_slice.len(),
                 sri,
-                class_name,
+                class,
                 gen_id,
                 lineage,
                 payload,
@@ -500,12 +500,12 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
 
     loop {
         log::info!("[WAMR] Waiting for WASM module");
-        let (module_bytes, sri, class_name, gen_id, lineage, payload) = ctx.wait_for_module();
+        let (module_bytes, sri, class, gen_id, lineage, payload) = ctx.wait_for_module();
         log::info!("[WAMR] Initializing runtime");
         let runtime = match WamrRuntime::init_with_module(
             module_bytes,
             &sri,
-            &class_name,
+            class,
             gen_id,
             &lineage,
             payload,

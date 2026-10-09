@@ -1,13 +1,12 @@
 use alloc::borrow::ToOwned;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
 use cell_protocol::{
-    ArtifactLocation, ArtifactPlatform, DEPLOYMENT_RESPONSES_TABLE, DEPLOYMENT_TABLE,
-    DeploymentCommand, DeploymentConfirmation, Sri, scope_of_deployment,
+    BlobHash, DEPLOYMENT_RESPONSES_TABLE, DEPLOYMENT_TABLE, DeploymentCommand,
+    DeploymentConfirmation, Sri, class_blob_id, class_registry_scope, scope_of_deployment,
 };
-use cfg_match::cfg_match;
 use db_client::v1::models::{BlobResponse, Id, tb_insert};
 use db_client::v1::{Client, models as db_models};
 use embassy_futures::select::{Either, select};
@@ -27,10 +26,10 @@ use wasm_runtime::{TransferReply, WasmTransfer};
 /// Error encountered during deployment
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DeployError {
-    #[error("Unable to parse metadata")]
-    MetadataParse,
-    #[error("Metadata could not be found")]
-    MetadataNotFound,
+    #[error("AOT module could not be found")]
+    ModuleNotFound,
+    #[error("AOT module is too large to store ({0} bytes)")]
+    ModuleTooLarge(u64),
     #[error("Db operation timed out")]
     DbTimedOut,
     #[error("Db unreachable: {0}")]
@@ -40,7 +39,7 @@ pub(crate) enum DeployError {
 /// A deployment waiting for the cell it replaces to tear down, which needs the service loop free.
 pub(crate) struct PendingDeploy {
     sri: Sri,
-    class: String,
+    module: Module,
     payload: Option<Vec<u8>>,
     gen_id: cell_protocol::Gen,
     lineage: cell_protocol::SpawnLineage,
@@ -63,7 +62,7 @@ pub(crate) async fn run_pending(
 ) {
     let PendingDeploy {
         sri,
-        class,
+        module,
         payload,
         gen_id,
         lineage,
@@ -75,7 +74,7 @@ pub(crate) async fn run_pending(
         gen_id,
         lineage: lineage.clone(),
     });
-    if let Err(e) = deploy(client, sri, &class, payload, gen_id, lineage, wasm_transfer).await {
+    if let Err(e) = deploy(client, sri, module, payload, gen_id, lineage, wasm_transfer).await {
         log::error!("[db-client] Failed to deploy; {e}");
     }
 }
@@ -97,18 +96,11 @@ pub(crate) async fn handle(
 ) {
     if let Some(cmd) = poll_for_deployment(client, zid, last_deploy_id).await {
         match cmd {
-            DeploymentCommand::Deploy {
-                sri,
-                class,
-                payload,
-                gen_id,
-                lineage,
-            } if native_held => {
+            DeploymentCommand::Deploy { sri, .. } if native_held => {
                 // A node hosts one cell, and this node's firmware is it. The
                 // orchestrator should not have got here — the native placement
                 // row marks this node occupied — so refuse loudly rather than
                 // letting a module displace the firmware's own cell.
-                let _ = (class, payload, lineage);
                 log::error!(
                     "[db-client] refusing to deploy '{sri}': this node's cell slot is held by \
                      its firmware"
@@ -124,11 +116,11 @@ pub(crate) async fn handle(
                     },
                 )
                 .await;
-                let _ = gen_id;
             }
             DeploymentCommand::Deploy {
                 sri,
                 class,
+                crc,
                 payload,
                 gen_id,
                 lineage,
@@ -153,7 +145,7 @@ pub(crate) async fn handle(
                 wasm_runtime::terminate_module();
                 let superseded = pending.replace(PendingDeploy {
                     sri,
-                    class,
+                    module: Module { aot: class, crc },
                     payload,
                     gen_id,
                     lineage,
@@ -199,17 +191,25 @@ pub(crate) async fn handle(
     }
 }
 
+/// The AOT module a deploy brings onto the device: its id, which is also the
+/// cell's class, and the CRC the flashed copy must match.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Module {
+    aot: BlobHash,
+    crc: u32,
+}
+
 /// Deploys a Cell onto the device.
 ///
 /// The module transfer opens its own read transaction, and that `tx_begin` can transiently fail to
 /// locate a db node ("no connected databases") when a discovery reply is dropped on the radio —
-/// even though the metadata read moments earlier succeeded. A fresh attempt then finds the db, so
+/// even though the size read moments earlier succeeded. A fresh attempt then finds the db, so
 /// retry a few times inside the orchestrator's deploy window instead of failing the deployment on
 /// the first transient miss. Only transient errors are retried; a bad/absent module fails fast.
 pub(crate) async fn deploy(
     client: &Client,
     sri: Sri,
-    class_name: &str,
+    module: Module,
     deployment_payload: Option<Vec<u8>>,
     gen_id: cell_protocol::Gen,
     lineage: cell_protocol::SpawnLineage,
@@ -221,7 +221,7 @@ pub(crate) async fn deploy(
         match deploy_once(
             client,
             sri,
-            class_name,
+            module,
             deployment_payload.clone(),
             gen_id,
             lineage.clone(),
@@ -245,21 +245,21 @@ pub(crate) async fn deploy(
     }
 }
 
-/// A single deploy attempt: fetch the metadata, then stream the module into flash.
+/// A single deploy attempt: size the module, then stream it into flash.
 async fn deploy_once(
     client: &Client,
     sri: Sri,
-    class_name: &str,
+    module: Module,
     deployment_payload: Option<Vec<u8>>,
     gen_id: cell_protocol::Gen,
     lineage: cell_protocol::SpawnLineage,
     wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
 ) -> Result<(), DeployError> {
-    log::info!("[db] Requesting WASM metadata...");
-    let len_to_transfer = fetch_metadata(
+    log::info!("[db] Requesting AOT module size...");
+    let len_to_transfer = start_transfer(
         client,
         sri,
-        class_name,
+        module,
         deployment_payload,
         gen_id,
         lineage,
@@ -276,17 +276,14 @@ async fn deploy_once(
         Timer::after_millis(100).await;
     }
 
-    log::info!("[db] Requesting WASM module...");
-    let (scope, path) = cfg_match! {
-        any(feature = "esp32c5", feature = "esp32c6", feature = "esp32c61") => ArtifactLocation::aot(class_name, ArtifactPlatform::Riscv32imac).into_parts(),
-        _ => compile_error!("Missing SoC variant selection");
-    };
+    log::info!("[db] Requesting AOT module...");
+    let blob_id = class_blob_id(module.aot);
     // Signalled on every received chunk; the transfer is aborted once it stalls for longer than
     // `CHUNK_STALL_TIMEOUT`, however long the whole transfer takes
     let progress = Signal::<CriticalSectionRawMutex, ()>::new();
     // Shadow reference so the async block can capture it without moving it
     let progress = &progress;
-    let fetch = client.read_tx_in(scope.clone(), async move |client, id| {
+    let fetch = client.read_tx_in(class_registry_scope(), async move |client, id| {
         let mut current_offset = 0u64;
 
         while current_offset < u64::from(len_to_transfer) {
@@ -297,11 +294,10 @@ async fn deploy_once(
             }
 
             let res = client
-                .send(db_models::path_resolve::Request {
+                .send(db_models::blob_resolve::Request {
                     id,
-                    op: db_models::path_resolve::Op {
-                        scope: scope.clone(),
-                        path: path.clone(),
+                    op: db_models::blob_resolve::Op {
+                        blob_id: blob_id.clone(),
                         range: Some(db_models::ChunkRange {
                             offset: current_offset,
                             length: CHUNK_SIZE as u64,
@@ -436,46 +432,52 @@ pub(crate) async fn confirm_deployment(
     }
 }
 
-/// Fetches the metadata and returns how many bytes are to be transferred
-async fn fetch_metadata(
+/// Sizes the module, hands its metadata to the runtime handler and returns how
+/// many bytes are to be transferred: 0 if the module is already stored.
+///
+/// The metadata is assembled here rather than fetched: its length is the blob's
+/// size, and its CRC and hash come with the deployment command (the hash is the
+/// module's id).
+async fn start_transfer(
     client: &Client,
     sri: Sri,
-    class_name: &str,
+    module: Module,
     deployment_payload: Option<Vec<u8>>,
     gen_id: cell_protocol::Gen,
     lineage: cell_protocol::SpawnLineage,
     wasm_transfer: Sender<'static, CriticalSectionRawMutex, WasmTransfer, 1>,
 ) -> Result<u32, DeployError> {
-    let (scope, path) = cfg_match! {
-        any(feature = "esp32c5", feature = "esp32c6", feature = "esp32c61") => ArtifactLocation::meta(class_name, ArtifactPlatform::Riscv32imac).into_parts(),
-        _ => compile_error!("Missing SoC variant selection");
-    };
-    let fetch_metadata = client.read_tx_in(scope.clone(), async move |client, id| {
+    let size = client.read_tx_in(class_registry_scope(), async move |client, id| {
         let res = client
-            .send(db_models::path_resolve::Request {
+            .send(db_models::blob_resolve::Request {
                 id,
-                op: db_models::path_resolve::Op {
-                    scope,
-                    path,
-                    range: None,
+                op: db_models::blob_resolve::Op {
+                    blob_id: class_blob_id(module.aot),
+                    // An empty range returns no bytes, only the blob's size.
+                    range: Some(db_models::ChunkRange {
+                        offset: 0,
+                        length: 0,
+                    }),
                 },
             })
             .await?
-            .map_err(|err| zenoh_result::zerror!("unable to request metadata: {}", err.message))?;
+            .map_err(|err| zenoh_result::zerror!("unable to size module: {}", err.message))?;
 
-        Ok(res.blob)
+        Ok(res.blob.map(|blob| blob.total_len))
     });
-    match with_timeout(Duration::from_secs(20), fetch_metadata).await {
-        Ok(Ok(Some(BlobResponse { blob, .. }))) => {
-            let metadata: Metadata = match postcard::from_bytes(&blob) {
-                Ok(metadata) => metadata,
-                Err(e) => {
-                    log::error!("[db] Failed to parse WASM metadata: {}", e);
-                    return Err(DeployError::MetadataParse);
-                }
+    match with_timeout(Duration::from_secs(20), size).await {
+        Ok(Ok(Some(total_len))) => {
+            let len =
+                u32::try_from(total_len).map_err(|_| DeployError::ModuleTooLarge(total_len))?;
+            let BlobHash::Sha2(hash) = module.aot;
+            let metadata = Metadata {
+                magic: wasm_storage::metadata::MAGIC,
+                version: wasm_storage::metadata::VERSION,
+                len,
+                crc: module.crc,
+                hash,
             };
-            let len = metadata.len;
-            log::trace!("[db] Parsed metadata: {:?}", metadata);
+            log::trace!("[db] Module metadata: {:?}", metadata);
 
             // Stop running module if it's already running, since we're about to store a new one
             wasm_runtime::terminate_module();
@@ -484,7 +486,7 @@ async fn fetch_metadata(
                 .send(WasmTransfer::Start {
                     metadata,
                     sri,
-                    class_name: class_name.to_owned(),
+                    class: module.aot,
                     payload: deployment_payload,
                     gen_id,
                     lineage,
@@ -498,7 +500,7 @@ async fn fetch_metadata(
                 Ok(len)
             }
         }
-        Ok(Ok(None)) => Err(DeployError::MetadataNotFound),
+        Ok(Ok(None)) => Err(DeployError::ModuleNotFound),
         Ok(Err(err)) => Err(DeployError::DbUnreachable(err)),
         Err(_) => Err(DeployError::DbTimedOut),
     }

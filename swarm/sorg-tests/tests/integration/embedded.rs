@@ -21,7 +21,8 @@ const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const SILENT_WAIT: Duration = Duration::from_secs(2);
 
 const CELL_SRI: &str = "embedded-cell-1";
-const CELL_CLASS: &str = "embedded-cell-1";
+/// The AOT binary the deployment command names; the mock never fetches it.
+const CELL_AOT: &[u8] = b"embedded-cell-1";
 
 /// In `ConfirmSuccess` mode the mock registers with the embedded tags and
 /// replies with a `DeploymentConfirmation` carrying no failure.
@@ -211,7 +212,8 @@ async fn assert_registered_with_embedded_tags(test_app: &TestApp, exec_id: Runti
 /// the orchestrator's side of the deployment protocol.
 async fn write_deployment_command(db: &DbClient, exec_id: RuntimeId, sri: &Sri) {
     let command = DeploymentCommand::Deploy {
-        class: CELL_CLASS.to_owned(),
+        class: cell_protocol::BlobHash::of(CELL_AOT),
+        crc: 0,
         sri: *sri,
         payload: None,
         gen_id: cell_protocol::Gen::from_parts(1, 1),

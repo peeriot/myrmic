@@ -27,7 +27,7 @@ pub use watchdog::{WatchdogResetReason, WatchdogResetReport};
 
 use db_commons::NAMESPACE_SORG;
 pub use db_commons::models::BlobHash;
-use db_commons::models::Scope;
+use db_commons::models::{BlobId, Scope};
 use myrmic_common::cells::{
     Command, ERR_CELL_CMD_CELL_ERROR, ERR_CELL_CMD_CELL_NOT_PRESENT,
     ERR_CELL_CMD_COMMAND_NOT_PRESENT, ERR_CELL_CMD_INTERNAL, ERR_CELL_CMD_TIMEOUT, Event,
@@ -38,6 +38,7 @@ use opentelemetry::trace::{SpanContext, TraceState};
 use opentelemetry::{SpanId, TraceFlags, TraceId};
 use serde::{Deserialize, Serialize};
 use sys::borrow::ToOwned;
+use sys::collections::BTreeMap;
 use sys::string::ToString;
 use sys::{string::String, vec::Vec};
 use uuid::Uuid;
@@ -63,8 +64,12 @@ pub fn placement_scope() -> Scope {
 }
 
 const CLASS_REGISTRY_DB: &str = "cell-class-registry";
-/// Table of the cell classes in the registry
+/// Table of the cell classes in the registry, keyed by [`class_registry_key`]
+/// of the class id, valued by [`ClassInfo`]
 pub const CLASS_REGISTRY_TABLE: &str = "entries";
+/// Table of the class names in the registry: name -> class id. Names are labels
+/// for people; several may point to one class.
+pub const CLASS_NAMES_TABLE: &str = "names";
 
 const INSTANCE_REGISTRY_DB: &str = "cell-instance-registry";
 /// Table of the cell instances in the registry
@@ -73,6 +78,23 @@ pub const INSTANCE_REGISTRY_TABLE: &str = "entries";
 /// Returns the DB scope for the cell class registry.
 pub fn class_registry_scope() -> Scope {
     Scope::new(NAMESPACE_SORG, CLASS_REGISTRY_DB, "p")
+}
+
+/// The row key of a class in [`CLASS_REGISTRY_TABLE`]. Shared by every writer
+/// (the class registry and the firmware registering its own class).
+#[must_use]
+pub fn class_registry_key(id: BlobHash) -> Vec<u8> {
+    id.to_hex().into_bytes()
+}
+
+/// The blob holding a class's artifact: every class blob lives in the class
+/// registry's scope under its content hash, the class id.
+#[must_use]
+pub fn class_blob_id(id: BlobHash) -> BlobId {
+    BlobId {
+        scope: class_registry_scope(),
+        hash: id,
+    }
 }
 
 /// Returns the DB scope for the cell instance registry.
@@ -146,8 +168,8 @@ pub const EVENTS_TABLE: &str = "events";
 /// Table storing the discarded errored entries
 pub const DEADLETTER_TABLE: &str = "errors";
 
-/// A target architecture that produces AOT + meta artifact pairs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A target architecture that runs AOT-compiled cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ArtifactPlatform {
     /// Espressif riscv32imac target (e.g ESP32-C5, ESP32-C6, ESP32-C61)
     Riscv32imac,
@@ -194,15 +216,37 @@ impl FromStr for ArtifactPlatform {
     }
 }
 
-/// Information about a registered cell class.
+/// The class id of every cell a node's firmware implements natively. It names
+/// no registered class: the firmware is the implementation. All zeros is no
+/// content hash anyone can produce, so it never collides with a real class.
+pub const NATIVE_FIRMWARE_CLASS: BlobHash = BlobHash::Sha2([0; 32]);
+
+/// A registered cell class. Its id (a content hash) is the row key, not part of
+/// the value: a wasm class is identified by its wasm, an AOT entry by its AOT
+/// binary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClassInfo {
-    /// The name under which the class is registered.
-    pub name: String,
-    /// The SHA-256 content hash of the Wasm binary, if one has been uploaded.
-    pub wasm_hash: Option<BlobHash>,
-    /// Target-specific artifacts registered for this class.
-    pub artifacts: Vec<ArtifactInfo>,
+pub enum ClassInfo {
+    /// A wasm class, runnable on linux runtimes.
+    Wasm {
+        /// The AOT compilation of this wasm per platform, each an [`Aot`]
+        /// entry of its own.
+        ///
+        /// [`Aot`]: ClassInfo::Aot
+        aot: BTreeMap<ArtifactPlatform, BlobHash>,
+        /// The ids of the child classes this wasm spawns, as patched into it at
+        /// deploy. Read from the wasm when the entry is created; the wasm never
+        /// changes under its id, so neither does this list.
+        spawns: Vec<BlobHash>,
+    },
+    /// An AOT binary: the compilation of a wasm class, or a class of its own
+    /// when added without one.
+    Aot {
+        /// The platform the binary was compiled for.
+        platform: ArtifactPlatform,
+        /// The binary's CRC-32 (ISO-HDLC), which the board checks after
+        /// writing it to flash.
+        crc: u32,
+    },
 }
 
 /// Generation of a cell instance: a uhlc timestamp minted at deploy
@@ -285,49 +329,13 @@ pub struct SpawnLineage {
 pub struct CellInstance {
     /// The SRI identifying this instance.
     pub sri: Sri,
-    /// The name of the class this instance was created from.
-    pub class_name: String,
+    /// The id of the class this instance was created from.
+    pub class: BlobHash,
     /// Generation: a fresh stamp per deploy of this SRI. Same name, new
     /// life, new generation — staleness decisions compare generations.
     pub gen_id: Gen,
     /// The spawn edge this instance was born on.
     pub lineage: SpawnLineage,
-}
-
-/// Information about a target-specific artifact pair (aot + meta).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArtifactInfo {
-    /// The target architecture.
-    pub platform: ArtifactPlatform,
-    /// The SHA-256 content hash of the AOT binary.
-    pub aot_hash: BlobHash,
-    /// The SHA-256 content hash of the meta file.
-    pub meta_hash: BlobHash,
-}
-
-/// An artifact to be added to a cell class.
-#[derive(Debug, Clone)]
-pub enum ClassArtifact {
-    /// A Wasm binary (canonical class artifact).
-    Wasm(Vec<u8>),
-    /// A target-specific AOT + meta pair.
-    Aot {
-        /// The target architecture.
-        platform: ArtifactPlatform,
-        /// The AOT-compiled binary.
-        aot_blob: Vec<u8>,
-        /// The metadata file.
-        meta_blob: Vec<u8>,
-    },
-}
-
-/// Controls whether an operation adding sth to the datalayer should overwrite existing data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AddMode {
-    /// Reject the operation if data with the same reference exists.
-    Strict,
-    /// Overwrite existing data (unless this violates other, operation-specific constraints).
-    Force,
 }
 
 /// A cell's placement — where it currently lives — stored in the datalayer.
@@ -584,9 +592,11 @@ pub enum DeploymentCommand {
     /// Deploys the cell. If any existing running cell is present, it will be terminated before the
     /// new cell is deployed.
     Deploy {
-        /// Name of the cell class to deploy; the firmware derives the artifact
-        /// paths from this using [`ArtifactLocation`] and its own target.
-        class: String,
+        /// Id of the AOT binary to run: the orchestrator resolves the cell's
+        /// class to the AOT for this runtime's platform.
+        class: BlobHash,
+        /// The AOT binary's CRC-32 (ISO-HDLC), checked after flashing.
+        crc: u32,
         /// SRI of the deployed cell
         sri: Sri,
         /// The arguments to be provided during the initialistation phase.
@@ -654,64 +664,6 @@ impl From<CellCommandError> for i32 {
             CellCommandError::CellError(_) => ERR_CELL_CMD_CELL_ERROR,
             CellCommandError::Internal => ERR_CELL_CMD_INTERNAL,
         }
-    }
-}
-
-/// Where a class artifact is stored in the datalayer: its scope and blob path.
-///
-/// The single source of truth for class-artifact locations — the class registry
-/// writes through it and the execution runtimes (linux and embedded) read
-/// through it, so every side resolves the same blob.
-#[derive(Debug, Clone)]
-pub struct ArtifactLocation {
-    scope: Scope,
-    path: String,
-}
-
-impl ArtifactLocation {
-    /// Location of a class's wasm binary (target-independent).
-    #[must_use]
-    pub fn wasm(class_name: &str) -> Self {
-        Self {
-            scope: class_registry_scope(),
-            path: sys::format!("/{class_name}/wasm"),
-        }
-    }
-
-    /// Location of a class's AOT binary built for `target`.
-    #[must_use]
-    pub fn aot(class_name: &str, target: ArtifactPlatform) -> Self {
-        Self {
-            scope: class_registry_scope(),
-            path: sys::format!("/{class_name}/{}/aot", target.as_str()),
-        }
-    }
-
-    /// Location of a class's metadata file built for `target`.
-    #[must_use]
-    pub fn meta(class_name: &str, target: ArtifactPlatform) -> Self {
-        Self {
-            scope: class_registry_scope(),
-            path: sys::format!("/{class_name}/{}/meta", target.as_str()),
-        }
-    }
-
-    /// The datalayer scope the artifact lives in.
-    #[must_use]
-    pub fn scope(&self) -> &Scope {
-        &self.scope
-    }
-
-    /// The blob path within the scope.
-    #[must_use]
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    /// Consumes into the `(scope, path)` pair a blob / path-resolve request takes.
-    #[must_use]
-    pub fn into_parts(self) -> (Scope, String) {
-        (self.scope, self.path)
     }
 }
 
@@ -816,7 +768,7 @@ mod instance_row_tests {
     fn cell_instance_round_trips() {
         let v = CellInstance {
             sri: sri(),
-            class_name: "c".into(),
+            class: BlobHash::of(b"c"),
             gen_id: Gen::from_parts(7, 1),
             lineage: SpawnLineage {
                 parent: None,

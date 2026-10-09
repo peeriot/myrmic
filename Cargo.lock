@@ -233,8 +233,6 @@ dependencies = [
  "anyhow",
  "clap",
  "owo-colors",
- "sha2 0.10.9",
- "wasm-storage",
  "which",
 ]
 
@@ -9966,6 +9964,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "wasm-storage",
  "zenoh",
 ]
 
@@ -9990,6 +9989,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "wasm-storage",
  "zenoh",
  "zenoh-protocol",
 ]
@@ -10090,6 +10090,7 @@ dependencies = [
  "tryhard",
  "uhlc",
  "uuid",
+ "wasm-storage",
  "zenoh",
  "zenoh-protocol",
 ]

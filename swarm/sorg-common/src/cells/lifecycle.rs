@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use cell_protocol::{Gen, Sri};
+use cell_protocol::{BlobHash, Gen, Sri};
 use serde::{Deserialize, Serialize};
 use zenoh::Session;
 
@@ -38,7 +38,8 @@ pub use cell_protocol::SpawnLineage;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WasmCellDeployRequest {
     pub cell_sri: Sri,
-    pub class_name: String,
+    /// Id of the wasm class to load.
+    pub class: BlobHash,
     /// Optional payload delivered to the cell's `#[init]` as its argument
     /// buffer. Set by a spawner via `spawn_with`; `None` for root cells.
     pub arguments: Option<Vec<u8>>,
@@ -112,7 +113,7 @@ pub async fn deploy_cells(
 pub async fn deploy_wasm_cell(
     session: &Session,
     cell_sri: Sri,
-    class_name: &str,
+    class: BlobHash,
     tags: RequirementTags,
     timeout: Duration,
     lineage: SpawnLineage,
@@ -122,9 +123,7 @@ pub async fn deploy_wasm_cell(
     deploy_cell(
         session,
         cell_sri,
-        crate::CellConfig::Wasm {
-            class: class_name.to_owned(),
-        },
+        crate::CellConfig::Wasm { class },
         tags,
         timeout,
         lineage,

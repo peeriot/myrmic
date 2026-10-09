@@ -1,4 +1,5 @@
 use crate::args::Ctx;
+use crate::render::{class_label, names_by_class};
 
 #[derive(clap::Parser, Default)]
 pub struct List {}
@@ -12,23 +13,11 @@ pub async fn handle(ctx: Ctx, _cmd: List) -> anyhow::Result<()> {
         println!("No classes registered");
         return Ok(());
     }
+    let names = names_by_class(client.list_class_names().await?);
 
-    for class in &classes {
-        let hash = class
-            .wasm_hash
-            .as_ref()
-            .map_or("none".to_owned(), |h| h.to_hex());
-
-        println!("{} [{}]", class.name, hash);
-
-        for a in &class.artifacts {
-            println!(
-                "  platform '{}' (aot: [{}], meta: [{}])",
-                a.platform,
-                a.aot_hash.to_hex(),
-                a.meta_hash.to_hex()
-            );
-        }
+    for (class, info) in &classes {
+        println!("{} [{}]", class_label(*class, &names), class.to_hex());
+        println!("  {}", super::describe(info, &names));
     }
 
     Ok(())

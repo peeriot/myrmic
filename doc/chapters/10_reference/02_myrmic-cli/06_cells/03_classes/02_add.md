@@ -9,29 +9,23 @@ myrmic cells classes add [OPTIONS] [NAME]
 ```
 
 ## Description
-Creates a cell class from a binary artifact, or adds an artifact to an existing class. Classes are normally created automatically by [`myrmic deploy`](../../05_deploy.md) - use this command to register pre-built artifacts directly.
+Registers a cell class from a binary artifact and names it `NAME`, or adds an AOT binary under `NAME`. Classes are normally created automatically by [`myrmic deploy`](../../05_deploy.md) - use this command to register pre-built artifacts directly.
+
+A class is identified by the hash of its binary; the name is a label for it. Several names can point to the same class, and binding a name that already points to another class moves the name - the other class stays registered.
 
 ## Options
 `--wasm PATH`
 
-Path to a `.wasm` binary to register as the class artifact. Mutually exclusive with `--aot`.
+Path to a `.wasm` binary to register as a class. Mutually exclusive with `--aot`.
 
 `--aot PATH`
 
-Path to an AOT-compiled binary. Requires `--platform` and `--meta`.
-
-`--meta PATH`
-
-Path to the AOT metadata file.
+Path to an AOT-compiled binary. Requires `--platform`. If `NAME` points to a wasm class, the binary is added to that class as its compilation for the platform. Otherwise it is registered as a class of its own, and `NAME` is bound to it.
 
 `--platform PLATFORM`
 
-Target platform for the AOT artifact. Accepted values:
+Target platform for the AOT binary. Accepted values:
 - `riscv32imac` - Espressif RISC-V chips (ESP32-C5, ESP32-C6, ESP32-C61). Also accepted: `esp32c5`, `esp32_c5`, `esp32c6`, `esp32_c6`, `esp32c61`, `esp32_c61`.
-
-`--force`
-
-Overwrite the existing wasm binary if the class already has one registered.
 
 `-v` / `--verbose`
 
@@ -48,8 +42,8 @@ Prints help information.
 myrmic cells classes add my-cell --wasm ./my-cell.wasm
 ```
 
-2. Register a class with an AOT artifact:
+2. Add its AOT compilation for ESP32-C6 boards:
 
 ```bash
-myrmic cells classes add my-cell --aot ./my-cell.aot --meta ./my-cell.meta --platform esp32c6
+myrmic cells classes add my-cell --aot ./my-cell.aot --platform esp32c6
 ```

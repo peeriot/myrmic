@@ -1,5 +1,9 @@
-//! Table-rendering helpers shared by the status commands: column widths and
-//! id shortening with a highlighted unique prefix.
+//! Table-rendering helpers shared by the status and listing commands: column
+//! widths, id shortening with a highlighted unique prefix, and class labels.
+
+use std::collections::HashMap;
+
+use cell_protocol::{BlobHash, NATIVE_FIRMWARE_CLASS};
 
 pub const BOLD: &str = "\x1b[1m";
 pub const BOLD_CYAN: &str = "\x1b[1;36m";
@@ -11,6 +15,32 @@ pub const ID_CHARS: usize = 8;
 
 /// Stands in for a column a row has no value for.
 pub const NONE: &str = "—";
+
+/// The names bound to each class, sorted, from a listing of the name table.
+pub fn names_by_class(names: Vec<(String, BlobHash)>) -> HashMap<BlobHash, Vec<String>> {
+    let mut by_class: HashMap<BlobHash, Vec<String>> = HashMap::new();
+    for (name, class) in names {
+        by_class.entry(class).or_default().push(name);
+    }
+    for names in by_class.values_mut() {
+        names.sort_unstable();
+    }
+    by_class
+}
+
+/// How a class reads in a listing: every name bound to it, written as
+/// synonyms (`a = b`), or the start of its id when it has none. The class of
+/// native firmware cells is no registered class and reads `<firmware>`.
+pub fn class_label(class: BlobHash, names: &HashMap<BlobHash, Vec<String>>) -> String {
+    if class == NATIVE_FIRMWARE_CLASS {
+        "<firmware>".to_owned()
+    } else {
+        match names.get(&class) {
+            Some(names) => names.join(" = "),
+            None => class.to_hex()[..ID_CHARS].to_owned(),
+        }
+    }
+}
 
 pub fn width<'a>(cells: impl Iterator<Item = &'a str>) -> usize {
     cells.map(|c| c.chars().count()).max().unwrap_or(0)

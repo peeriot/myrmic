@@ -24,7 +24,10 @@
 
 use std::time::{Duration, Instant};
 
-use cell_protocol::{CellInstance, ClassInfo, Gen, PlacementEntry, PlacementKind, SpawnLineage};
+use cell_protocol::{
+    ArtifactPlatform, BlobHash, CellInstance, ClassInfo, Gen, PlacementEntry, PlacementKind,
+    SpawnLineage,
+};
 use claims::{assert_err, assert_ok};
 use db_commons::models::{
     self, DbRequest, Scope, TxOp, TxOpResponse, locate, tb_get, tb_list, tx_apply, tx_commit,
@@ -86,6 +89,9 @@ async fn placement_locates_the_class_registry_scope() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // A recorder on the class registry's locate keyexpr. It never replies and
     // drops every query, so the real holder still wins the round untouched -
@@ -104,7 +110,7 @@ async fn placement_locates_the_class_registry_scope() {
     // the exec's own module load reads the class registry too, and its locate
     // would be indistinguishable from placement's.
     let started = Instant::now();
-    let result = deploy_probe(&test_app, RequirementTags::new(vec![UNMET_TAG])).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::new(vec![UNMET_TAG])).await;
     let elapsed = started.elapsed();
 
     // Assert I - the deploy really did stop at the placement decision, on the
@@ -155,13 +161,15 @@ async fn placement_class_read_follows_the_class_registry_holder() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass: an unregistered class fails the same way
     // this test asserts. Read the class through its own scope while the real
     // holder is still the only answer, so the failure below can only come from
     // the stand-in.
-    let registered =
-        assert_ok!(class_registry::get_class_info(test_app.session(), PROBE_CLASS).await);
+    let registered = assert_ok!(class_registry::get_class_info(test_app.session(), class).await);
     assert!(
         registered.is_some(),
         "the probe class must be readable on the class registry's own holder \
@@ -173,17 +181,17 @@ async fn placement_class_read_follows_the_class_registry_holder() {
     declare_stand_in_holder(&mut test_app, &cell_protocol::class_registry_scope(), None).await;
 
     let started = Instant::now();
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
     let elapsed = started.elapsed();
 
     // Assert - placement consulted the holder its own locate picked, found no
     // row there, and said so.
     let err = result.expect_err("the class registry holder has no rows, so the deploy must fail");
-    let DeploymentError::UnknownClass { class } = &err else {
+    let DeploymentError::UnknownClass { class: unknown } = &err else {
         panic!("expected UnknownClass from the located class-registry holder, got: {err:?}");
     };
     assert_eq!(
-        class, PROBE_CLASS,
+        *unknown, class,
         "the error must name the class that was read"
     );
 
@@ -207,6 +215,9 @@ async fn placement_exec_registry_read_follows_its_own_scope() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass: a genuinely empty exec registry yields the
     // same error this test asserts. Wait for the node's own exec to register
@@ -230,7 +241,7 @@ async fn placement_exec_registry_read_follows_its_own_scope() {
     )
     .await;
 
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
 
     // Assert - placement consulted the holder its own locate picked, found no
     // runtimes there, and said so. The lease read cannot be what produced this:
@@ -255,6 +266,9 @@ async fn placement_node_lease_read_follows_its_own_scope() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass twice over: a node that never leased, and a
     // node that never registered, both end the deploy the same way. Confirm
@@ -275,7 +289,7 @@ async fn placement_node_lease_read_follows_its_own_scope() {
     // down only nodes that are hosting cells - none are.
     declare_stand_in_holder(&mut test_app, &cell_protocol::node_lease_scope(), None).await;
 
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
 
     // Assert - the exec registry still lists the node, and placement dropped it
     // anyway, because the holder its lease locate picked had no lease for it.
@@ -301,36 +315,37 @@ async fn placement_retries_while_only_an_artifact_is_missing() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass: the class carries its wasm artifact on its
     // own holder before the stand-in exists, so the rejection below can only
     // come from the artifact-less row the stand-in serves.
-    let registered =
-        assert_ok!(class_registry::get_class_info(test_app.session(), PROBE_CLASS).await)
-            .expect("the probe class must be readable before the stand-in exists");
+    let registered = assert_ok!(class_registry::get_class_info(test_app.session(), class).await)
+        .expect("the probe class must be readable before the stand-in exists");
     assert!(
-        registered.wasm_hash.is_some(),
+        matches!(registered, ClassInfo::Wasm { .. }),
         "the probe class must carry its wasm artifact on its own holder, \
          otherwise this test proves nothing"
     );
 
-    // Act - a stand-in serving a class row with no artifacts at all. The class
-    // is found, so this is not an unknown class; no runtime can load it, so
-    // every rejection names the artifact; and nothing will ever change that, so
-    // the deploy runs the retry to the end.
+    // Act - a stand-in serving a class row the linux runtime cannot load: an
+    // AOT-only class. The class is found, so this is not an unknown class; no
+    // runtime can load it, so every rejection names the artifact; and nothing
+    // will ever change that, so the deploy runs the retry to the end.
     declare_stand_in_holder(
         &mut test_app,
         &cell_protocol::class_registry_scope(),
-        Some(encode(&ClassInfo {
-            name: PROBE_CLASS.to_owned(),
-            wasm_hash: None,
-            artifacts: Vec::new(),
+        Some(encode(&ClassInfo::Aot {
+            platform: ArtifactPlatform::Riscv32imac,
+            crc: 0,
         })),
     )
     .await;
 
     let started = Instant::now();
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
     let elapsed = started.elapsed();
 
     // Assert - the outcome names the artifact, and getting it took the whole
@@ -369,7 +384,7 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
     let sri = to_sri(ERASE_SRI);
     let record = CellInstance {
         sri,
-        class_name: "erase_probe".to_owned(),
+        class: BlobHash::of(b"erase_probe"),
         gen_id: ERASE_GEN,
         lineage: SpawnLineage::default(),
     };
@@ -422,9 +437,13 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
 /// Deploys the probe cell through a client of the test's own, which carries the
 /// client default deadline rather than the shorter one the shared test app
 /// pins, and - unlike the shared app's deploy helper - can carry tags.
-async fn deploy_probe(test_app: &TestApp, tags: RequirementTags) -> Result<(), DeploymentError> {
+async fn deploy_probe(
+    test_app: &TestApp,
+    class: BlobHash,
+    tags: RequirementTags,
+) -> Result<(), DeploymentError> {
     sorg_client::Client::new(test_app.session().clone())
-        .deploy_wasm_cell(to_sri(PROBE_SRI), PROBE_CLASS, tags)
+        .deploy_wasm_cell(to_sri(PROBE_SRI), class, tags)
         .await
 }
 

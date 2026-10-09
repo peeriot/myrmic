@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
 use cell_protocol::Sri;
-use cell_protocol::{
-    BlobHash, CapabilityTag, ClassInfo, ExecRuntimeInfo, ExecutionCapabilities, RuntimeId,
-};
+use cell_protocol::{CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, RuntimeId};
 use sorg_common::{CellConfig, CellDeployment, RejectionReason, RequirementTags};
 
 use super::super::super::PlacementContext;
 use super::super::{CellMappings, preprocess};
-use super::rt_id;
+use super::{class_id, class_wasm_only, rt_id};
 
 fn linux_rt_with_tags(id: RuntimeId, tags: Vec<&str>) -> ExecRuntimeInfo {
     let caps = tags.into_iter().map(CapabilityTag::new).collect::<Vec<_>>();
@@ -22,7 +20,7 @@ fn wasm_cell_requiring(class: &str, required_tags: Vec<&str>) -> CellDeployment 
     CellDeployment::new(
         Sri::from_target(class).unwrap(),
         CellConfig::Wasm {
-            class: class.to_string(),
+            class: class_id(class),
         },
     )
     .with_tags(RequirementTags::new(required_tags))
@@ -31,14 +29,7 @@ fn wasm_cell_requiring(class: &str, required_tags: Vec<&str>) -> CellDeployment 
 fn context_linux(id: RuntimeId, rt_tags: Vec<&str>) -> PlacementContext {
     PlacementContext {
         execs: vec![linux_rt_with_tags(id, rt_tags)],
-        class_info: HashMap::from([(
-            "cls".to_string(),
-            ClassInfo {
-                name: "cls".to_string(),
-                wasm_hash: Some(BlobHash::of(b"")),
-                artifacts: vec![],
-            },
-        )]),
+        class_info: HashMap::from([(class_id("cls"), class_wasm_only())]),
         cells_per_runtime: HashMap::new(),
     }
 }

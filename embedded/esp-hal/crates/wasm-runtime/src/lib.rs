@@ -69,7 +69,7 @@ use alloc::{format, vec};
 use core::sync::atomic::Ordering;
 
 use cell_protocol::{
-    CellInstance, Gen, INSTANCE_REGISTRY_TABLE, MESSAGES_TABLE, SpawnLineage, Sri,
+    BlobHash, CellInstance, Gen, INSTANCE_REGISTRY_TABLE, MESSAGES_TABLE, SpawnLineage, Sri,
     instance_registry_scope, scope_of_cell,
 };
 use db_client::v1::models::{Id, Scope, tb_append, tb_delete, tb_get};
@@ -176,7 +176,7 @@ impl<'buf> WamrRuntime<'buf> {
     pub fn init_with_module(
         aot_module: &'buf [u8],
         sri: &Sri,
-        class_name: &str,
+        class: BlobHash,
         gen_id: Gen,
         lineage: &SpawnLineage,
         payload: Option<Vec<u8>>,
@@ -278,7 +278,7 @@ impl<'buf> WamrRuntime<'buf> {
             &instance,
             InitTarget {
                 sri,
-                class_name,
+                class,
                 gen_id,
                 lineage,
             },
@@ -637,7 +637,7 @@ fn consume_mailbox_entry(msg_id: &Id) -> Result<(), String> {
 #[derive(Clone, Copy)]
 struct InitTarget<'a> {
     sri: &'a Sri,
-    class_name: &'a str,
+    class: BlobHash,
     gen_id: Gen,
     lineage: &'a SpawnLineage,
 }
@@ -657,7 +657,7 @@ fn run_cell_init(
 ) -> Result<(), Error> {
     let InitTarget {
         sri,
-        class_name,
+        class,
         gen_id,
         lineage,
     } = target;
@@ -687,7 +687,7 @@ fn run_cell_init(
             ],
         )?;
 
-        register_sri(sri, class_name, gen_id, lineage)?;
+        register_sri(sri, class, gen_id, lineage)?;
     }
 
     Ok(())
@@ -697,13 +697,13 @@ fn run_cell_init(
 /// carrying the generation and the spawn edge that supervision reads.
 fn register_sri(
     sri: &Sri,
-    class_name: &str,
+    class: BlobHash,
     gen_id: Gen,
     lineage: &SpawnLineage,
 ) -> Result<(), Error> {
     let value = postcard::to_allocvec(&CellInstance {
         sri: *sri,
-        class_name: class_name.to_owned(),
+        class,
         gen_id,
         lineage: lineage.clone(),
     })
