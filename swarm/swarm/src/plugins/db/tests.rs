@@ -1622,3 +1622,57 @@ async fn a_departed_peer_stops_being_vouched_for_within_seconds() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+
+async fn sem_select(
+    client: &Client,
+    query: &str,
+) -> Result<models::sem_select::Response, models::sem_select::Error> {
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+
+    client
+        .send(models::sem_select::Request {
+            id: tx.id,
+            op: models::sem_select::Op {
+                scope: scope(),
+                query: query.to_owned(),
+                base_iri: None,
+                skip: None,
+                limit: None,
+            },
+        })
+        .await
+        .expect("send failed")
+}
+
+/// A stack overflow would abort the whole node, so nesting is refused before
+/// it is parsed and the node keeps serving.
+#[tokio::test(flavor = "multi_thread")]
+async fn deeply_nested_sem_select_is_refused() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+
+    for query in [
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER({}true) }}",
+            "!".repeat(50_000)
+        ),
+        format!(
+            "SELECT * WHERE {{ {}?s ?p ?o{} }}",
+            "{ ".repeat(20_000),
+            " }".repeat(20_000)
+        ),
+    ] {
+        let err = sem_select(&client, &query)
+            .await
+            .expect_err("query was served");
+        assert!(err.message.contains("nests deeper than"), "{}", err.message);
+    }
+
+    sem_select(&client, "SELECT * WHERE { ?s ?p ?o }")
+        .await
+        .expect("node stopped serving");
+}

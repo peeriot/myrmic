@@ -460,6 +460,7 @@ oxrdf = { version = "0.3.2", default-features = false }
 spareval = { version = "0.2.4", default-features = false }
 spargebra = { version = "0.4.4", default-features = false }
 oxsdatatypes = { version = "0.2.2", default-features = false }
+stacker = "0.1.25"
 
 vecmap-rs = "0.2.4"
 
