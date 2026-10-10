@@ -1,7 +1,6 @@
-use myrmic_build::firmware;
+use myrmic_build::{PlatformFamily, firmware};
 
 use crate::args::Ctx;
-use crate::platforms::Platform;
 use crate::utils::determine_wd;
 use crate::{PathType, build, models, nest};
 use std::path::PathBuf;
@@ -84,7 +83,7 @@ pub fn handle(ctx: &Ctx, cmd: Build) -> anyhow::Result<()> {
         },
         (path, PathType::Toml) => {
             let cargo_target = target.unwrap_or(models::CargoTarget::Auto);
-            let platforms = Platform::parse_list(platform.as_deref())?;
+            let platforms = PlatformFamily::parse_list(platform.as_deref())?;
 
             let _classes = build::build_toml(
                 ctx,

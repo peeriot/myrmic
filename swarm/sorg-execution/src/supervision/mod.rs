@@ -5,4 +5,4 @@ pub(crate) mod fencing;
 mod renewal;
 pub(crate) mod startup;
 
-pub(crate) use renewal::spawn_renewal;
+pub(crate) use renewal::start_renewal;

@@ -14,7 +14,6 @@ pub mod compose;
 pub mod docker;
 pub mod latency;
 pub mod metrics;
-pub mod mqtt;
 pub mod myrmic;
 pub mod producers;
 pub mod rack;

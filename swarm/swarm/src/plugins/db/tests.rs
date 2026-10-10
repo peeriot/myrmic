@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::Plugin;
-use crate::plugins::{MyrmicCtx, MyrmicPlugin};
+use crate::plugins::MyrmicCtx;
 use cell_protocol::node_tags::LiveTags;
 use cell_protocol::replication::{
     CUSTODY_TABLE, CustodyRow, REPLICATION_TABLE, ReplicaEntry, ReplicaSelector, replication_scope,
@@ -87,7 +87,11 @@ fn node_id(session: &zenoh::Session) -> models::NodeId {
 
 /// A plugin context for one node, tagged the way the host tags it at boot —
 /// tests pin replicas by runtime tag, which lives in that set.
-fn ctx(session: &zenoh::Session, drop_rx: swarm_api::DropNotifier) -> MyrmicCtx {
+fn ctx(
+    session: &zenoh::Session,
+    drop_rx: swarm_api::DropNotifier,
+    ready: swarm_api::Ready,
+) -> MyrmicCtx {
     let tags = LiveTags::new(crate::node_tags::effective_at_boot(session, &[]));
 
     MyrmicCtx::new(
@@ -96,8 +100,19 @@ fn ctx(session: &zenoh::Session, drop_rx: swarm_api::DropNotifier) -> MyrmicCtx 
         Default::default(),
         tags,
         drop_rx,
-        swarm_api::Ready::default(),
+        ready,
     )
+}
+
+/// Runs the plugin's `main` as a task and returns once it signalled ready.
+async fn boot(
+    session: &zenoh::Session,
+    drop_rx: swarm_api::DropNotifier,
+    config: super::config::Config,
+) {
+    let ready = swarm_api::Ready::default();
+
+    Plugin::run_until_ready(ctx(session, drop_rx, ready.clone()), ready, config).await;
 }
 
 async fn start_node() -> (zenoh::Session, swarm_api::DropSender) {
@@ -113,9 +128,7 @@ async fn start_node_on(
 
     let (drop_tx, drop_rx) = flume::bounded(1);
 
-    Plugin::main(ctx(&session, drop_rx), config)
-        .await
-        .expect("unable to start db plugin");
+    boot(&session, drop_rx, config).await;
 
     (session, drop_tx)
 }
@@ -138,9 +151,7 @@ async fn start_node_with_escalation(
         ..Default::default()
     };
 
-    Plugin::main(ctx(&session, drop_rx), config)
-        .await
-        .expect("unable to start db plugin");
+    boot(&session, drop_rx, config).await;
 
     (session, drop_tx)
 }

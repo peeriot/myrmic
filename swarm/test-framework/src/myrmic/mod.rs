@@ -3,6 +3,8 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 pub use backend::MyrmicBackend;
 pub use backend::docker::DockerBinary;
@@ -10,6 +12,8 @@ pub use backend::local::LocalBinary;
 pub use backend::ssh::SshBinary;
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
+use myrmic_build::PlatformFamily;
+use sorg_common::RestartType;
 
 use crate::{
     CommandOutput,
@@ -21,6 +25,7 @@ use crate::{
 pub mod backend;
 pub mod cell;
 mod debug;
+pub mod mqtt;
 
 /// Prefix of the CLI's info lines on stderr (the label is padded to the width of `ERROR`).
 const INFO_PREFIX: &str = "INFO  ";
@@ -58,6 +63,19 @@ pub enum Error {
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
+    /// set by [`Myrmic::local_isolated`]; shared by the clones, so its directories live as long
+    /// as any runtime or cell handle that may still need them for cleanup
+    isolation: Option<Arc<Isolation>>,
+}
+
+/// A private myrmic setup on the host (see [`Myrmic::local_isolated`]).
+struct Isolation {
+    /// holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs), `run/`
+    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read) and the runtime config
+    dir: tempfile::TempDir,
+    /// the multicast group (`<address>:<port>`) its runtimes scout on, and the CLI and
+    /// [`Myrmic::connect_session`] discover them by
+    multicast_group: String,
 }
 
 impl Myrmic<LocalBinary> {
@@ -65,11 +83,44 @@ impl Myrmic<LocalBinary> {
     pub fn local() -> Self {
         Self {
             backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
+            isolation: None,
         }
     }
 
-    /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI (peer mode,
-    /// default config, multicast scouting).
+    /// Like [`Self::local`], but nothing outside this shim and its clones sees its runtime, and
+    /// it sees no other runtime, so tests using it can run in parallel.
+    ///
+    /// The shim gets its own state directories and its own multicast group, on which its
+    /// runtimes scout and every CLI call (through `DEFAULT_MYRMIC_MULTICAST_GROUP`) and
+    /// [`Self::connect_session`] discover them, the same way as on the default group.
+    /// [`RuntimeBuilder::config`] is not available, the shim generates the config itself.
+    pub fn local_isolated() -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("myrmic-isolated.")
+            .tempdir()
+            .expect("failed to create a temporary directory for an isolated myrmic");
+        for subdir in ["data", "run"] {
+            std::fs::create_dir(dir.path().join(subdir))
+                .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
+        }
+        let multicast_group = isolated_multicast_group();
+        // JSON is YAML, which `runtimes start` parses
+        let config = serde_json::json!({
+            "zenoh": { "scouting": { "multicast": { "address": multicast_group } } },
+        });
+        std::fs::write(dir.path().join("runtime.yaml"), config.to_string())
+            .expect("failed to write the isolated runtime's config");
+        Self {
+            backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
+            isolation: Some(Arc::new(Isolation {
+                dir,
+                multicast_group,
+            })),
+        }
+    }
+
+    /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI: in peer mode,
+    /// found by multicast scouting, on [`Self::local_isolated`]'s own group if it is one.
     ///
     /// It does not use the shim: the receiver only restricts it to the local backend, whose
     /// runtimes are on this host and so reachable by multicast scouting. A remote mesh needs a
@@ -82,10 +133,37 @@ impl Myrmic<LocalBinary> {
         config
             .set_mode(Some(zenoh::config::WhatAmI::Peer))
             .expect("setting zenoh mode cannot fail");
+        if let Some(isolation) = &self.isolation {
+            config
+                .insert_json5(
+                    "scouting/multicast/address",
+                    &serde_json::json!(isolation.multicast_group).to_string(),
+                )
+                .expect("the isolated multicast group is a valid zenoh multicast address");
+        }
         zenoh::open(config)
             .await
             .expect("failed to open zenoh session")
     }
+}
+
+/// A multicast group no other [`Myrmic::local_isolated`] shim uses: the address from this
+/// process's pid (administratively scoped 239.0.0.0/8; its low 24 bits cover every Linux pid),
+/// the port from a per-process counter.
+fn isolated_multicast_group() -> String {
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(7446);
+    let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+    assert!(
+        port >= 7446,
+        "ran out of ports for isolated multicast groups"
+    );
+    let pid = std::process::id();
+    format!(
+        "239.{}.{}.{}:{port}",
+        (pid >> 16) & 0xFF,
+        (pid >> 8) & 0xFF,
+        pid & 0xFF
+    )
 }
 
 impl<'c> Myrmic<DockerBinary<'c>> {
@@ -94,6 +172,7 @@ impl<'c> Myrmic<DockerBinary<'c>> {
     pub fn attach(container: &'c ConnectedContainer) -> Self {
         Self {
             backend: DockerBinary::attach(container),
+            isolation: None,
         }
     }
 }
@@ -104,6 +183,7 @@ impl Myrmic<SshBinary> {
     pub fn ssh(host: impl Into<String>) -> Self {
         Self {
             backend: SshBinary::new(host),
+            isolation: None,
         }
     }
 
@@ -112,6 +192,7 @@ impl Myrmic<SshBinary> {
     pub fn ssh_at(host: impl Into<String>, binary: impl Into<String>) -> Self {
         Self {
             backend: SshBinary::at(host, binary),
+            isolation: None,
         }
     }
 }
@@ -143,7 +224,7 @@ where
     /// [`Error::Cli`], like any other failed delete.
     pub async fn delete_runtime(&self, name: &str) -> Result<(), Error> {
         self.run(&["runtimes", "delete", name]).await?;
-        self.wait_until_listed(name, false).await
+        self.wait_until_unlisted(name).await
     }
 
     /// run: myrmic new --name `name` [--sdk `sdk`] into a temporary directory on the target
@@ -159,11 +240,23 @@ where
         Ok(cell)
     }
 
-    /// run: myrmic send `sri` `command`
+    /// run: myrmic send `sri` `command` [`payload` --raw]
     ///
-    /// The CLI only hands the command over and prints no response, so success carries no value.
-    pub async fn send(&self, sri: &str, command: &str) -> Result<(), Error> {
-        self.run(&["send", sri, command]).await?;
+    /// `payload` is delivered as-is, so the test encodes it in the handler's codec (e.g.
+    /// `serde_json::to_vec` for the JSON default). The CLI only hands the command over and prints
+    /// no response, so success carries no value.
+    pub async fn send(
+        &self,
+        sri: &str,
+        command: &str,
+        payload: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        let payload = payload.map(hex::encode);
+        let mut args = vec!["send", sri, command];
+        if let Some(payload) = &payload {
+            args.extend([payload.as_str(), "--raw"]);
+        }
+        self.run(&args).await?;
         Ok(())
     }
 
@@ -174,6 +267,9 @@ where
             cell: cell.into(),
             srn: format!("e2e-{}", uuid::Uuid::new_v4().simple()),
             tags: &[],
+            platforms: None,
+            init: None,
+            policy: None,
         }
     }
 
@@ -229,7 +325,7 @@ where
     /// Run `program args` on the target and capture its output. Panics when it cannot be
     /// started, or its wrapper failed: broken test infrastructure, not a result.
     async fn run_program(&self, program: &str, args: &[&str]) -> CommandOutput {
-        let command = self.backend.command(program, args);
+        let command = self.command(program, args);
         let invocation = format!("{command:?}");
         let output = tokio::process::Command::from(command)
             .output()
@@ -248,11 +344,27 @@ where
     /// command that cannot be started, or whose wrapper failed, is the error instead of a panic:
     /// a panic during unwinding aborts the process and hides the original one.
     fn run_program_blocking(&self, program: &str, args: &[&str]) -> std::io::Result<CommandOutput> {
-        let mut command = self.backend.command(program, args);
+        let mut command = self.command(program, args);
         let invocation = format!("{command:?}");
         let output = command.output()?;
         self.captured(&invocation, output)
             .map_err(std::io::Error::other)
+    }
+
+    /// `program args` as a host command from the backend, inside the isolation, if any: its
+    /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, and its multicast group as
+    /// `DEFAULT_MYRMIC_MULTICAST_GROUP`, which the CLI takes like `--multicast-group`. Every
+    /// program the shim starts goes through here, so the CLI inherits the isolation also when
+    /// it is exec'd by `sh`.
+    fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
+        let mut command = self.backend.command(program, args);
+        if let Some(isolation) = &self.isolation {
+            command
+                .env("XDG_DATA_HOME", isolation.dir.path().join("data"))
+                .env("XDG_RUNTIME_DIR", isolation.dir.path().join("run"))
+                .env("DEFAULT_MYRMIC_MULTICAST_GROUP", &isolation.multicast_group);
+        }
+        command
     }
 
     /// `output`, with the invocation and exit code folded into a failed command's stderr (the
@@ -276,17 +388,15 @@ where
         }
     }
 
-    /// Wait until the runtime `name` is `listed` by `myrmic runtimes list`, or no longer is.
-    async fn wait_until_listed(&self, name: &str, listed: bool) -> Result<(), Error> {
-        let waited_for = if listed {
-            format!("runtime `{name}` to show up in `runtimes list`")
-        } else {
-            format!("runtime `{name}` to leave `runtimes list`")
-        };
-        wait_for(waited_for, || async {
-            let runtimes = self.list_runtimes().await?;
-            Ok(runtimes.iter().any(|runtime| runtime == name) == listed)
-        })
+    /// Wait until the runtime `name` is no longer listed by `myrmic runtimes list`.
+    async fn wait_until_unlisted(&self, name: &str) -> Result<(), Error> {
+        wait_for(
+            format!("runtime `{name}` to leave `runtimes list`"),
+            || async {
+                let runtimes = self.list_runtimes().await?;
+                Ok(!runtimes.iter().any(|runtime| runtime == name))
+            },
+        )
         .await
     }
 
@@ -409,7 +519,8 @@ where
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] [`config`]
     ///
-    /// Returns once the runtime shows up in `myrmic runtimes list`.
+    /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
+    /// on it.
     pub async fn start(self) -> Result<Runtime<B>, Error> {
         let mut args = vec!["runtimes", "start", "-d", "--name", &self.name];
         if !self.persistent {
@@ -418,11 +529,20 @@ where
         for tag in self.tags {
             args.extend(["--tag", tag]);
         }
+        let isolated_config = self.myrmic.isolation.as_ref().map(|isolation| {
+            assert!(
+                self.config.is_none(),
+                "an isolated shim generates the runtime config itself"
+            );
+            isolation.dir.path().join("runtime.yaml")
+        });
         if let Some(config) = &self.config {
             args.push(config);
         }
+        if let Some(config) = &isolated_config {
+            args.push(path_arg(config));
+        }
         self.myrmic.run(&args).await?;
-        self.myrmic.wait_until_listed(&self.name, true).await?;
         Ok(Runtime {
             myrmic: self.myrmic.clone(),
             name: self.name,
@@ -440,6 +560,9 @@ where
     cell: CellSpec<B>,
     srn: String,
     tags: &'a [&'a str],
+    platforms: Option<&'a [PlatformFamily]>,
+    init: Option<&'a [u8]>,
+    policy: Option<RestartType>,
 }
 
 impl<'a, B> CellDeployBuilder<'a, B>
@@ -459,13 +582,50 @@ where
         self
     }
 
-    /// run: myrmic deploy --name `srn` `cell` [--tag `tag`...]
+    /// `--platform`: the platforms a cell crate is built for; defaults to the CLI's (`linux`)
+    pub fn platforms(mut self, platforms: &'a [PlatformFamily]) -> Self {
+        self.platforms = Some(platforms);
+        self
+    }
+
+    /// `--init` with `--raw`: the arguments delivered as-is to the cell's `#[init]`, encoded in
+    /// its codec (see [`Myrmic::send`]); defaults to none
+    pub fn init(mut self, init: &'a [u8]) -> Self {
+        self.init = Some(init);
+        self
+    }
+
+    /// `--policy`: the cell's restart policy; defaults to the CLI's ([`RestartType::Never`])
+    pub fn policy(mut self, policy: RestartType) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// run: myrmic deploy --name `srn` `cell` [--tag `tag`...] [--platform `platforms`]
+    /// [--init `init` --raw] [--policy `policy`]
     ///
     /// Returns once the SRI shows up in `myrmic cells status`.
     pub async fn deploy(self) -> Result<DeployedCell<B>, Error> {
+        let platforms = self.platforms.map(|platforms| {
+            platforms
+                .iter()
+                .map(|platform| platform.name())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
+        let init = self.init.map(hex::encode);
         let mut args = vec!["deploy", "--name", &self.srn, path_arg(self.cell.as_path())];
         for tag in self.tags {
             args.extend(["--tag", tag]);
+        }
+        if let Some(platforms) = &platforms {
+            args.extend(["--platform", platforms.as_str()]);
+        }
+        if let Some(init) = &init {
+            args.extend(["--init", init.as_str(), "--raw"]);
+        }
+        if let Some(policy) = self.policy {
+            args.extend(["--policy", policy.spelling()]);
         }
         let output = self.myrmic.run(&args).await?;
         let sri = Sri::of_path(&self.srn)
@@ -475,6 +635,12 @@ where
         Ok(DeployedCell::new(self.myrmic.clone(), sri, output.stderr))
     }
 }
+
+/// How long [`DebugListenerBuilder::start`] waits before returning. The CLI reports nothing once
+/// its subscriptions are in place (it prints `starting debug stream` before it even opens its
+/// session), so the wait is a guess. Measured with [`Myrmic::local_isolated`]: without it, a
+/// command sent right after the spawn was missed in most runs; with 5 s, none was.
+pub const DEBUG_LISTENER_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Options for one `myrmic telemetry debug --json`, created by [`Myrmic::debug_listener`].
 pub struct DebugListenerBuilder<'a, B> {
@@ -503,7 +669,9 @@ where
 
     /// run: myrmic telemetry debug --json [--id `id`] [--level `level`]
     ///
-    /// The CLI keeps running for as long as the returned listener lives.
+    /// Returns after [`DEBUG_LISTENER_SETTLE`], so the listener sees what happens after the
+    /// return; start it before whatever it is meant to observe. The CLI keeps running for as long
+    /// as the returned listener lives.
     pub async fn start(self) -> DebugListener {
         let mut args = vec!["telemetry", "debug", "--json"];
         if let Some(id) = &self.id {
@@ -512,7 +680,9 @@ where
         if let Some(level) = &self.level {
             args.extend(["--level", level]);
         }
-        DebugListener::spawn(&self.myrmic.backend, &args).await
+        let listener = DebugListener::spawn(self.myrmic, &args).await;
+        tokio::time::sleep(DEBUG_LISTENER_SETTLE).await;
+        listener
     }
 }
 

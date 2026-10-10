@@ -28,6 +28,14 @@ myrmic --connect tcp/192.0.2.10:7447 cells status
 
 The runtime must be configured to listen on that reachable endpoint under its `zenoh` configuration.
 
+To keep a set of runtimes on one host apart from the others, for example for testing, give them their own multicast group under `zenoh.scouting.multicast.address` in their configuration, and point the CLI at it with `--multicast-group` (or `DEFAULT_MYRMIC_MULTICAST_GROUP`):
+
+```bash
+myrmic --multicast-group 239.1.2.3:7446 cells status
+```
+
+A separate group only keeps discovery apart; it is not a security boundary.
+
 A runtime whose IP address changes rejoins by itself, with no restart, as long as it listens on an unspecified address - `tcp/0.0.0.0:7447` or `tcp/[::]:7447`, and the same under `tls/`. A listen endpoint that carries a host name or a concrete address is resolved once at startup and bound to the address that came back, so after the move it accepts nothing and only a restart clears it. Check which of the two your `zenoh` configuration declares before relying on this.
 
 A runtime that qualifies checks the host's addresses on a timer - every ten seconds, unless [`zenoh.scouting.interface_poll_interval`](../10_reference/01_configuration/01_runtime-configuration.md#zenoh-advanced) says otherwise - and once they have moved it re-publishes the addresses it can be reached at, pushes the change to the peers it is still connected to, and rebuilds its discovery sockets. The push and the socket rebuild are independent: a host with no multicast interface at all still re-publishes its addresses. Expect the swarm to settle within a minute of the move: the poll has to notice it, the links to the old address have to expire, and the peers have to find each other again.

@@ -35,7 +35,7 @@ pub use log_tracker::{StateTracker, TaskStatus, set_up_log_tracker};
 pub use myrmic_tags::Platform;
 pub use swarm::{
     KillableProcess, ScopedProcess, scope_test_multicast, set_up_killable_swarm,
-    set_up_swarm_with_config, test_session,
+    set_up_swarm_with_config, swarm_with_config, test_session,
 };
 pub use wasm::{register_fixture, register_fixture_class};
 

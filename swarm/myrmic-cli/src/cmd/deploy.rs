@@ -1,8 +1,8 @@
 use anyhow::Context as _;
+use myrmic_build::PlatformFamily;
 
 use crate::args::Ctx;
 use crate::models::{self, DeployInput, http, mqtt};
-use crate::platforms::Platform;
 use crate::utils::{PathType, determine_wd};
 use crate::{deploy, determine_name};
 
@@ -27,9 +27,16 @@ pub struct Deploy {
 
     /// Init arguments delivered to the cell's `#[init]` on deploy. Parsed like
     /// a `send` payload (JSON by default; a value that isn't valid JSON is sent
-    /// as a JSON string). Single-cell (`.wasm` / crate) deploys only.
+    /// as a JSON string). Use `--raw` to deliver hex-decoded raw bytes instead.
+    /// Single-cell (`.wasm` / crate) deploys only.
     #[clap(long, conflicts_with = "init_file")]
     init: Option<String>,
+
+    /// Decode the `--init` payload as a hex string (optional `0x` prefix) and
+    /// deliver the raw bytes as-is, bypassing JSON encoding. For non-JSON wire
+    /// formats.
+    #[clap(long, requires = "init")]
+    raw: bool,
 
     /// File whose raw bytes are delivered verbatim as the cell's `#[init]`
     /// arguments. Single-cell (`.wasm` / crate) deploys only.
@@ -47,8 +54,8 @@ pub struct Deploy {
     /// `on-error` (also spelled `onerror`), or `always`. Crash-loop bounds keep
     /// their defaults. On an app deploy this overrides the `restart` declared
     /// in the app-spec YAML; bridges have no restart policy.
-    #[clap(long, value_name = "POLICY")]
-    policy: Option<models::RestartTypeName>,
+    #[clap(long, value_name = "POLICY", hide_possible_values = true)]
+    policy: Option<sorg_common::RestartType>,
 }
 
 pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
@@ -58,6 +65,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
         platform,
         target,
         init,
+        raw,
         init_file,
         tags,
         policy,
@@ -74,8 +82,8 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
 
     let path = determine_wd(&ctx, path)?;
     let tags = sorg_common::RequirementTags::new(tags);
-    let init = resolve_init(init, init_file)?;
-    let restart = policy.map(models::RestartTypeName::to_policy);
+    let init = resolve_init(init, raw, init_file)?;
+    let restart = policy.map(sorg_common::RestartPolicy::with_default_bounds);
 
     let resolved = PathType::from_path(&path)?;
     if target.is_some() && !matches!(resolved.1, PathType::Toml) {
@@ -100,7 +108,7 @@ pub async fn handle(ctx: Ctx, cmd: Deploy) -> anyhow::Result<()> {
         (path, PathType::Yaml) => deploy_yaml(ctx, &path, name, tags, restart).await?,
         (path, PathType::Toml) => {
             let cargo_target = target.unwrap_or(models::CargoTarget::Auto);
-            let platforms = Platform::parse_list(platform.as_deref())?;
+            let platforms = PlatformFamily::parse_list(platform.as_deref())?;
             deploy::deploy_toml(
                 ctx,
                 name,
@@ -208,15 +216,17 @@ fn root_config(
 }
 
 /// Resolves the init-argument buffer from the mutually-exclusive `--init`
-/// (payload literal, encoded like a `send` payload) / `--init-file` (raw bytes)
-/// flags. The bytes are forwarded verbatim; the cell's `#[init]` decodes them.
+/// (payload literal, encoded like a `send` payload, `raw` like `send --raw`) /
+/// `--init-file` (raw bytes) flags. The bytes are forwarded verbatim; the
+/// cell's `#[init]` decodes them.
 fn resolve_init(
     init: Option<String>,
+    raw: bool,
     init_file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<Option<Vec<u8>>> {
     match (init, init_file) {
         (Some(_), Some(_)) => anyhow::bail!("--init and --init-file are mutually exclusive"),
-        (Some(payload), None) => Ok(Some(crate::payload::encode(payload, false)?)),
+        (Some(payload), None) => Ok(Some(crate::payload::encode(payload, raw)?)),
         (None, Some(path)) => {
             let bytes = std::fs::read(&path)
                 .with_context(|| format!("failed to read init file '{}'", path.display()))?;
