@@ -1204,6 +1204,11 @@ async fn handle_locate(
         };
     let scope = models::Scope::new(namespace, database, schema);
 
+    // A store that refuses writes is no holder to route to; stay silent.
+    if store.is_unavailable() {
+        return;
+    }
+
     let Some(req) = db_commons::query::parse_query::<models::locate::Request>(&query) else {
         // parse_query logs the failure.
         return;
