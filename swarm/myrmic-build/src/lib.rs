@@ -9,10 +9,12 @@ pub use build::{AotArtifacts, CargoTarget, CellBuild, build};
 pub use compile::TOOLCHAIN;
 pub(crate) use compile::compile_cell;
 pub use myrmic_tags::Platform;
+pub use platform_family::PlatformFamily;
 
 mod build;
 pub mod cargo;
 mod compile;
 pub mod firmware;
 pub mod linux_pipeline;
+mod platform_family;
 pub mod spawn_patch;

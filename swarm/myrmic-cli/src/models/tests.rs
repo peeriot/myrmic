@@ -194,38 +194,16 @@ fn restart_defaults_to_none() {
 
 /// The spellings `--policy` accepts, including the run-together `onerror`.
 #[test]
-fn restart_type_name_parses_policy_spellings() {
+fn restart_type_parses_policy_spellings() {
     use clap::ValueEnum as _;
 
-    let parse = |s: &str| RestartTypeName::from_str(s, true).expect("known policy");
-    assert_eq!(parse("never"), RestartTypeName::Never);
-    assert_eq!(parse("on-error"), RestartTypeName::OnError);
-    assert_eq!(parse("onerror"), RestartTypeName::OnError);
-    assert_eq!(parse("always"), RestartTypeName::Always);
+    let parse = |s: &str| RestartType::from_str(s, true).expect("known policy");
+    assert_eq!(parse("never"), RestartType::Never);
+    assert_eq!(parse("on-error"), RestartType::OnError);
+    assert_eq!(parse("onerror"), RestartType::OnError);
+    assert_eq!(parse("always"), RestartType::Always);
 
-    assert!(RestartTypeName::from_str("sometimes", true).is_err());
-}
-
-/// `--policy` sets the trigger only; the crash-loop bounds stay at defaults.
-#[test]
-fn restart_type_name_to_policy_keeps_default_bounds() {
-    let defaults = sorg_common::RestartPolicy::default();
-    assert_eq!(
-        RestartTypeName::Always.to_policy(),
-        sorg_common::RestartPolicy {
-            restart_type: sorg_common::RestartType::Always,
-            ..defaults
-        }
-    );
-}
-
-/// The one place a trigger is spelled: `--policy`, an app spec's `restart:`,
-/// the override warning and the `cells` column all read it from here.
-#[test]
-fn restart_type_names_spell_every_trigger() {
-    assert_eq!(RestartTypeName::spelling(RestartType::Never), "never");
-    assert_eq!(RestartTypeName::spelling(RestartType::OnError), "on-error");
-    assert_eq!(RestartTypeName::spelling(RestartType::Always), "always");
+    assert!(RestartType::from_str("sometimes", true).is_err());
 }
 
 /// The `restart:` shorthand accepts the same `onerror` spelling as `--policy`.

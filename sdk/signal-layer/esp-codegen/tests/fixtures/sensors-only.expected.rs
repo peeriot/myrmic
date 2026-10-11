@@ -39,7 +39,8 @@ impl BoardPeripherals {
             .with_scl(i2c0_scl)
             .with_sda(i2c0_sda)
             .into_async();
-        let relay1_out = esp_hal::gpio::Flex::new(relay1_out_gpio);
+        let mut relay1_out = esp_hal::gpio::Flex::new(relay1_out_gpio);
+        relay1_out.set_input_enable(true);
         BoardPeripherals {
             i2c0,
             relay1_out,

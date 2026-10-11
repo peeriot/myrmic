@@ -34,10 +34,19 @@ const PAGE_SIZE: usize = 65_536;
 const RUSTFLAGS_ENV: &str = "CARGO_TARGET_WASM32V1_NONE_RUSTFLAGS";
 const HEAP_SIZE_ENV: &str = "WASM_SDK_HEAP_SIZE";
 
-/// Per-cell memory layout, sourced from `[package.metadata.myrmic]` (with
-/// fallbacks to the defaults). Values are in bytes.
-#[derive(Clone, Copy, Deserialize)]
-#[serde(default)]
+/// The memory keys a cell may set in `[package.metadata.myrmic]`. Values are
+/// in bytes; an omitted key falls back to its default.
+#[derive(Default, Deserialize)]
+struct MemoryMetadata {
+    heap_size: Option<usize>,
+    stack_size: Option<usize>,
+    initial_memory: Option<usize>,
+    max_memory: Option<usize>,
+}
+
+/// Per-cell memory layout, resolved from [`MemoryMetadata`] with the linear
+/// memory bounds in whole pages. Values are in bytes.
+#[derive(Clone, Copy)]
 struct MemoryConfig {
     heap_size: usize,
     stack_size: usize,
@@ -45,29 +54,31 @@ struct MemoryConfig {
     max_memory: usize,
 }
 
-impl Default for MemoryConfig {
-    fn default() -> Self {
+impl From<MemoryMetadata> for MemoryConfig {
+    fn from(metadata: MemoryMetadata) -> Self {
+        let heap_size = metadata.heap_size.unwrap_or(DEFAULT_HEAP_SIZE);
+        let stack_size = metadata.stack_size.unwrap_or(DEFAULT_STACK_SIZE);
+        let total = heap_size + stack_size;
+
         Self {
-            heap_size: DEFAULT_HEAP_SIZE,
-            stack_size: DEFAULT_STACK_SIZE,
-            initial_memory: DEFAULT_INITIAL_MEMORY,
-            max_memory: DEFAULT_MAX_MEMORY,
+            heap_size,
+            stack_size,
+            initial_memory: whole_pages(metadata.initial_memory, DEFAULT_INITIAL_MEMORY, total),
+            max_memory: whole_pages(metadata.max_memory, DEFAULT_MAX_MEMORY, total),
         }
     }
 }
 
-impl MemoryConfig {
-    pub fn adjust(&mut self) {
-        let total = self.heap_size + self.stack_size;
-        if total > self.initial_memory {
-            self.initial_memory = total;
-        }
-        if total > self.max_memory {
-            self.max_memory = total;
-        }
-
-        self.initial_memory = ((self.initial_memory / PAGE_SIZE) + 1) * PAGE_SIZE;
-        self.max_memory = ((self.max_memory / PAGE_SIZE) + 1) * PAGE_SIZE;
+/// A linear memory bound in whole pages. A declared bound that covers heap and
+/// stack is rounded up and otherwise kept as declared. A bound the tool
+/// computes, because none was declared or the declared one is below heap and
+/// stack, gets the page past it, where the static data neither heap nor stack
+/// account for lives.
+fn whole_pages(declared: Option<usize>, default: usize, heap_and_stack: usize) -> usize {
+    match declared {
+        Some(bound) if bound >= heap_and_stack => bound.div_ceil(PAGE_SIZE) * PAGE_SIZE,
+        Some(_) => (heap_and_stack / PAGE_SIZE + 1) * PAGE_SIZE,
+        None => (default.max(heap_and_stack) / PAGE_SIZE + 1) * PAGE_SIZE,
     }
 }
 
@@ -161,15 +172,14 @@ pub(crate) fn compile_cell(
 ) -> anyhow::Result<Vec<PathBuf>> {
     ensure_c_linker()?;
 
-    let mut memory: MemoryConfig =
-        cargo::read_package_metadata(manifest_path)?.with_context(|| {
+    let memory: MemoryConfig = cargo::read_package_metadata::<MemoryMetadata>(manifest_path)?
+        .with_context(|| {
             format!(
                 "manifest is a workspace, not a cell: {}",
                 manifest_path.display()
             )
-        })?;
-
-    memory.adjust();
+        })?
+        .into();
 
     let selector = resolve_selector(manifest_path, cargo_target)?;
 
@@ -440,7 +450,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Cargo.toml");
         std::fs::write(&path, manifest).unwrap();
-        cargo::read_package_metadata(&path).unwrap().unwrap()
+        cargo::read_package_metadata::<MemoryMetadata>(&path)
+            .unwrap()
+            .unwrap()
+            .into()
+    }
+
+    /// Where an undeclared bound lands: the page past the one `size` ends in.
+    fn page_past(size: usize) -> usize {
+        (size / PAGE_SIZE + 1) * PAGE_SIZE
     }
 
     #[test]
@@ -451,8 +469,8 @@ mod tests {
         let memory = memory_config_from("[package]\nname = \"c\"\nversion = \"0.1.0\"\n");
         assert_eq!(memory.heap_size, DEFAULT_HEAP_SIZE);
         assert_eq!(memory.stack_size, DEFAULT_STACK_SIZE);
-        assert_eq!(memory.initial_memory, DEFAULT_INITIAL_MEMORY);
-        assert_eq!(memory.max_memory, DEFAULT_MAX_MEMORY);
+        assert_eq!(memory.initial_memory, page_past(DEFAULT_INITIAL_MEMORY));
+        assert_eq!(memory.max_memory, page_past(DEFAULT_MAX_MEMORY));
     }
 
     #[test]
@@ -463,7 +481,84 @@ mod tests {
         );
         assert_eq!(memory.heap_size, 2048);
         assert_eq!(memory.stack_size, DEFAULT_STACK_SIZE);
-        assert_eq!(memory.initial_memory, DEFAULT_INITIAL_MEMORY);
-        assert_eq!(memory.max_memory, DEFAULT_MAX_MEMORY);
+        assert_eq!(memory.initial_memory, page_past(DEFAULT_INITIAL_MEMORY));
+        assert_eq!(memory.max_memory, page_past(DEFAULT_MAX_MEMORY));
+    }
+
+    fn rustflags_from(myrmic_table: &str) -> String {
+        let memory = memory_config_from(&format!(
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\
+             [package.metadata.myrmic]\n{myrmic_table}"
+        ));
+        rustflags(&memory)
+    }
+
+    fn assert_linear_memory(flags: &str, initial: usize, max: usize) {
+        assert!(
+            flags.contains(&format!("-C link-arg=--initial-memory={initial} ")),
+            "{flags}"
+        );
+        assert!(
+            flags.contains(&format!("-C link-arg=--max-memory={max} ")),
+            "{flags}"
+        );
+    }
+
+    #[test]
+    fn declared_whole_pages_are_linked_as_declared() {
+        let flags = rustflags_from(&format!(
+            "initial_memory = {}\nmax_memory = {}\n",
+            2 * PAGE_SIZE,
+            3 * PAGE_SIZE
+        ));
+        assert_linear_memory(&flags, 2 * PAGE_SIZE, 3 * PAGE_SIZE);
+    }
+
+    #[test]
+    fn declared_partial_pages_round_up_to_whole_pages() {
+        let flags = rustflags_from(&format!(
+            "initial_memory = {}\nmax_memory = {}\n",
+            PAGE_SIZE + 1,
+            2 * PAGE_SIZE + 1
+        ));
+        assert_linear_memory(&flags, 2 * PAGE_SIZE, 3 * PAGE_SIZE);
+    }
+
+    #[test]
+    fn undeclared_bounds_get_the_page_past_the_defaults() {
+        // The defaults account for heap and stack only; the page beyond them
+        // is where the static data lives.
+        let flags = rustflags_from("");
+        assert!(
+            flags.contains(&format!("-C link-arg=-zstack-size={DEFAULT_STACK_SIZE} ")),
+            "{flags}"
+        );
+        assert_linear_memory(
+            &flags,
+            page_past(DEFAULT_INITIAL_MEMORY),
+            page_past(DEFAULT_MAX_MEMORY),
+        );
+    }
+
+    #[test]
+    fn a_declared_heap_leaves_undeclared_bounds_their_spare_page() {
+        // What `myrmic new` scaffolds: the heap declared, the bounds not.
+        let flags = rustflags_from(&format!("heap_size = {DEFAULT_HEAP_SIZE}\n"));
+        assert_linear_memory(
+            &flags,
+            page_past(DEFAULT_INITIAL_MEMORY),
+            page_past(DEFAULT_MAX_MEMORY),
+        );
+    }
+
+    #[test]
+    fn declared_bounds_below_heap_and_stack_are_raised_like_computed_ones() {
+        // A bound the tool had to raise is no longer the declared one, so it
+        // gets the spare page an undeclared bound gets.
+        let heap_size = 2 * PAGE_SIZE - DEFAULT_STACK_SIZE;
+        let flags = rustflags_from(&format!(
+            "heap_size = {heap_size}\ninitial_memory = {PAGE_SIZE}\nmax_memory = {PAGE_SIZE}\n"
+        ));
+        assert_linear_memory(&flags, page_past(2 * PAGE_SIZE), page_past(2 * PAGE_SIZE));
     }
 }

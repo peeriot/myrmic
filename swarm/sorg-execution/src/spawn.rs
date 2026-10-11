@@ -78,14 +78,15 @@ pub async fn spawn(
     ));
 
     // Linux execs have no stable device id today; the runtime id stands in.
-    let _renewal = crate::supervision::spawn_renewal(
+    let _renewal = crate::supervision::start_renewal(
         session.clone(),
         runtime_id,
         runtime_id.to_string(),
         sorg_common::supervision::SupervisionTiming::default(),
         name,
         tags,
-    );
+    )
+    .await;
 
     ready.notify_one();
     info!("exec plugin ready");

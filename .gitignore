@@ -6,7 +6,7 @@
 **/target
 **/?
 
-
+plan.md
 .devcontainer
 book
 artifacts

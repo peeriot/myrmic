@@ -1,6 +1,6 @@
 use crate::plugins::MyrmicCtx;
 use sorg_common::{ExecConfig, PLUGIN_NAME_EXEC};
-use tracing::{debug, error};
+use tracing::debug;
 
 pub struct SorgExecutionPlugin;
 
@@ -18,10 +18,9 @@ impl crate::plugins::MyrmicPlugin for SorgExecutionPlugin {
             ctx.drop_notifier(),
             ctx.ready(),
         );
-        match spawned.await {
-            Ok(()) => debug!("sorg execution terminated"),
-            Err(err) => error!("sorg execution terminated with an error: {err}"),
-        }
+        spawned.await?;
+        debug!("sorg execution terminated");
+
         Ok(())
     }
 }

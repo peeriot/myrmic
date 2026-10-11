@@ -18,6 +18,7 @@ cell-protocol = { workspace = true, default-features = true }
 claims = { workspace = true }
 db-client = { workspace = true, features = ["zenoh"] }
 futures = { workspace = true }
+hex = { workspace = true }
 introspection-client = { workspace = true }
 introspection-common = { workspace = true }
 myrmic-build = { workspace = true }

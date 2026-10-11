@@ -62,7 +62,11 @@ Applies to cell crate and cell workspace deployments. Ignored for app suite depl
 
 `--init PAYLOAD`
 
-Initialization arguments delivered to the cell's initialization handler on deploy. Encoded as JSON by default - a value that is not valid JSON is automatically wrapped as a JSON string. Only applies to single-cell (`.wasm` or crate) deploys - set `init` per instance in the app spec for application suites.
+Initialization arguments delivered to the cell's initialization handler on deploy. Encoded as JSON by default - a value that is not valid JSON is automatically wrapped as a JSON string. Pass `--raw` to deliver raw bytes instead. Only applies to single-cell (`.wasm` or crate) deploys - set `init` per instance in the app spec for application suites.
+
+`--raw`
+
+Decodes the `--init` payload as a hex string (an optional `0x` prefix is allowed) and delivers those raw bytes as-is, bypassing JSON encoding. Use this when the initialization handler expects a non-JSON wire format. Requires `--init`.
 
 `--init-file PATH`
 
@@ -132,19 +136,25 @@ myrmic deploy ./my-bridge.yml
 myrmic deploy ./my-cell --init '{"greeting":"hello"}'
 ```
 
-8. Deploy a cell with init arguments from a file:
+8. Deploy a cell with raw (non-JSON) init arguments:
+
+```bash
+myrmic deploy ./my-cell --init 0xdeadbeef --raw
+```
+
+9. Deploy a cell with init arguments from a file:
 
 ```bash
 myrmic deploy ./my-cell --init-file ./init
 ```
 
-9. Deploy a cell built for an embedded platform:
+10. Deploy a cell built for an embedded platform:
 
 ```bash
 myrmic deploy ./my-cell --platform riscv32imac --tag esp32c6
 ```
 
-10. Deploy a cell that is restarted after a crash:
+11. Deploy a cell that is restarted after a crash:
 
 ```bash
 myrmic deploy ./my-cell --policy on-error

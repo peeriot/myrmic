@@ -1,8 +1,10 @@
 use cell_protocol::node_tags::LiveTags;
+use futures_util::future::select_all;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 
 use swarm_api::{DropNotifier, Ready};
 
@@ -123,5 +125,102 @@ where
         Some(s) => humantime::parse_duration(&s)
             .map(Some)
             .map_err(serde::de::Error::custom),
+    }
+}
+
+/// Waits for the first of `tasks` to end and says how it ended. Never resolves
+/// for an empty list. Cancel-safe, but must not be polled again once it
+/// resolved: the finished handle would be polled twice.
+pub(crate) async fn first_ended<N>(tasks: &mut [(N, JoinHandle<zenoh::Result<()>>)]) -> String
+where
+    N: Display,
+{
+    if tasks.is_empty() {
+        return std::future::pending().await;
+    }
+    let (result, index, _) = select_all(tasks.iter_mut().map(|(_, task)| task)).await;
+    let name = &tasks[index].0;
+
+    match result {
+        Ok(Ok(())) => format!("{name} stopped"),
+        Ok(Err(err)) => format!("{name} failed: {err}"),
+        Err(err) => format!("{name} failed: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::task::JoinHandle;
+
+    use super::first_ended;
+
+    #[tokio::test]
+    async fn ok_end_is_stopped() {
+        let mut tasks = [("x", pending_task()), ("y", task(async { Ok(()) }))];
+        assert_eq!(first_ended(&mut tasks).await, "y stopped");
+    }
+
+    #[tokio::test]
+    async fn err_end_is_failed() {
+        let mut tasks = [("x", task(async { Err("boom".into()) }))];
+        assert_eq!(first_ended(&mut tasks).await, "x failed: boom");
+    }
+
+    #[tokio::test]
+    async fn panic_end_is_failed() {
+        let mut tasks = [("x", task(async { panic!("boom") }))];
+        let message = first_ended(&mut tasks).await;
+        assert!(message.contains("x failed"), "{message}");
+        assert!(message.contains("boom"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn running_tasks_stay_pending() {
+        let mut tasks = [("x", pending_task())];
+        assert!(stays_pending(&mut tasks).await);
+    }
+
+    #[tokio::test]
+    async fn no_tasks_stay_pending() {
+        let mut tasks: [(&str, JoinHandle<zenoh::Result<()>>); 0] = [];
+        assert!(stays_pending(&mut tasks).await);
+    }
+
+    #[tokio::test]
+    async fn dropped_wait_keeps_watching() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let mut tasks = [(
+            "x",
+            task(async move {
+                let _ = rx.await;
+                Err("boom".into())
+            }),
+        )];
+
+        assert!(stays_pending(&mut tasks).await);
+        tx.send(()).expect("task still waiting");
+        assert_eq!(first_ended(&mut tasks).await, "x failed: boom");
+    }
+
+    fn task<F>(fut: F) -> JoinHandle<zenoh::Result<()>>
+    where
+        F: Future<Output = zenoh::Result<()>> + Send + 'static,
+    {
+        tokio::spawn(fut)
+    }
+
+    fn pending_task() -> JoinHandle<zenoh::Result<()>> {
+        task(async {
+            std::future::pending::<()>().await;
+            Ok(())
+        })
+    }
+
+    async fn stays_pending(tasks: &mut [(&str, JoinHandle<zenoh::Result<()>>)]) -> bool {
+        tokio::time::timeout(Duration::from_millis(100), first_ended(tasks))
+            .await
+            .is_err()
     }
 }

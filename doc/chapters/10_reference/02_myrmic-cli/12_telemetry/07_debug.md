@@ -11,7 +11,7 @@ myrmic telemetry debug [OPTIONS]
 ## Description
 Connects to the swarm and streams live debug information about commands, events, and log records from the swarm cells.
 
-Records are printed as they arrive, sorted by timestamp.
+Records are printed as they arrive, sorted by timestamp. A command or event waits for the log records around it so it can be sorted between them, for at most a second; then it is printed anyway.
 
 Use it during development to get live visibility into what is happening inside the swarm.
 

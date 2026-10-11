@@ -14,6 +14,11 @@ mod mailbox;
 mod messages;
 mod stream;
 
+/// How long a queued command or event waits at most for a log row to place it against. Without
+/// one (no db retention, nothing logs any more, or only non-cell targets log) it would stay queued
+/// for good.
+const IDLE_FLUSH: std::time::Duration = std::time::Duration::from_secs(1);
+
 #[derive(clap::Parser)]
 pub struct Debug {
     #[clap(long)]
@@ -233,6 +238,12 @@ async fn debug_writer(
     let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(5));
     ping_interval.tick().await;
 
+    // started by the item that finds the queue empty, so the oldest queued item waits at most
+    // `IDLE_FLUSH`; restarting it on later items or log notifications would let a steady trickle
+    // of them hold the queue back forever
+    let idle_flush = tokio::time::sleep(IDLE_FLUSH);
+    tokio::pin!(idle_flush);
+
     loop {
         tokio::select! {
             _ = ping_interval.tick() => {
@@ -243,9 +254,17 @@ async fn debug_writer(
             item = rx_dbg.recv() => {
                 match item {
                     Some(item) => {
+                        if stream.is_empty() {
+                            idle_flush.as_mut().reset(tokio::time::Instant::now() + IDLE_FLUSH);
+                        }
                         stream.push(item);
                     }
                     None => break,
+                }
+            }
+            () = &mut idle_flush, if !stream.is_empty() => {
+                for item in stream.drain_all(sri_filter) {
+                    print_item(&mut out, &item, json)?;
                 }
             }
             // once a new log batch was inserted we are collecting relevant logs for each debug

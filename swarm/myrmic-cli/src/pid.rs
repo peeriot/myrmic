@@ -182,7 +182,7 @@ pub fn default_pid_dir(pid_group: &str) -> PathBuf {
 }
 
 /// Returns `true` if a process with `pid` exists.
-fn process_is_alive(pid: libc::pid_t) -> bool {
+pub(crate) fn process_is_alive(pid: libc::pid_t) -> bool {
     // `kill(pid, 0)` performs the permission check, doesn't actually kill anything... linux amirite
     // SAFETY: signal 0 delivers nothing; we only read the return value.
     if unsafe { libc::kill(pid, 0) } == 0 {

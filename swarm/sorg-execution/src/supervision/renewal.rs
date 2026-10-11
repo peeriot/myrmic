@@ -28,10 +28,11 @@ pub(crate) fn mint_seq() -> u64 {
     .unwrap_or(u64::MAX)
 }
 
-/// Renews this node's liveness lease forever. Failures are logged and retried
-/// next tick — the lease going stale on persistent failure IS the designed
-/// signal, not an error path to handle.
-pub(crate) fn spawn_renewal(
+/// Renews this node's liveness lease forever: the first renewal before it returns, so a node that
+/// reports ready afterwards can be placed on (placement drops an exec without a lease row), the
+/// rest on the returned task. Failures are logged and retried next tick — the lease going stale
+/// on persistent failure IS the designed signal, not an error path to handle.
+pub(crate) async fn start_renewal(
     session: Session,
     id: RuntimeId,
     device_id: String,
@@ -39,21 +40,16 @@ pub(crate) fn spawn_renewal(
     name: Option<String>,
     tags: LiveTags,
 ) -> tokio::task::JoinHandle<()> {
+    let retention = timing.lease_retention();
+    let ttl_ms = u64::try_from(timing.ttl.as_millis()).unwrap_or(u64::MAX);
+    let mut tick: u64 = 1;
+    renew(&session, id, &device_id, ttl_ms, retention).await;
+
     tokio::spawn(async move {
-        let retention = timing.lease_retention();
-        let ttl_ms = u64::try_from(timing.ttl.as_millis()).unwrap_or(u64::MAX);
-        let mut tick: u64 = 0;
         loop {
+            tokio::time::sleep(next_renewal_delay(&timing, tick)).await;
             tick += 1;
-            let seq = mint_seq();
-            let lease = NodeLease {
-                device_id: device_id.clone(),
-                seq,
-                ttl_ms,
-            };
-            if let Err(err) = node_lease::renew_lease(&session, id, &lease, retention).await {
-                warn!("lease renewal {seq} failed: {err}");
-            }
+            renew(&session, id, &device_id, ttl_ms, retention).await;
 
             // The registry row should live as long as this exec, but a stale
             // leave-deregistration racing a restart (or hygiene during a lease
@@ -69,10 +65,27 @@ pub(crate) fn spawn_renewal(
                     Err(err) => warn!("exec registry heal failed: {err}"),
                 }
             }
-
-            tokio::time::sleep(next_renewal_delay(&timing, tick)).await;
         }
     })
+}
+
+/// One renewal of this node's lease, stamped now.
+async fn renew(
+    session: &Session,
+    id: RuntimeId,
+    device_id: &str,
+    ttl_ms: u64,
+    retention: Duration,
+) {
+    let seq = mint_seq();
+    let lease = NodeLease {
+        device_id: device_id.to_owned(),
+        seq,
+        ttl_ms,
+    };
+    if let Err(err) = node_lease::renew_lease(session, id, &lease, retention).await {
+        warn!("lease renewal {seq} failed: {err}");
+    }
 }
 
 #[cfg(test)]

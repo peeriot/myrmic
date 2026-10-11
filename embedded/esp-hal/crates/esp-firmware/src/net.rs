@@ -25,6 +25,7 @@ use wasm_runtime::async_request::{DbClientRequest, DbClientResponse};
 use wasm_runtime::{from_thread_arg, into_thread_arg};
 
 pub use esp_common::esp_network::CONNECTED;
+use esp_common::esp_network::WifiBuffers;
 use esp_common::esp_watchdog::liveness::{Task, bump};
 
 use crate::{Config, WifiCredentials};
@@ -33,6 +34,7 @@ use crate::{Config, WifiCredentials};
 struct ServiceArgs {
     wifi: WIFI<'static>,
     credentials: WifiCredentials,
+    wifi_buffers: WifiBuffers,
     zenoh: ZenohArgs,
 }
 
@@ -51,6 +53,7 @@ pub fn start_thread(wifi: WIFI<'static>, credentials: WifiCredentials, config: &
     let args = ServiceArgs {
         wifi,
         credentials,
+        wifi_buffers: config.wifi_buffers,
         zenoh: ZenohArgs {
             wasm_transfer: crate::WASM_TRANSFER.sender(),
             db_requests: crate::DB_REQUESTS.receiver(),
@@ -99,10 +102,12 @@ fn start_service(spawner: Spawner, args: ServiceArgs) {
     let ServiceArgs {
         wifi,
         credentials,
+        wifi_buffers,
         zenoh,
     } = args;
 
-    let (controller, stack, runner) = esp_common::esp_network::init_stack(wifi, &credentials);
+    let (controller, stack, runner) =
+        esp_common::esp_network::init_stack(wifi, &credentials, wifi_buffers);
 
     spawner.spawn(connection(controller, credentials).unwrap());
     spawner.spawn(net_task(runner).unwrap());

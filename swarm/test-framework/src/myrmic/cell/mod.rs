@@ -127,9 +127,9 @@ where
         &self.output
     }
 
-    /// run: myrmic send `sri` `command` (see [`Myrmic::send`])
-    pub async fn send(&self, command: &str) -> Result<(), Error> {
-        self.myrmic.send(&self.sri, command).await
+    /// run: myrmic send `sri` `command` [`payload` --raw] (see [`Myrmic::send`])
+    pub async fn send(&self, command: &str, payload: Option<&[u8]>) -> Result<(), Error> {
+        self.myrmic.send(&self.sri, command, payload).await
     }
 
     /// run: myrmic delete --cell `sri`; returns once the SRI is no longer in `myrmic cells status`

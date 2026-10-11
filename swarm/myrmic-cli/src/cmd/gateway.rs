@@ -54,12 +54,16 @@ pub async fn handle(ctx: Ctx, cmd: Gateway) -> anyhow::Result<()> {
     });
     config.telemetry.logs.env_filter = utils::build_filter(&ctx);
 
-    let spawned = Swarm::new(config).wait_in_place().await?;
+    let mut spawned = Swarm::new(config).wait_in_place().await?;
 
-    shutdown_signal().await;
+    let result = tokio::select! {
+        () = shutdown_signal() => Ok(()),
+        err = spawned.plugin_failure() => Err(err),
+    };
 
     spawned.kill_async().await;
-    Ok(())
+
+    result
 }
 
 /// Resolves when the process receives SIGTERM or Ctrl+C.

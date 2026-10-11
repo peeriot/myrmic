@@ -1,14 +1,12 @@
-use futures_util::future::select;
 use rumqttd::Notification;
 use rumqttd::local::{LinkRx, LinkTx};
 use rumqttd::protocol::{Filter, Packet, Publish, QoS, RetainForwardRule, Subscribe};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::pin::pin;
 use std::time::Duration;
 use swarm_api::DropNotifier;
 use tokio::runtime::Handle;
 
-use crate::plugins::MyrmicCtx;
+use crate::plugins::{MyrmicCtx, first_ended};
 use config::Config;
 use zenoh::sample::Locality;
 use zenoh::{Result as ZResult, Session};
@@ -47,32 +45,36 @@ impl crate::plugins::MyrmicPlugin for Plugin {
         if v5.is_empty() {
             v5.push(default_v5());
         }
+        let mut tasks = Vec::new();
         for settings in v4 {
-            handle.spawn(spawn_server(
+            let name = format!("listener {}", settings.name);
+            let server = spawn_server(
                 settings,
                 router_tx.clone(),
                 rumqttd::LinkType::Remote,
                 rumqttd::protocol::v4::V4,
-                drop_rx.clone(),
-            ));
+            );
+            tasks.push((name, handle.spawn(server)));
         }
         for settings in v5 {
-            handle.spawn(spawn_server(
+            let name = format!("listener {}", settings.name);
+            let server = spawn_server(
                 settings,
                 router_tx.clone(),
                 rumqttd::LinkType::Remote,
                 rumqttd::protocol::v5::V5,
-                drop_rx.clone(),
-            ));
+            );
+            tasks.push((name, handle.spawn(server)));
         }
         for settings in ws {
-            handle.spawn(spawn_server(
+            let name = format!("listener {}", settings.name);
+            let server = spawn_server(
                 settings,
                 router_tx.clone(),
                 rumqttd::LinkType::Websocket,
                 rumqttd::protocol::v4::V4,
-                drop_rx.clone(),
-            ));
+            );
+            tasks.push((name, handle.spawn(server)));
         }
 
         let client_id = format!("zenoh-bridge-{}", session.zid());
@@ -81,7 +83,15 @@ impl crate::plugins::MyrmicPlugin for Plugin {
                 .dynamic_filters(true)
                 .build()
                 .expect("Unable to setup router link");
-        handle.spawn(forward(session.clone(), link_rx));
+        let forwarder = forward(session.clone(), link_rx);
+        tasks.push((
+            "forward".to_owned(),
+            handle.spawn(async move {
+                forwarder.await;
+
+                ZResult::Ok(())
+            }),
+        ));
 
         let filters = subscribe_topics(&session, &allow, &handle, &drop_rx, &mut link_tx).await;
         let subscribe = Subscribe { pkid: 0, filters };
@@ -93,7 +103,16 @@ impl crate::plugins::MyrmicPlugin for Plugin {
 
         ctx.notify_ready();
 
-        Ok(())
+        let result: ZResult<()> = tokio::select! {
+            biased;
+            _ = drop_rx.recv_async() => Ok(()),
+            stopped = first_ended(&mut tasks) => Err(stopped.into()),
+        };
+        for (_, task) in &tasks {
+            task.abort();
+        }
+
+        result
     }
 }
 
@@ -242,23 +261,13 @@ async fn spawn_server<P: rumqttd::protocol::Protocol + Clone + Send + 'static>(
     router_tx: rumqttd::RouterTx,
     link_type: rumqttd::LinkType,
     protocol: P,
-    drop_rx: DropNotifier,
-) {
-    let mut server = rumqttd::Server::new(settings, router_tx.clone(), protocol);
+) -> ZResult<()> {
+    let mut server = rumqttd::Server::new(settings, router_tx, protocol);
 
-    let fut = server.start(link_type);
-
-    let fut = pin!(fut);
-    let drop_rx = pin!(drop_rx.into_recv_async());
-
-    match select(fut, drop_rx).await {
-        futures_util::future::Either::Left(_) => {
-            tracing::info!("mqtt server shutting down");
-        }
-        futures_util::future::Either::Right(_) => {
-            tracing::info!("kill signal received");
-        }
-    }
+    server
+        .start(link_type)
+        .await
+        .map_err(|err| err.to_string().into())
 }
 
 fn default_router() -> rumqttd::RouterConfig {

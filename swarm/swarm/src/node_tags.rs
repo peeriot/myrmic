@@ -188,7 +188,6 @@ mod tests {
     use cell_protocol::RuntimeId;
 
     use super::*;
-    use crate::plugins::MyrmicPlugin as _;
 
     /// How long a test waits on the watcher. Generous: the first routed
     /// transaction has to wait for the db plugin to declare itself the holder
@@ -212,18 +211,17 @@ mod tests {
         let session = zenoh::open(config).await.expect("unable to open session");
         let (drop_tx, drop_rx) = flume::bounded(1);
 
+        let ready = swarm_api::Ready::default();
         let ctx = crate::plugins::MyrmicCtx::new(
             session.clone(),
             tokio::runtime::Handle::current(),
             Default::default(),
             LiveTags::default(),
             drop_rx,
-            swarm_api::Ready::default(),
+            ready.clone(),
         );
 
-        crate::plugins::db::Plugin::main(ctx, Default::default())
-            .await
-            .expect("unable to start db plugin");
+        crate::plugins::db::Plugin::run_until_ready(ctx, ready, Default::default()).await;
 
         (session, drop_tx)
     }

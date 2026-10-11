@@ -6,17 +6,35 @@ use myrmic_common::cells::LostReason;
 use serde::{Deserialize, Serialize};
 
 /// When a root should be restarted after it dies.
+///
+/// Serde and clap use the names [`Self::spelling`] gives, plus `onerror` for `OnError`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[serde(rename_all = "kebab-case")]
 pub enum RestartType {
     /// Never restart (current behavior); the root's death is terminal.
     #[default]
     Never,
     /// Restart only on an abnormal exit (crash, spawn failure, node loss, or a
     /// non-zero stop code). A clean `stop_self(0)` is terminal.
+    #[serde(alias = "onerror")]
+    #[cfg_attr(feature = "clap", value(alias = "onerror"))]
     OnError,
     /// Restart on any exit, including a clean self-stop. Only an operator
     /// terminate / cascade (`Terminated`) is terminal.
     Always,
+}
+
+impl RestartType {
+    /// The name this type is spelled with where people write it: `myrmic deploy --policy` and an
+    /// app spec's `restart:`.
+    pub fn spelling(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::OnError => "on-error",
+            Self::Always => "always",
+        }
+    }
 }
 
 /// A root's full restart policy: the trigger type plus the crash-loop bounds.
@@ -43,6 +61,14 @@ impl Default for RestartPolicy {
 }
 
 impl RestartPolicy {
+    /// `restart_type` with the default crash-loop bounds.
+    pub fn with_default_bounds(restart_type: RestartType) -> Self {
+        Self {
+            restart_type,
+            ..Self::default()
+        }
+    }
+
     /// A policy that actually restarts (anything other than `Never`).
     pub fn is_enabled(&self) -> bool {
         self.restart_type != RestartType::Never
@@ -72,6 +98,27 @@ fn is_abnormal(reason: &LostReason) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one place a trigger is spelled: `--policy`, an app spec's `restart:`, the CLI's
+    /// override warning and `cells` column, and the test-framework all read it from here.
+    #[test]
+    fn spelling_covers_every_trigger() {
+        assert_eq!(RestartType::Never.spelling(), "never");
+        assert_eq!(RestartType::OnError.spelling(), "on-error");
+        assert_eq!(RestartType::Always.spelling(), "always");
+    }
+
+    /// `--policy` sets the trigger only; the crash-loop bounds stay at defaults.
+    #[test]
+    fn with_default_bounds_keeps_default_bounds() {
+        assert_eq!(
+            RestartPolicy::with_default_bounds(RestartType::Always),
+            RestartPolicy {
+                restart_type: RestartType::Always,
+                ..RestartPolicy::default()
+            }
+        );
+    }
 
     #[test]
     fn default_policy_is_never_with_bounded_defaults() {

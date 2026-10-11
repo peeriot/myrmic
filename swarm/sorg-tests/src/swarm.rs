@@ -54,14 +54,21 @@ pub async fn test_session() -> zenoh::Session {
         .expect("failed to open test zenoh session")
 }
 
+/// Loads the swarm config file and scopes it to this test process's multicast
+/// group, without starting it.
+pub fn swarm_with_config(config_file: impl AsRef<std::path::Path>) -> swarm::Swarm {
+    let mut config = swarm::Swarm::from_path(config_file)
+        .expect("Unable to configure swarm")
+        .into_config();
+    scope_test_multicast(&mut config.zenoh);
+    swarm::Swarm::new(config)
+}
+
 /// Sets up a swarm config defined by the provided config file (in the ``tests/data`` dir)
 /// returns a handle to the process so that it is killed when we leave the scope
 /// of the test
 pub async fn set_up_swarm_with_config(config_file: impl AsRef<std::path::Path>) -> ScopedProcess {
-    let swarm = swarm::Swarm::from_path(config_file).expect("Unable to configure swarm");
-    let mut config = swarm.into_config();
-    scope_test_multicast(&mut config.zenoh);
-    swarm::Swarm::new(config)
+    swarm_with_config(config_file)
         .wait_in_place()
         .await
         .expect("Unable to spawn swarm")

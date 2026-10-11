@@ -1,6 +1,6 @@
 use crate::plugins::MyrmicCtx;
 use sorg_common::PLUGIN_NAME_ORCH;
-use tracing::{debug, error};
+use tracing::debug;
 
 mod config;
 
@@ -21,10 +21,9 @@ impl crate::plugins::MyrmicPlugin for SorgOrchestrationPlugin {
             ctx.drop_notifier(),
             ctx.ready(),
         );
-        match spawned.await {
-            Ok(()) => debug!("sorg orchestration terminated"),
-            Err(err) => error!("sorg orchestration terminated with an error: {err}"),
-        }
+        spawned.await?;
+        debug!("sorg orchestration terminated");
+
         Ok(())
     }
 }

@@ -13,6 +13,12 @@ myrmic runtimes start [OPTIONS] [PATH]
 ## Description
 Start a Myrmic runtime. Runs in the foreground by default.
 
+Once the runtime can run cells, it logs a readiness line:
+
+```text
+INFO  runtime "<NAME>" ready (<id>)
+```
+
 `PATH` is an optional YAML configuration file for the runtime. If not provided, the runtime starts with the built-in default configuration.
 
 See [Runtime Configuration](../../01_configuration/01_runtime-configuration.md) for all options available in the configuration file.
@@ -28,7 +34,7 @@ Adds a capability tag to this runtime instance. Can be specified multiple times 
 
 `--detached` / `-d`
 
-Start the runtime as a background daemon.
+Start the runtime as a background daemon. The command returns once the runtime is ready, so a deploy right after it can place cells on it. If the runtime exits before it is ready, the command fails and names the directory with its logs.
 
 `--pid-path PATH`
 
