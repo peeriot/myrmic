@@ -1,0 +1,18 @@
+name: boiler
+host: plc.local
+poll:
+  - id: boiler_temperature
+    register: input
+    address: 100
+    value: "${f32:celsius}"
+    interval: 1s
+write:
+  - id: pump_on
+    register: coil
+    address: 5
+    value: "${bool:on}"
+read:
+  - id: read_setpoint
+    register: holding
+    address: 1
+    value: "${i16:setpoint}"

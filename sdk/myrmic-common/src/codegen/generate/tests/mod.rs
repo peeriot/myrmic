@@ -1,5 +1,5 @@
 use super::*;
-use crate::codegen::bridge_api::{UserHttpBridgeApi, UserMqttBridge};
+use crate::codegen::bridge_api::{UserHttpBridgeApi, UserModbusBridge, UserMqttBridge};
 
 /// Pretty-prints a generated token stream, asserting it is syntactically valid
 /// Rust in the process.
@@ -54,51 +54,9 @@ fn assert_self_contained(out: &str) {
     );
 }
 
-const HTTP_SPEC: &str = r#"
-name: http
-base_url: http://localhost:10000
-types:
-  definitions:
-    SendMessageRequest:
-      type: object
-      required: [message]
-      properties:
-        message:
-          type: string
-    TestResponse:
-      type: object
-      required: [body]
-      properties:
-        body:
-          type: string
-endpoints:
-  - id: send_message
-    request:
-      method: POST
-      path: /messages
-      body: "${json:SendMessageRequest}"
-    response:
-      200: "${json:TestResponse}"
-  - id: test
-    request:
-      method: GET
-      path: /test
-    response:
-      200: "${json:TestResponse}"
-"#;
+const HTTP_SPEC: &str = include_str!("./http.yml");
 
-const MQTT_SPEC: &str = r#"
-name: mqtt
-broker_url: mqtt://localhost:11000
-ingress:
-  - id: receive_request
-    topic: e2e/test/ingress
-    payload: "${json:data}"
-egress:
-  - id: publish_response
-    topic: "${db:e2e/test/data@topic}"
-    payload: "${json:data}"
-"#;
+const MQTT_SPEC: &str = include_str!("./mqtt.yml");
 
 #[test]
 fn http_bridge_generates_typify_types_and_a_method_per_endpoint() {
@@ -221,45 +179,7 @@ fn mqtt_bridge_generates_client_events_and_command_methods() {
     assert_self_contained(&out);
 }
 
-const TYPED_HTTP_SPEC: &str = r##"
-name: weather
-base_url: "https://api.example.com"
-types:
-  definitions:
-    Coordinates:
-      type: object
-      required: [lat, lon]
-      properties:
-        lat: { type: number, format: double }
-        lon: { type: number, format: double }
-    ForecastRequest:
-      type: object
-      required: [where, units]
-      properties:
-        where:
-          $ref: "#/definitions/Coordinates"
-        units:
-          type: string
-          enum: [metric, imperial]
-    ForecastResponse:
-      type: object
-      required: [station_id, observed_at, summary, temp_c]
-      properties:
-        station_id: { type: string, format: uuid }
-        observed_at: { type: string, format: date-time }
-        summary: { type: string }
-        temp_c: { type: number, format: double }
-        humidity: { type: integer, format: uint32 }
-endpoints:
-  - id: get_forecast
-    request:
-      method: POST
-      path: "/v1/forecast"
-      body: "${json:ForecastRequest}"
-      timeout_ms: 5000
-    response:
-      200: "${json:ForecastResponse}"
-"##;
+const TYPED_HTTP_SPEC: &str = include_str!("./http_typed.yml");
 
 #[test]
 fn richer_schema_bridge_spec_generates() {
@@ -372,19 +292,7 @@ endpoints:
     assert!(out.contains("Unknown(u16)"), "{out}");
 }
 
-const HTTP_PARAMS_SPEC: &str = r#"
-name: spacetraders
-base_url: https://api.spacetraders.io
-endpoints:
-  - id: negotiate_contract
-    request:
-      method: POST
-      path: "/my/ships/${string:ship}/negotiate/contract"
-      headers:
-        authorization: "Bearer ${db:keys/secrets/spacetraders@token}"
-    response:
-      200: "${json:body}"
-"#;
+const HTTP_PARAMS_SPEC: &str = include_str!("./http_params.yml");
 
 #[test]
 fn http_endpoint_with_path_param_generates_positional_arg_and_typed_callback() {
@@ -408,5 +316,53 @@ fn http_endpoint_with_path_param_generates_positional_arg_and_typed_callback() {
         "{out}"
     );
 
+    assert_self_contained(&out);
+}
+
+const MODBUS_SPEC: &str = include_str!("./modbus.yml");
+
+#[test]
+fn modbus_bridge_generates_poll_events_and_write_methods() {
+    let api: UserModbusBridge = serde_yaml::from_str(MODBUS_SPEC).expect("parse modbus spec");
+    let out = render(modbus_bridge(&root(), api).expect("generate modbus bridge"));
+
+    assert!(out.contains("pub struct BoilerClient"), "{out}");
+    // Poll -> event payload type, keyed by the value's field name.
+    assert!(out.contains("pub struct BoilerTemperature"), "{out}");
+    assert!(out.contains("pub celsius: f32"), "{out}");
+    assert!(
+        out.contains("impl ::myrmic_sdk::CellEvent for BoilerTemperature"),
+        "{out}"
+    );
+    // Write -> fire-and-forget method carrying the value to write.
+    assert!(out.contains("pub struct PumpOn"), "{out}");
+    assert!(out.contains("pub on: bool"), "{out}");
+    assert!(
+        out.contains("pub fn pump_on(&self, value: PumpOn)"),
+        "{out}"
+    );
+    assert_self_contained(&out);
+}
+
+#[test]
+fn modbus_bridge_generates_read_methods_with_a_callback() {
+    let api: UserModbusBridge = serde_yaml::from_str(MODBUS_SPEC).expect("parse modbus spec");
+    let out = render(modbus_bridge(&root(), api).expect("generate modbus bridge"));
+
+    // The value under its field name, as the bridge replies it inside `Ok`.
+    assert!(out.contains("pub struct ReadSetpointValue"), "{out}");
+    assert!(out.contains("pub setpoint: i16"), "{out}");
+    // The reply mirrors the bridge's `{"Ok": ..} | {"Exception": ..} | {"Failed": ..}`.
+    assert!(out.contains("pub enum ReadSetpointReply"), "{out}");
+    assert!(out.contains("Ok(ReadSetpointValue)"), "{out}");
+    assert!(out.contains("Exception(u8)"), "{out}");
+    assert!(out.contains("Failed(::myrmic_sdk::String)"), "{out}");
+    // A read takes no arguments, only the callback it is answered through.
+    assert!(out.contains("struct __ReadSetpointPayload"), "{out}");
+    assert!(out.contains("pub fn read_setpoint("), "{out}");
+    assert!(
+        out.contains("cb: ::myrmic_sdk::Callback<ReadSetpointReply>"),
+        "{out}"
+    );
     assert_self_contained(&out);
 }

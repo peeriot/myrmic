@@ -187,6 +187,70 @@ impl core::str::FromStr for BodyTemplate {
     }
 }
 
+/// The `value` of a Modbus bridge entry: the cell field a register (or coil) value
+/// maps to, and the type it is read or written as.
+///
+/// Unlike [`BodyTemplate`], the kind here is not a wire encoding but a Modbus data
+/// type: `bool` is one coil, `u16`/`i16` one 16-bit register, and `u32`/`i32`/`f32`
+/// two consecutive registers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ModbusValueTemplate {
+    Bool(String),
+    U16(String),
+    I16(String),
+    U32(String),
+    I32(String),
+    F32(String),
+}
+
+impl ModbusValueTemplate {
+    /// The cell field this value maps to.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Bool(n)
+            | Self::U16(n)
+            | Self::I16(n)
+            | Self::U32(n)
+            | Self::I32(n)
+            | Self::F32(n) => n,
+        }
+    }
+}
+
+impl Seg for ModbusValueTemplate {
+    fn split(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Self::Bool(n) => Some(("bool", n)),
+            Self::U16(n) => Some(("u16", n)),
+            Self::I16(n) => Some(("i16", n)),
+            Self::U32(n) => Some(("u32", n)),
+            Self::I32(n) => Some(("i32", n)),
+            Self::F32(n) => Some(("f32", n)),
+        }
+    }
+}
+
+impl core::str::FromStr for ModbusValueTemplate {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = strip_single(s)?;
+        let (kind, value) = s
+            .split_once(':')
+            .ok_or_else(|| format!("missing `:` in `{s}`"))?;
+
+        Ok(match kind {
+            "bool" => Self::Bool(value.to_string()),
+            "u16" => Self::U16(value.to_string()),
+            "i16" => Self::I16(value.to_string()),
+            "u32" => Self::U32(value.to_string()),
+            "i32" => Self::I32(value.to_string()),
+            "f32" => Self::F32(value.to_string()),
+            other => return Err(format!("unknown modbus value kind `{other}`")),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TemplateSegment {
     Raw(String),
@@ -308,5 +372,55 @@ impl<T: core::str::FromStr> core::str::FromStr for ParseInto<T> {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(T::from_str(s)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modbus_value_parses_every_kind() {
+        let cases = [
+            ("${bool:on}", ModbusValueTemplate::Bool("on".into())),
+            ("${u16:raw}", ModbusValueTemplate::U16("raw".into())),
+            (
+                "${i16:setpoint}",
+                ModbusValueTemplate::I16("setpoint".into()),
+            ),
+            ("${u32:counter}", ModbusValueTemplate::U32("counter".into())),
+            ("${i32:offset}", ModbusValueTemplate::I32("offset".into())),
+            ("${f32:celsius}", ModbusValueTemplate::F32("celsius".into())),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                input.parse::<ModbusValueTemplate>(),
+                Ok(expected),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn modbus_value_exposes_its_field_name() {
+        let value: ModbusValueTemplate = "${f32:celsius}".parse().unwrap();
+        assert_eq!(value.name(), "celsius");
+    }
+
+    #[test]
+    fn modbus_value_rejects_kinds_without_a_modbus_mapping() {
+        // `string`/`json`/`bytes` have no fixed register layout, and 64-bit values
+        // are not supported (yet).
+        for input in ["${string:s}", "${json:j}", "${bytes:b}", "${u64:big}"] {
+            let err = input.parse::<ModbusValueTemplate>().unwrap_err();
+            assert!(err.contains("unknown modbus value kind"), "{input}: {err}");
+        }
+    }
+
+    #[test]
+    fn modbus_value_must_be_a_single_placeholder() {
+        assert!("celsius".parse::<ModbusValueTemplate>().is_err());
+        assert!("${f32:a}${f32:b}".parse::<ModbusValueTemplate>().is_err());
     }
 }
