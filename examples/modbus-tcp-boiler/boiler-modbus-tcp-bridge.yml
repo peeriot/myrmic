@@ -1,0 +1,32 @@
+name: boiler
+host: 127.0.0.1
+port: 5020
+
+poll:
+  - id: boiler_temperature
+    register: input
+    address: 0x0100
+    value: "${f32:celsius}"
+    interval: 1s
+  - id: burner
+    register: coil
+    address: 0x0005
+    value: "${bool:on}"
+    interval: 1s
+    on_change: true
+
+read:
+  - id: read_setpoint
+    register: holding
+    address: 0x0200
+    value: "${i16:setpoint}"
+
+write:
+  - id: burner_on
+    register: coil
+    address: 0x0005
+    value: "${bool:on}"
+  - id: set_setpoint
+    register: holding
+    address: 0x0200
+    value: "${i16:setpoint}"

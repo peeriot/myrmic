@@ -156,6 +156,28 @@ pub async fn deploy_mqtt_bridge(
     .await
 }
 
+/// Deploys a Modbus bridge cell.
+pub async fn deploy_modbus_bridge(
+    session: &Session,
+    cell_sri: Sri,
+    bridge: crate::ModbusBridge,
+    tags: RequirementTags,
+    timeout: Duration,
+) -> std::result::Result<(), DeploymentError> {
+    let app = Some(bridge.cell_name.clone());
+    deploy_cell(
+        session,
+        cell_sri,
+        crate::CellConfig::ModbusBridge(bridge),
+        tags,
+        timeout,
+        SpawnLineage::default(),
+        None,
+        app,
+    )
+    .await
+}
+
 /// Deploys an HTTP bridge cell.
 pub async fn deploy_http_bridge(
     session: &Session,

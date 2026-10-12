@@ -1,0 +1,7 @@
+name: boiler
+host: plc.local
+write:
+  - id: pump_on
+    register: holding
+    address: 5
+    value: "${bool:on}"
