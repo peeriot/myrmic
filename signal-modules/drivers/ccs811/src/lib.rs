@@ -25,7 +25,7 @@
 //! driver enables hardware interrupt mode and waits for the line to assert
 //! before checking STATUS; otherwise it polls the STATUS register until
 //! `DATA_READY` is set. Both paths check the algorithm error bit before
-//! returning a reading.
+//! returning a reading and report the sensor's `ERROR_ID` when it is set.
 //!
 //! # Timing
 //!
@@ -45,6 +45,7 @@ const REG_STATUS: u8 = 0x00;
 const REG_MEAS_MODE: u8 = 0x01;
 const REG_ALG_RESULT: u8 = 0x02;
 const REG_HW_ID: u8 = 0x20;
+const REG_ERROR_ID: u8 = 0xE0;
 const REG_APP_START: u8 = 0xF4;
 const REG_SW_RESET: u8 = 0xFF;
 
@@ -140,8 +141,10 @@ pub enum Ccs811Error<E: core::fmt::Debug> {
     InvalidId(u8),
     /// `STATUS` register reported `APP_VALID=0` — sensor has no valid firmware.
     NoValidFirmware,
-    /// Algorithm result reported the `STATUS_ERROR` bit.
-    SensorError,
+    /// `STATUS` reported the `ERROR` bit; carries the `ERROR_ID` register
+    /// (bit 0 `WRITE_REG_INVALID`, 1 `READ_REG_INVALID`, 2 `MEASMODE_INVALID`,
+    /// 3 `MAX_RESISTANCE`, 4 `HEATER_FAULT`, 5 `HEATER_SUPPLY`).
+    SensorError(u8),
     /// No fresh sample within the `meas_mode` period plus margin — NINT did
     /// not assert, or `STATUS` never reported `DATA_READY`.
     Timeout,
@@ -153,6 +156,12 @@ impl<E: core::fmt::Debug> From<E> for Ccs811Error<E> {
     fn from(e: E) -> Self {
         Self::Bus(e)
     }
+}
+
+/// Build the error for an asserted `STATUS_ERROR` bit, logging the cause.
+fn sensor_error<E: core::fmt::Debug>(error_id: u8) -> Ccs811Error<E> {
+    log::warn!("[ccs811] sensor error, ERROR_ID=0x{error_id:02X}");
+    Ccs811Error::SensorError(error_id)
 }
 
 /// Marker type used when no NINT pin is wired. Implements `Wait` as a
@@ -324,7 +333,9 @@ async fn wait_data_ready<I: I2c>(
     loop {
         bus.write_read(addr, &[REG_STATUS], &mut status).await?;
         if status[0] & STATUS_ERROR != 0 {
-            return Err(Ccs811Error::SensorError);
+            let mut error_id = [0u8; 1];
+            bus.write_read(addr, &[REG_ERROR_ID], &mut error_id).await?;
+            return Err(sensor_error(error_id[0]));
         }
         if status[0] & STATUS_DATA_READY != 0 {
             return Ok(());
@@ -339,8 +350,8 @@ async fn wait_data_ready<I: I2c>(
 }
 
 /// Read the 8-byte `ALG_RESULT_DATA` register and decode eCO2 + TVOC. The
-/// caller has already seen `DATA_READY`; the STATUS copy in byte 4 is only
-/// re-checked for the error bit.
+/// caller has already seen `DATA_READY`; the STATUS and `ERROR_ID` copies in
+/// bytes 4 and 5 are only re-checked for the error bit.
 async fn read_alg_result<I: I2c>(
     bus: &mut I,
     addr: u8,
@@ -349,7 +360,7 @@ async fn read_alg_result<I: I2c>(
     bus.write_read(addr, &[REG_ALG_RESULT], &mut result).await?;
 
     if result[4] & STATUS_ERROR != 0 {
-        return Err(Ccs811Error::SensorError);
+        return Err(sensor_error(result[5]));
     }
 
     let eco2 = f32::from(u16::from_be_bytes([result[0], result[1]]));
@@ -407,6 +418,9 @@ mod tests {
     const STATUS_NO_DATA: u8 = STATUS_FW_MODE | STATUS_APP_VALID;
     /// App running with a fresh result in `ALG_RESULT_DATA`.
     const STATUS_READY: u8 = STATUS_NO_DATA | STATUS_DATA_READY;
+
+    const ERROR_ID_MEASMODE_INVALID: u8 = 0x04;
+    const ERROR_ID_HEATER_FAULT: u8 = 0x10;
 
     fn config(meas_mode: MeasMode) -> Ccs811Config {
         Ccs811Config {
@@ -552,17 +566,66 @@ mod tests {
     }
 
     #[test]
-    fn sample_reports_sensor_error() {
+    fn sample_reports_sensor_error_id() {
+        // STATUS carries the ERROR bit while waiting — the driver reads
+        // ERROR_ID and surfaces its value instead of polling on.
         futures::executor::block_on(async {
             let polling_mode = meas_mode_register(MeasMode::Every1s, false);
             let mut txns = init_transactions_app_mode(polling_mode);
             txns.push(status_read(STATUS_NO_DATA | STATUS_ERROR));
+            txns.push(T::write_read(
+                ADDR,
+                vec![REG_ERROR_ID],
+                vec![ERROR_ID_HEATER_FAULT],
+            ));
             let mut mock = Mock::new(&txns);
 
             let mut driver = Ccs811::new(&config(MeasMode::Every1s));
             driver.init(&mut mock).await.unwrap();
             let result = driver.sample(&mut mock).await;
-            assert!(matches!(result, Err(Ccs811Error::SensorError)));
+            assert!(
+                matches!(result, Err(Ccs811Error::SensorError(ERROR_ID_HEATER_FAULT))),
+                "{result:?}"
+            );
+
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn alg_result_error_reports_error_id() {
+        // The error bit appears only in the ALG_RESULT_DATA status copy; its
+        // ERROR_ID copy in byte 5 is what gets reported.
+        futures::executor::block_on(async {
+            let polling_mode = meas_mode_register(MeasMode::Every1s, false);
+            let mut txns = init_transactions_app_mode(polling_mode);
+            txns.push(status_read(STATUS_READY));
+            txns.push(T::write_read(
+                ADDR,
+                vec![REG_ALG_RESULT],
+                vec![
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    STATUS_READY | STATUS_ERROR,
+                    ERROR_ID_MEASMODE_INVALID,
+                    0x00,
+                    0x00,
+                ],
+            ));
+            let mut mock = Mock::new(&txns);
+
+            let mut driver = Ccs811::new(&config(MeasMode::Every1s));
+            driver.init(&mut mock).await.unwrap();
+            let result = driver.sample(&mut mock).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(Ccs811Error::SensorError(ERROR_ID_MEASMODE_INVALID))
+                ),
+                "{result:?}"
+            );
 
             mock.done();
         });
