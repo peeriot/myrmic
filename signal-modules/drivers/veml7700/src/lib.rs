@@ -24,11 +24,11 @@
 //!
 //! # Timing
 //!
-//! After [`Veml7700::init`] the datasheet requires at least 2× the
-//! integration time before the first reading is valid (so 200 ms for the
-//! default 100 ms IT). The driver does **not** insert this delay — the
-//! caller (typically the codegen-emitted source task with a 1000+ ms
-//! `sample_interval_ms`) is expected to wait long enough.
+//! After the configuration write the datasheet requires at least 2× the
+//! integration time before the first reading is valid; until then the ALS
+//! register still holds 0. [`Veml7700::init`] therefore waits `2 × IT + 3 ms`
+//! before returning (`embassy_time` under `#[cfg(not(test))]`; host tests
+//! skip the wait), so the first [`Veml7700::sample`] after it is a real reading.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -141,8 +141,8 @@ impl Veml7700 {
         }
     }
 
-    /// (Re-)initialise the sensor: power it on and apply the configured
-    /// gain / integration time.
+    /// (Re-)initialise the sensor: power it on, apply the configured
+    /// gain / integration time and wait until the first reading is valid.
     ///
     /// Safe to call repeatedly — the generated source task re-runs `init` to
     /// recover a sensor that started failing.
@@ -160,6 +160,11 @@ impl Veml7700 {
         let conf_le = conf.to_le_bytes();
         bus.write(addr, &[REG_ALS_CONF, conf_le[0], conf_le[1]])
             .await?;
+
+        // The ALS register holds 0 until the first integration completes;
+        // give it two periods plus the wake-up time before the first sample.
+        #[cfg(not(test))]
+        embassy_time::Timer::after_millis(settle_ms(self.cfg.integration_time)).await;
 
         log::info!("[veml7700] init OK at 0x{addr:02X}");
         Ok(())
@@ -209,6 +214,24 @@ fn it_bits(it: IntegrationTime) -> u8 {
     }
 }
 
+/// Integration time in milliseconds.
+fn it_ms(it: IntegrationTime) -> u16 {
+    match it {
+        IntegrationTime::Ms25 => 25,
+        IntegrationTime::Ms50 => 50,
+        IntegrationTime::Ms100 => 100,
+        IntegrationTime::Ms200 => 200,
+        IntegrationTime::Ms400 => 400,
+        IntegrationTime::Ms800 => 800,
+    }
+}
+
+/// Milliseconds to wait after a configuration write before the first
+/// reading is valid: two integration periods plus the wake-up time.
+fn settle_ms(it: IntegrationTime) -> u64 {
+    2 * u64::from(it_ms(it)) + 3
+}
+
 /// Lux per count for the given gain × integration time.
 ///
 /// Reference point from the datasheet: gain ×2, IT=800 ms → 0.0036 lx/count.
@@ -220,16 +243,8 @@ fn lsb_lux(gain: Gain, it: IntegrationTime) -> f32 {
         Gain::OneEighth => 0.125,
         Gain::OneFourth => 0.25,
     };
-    let it_ms = match it {
-        IntegrationTime::Ms25 => 25.0,
-        IntegrationTime::Ms50 => 50.0,
-        IntegrationTime::Ms100 => 100.0,
-        IntegrationTime::Ms200 => 200.0,
-        IntegrationTime::Ms400 => 400.0,
-        IntegrationTime::Ms800 => 800.0,
-    };
     // Reference: gain=×2, IT=800ms → 0.0036 lx/count.
-    0.0036 * (2.0 / gain_ratio) * (800.0 / it_ms)
+    0.0036 * (2.0 / gain_ratio) * (800.0 / f32::from(it_ms(it)))
 }
 
 /// Vishay AN84323 correction for the sensor's non-linear response above
@@ -367,6 +382,21 @@ mod tests {
             let expected = 8680.0 * 0.1152;
             assert!((lux - expected).abs() < 0.1, "lux={lux}");
         });
+    }
+
+    #[test]
+    fn init_settle_time_is_two_integrations_plus_wake_up() {
+        let cases = [
+            (IntegrationTime::Ms25, 53),
+            (IntegrationTime::Ms50, 103),
+            (IntegrationTime::Ms100, 203),
+            (IntegrationTime::Ms200, 403),
+            (IntegrationTime::Ms400, 803),
+            (IntegrationTime::Ms800, 1603),
+        ];
+        for (it, expected) in cases {
+            assert_eq!(settle_ms(it), expected, "{it:?}");
+        }
     }
 
     #[test]

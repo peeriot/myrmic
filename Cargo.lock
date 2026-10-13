@@ -12016,6 +12016,7 @@ dependencies = [
 name = "veml7700-driver"
 version = "0.7.0"
 dependencies = [
+ "embassy-time",
  "embedded-hal-async",
  "embedded-hal-mock",
  "futures",
