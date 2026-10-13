@@ -142,9 +142,10 @@ pub fn build(
         Selector::Lib => anyhow::bail!("a firmware is a binary; `lib` is not a firmware target"),
     };
 
-    // A crate without a pin falls back to the toolchain this crate declares; a
-    // pinned one builds with its pin, picked up from `current_dir`.
-    let toolchain = (!cargo::has_toolchain_pin(manifest_dir)).then_some(TOOLCHAIN);
+    // A crate without a pin builds with the toolchain this crate declares - the
+    // plain `cargo` when it is that one, through rustup otherwise; a pinned one
+    // builds with its pin, picked up from `current_dir`.
+    let toolchain = cargo::toolchain_override(manifest_dir, TOOLCHAIN, TARGET)?;
     let mut cmd = Command::new("cargo");
     cmd.current_dir(manifest_dir);
     if let Some(toolchain) = toolchain {

@@ -304,10 +304,68 @@ pub fn has_toolchain_pin(dir: &Path) -> bool {
     dir.join("rust-toolchain.toml").exists() || dir.join("rust-toolchain").exists()
 }
 
+/// The `+toolchain` override a cargo command for the crate in `dir` needs to
+/// build with `toolchain` for `target`, or `None` when it runs on the plain
+/// `cargo`:
+///
+/// - A crate that pins its own toolchain builds with its pin, which rustup
+///   picks up from the crate's directory.
+/// - When the `cargo` on the `PATH` is `toolchain` already, the build uses it
+///   as is. It need not be rustup's proxy: a toolchain from a distribution or
+///   Nix does not understand `+toolchain`.
+/// - Otherwise rustup provides `toolchain`. Without rustup, the build cannot
+///   run, and says why.
+pub fn toolchain_override<'a>(
+    dir: &Path,
+    toolchain: &'a str,
+    target: &str,
+) -> anyhow::Result<Option<&'a str>> {
+    if has_toolchain_pin(dir) {
+        return Ok(None);
+    }
+    let version = cargo_version(dir, None)?;
+    choose_override(
+        release(&version),
+        toolchain,
+        target,
+        which::which("rustup").is_ok(),
+    )
+}
+
+/// The decision of [`toolchain_override`], given the release of the plain
+/// `cargo` and whether rustup is installed.
+fn choose_override<'a>(
+    release: Option<&str>,
+    toolchain: &'a str,
+    target: &str,
+    rustup: bool,
+) -> anyhow::Result<Option<&'a str>> {
+    if release == Some(toolchain) {
+        return Ok(None);
+    }
+    if rustup {
+        return Ok(Some(toolchain));
+    }
+    anyhow::bail!(
+        "myrmic builds with Rust {toolchain}, but the `cargo` on the PATH is {}, and without \
+         rustup there is no other to switch to: install Rust {toolchain} with the `{target}` \
+         target, or rustup",
+        release.map_or("of an unknown release".to_owned(), |release| format!(
+            "Rust {release}"
+        )),
+    )
+}
+
 /// Whether the `cargo` a build runs in `dir` (on `toolchain` when given, as a
 /// `+toolchain` override) belongs to a nightly or dev toolchain, the only ones
 /// that accept `-Z` flags.
 pub fn is_nightly(dir: &Path, toolchain: Option<&str>) -> anyhow::Result<bool> {
+    Ok(release_is_nightly(&cargo_version(dir, toolchain)?))
+}
+
+/// What `cargo -vV` prints in `dir`, on `toolchain` when given, as a
+/// `+toolchain` override.
+fn cargo_version(dir: &Path, toolchain: Option<&str>) -> anyhow::Result<String> {
     let mut cmd = Command::new("cargo");
     cmd.current_dir(dir);
     if let Some(toolchain) = toolchain {
@@ -328,9 +386,7 @@ pub fn is_nightly(dir: &Path, toolchain: Option<&str>) -> anyhow::Result<bool> {
     if !out.status.success() {
         anyhow::bail!("cargo -vV failed in {}", dir.display());
     }
-    let version = String::from_utf8(out.stdout).context("cargo -vV printed invalid UTF-8")?;
-
-    Ok(release_is_nightly(&version))
+    String::from_utf8(out.stdout).context("cargo -vV printed invalid UTF-8")
 }
 
 /// Sets `flags` as the rustflags for the target `target_var` names, and clears
@@ -373,13 +429,16 @@ fn artifacts_in(line: &str) -> Vec<Artifact> {
 /// Whether the `release:` line of `cargo -vV` output names a nightly or dev
 /// build, e.g. `release: 1.99.0-nightly`.
 fn release_is_nightly(version: &str) -> bool {
+    release(version)
+        .is_some_and(|release| release.ends_with("-nightly") || release.ends_with("-dev"))
+}
+
+/// The `release:` line of `cargo -vV` output, e.g. `1.97.0` or `1.99.0-nightly`.
+fn release(version: &str) -> Option<&str> {
     version
         .lines()
         .find_map(|line| line.strip_prefix("release: "))
-        .is_some_and(|release| {
-            let release = release.trim();
-            release.ends_with("-nightly") || release.ends_with("-dev")
-        })
+        .map(str::trim)
 }
 
 #[cfg(test)]
@@ -400,6 +459,43 @@ mod tests {
         assert!(!release_is_nightly(
             "cargo 1.99.0-nightly (abc 2026-08-06)\n"
         ));
+    }
+
+    #[test]
+    fn a_plain_cargo_of_the_toolchain_builds_without_an_override() {
+        for rustup in [true, false] {
+            let chosen = choose_override(Some("1.97.0"), "1.97.0", "wasm32v1-none", rustup);
+            assert_eq!(chosen.unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn another_release_switches_through_rustup() {
+        let chosen = choose_override(Some("1.98.0"), "1.97.0", "wasm32v1-none", true);
+        assert_eq!(chosen.unwrap(), Some("1.97.0"));
+    }
+
+    #[test]
+    fn another_release_without_rustup_says_what_to_install() {
+        let err = choose_override(Some("1.99.0-nightly"), "1.97.0", "wasm32v1-none", false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Rust 1.99.0-nightly"), "{err}");
+        assert!(
+            err.contains("install Rust 1.97.0 with the `wasm32v1-none` target"),
+            "{err}"
+        );
+
+        let err = choose_override(None, "1.97.0", "wasm32v1-none", false).unwrap_err();
+        assert!(err.to_string().contains("unknown release"), "{err}");
+    }
+
+    #[test]
+    fn release_reads_the_release_line() {
+        let version =
+            "cargo 1.97.0 (abc 2026-09-01)\nrelease: 1.97.0\nhost: x86_64-unknown-linux-gnu\n";
+        assert_eq!(release(version), Some("1.97.0"));
+        assert_eq!(release("cargo 1.97.0 (abc 2026-09-01)\n"), None);
     }
 
     #[test]
