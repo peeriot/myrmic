@@ -16,7 +16,8 @@
 //!   of measurement latency.
 //!
 //! The driver computes the lux LSB from these two fields at [`Veml7700::init`]
-//! and stores it; [`Veml7700::sample`] multiplies the raw count by the stored LSB.
+//! and stores it; [`Veml7700::sample`] multiplies the raw count by the stored LSB
+//! and, above 1000 lx, applies Vishay's non-linearity correction (AN84323).
 //!
 //! Defaults: gain ×1, integration 100 ms (matches the datasheet's typical
 //! default profile).
@@ -35,6 +36,10 @@ use embedded_hal_async::i2c::I2c;
 
 const REG_ALS_CONF: u8 = 0x00;
 const REG_ALS: u8 = 0x04;
+
+/// Lux above which the sensor's response is non-linear and the AN84323
+/// correction applies.
+const LUX_CORRECTION_THRESHOLD: f64 = 1000.0;
 
 /// Amplifier gain — controls the measurable range and per-count resolution.
 #[repr(u8)]
@@ -161,7 +166,8 @@ impl Veml7700 {
     }
 
     /// Read one ambient-light sample. Multiplies the raw 16-bit ALS count by
-    /// the stored LSB to produce lux.
+    /// the stored LSB to produce lux, corrected for the sensor's non-linear
+    /// response above 1000 lx.
     ///
     /// # Errors
     ///
@@ -174,7 +180,8 @@ impl Veml7700 {
         bus.write_read(self.cfg.i2c_addr, &[REG_ALS], &mut raw)
             .await?;
         let counts = u16::from_le_bytes(raw);
-        let lux = f32::from(counts) * self.lsb_lux;
+        #[allow(clippy::cast_possible_truncation)]
+        let lux = correct_lux(f64::from(counts) * f64::from(self.lsb_lux)) as f32;
         log::debug!("[veml7700] {lux:.1} lux");
         Ok(Veml7700Readings { lux })
     }
@@ -225,6 +232,17 @@ fn lsb_lux(gain: Gain, it: IntegrationTime) -> f32 {
     0.0036 * (2.0 / gain_ratio) * (800.0 / it_ms)
 }
 
+/// Vishay AN84323 correction for the sensor's non-linear response above
+/// 1000 lx; the linear value is returned unchanged below that.
+///
+/// `lux = 6.0135e-13 x⁴ − 9.3924e-9 x³ + 8.1488e-5 x² + 1.0023 x`, in Horner form.
+fn correct_lux(lux: f64) -> f64 {
+    if lux <= LUX_CORRECTION_THRESHOLD {
+        return lux;
+    }
+    (((6.0135e-13 * lux - 9.3924e-9) * lux + 8.1488e-5) * lux + 1.0023) * lux
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +254,24 @@ mod tests {
         let conf = (u16::from(gain_bits(gain)) << 11) | (u16::from(it_bits(it)) << 6);
         let le = conf.to_le_bytes();
         vec![REG_ALS_CONF, le[0], le[1]]
+    }
+
+    /// Bring up a driver with the given profile and sample one raw ALS count.
+    async fn sample_counts(gain: Gain, it: IntegrationTime, counts: u16) -> f32 {
+        let mut mock = Mock::new(&[
+            T::write(ADDR, conf_bytes(gain, it)),
+            T::write_read(ADDR, vec![REG_ALS], counts.to_le_bytes().to_vec()),
+        ]);
+        let cfg = Veml7700Config {
+            i2c_addr: ADDR,
+            gain,
+            integration_time: it,
+        };
+        let mut driver = Veml7700::new(&cfg);
+        driver.init(&mut mock).await.unwrap();
+        let r = driver.sample(&mut mock).await.unwrap();
+        mock.done();
+        r.lux
     }
 
     #[test]
@@ -298,6 +334,38 @@ mod tests {
             let expected = 10000.0 * 0.0036;
             assert!((r.lux - expected).abs() < 0.01, "lux={}", r.lux);
             mock.done();
+        });
+    }
+
+    #[test]
+    fn lux_above_1000_follows_vishay_correction() {
+        futures::executor::block_on(async {
+            // gain=×1 → IT=50ms is 0.1152 lx/count, IT=25ms is 0.2304 lx/count.
+            // Counts are the smallest that land above 1000, 5000 and 10000 lx
+            // uncorrected; expected values are Vishay AN84323's polynomial there.
+            let cases = [
+                (IntegrationTime::Ms50, 8681, 1075.0),
+                (IntegrationTime::Ms50, 43403, 6250.0),
+                (IntegrationTime::Ms25, 43403, 14793.0),
+            ];
+            for (it, counts, expected) in cases {
+                let lux = sample_counts(Gain::X1, it, counts).await;
+                assert!(
+                    (lux - expected).abs() < 1.0,
+                    "counts={counts} lux={lux} expected={expected}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn lux_below_1000_is_uncorrected() {
+        futures::executor::block_on(async {
+            // gain=×1, IT=50ms → 8680 counts = 999.9 lx, the last count under
+            // the correction threshold.
+            let lux = sample_counts(Gain::X1, IntegrationTime::Ms50, 8680).await;
+            let expected = 8680.0 * 0.1152;
+            assert!((lux - expected).abs() < 0.1, "lux={lux}");
         });
     }
 
