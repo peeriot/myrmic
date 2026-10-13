@@ -23,16 +23,19 @@
 //! The optional NINT (data-ready interrupt) line is supported via
 //! [`Ccs811::new_with_pins`] and [`Ccs811Pins`]. When NINT is wired the
 //! driver enables hardware interrupt mode and waits for the line to assert
-//! before reading; otherwise it polls the STATUS register. Both paths
-//! defensively check `STATUS_DATA_READY` and the algorithm error bit before
+//! before checking STATUS; otherwise it polls the STATUS register until
+//! `DATA_READY` is set. Both paths check the algorithm error bit before
 //! returning a reading.
 //!
 //! # Timing
 //!
 //! `init()` software-resets the device (100 ms wait per datasheet) and may
-//! start the firmware (20 ms wait) — handled with `embassy_time` under
-//! `#[cfg(not(test))]`. Host tests skip the waits since they use
-//! deterministic mocks.
+//! start the firmware (20 ms wait). The sensor then needs one full
+//! `meas_mode` period before its first result exists, so [`Ccs811::sample`]
+//! waits for `DATA_READY` — up to the period plus a 50 % margin — before it
+//! reads `ALG_RESULT_DATA`. All waits use `embassy_time` under
+//! `#[cfg(not(test))]`; host tests skip them since they use deterministic
+//! mocks.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -65,7 +68,22 @@ pub enum MeasMode {
     Every60s = 3,
 }
 
+impl MeasMode {
+    /// Nominal interval between two algorithm results, in milliseconds.
+    #[must_use]
+    pub const fn period_ms(self) -> u64 {
+        match self {
+            Self::Every1s => 1_000,
+            Self::Every10s => 10_000,
+            Self::Every60s => 60_000,
+        }
+    }
+}
+
 const INT_ENABLE_BIT: u8 = 0x08;
+
+/// Interval between STATUS reads while waiting for `DATA_READY`.
+const DATA_READY_POLL_MS: u64 = 100;
 
 fn meas_mode_register(meas_mode: MeasMode, irq: bool) -> u8 {
     // DRIVE_MODE occupies bits 6:4 (so `meas_mode << 4`); INT_DATARDY is bit 3.
@@ -74,6 +92,13 @@ fn meas_mode_register(meas_mode: MeasMode, irq: bool) -> u8 {
         reg |= INT_ENABLE_BIT;
     }
     reg
+}
+
+/// Longest wait for a fresh sample: one `meas_mode` period plus a 50 % margin
+/// for the sensor's clock tolerance and the latency of its first result.
+fn data_ready_timeout_ms(meas_mode: MeasMode) -> u64 {
+    let period = meas_mode.period_ms();
+    period + period / 2
 }
 
 /// Driver configuration.
@@ -117,9 +142,8 @@ pub enum Ccs811Error<E: core::fmt::Debug> {
     NoValidFirmware,
     /// Algorithm result reported the `STATUS_ERROR` bit.
     SensorError,
-    /// `sample()` was called but `STATUS_DATA_READY` was not asserted.
-    NotReady,
-    /// NINT did not assert within the interrupt timeout (5 s).
+    /// No fresh sample within the `meas_mode` period plus margin — NINT did
+    /// not assert, or `STATUS` never reported `DATA_READY`.
     Timeout,
     /// Underlying GPIO/Wait error on the NINT pin.
     Pin,
@@ -171,8 +195,8 @@ impl embedded_hal_async::digital::Wait for NoPin {
 /// change tracked through the descriptor's `optional_pins` list.
 pub struct Ccs811Pins<P> {
     /// NINT — active-low data-ready interrupt. When wired, the driver
-    /// enables hardware interrupt mode and uses `wait_for_low()` instead of
-    /// polling STATUS in [`Ccs811::sample`].
+    /// enables hardware interrupt mode and waits on `wait_for_low()` before
+    /// checking STATUS in [`Ccs811::sample`], instead of polling it.
     pub nint: Option<P>,
 }
 
@@ -243,55 +267,89 @@ impl<P: embedded_hal_async::digital::Wait> Ccs811<P> {
         .await
     }
 
-    /// Read one eCO2/TVOC sample. When NINT is wired, blocks (up to 5 s)
-    /// waiting for the line to assert; otherwise polls STATUS once and
-    /// returns [`Ccs811Error::NotReady`] if no fresh data is available.
+    /// Read one eCO2/TVOC sample, waiting for the sensor to finish its
+    /// current measurement first.
     ///
-    /// Both paths defensively check `STATUS_ERROR` and `STATUS_DATA_READY`.
+    /// When NINT is wired, waits for the line to assert; otherwise polls
+    /// STATUS at a fixed interval. Either wait is bounded by the `meas_mode`
+    /// period plus a 50 % margin, so a sensor that produces no result within
+    /// that window is reported as [`Ccs811Error::Timeout`].
+    ///
+    /// The first call after [`Ccs811::init`] always waits for one full
+    /// period — 1 s, 10 s or 60 s — because the reset restarts the
+    /// measurement cycle. That is deliberate: the generated source task has
+    /// no "no data yet" outcome (any `Err` triggers a re-init and another
+    /// reset), its ticker catches up on missed ticks, and nothing bounds how
+    /// long one tick may take. Later calls return as soon as a result is
+    /// pending, so the effective cadence is the larger of the task's sample
+    /// interval and the mode period.
     ///
     /// # Errors
     ///
     /// - [`Ccs811Error::Bus`] on I2C transaction failure.
-    /// - [`Ccs811Error::Pin`] / `Timeout` on NINT failure or timeout.
+    /// - [`Ccs811Error::Pin`] if waiting on NINT fails.
+    /// - [`Ccs811Error::Timeout`] if no fresh sample appears within the window.
     /// - [`Ccs811Error::SensorError`] if the algorithm error bit is set.
-    /// - [`Ccs811Error::NotReady`] (polling path only) if data isn't ready
-    ///   yet — caller should retry after the configured `meas_mode` cadence.
     pub async fn sample<I: I2c>(
         &mut self,
         bus: &mut I,
     ) -> Result<Ccs811Readings, Ccs811Error<I::Error>> {
+        let timeout_ms = data_ready_timeout_ms(self.cfg.meas_mode);
         if let Some(nint) = self.nint.as_mut() {
             #[cfg(not(test))]
-            embassy_time::with_timeout(embassy_time::Duration::from_secs(5), nint.wait_for_low())
-                .await
-                .map_err(|_| Ccs811Error::Timeout)?
-                .map_err(|_| Ccs811Error::Pin)?;
+            embassy_time::with_timeout(
+                embassy_time::Duration::from_millis(timeout_ms),
+                nint.wait_for_low(),
+            )
+            .await
+            .map_err(|_| Ccs811Error::Timeout)?
+            .map_err(|_| Ccs811Error::Pin)?;
             #[cfg(test)]
             nint.wait_for_low().await.map_err(|_| Ccs811Error::Pin)?;
         }
-        read_alg_result(bus, self.cfg.i2c_addr, self.nint.is_some()).await
+        wait_data_ready(bus, self.cfg.i2c_addr, timeout_ms).await?;
+        read_alg_result(bus, self.cfg.i2c_addr).await
     }
 }
 
-/// Read the 8-byte `ALG_RESULT` register and decode eCO2 + TVOC.
-/// `interrupt_driven`: when true, the NINT line already implies data is
-/// ready, so `STATUS_DATA_READY` is treated as defensive (still checked —
-/// missing it returns [`Ccs811Error::NotReady`] rather than silently
-/// returning stale data).
+/// Poll `STATUS` until `DATA_READY` is set, sleeping `DATA_READY_POLL_MS`
+/// between reads, for at most `timeout_ms`.
+async fn wait_data_ready<I: I2c>(
+    bus: &mut I,
+    addr: u8,
+    timeout_ms: u64,
+) -> Result<(), Ccs811Error<I::Error>> {
+    let mut polls_left = timeout_ms / DATA_READY_POLL_MS;
+    let mut status = [0u8; 1];
+    loop {
+        bus.write_read(addr, &[REG_STATUS], &mut status).await?;
+        if status[0] & STATUS_ERROR != 0 {
+            return Err(Ccs811Error::SensorError);
+        }
+        if status[0] & STATUS_DATA_READY != 0 {
+            return Ok(());
+        }
+        if polls_left == 0 {
+            return Err(Ccs811Error::Timeout);
+        }
+        polls_left -= 1;
+        #[cfg(not(test))]
+        embassy_time::Timer::after_millis(DATA_READY_POLL_MS).await;
+    }
+}
+
+/// Read the 8-byte `ALG_RESULT_DATA` register and decode eCO2 + TVOC. The
+/// caller has already seen `DATA_READY`; the STATUS copy in byte 4 is only
+/// re-checked for the error bit.
 async fn read_alg_result<I: I2c>(
     bus: &mut I,
     addr: u8,
-    _interrupt_driven: bool,
 ) -> Result<Ccs811Readings, Ccs811Error<I::Error>> {
     let mut result = [0u8; 8];
     bus.write_read(addr, &[REG_ALG_RESULT], &mut result).await?;
 
-    let status = result[4];
-    if status & STATUS_ERROR != 0 {
+    if result[4] & STATUS_ERROR != 0 {
         return Err(Ccs811Error::SensorError);
-    }
-    if status & STATUS_DATA_READY == 0 {
-        return Err(Ccs811Error::NotReady);
     }
 
     let eco2 = f32::from(u16::from_be_bytes([result[0], result[1]]));
@@ -343,46 +401,68 @@ mod tests {
     use embedded_hal_mock::eh1::i2c::{Mock, Transaction as T};
 
     const ADDR: u8 = 0x5A;
+    const ALL_MODES: [MeasMode; 3] = [MeasMode::Every1s, MeasMode::Every10s, MeasMode::Every60s];
+
+    /// App running, no result pending yet.
+    const STATUS_NO_DATA: u8 = STATUS_FW_MODE | STATUS_APP_VALID;
+    /// App running with a fresh result in `ALG_RESULT_DATA`.
+    const STATUS_READY: u8 = STATUS_NO_DATA | STATUS_DATA_READY;
+
+    fn config(meas_mode: MeasMode) -> Ccs811Config {
+        Ccs811Config {
+            i2c_addr: ADDR,
+            meas_mode,
+        }
+    }
 
     fn init_transactions_app_mode(meas_mode_reg: u8) -> Vec<T> {
         vec![
             T::write(ADDR, SW_RESET_SEQ.to_vec()),
             T::write_read(ADDR, vec![REG_HW_ID], vec![HW_ID]),
-            T::write_read(
-                ADDR,
-                vec![REG_STATUS],
-                vec![STATUS_FW_MODE | STATUS_APP_VALID],
-            ),
+            T::write_read(ADDR, vec![REG_STATUS], vec![STATUS_NO_DATA]),
             T::write(ADDR, vec![REG_MEAS_MODE, meas_mode_reg]),
         ]
+    }
+
+    fn status_read(status: u8) -> T {
+        T::write_read(ADDR, vec![REG_STATUS], vec![status])
+    }
+
+    fn alg_result_read(eco2: u16, tvoc: u16) -> T {
+        let eco2 = eco2.to_be_bytes();
+        let tvoc = tvoc.to_be_bytes();
+        T::write_read(
+            ADDR,
+            vec![REG_ALG_RESULT],
+            vec![
+                eco2[0],
+                eco2[1],
+                tvoc[0],
+                tvoc[1],
+                STATUS_READY,
+                0x00,
+                0x00,
+                0x00,
+            ],
+        )
+    }
+
+    /// STATUS reads `sample()` makes before giving up: one immediately, then
+    /// one per poll interval until the timeout is spent.
+    fn status_reads_until_timeout(meas_mode: MeasMode) -> u64 {
+        data_ready_timeout_ms(meas_mode) / DATA_READY_POLL_MS + 1
     }
 
     #[test]
     fn init_and_sample_defaults() {
         futures::executor::block_on(async {
-            let eco2_bytes = 700u16.to_be_bytes();
-            let tvoc_bytes = 200u16.to_be_bytes();
-            let alg_result = vec![
-                eco2_bytes[0],
-                eco2_bytes[1],
-                tvoc_bytes[0],
-                tvoc_bytes[1],
-                STATUS_DATA_READY,
-                0x00,
-                0x00,
-                0x00,
-            ];
-
             let polling_mode = meas_mode_register(MeasMode::Every1s, false);
             let mut txns = init_transactions_app_mode(polling_mode);
-            txns.push(T::write_read(ADDR, vec![REG_ALG_RESULT], alg_result));
+            txns.push(status_read(STATUS_READY));
+            txns.push(alg_result_read(700, 200));
             let mut mock = Mock::new(&txns);
 
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
-            let mut driver = Ccs811::new(&cfg);
+            let mut driver = Ccs811::new(&config(MeasMode::Every1s));
             driver.init(&mut mock).await.unwrap();
             let r = driver.sample(&mut mock).await.unwrap();
 
@@ -406,36 +486,83 @@ mod tests {
                 T::write(ADDR, vec![REG_MEAS_MODE, polling_mode]),
             ]);
 
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
-            let mut driver = Ccs811::new(&cfg);
+            let mut driver = Ccs811::new(&config(MeasMode::Every1s));
             driver.init(&mut mock).await.unwrap();
             mock.done();
         });
     }
 
     #[test]
-    fn not_ready_returns_error() {
+    fn sample_waits_for_data_ready() {
+        // The first STATUS reads after init report no result yet; the driver
+        // must keep polling and deliver exactly one reading once DATA_READY
+        // is set, with no bus traffic beyond that.
         futures::executor::block_on(async {
             let polling_mode = meas_mode_register(MeasMode::Every1s, false);
             let mut txns = init_transactions_app_mode(polling_mode);
-            txns.push(T::write_read(
-                ADDR,
-                vec![REG_ALG_RESULT],
-                vec![0, 0, 0, 0, STATUS_FW_MODE, 0, 0, 0],
-            ));
+            txns.push(status_read(STATUS_NO_DATA));
+            txns.push(status_read(STATUS_NO_DATA));
+            txns.push(status_read(STATUS_READY));
+            txns.push(alg_result_read(700, 200));
             let mut mock = Mock::new(&txns);
 
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
-            let mut driver = Ccs811::new(&cfg);
+            let mut driver = Ccs811::new(&config(MeasMode::Every1s));
+            driver.init(&mut mock).await.unwrap();
+            let r = driver.sample(&mut mock).await.unwrap();
+
+            assert!((r.eco2 - 700.0).abs() < 1.0, "eco2={}", r.eco2);
+            assert!((r.tvoc - 200.0).abs() < 1.0, "tvoc={}", r.tvoc);
+
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn sample_times_out_without_data_ready() {
+        for meas_mode in ALL_MODES {
+            futures::executor::block_on(async {
+                let polling_mode = meas_mode_register(meas_mode, false);
+                let mut txns = init_transactions_app_mode(polling_mode);
+                for _ in 0..status_reads_until_timeout(meas_mode) {
+                    txns.push(status_read(STATUS_NO_DATA));
+                }
+                let mut mock = Mock::new(&txns);
+
+                let mut driver = Ccs811::new(&config(meas_mode));
+                driver.init(&mut mock).await.unwrap();
+                let result = driver.sample(&mut mock).await;
+                assert!(
+                    matches!(result, Err(Ccs811Error::Timeout)),
+                    "{meas_mode:?}: {result:?}"
+                );
+
+                mock.done();
+            });
+        }
+    }
+
+    #[test]
+    fn data_ready_timeout_exceeds_period() {
+        for meas_mode in ALL_MODES {
+            assert!(
+                data_ready_timeout_ms(meas_mode) > meas_mode.period_ms(),
+                "{meas_mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sample_reports_sensor_error() {
+        futures::executor::block_on(async {
+            let polling_mode = meas_mode_register(MeasMode::Every1s, false);
+            let mut txns = init_transactions_app_mode(polling_mode);
+            txns.push(status_read(STATUS_NO_DATA | STATUS_ERROR));
+            let mut mock = Mock::new(&txns);
+
+            let mut driver = Ccs811::new(&config(MeasMode::Every1s));
             driver.init(&mut mock).await.unwrap();
             let result = driver.sample(&mut mock).await;
-            assert!(matches!(result, Err(Ccs811Error::NotReady)));
+            assert!(matches!(result, Err(Ccs811Error::SensorError)));
 
             mock.done();
         });
@@ -468,30 +595,15 @@ mod tests {
     #[test]
     fn init_with_pins_none_falls_back_to_polling() {
         futures::executor::block_on(async {
-            let eco2_bytes = 600u16.to_be_bytes();
-            let tvoc_bytes = 250u16.to_be_bytes();
-            let alg_result = vec![
-                eco2_bytes[0],
-                eco2_bytes[1],
-                tvoc_bytes[0],
-                tvoc_bytes[1],
-                STATUS_DATA_READY,
-                0x00,
-                0x00,
-                0x00,
-            ];
-
             let polling_mode = meas_mode_register(MeasMode::Every1s, false);
             let mut txns = init_transactions_app_mode(polling_mode);
-            txns.push(T::write_read(ADDR, vec![REG_ALG_RESULT], alg_result));
+            txns.push(status_read(STATUS_NO_DATA));
+            txns.push(status_read(STATUS_READY));
+            txns.push(alg_result_read(600, 250));
             let mut mock = Mock::new(&txns);
 
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
             let pins: Ccs811Pins<ImmediateLow> = Ccs811Pins { nint: None };
-            let mut driver = Ccs811::new_with_pins(&cfg, pins);
+            let mut driver = Ccs811::new_with_pins(&config(MeasMode::Every1s), pins);
             driver.init(&mut mock).await.unwrap();
             let r = driver.sample(&mut mock).await.unwrap();
 
@@ -505,32 +617,16 @@ mod tests {
     #[test]
     fn interrupt_driven_init_and_sample() {
         futures::executor::block_on(async {
-            let eco2_bytes = 800u16.to_be_bytes();
-            let tvoc_bytes = 150u16.to_be_bytes();
-            let alg_result = vec![
-                eco2_bytes[0],
-                eco2_bytes[1],
-                tvoc_bytes[0],
-                tvoc_bytes[1],
-                STATUS_DATA_READY,
-                0x00,
-                0x00,
-                0x00,
-            ];
-
             let irq_mode = meas_mode_register(MeasMode::Every1s, true);
             let mut txns = init_transactions_app_mode(irq_mode);
-            txns.push(T::write_read(ADDR, vec![REG_ALG_RESULT], alg_result));
-
+            txns.push(status_read(STATUS_READY));
+            txns.push(alg_result_read(800, 150));
             let mut mock = Mock::new(&txns);
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
+
             let pins = Ccs811Pins {
                 nint: Some(ImmediateLow),
             };
-            let mut driver = Ccs811::new_with_pins(&cfg, pins);
+            let mut driver = Ccs811::new_with_pins(&config(MeasMode::Every1s), pins);
             driver.init(&mut mock).await.unwrap();
             let r = driver.sample(&mut mock).await.unwrap();
 
@@ -543,36 +639,24 @@ mod tests {
 
     #[test]
     fn interrupt_path_still_checks_data_ready() {
-        // Interrupt fires (NINT low) but somehow STATUS_DATA_READY isn't
-        // set — defensive check must still return NotReady, not stale data.
+        // NINT asserts but STATUS does not report DATA_READY yet — the driver
+        // must keep polling STATUS rather than read a stale result.
         futures::executor::block_on(async {
-            let alg_result = vec![
-                0,
-                0,
-                0,
-                0,
-                STATUS_FW_MODE, // no DATA_READY bit
-                0,
-                0,
-                0,
-            ];
-
             let irq_mode = meas_mode_register(MeasMode::Every1s, true);
             let mut txns = init_transactions_app_mode(irq_mode);
-            txns.push(T::write_read(ADDR, vec![REG_ALG_RESULT], alg_result));
-
+            txns.push(status_read(STATUS_NO_DATA));
+            txns.push(status_read(STATUS_READY));
+            txns.push(alg_result_read(800, 150));
             let mut mock = Mock::new(&txns);
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
+
             let pins = Ccs811Pins {
                 nint: Some(ImmediateLow),
             };
-            let mut driver = Ccs811::new_with_pins(&cfg, pins);
+            let mut driver = Ccs811::new_with_pins(&config(MeasMode::Every1s), pins);
             driver.init(&mut mock).await.unwrap();
-            let result = driver.sample(&mut mock).await;
-            assert!(matches!(result, Err(Ccs811Error::NotReady)));
+            let r = driver.sample(&mut mock).await.unwrap();
+
+            assert!((r.eco2 - 800.0).abs() < 1.0, "eco2={}", r.eco2);
             mock.done();
         });
     }
@@ -582,30 +666,14 @@ mod tests {
         // The generated source task re-runs init() to recover a degraded sensor.
         // The owned NINT pin (here None) is retained across re-inits.
         futures::executor::block_on(async {
-            let eco2_bytes = 700u16.to_be_bytes();
-            let tvoc_bytes = 200u16.to_be_bytes();
-            let alg_result = vec![
-                eco2_bytes[0],
-                eco2_bytes[1],
-                tvoc_bytes[0],
-                tvoc_bytes[1],
-                STATUS_DATA_READY,
-                0x00,
-                0x00,
-                0x00,
-            ];
-
             let polling_mode = meas_mode_register(MeasMode::Every1s, false);
             let mut txns = init_transactions_app_mode(polling_mode);
             txns.extend(init_transactions_app_mode(polling_mode)); // recovery re-init
-            txns.push(T::write_read(ADDR, vec![REG_ALG_RESULT], alg_result));
+            txns.push(status_read(STATUS_READY));
+            txns.push(alg_result_read(700, 200));
             let mut mock = Mock::new(&txns);
 
-            let cfg = Ccs811Config {
-                i2c_addr: ADDR,
-                ..Ccs811Config::default()
-            };
-            let mut driver = Ccs811::new(&cfg);
+            let mut driver = Ccs811::new(&config(MeasMode::Every1s));
             driver.init(&mut mock).await.unwrap();
             driver.init(&mut mock).await.unwrap(); // recovery re-init
             let r = driver.sample(&mut mock).await.unwrap();
