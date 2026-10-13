@@ -5,8 +5,10 @@ use std::process::Command;
 /// crate as two env vars:
 ///
 /// - `MYRMIC_VERSION` — `<crate version> (<hash|"unknown">)`, used for `--version`.
-/// - `MYRMIC_GIT_HASH` — the bare hash, set only when a revision was found, so
-///   `option_env!` is `None` on a VCS-less build and `myrmic new` can demand
+///   A non-empty jj working-copy commit is reported over its parent, since
+///   that is the code actually being built.
+/// - `MYRMIC_GIT_HASH` — the parent hash, set only when a revision was found,
+///   so `option_env!` is `None` on a VCS-less build and `myrmic new` can demand
 ///   an explicit `--sdk` instead of pinning to a guessed revision.
 ///
 /// `MYRMIC_SDK_VERSION` is read by the crate itself, not re-exported; it only
@@ -14,6 +16,7 @@ use std::process::Command;
 fn main() {
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
     let hash = git_hash().or_else(jj_hash);
+    let build_hash = jj_working_copy_hash().or_else(|| hash.clone());
 
     match hash.as_deref() {
         Some(hash) => println!("cargo::rustc-env=MYRMIC_GIT_HASH={hash}"),
@@ -24,7 +27,7 @@ fn main() {
     }
     println!(
         "cargo::rustc-env=MYRMIC_VERSION={version} ({})",
-        hash.as_deref().unwrap_or("unknown"),
+        build_hash.as_deref().unwrap_or("unknown"),
     );
 
     rerun_on_vcs_head();
@@ -51,6 +54,20 @@ fn jj_hash() -> Option<String> {
         "@-",
         "-T",
         "commit_id.short(8)",
+    ]))
+}
+
+/// The jj working-copy commit (`@`), or `None` when it is empty. Snapshots
+/// first, so the hash covers the files being compiled.
+fn jj_working_copy_hash() -> Option<String> {
+    run(Command::new("jj").args([
+        "--no-pager",
+        "log",
+        "--no-graph",
+        "-r",
+        "@",
+        "-T",
+        r#"if(empty, "", commit_id.short(8))"#,
     ]))
 }
 
