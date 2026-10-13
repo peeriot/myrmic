@@ -56,8 +56,13 @@ impl Client {
         let msg = postcard::to_allocvec(&msg).expect("unable to ser msg");
         let bytes = msg.len();
 
+        // A full announce or changeset spans many batches, and if it's droppable,
+        // it just causes issues when things are cut off.
+        // Slow links suffer massively as replication never manages to receive anything,
+        // it just saturates all of the links...
         self.session
             .put(&self.broadcast, msg)
+            .congestion_control(zenoh::qos::CongestionControl::Block)
             .await
             .expect("unable to publish replica message");
 
