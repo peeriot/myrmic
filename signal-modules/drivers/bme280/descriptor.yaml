@@ -25,19 +25,19 @@ config_schema:
     scope: application
     rust_type: Oversampling
     default: X1
-    # Variants: Skip | X1 | X2 | X4 | X8 | X16
+    # Variants: X1 | X2 | X4 | X8 | X16
     description: "Temperature oversampling — higher values reduce noise at the cost of longer conversion time."
   osrs_p:
     scope: application
     rust_type: Oversampling
     default: X1
-    # Variants: Skip | X1 | X2 | X4 | X8 | X16
+    # Variants: X1 | X2 | X4 | X8 | X16
     description: "Pressure oversampling — higher values reduce noise at the cost of longer conversion time."
   osrs_h:
     scope: application
     rust_type: Oversampling
     default: X1
-    # Variants: Skip | X1 | X2 | X4 | X8 | X16
+    # Variants: X1 | X2 | X4 | X8 | X16
     description: "Humidity oversampling — higher values reduce noise at the cost of longer conversion time."
   filter:
     scope: application
