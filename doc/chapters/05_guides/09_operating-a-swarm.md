@@ -89,7 +89,7 @@ After a hard stop, `myrmic runtimes list` may show a runtime as `stale`: its PID
 
 ## Clock synchronization
 
-Runtimes stamp messages with a hybrid logical clock. A timestamp more than 500 ms ahead of the receiver's own is not dropped: the receiver swaps in its own and forwards the message. Run NTP or PTP on every node and target a second or two rather than milliseconds - real trouble starts around a minute of disagreement, where a node behind the swarm can stop receiving new cells.
+Runtimes stamp messages with a hybrid logical clock. A timestamp more than 500 ms ahead of the receiver's own is not dropped: the receiver swaps in its own and forwards the message. Run NTP or PTP on every node and target a second or two rather than milliseconds - real trouble starts around a minute of disagreement.
 
 A runtime's clock only moves forward, so a forward jump lasts until the process restarts and re-seeds it, and correcting a large one can cost the node its running cells while the swarm briefly treats it as having gone away. After correcting a clock that had jumped forward, restart the runtime on that node; rows already written keep their future dates.
 

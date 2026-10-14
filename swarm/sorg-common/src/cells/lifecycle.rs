@@ -21,12 +21,18 @@ use crate::{
     is_query_timeout, zenoh_err,
 };
 
+/// Appended to a decode failure of a deploy reply: postcard cannot tell an
+/// unknown enum variant from other bad input, so the cause is only probable.
+const VERSION_MISMATCH_HINT: &str = "the node probably runs a different myrmic version than this client; use a client matching the swarm's version";
+
 /// Deserializes a [`DeploymentError`] from an orchestrator error reply, falling
 /// back to [`DeploymentError::Internal`] if the payload can't be decoded.
 fn deploy_err_from_reply(payload: &zenoh::bytes::ZBytes) -> DeploymentError {
     DeploymentError::from_payload(payload, "deser deployment error from orchestrator")
         .unwrap_or_else(|err| {
-            DeploymentError::Internal(format!("failed to deserialize deployment error: {err}"))
+            DeploymentError::Internal(format!(
+                "could not decode the orchestrator's deployment error ({err}); {VERSION_MISMATCH_HINT}"
+            ))
         })
 }
 
@@ -95,7 +101,11 @@ pub async fn deploy_cells(
                 sample.payload(),
                 "deser deployment response from orchestrator",
             )
-            .map_err(|err| DeploymentError::Internal(err.to_string())),
+            .map_err(|err| {
+                DeploymentError::Internal(format!(
+                    "could not decode the orchestrator's deployment response ({err}); {VERSION_MISMATCH_HINT}"
+                ))
+            }),
             Err(err_reply) => {
                 if is_query_timeout(err_reply) {
                     return Err(DeploymentError::QueryTimeout);
@@ -247,5 +257,28 @@ pub async fn delete_application(
             }
         },
         Err(_) => bail!("no response from an orchestration runtime for app delete request"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A variant index past the last known one is what an older client sees
+    /// when a newer node adds an error; the message must point at the
+    /// version mismatch.
+    #[test]
+    fn an_unknown_deployment_error_variant_names_a_version_mismatch() {
+        let payload = zenoh::bytes::ZBytes::from(postcard::to_allocvec(&200u32).unwrap());
+
+        let err = deploy_err_from_reply(&payload);
+
+        let DeploymentError::Internal(msg) = err else {
+            panic!("expected Internal, got: {err:?}");
+        };
+        assert!(
+            msg.contains("different myrmic version"),
+            "message should hint at a version mismatch, got: {msg}"
+        );
     }
 }
