@@ -12,9 +12,6 @@ anyhow  = { workspace = true }
 clap    = { workspace = true, features = ["derive"] }
 owo-colors = { workspace = true }
 which   = { workspace = true }
-sha2 = { workspace = true }
-# Local
-wasm-storage = { workspace = true }
 
 [lints]
 workspace = true

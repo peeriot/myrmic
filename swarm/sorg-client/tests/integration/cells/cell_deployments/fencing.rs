@@ -83,7 +83,7 @@ async fn instance_erase_is_fenced_by_generation() {
     let sri = Sri::from_target(SRI).unwrap();
     let record = CellInstance {
         sri,
-        class_name: "fenced".to_owned(),
+        class: cell_protocol::BlobHash::of(b"fenced"),
         gen_id: FIRST,
         lineage: SpawnLineage::default(),
     };

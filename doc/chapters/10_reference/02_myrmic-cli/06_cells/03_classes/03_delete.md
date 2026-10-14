@@ -11,9 +11,7 @@ myrmic cells classes delete [NAME]
 ```
 
 ## Description
-Removes the cell class identified by `NAME` from the data layer.
-
-Fails if the class has any instances. Delete all instances first.
+Removes the name `NAME`, then the class it pointed to, unless something still references the class: another name, a cell instance, the restart spec of a root cell, or a wasm class that spawns it or was compiled to it. A class that stays is reported with what references it.
 
 ## Options
 `-v` / `--verbose`

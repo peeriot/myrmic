@@ -1,7 +1,8 @@
 use std::time::Duration;
 
+use cell_protocol::{BlobHash, Sri};
 use claims::{assert_err, assert_matches};
-use sorg_common::DeploymentError;
+use sorg_common::{DeploymentError, RequirementTags};
 use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 
 use crate::integration::{spawn_empty_test_app, spawn_test_app_with_swarm};
@@ -75,7 +76,7 @@ pub async fn load_error_no_exec() {
 
     // Act - try to load the dummy cell;
     let result = test_app
-        .try_deploy_wasm_cell("dummy_cell.wasm", DUMMY_CELL_SRI)
+        .try_deploy_wasm_cell("dummy.wasm", DUMMY_CELL_SRI)
         .await;
 
     // Assert - no exec runtime is registered at all
@@ -91,9 +92,14 @@ pub async fn load_error_no_orch() {
     // Arrange - bare peer, no orch or exec
     let test_app = spawn_empty_test_app().await;
 
-    // Act - try to load a cell when no orch is available
-    let result = test_app
-        .try_deploy_wasm_cell("dummy_cell.wasm", DUMMY_CELL_SRI)
+    // Act - try to load a cell when no orch is available (no db either, so the
+    // class goes by id rather than by a name to resolve)
+    let result = sorg_client::Client::new(test_app.session().clone())
+        .deploy_wasm_cell(
+            Sri::from_target(DUMMY_CELL_SRI).unwrap(),
+            BlobHash::of(b"dummy"),
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert - no orchestrator responded
@@ -111,14 +117,20 @@ pub async fn load_error_unregistered_class() {
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
     // Act - try to load a cell whose class was never registered
-    let result = test_app
-        .try_deploy_wasm_cell("nonexistent.wasm", DUMMY_CELL_SRI)
+    let missing = BlobHash::of(b"nonexistent");
+    let sorg = sorg_client::Client::new(test_app.session().clone());
+    let result = sorg
+        .deploy_wasm_cell(
+            Sri::from_target(DUMMY_CELL_SRI).unwrap(),
+            missing,
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert - the class is named, not reported as every runtime lacking an artifact
     assert_matches!(
         assert_err!(result),
-        DeploymentError::UnknownClass { class } if class == "nonexistent.wasm",
+        DeploymentError::UnknownClass { class } if class == missing,
         "expected UnknownClass naming the class that is not registered"
     );
 }
@@ -137,8 +149,12 @@ pub async fn load_error_unregistered_class_does_not_affect_existing_cell() {
     test_app.deploy_wasm_cell("counter.wasm", COUNTER_SRI).await;
 
     // Act - try to load a cell whose class was never registered
-    let result = test_app
-        .try_deploy_wasm_cell("nonexistent.wasm", MISSING_CELL_SRI)
+    let result = sorg_client::Client::new(test_app.session().clone())
+        .deploy_wasm_cell(
+            Sri::from_target(MISSING_CELL_SRI).unwrap(),
+            BlobHash::of(b"nonexistent"),
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert I - the load should fail

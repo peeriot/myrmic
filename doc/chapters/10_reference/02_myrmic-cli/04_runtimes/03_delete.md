@@ -11,11 +11,17 @@ myrmic runtimes delete [OPTIONS] [NAME]...
 ```
 
 ## Description
-Stop one or more runtime instances by NAME.
+Stop one or more runtime instances by NAME and wait until their processes have exited.
 
 If a runtime process is gone but its PID file remains, the stale file is removed and a warning is printed.
 
 ## Options
+`--signal SIGNAL`
+
+The signal sent to each runtime: `term` (SIGTERM, the default) or `kill` (SIGKILL).
+
+With `term`, the runtime shuts down: it leaves the swarm and cleans up. With `kill`, it ends abruptly, as on a crash or power loss, which is useful for testing how the rest of the swarm copes. A killed runtime leaves its PID file behind; the command removes it once the process is gone.
+
 `--pid-path PATH`
 
 For advanced usage, specifies the location of runtime PID files. Use this if you started your runtime with a custom `--pid-path`.
@@ -35,4 +41,10 @@ Prints help information.
 
 ```bash
 myrmic runtimes delete runtime-1 runtime-2
+```
+
+2. End a runtime abruptly, without a clean shutdown:
+
+```bash
+myrmic runtimes delete --signal kill runtime-1
 ```

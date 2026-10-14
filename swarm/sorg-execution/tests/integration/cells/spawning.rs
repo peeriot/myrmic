@@ -48,16 +48,11 @@ async fn setup() -> (TestApp, Client) {
     (test_app, client)
 }
 
-/// Retrieves the wasm content hash for a registered cell class.
+/// Retrieves the wasm content hash, the class id, of a registered cell class.
 async fn class_hash(client: &Client, class_name: &str) -> [u8; 32] {
-    let info = assert_some!(
-        assert_ok!(client.get_class_info(class_name).await),
-        "class '{}' should exist",
-        class_name
-    );
     let BlobHash::Sha2(hash) = assert_some!(
-        info.wasm_hash,
-        "class '{}' should have a wasm hash",
+        assert_ok!(client.resolve_class_name(class_name).await),
+        "class '{}' should exist",
         class_name
     );
     hash

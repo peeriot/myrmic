@@ -5,7 +5,7 @@ mod linux;
 pub(in crate::event_loop::cells) use bridges::terminate_bridge_cell;
 
 use cell_protocol::Gen;
-use cell_protocol::{ExecRuntimeInfo, PlacementKind, RuntimeKind, Sri};
+use cell_protocol::{BlobHash, ExecRuntimeInfo, PlacementKind, RuntimeKind, Sri};
 use sorg_common::{CellConfig, SpawnLineage, bail};
 
 use crate::Result;
@@ -23,7 +23,7 @@ impl Runtime {
     ) -> Result<PlacementKind> {
         match config {
             CellConfig::Wasm { class } => {
-                self.deploy_wasm_cell(sri, &class, runtime, gen_id, lineage, arguments)
+                self.deploy_wasm_cell(sri, class, runtime, gen_id, lineage, arguments)
                     .await
             }
             // Bridge cells run natively on the orchestrator (see `bridges.rs`), not on
@@ -38,7 +38,7 @@ impl Runtime {
     async fn deploy_wasm_cell(
         &self,
         cell_sri: &Sri,
-        class_name: &str,
+        class: BlobHash,
         runtime: &ExecRuntimeInfo,
         gen_id: Gen,
         lineage: SpawnLineage,
@@ -46,18 +46,14 @@ impl Runtime {
     ) -> Result<PlacementKind> {
         match runtime.runtime_kind() {
             RuntimeKind::Linux => {
-                self.deploy_wasm_cell_linux(
-                    cell_sri, class_name, runtime, gen_id, lineage, arguments,
-                )
-                .await
+                self.deploy_wasm_cell_linux(cell_sri, class, runtime, gen_id, lineage, arguments)
+                    .await
             }
             RuntimeKind::Esp32c5 | RuntimeKind::Esp32c6 | RuntimeKind::Esp32c61 => {
                 // esp32 init-payload delivery is not wired up yet; the payload
                 // is dropped here rather than sent on-device.
-                self.deploy_wasm_cell_embedded(
-                    cell_sri, class_name, runtime, gen_id, lineage, arguments,
-                )
-                .await
+                self.deploy_wasm_cell_embedded(cell_sri, class, runtime, gen_id, lineage, arguments)
+                    .await
             }
             RuntimeKind::Unknown => {
                 let rt = runtime.id();

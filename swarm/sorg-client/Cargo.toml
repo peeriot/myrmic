@@ -27,3 +27,4 @@ zenoh = { workspace = true, features = ["unstable", "default"] }
 claims = { workspace = true }
 db-client = { workspace = true, features = ["zenoh"] }
 sorg-tests = { workspace = true }
+wasm-storage = { workspace = true }

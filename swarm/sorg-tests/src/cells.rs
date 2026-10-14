@@ -1,4 +1,4 @@
-use cell_protocol::{AddMode, ArtifactPlatform, ClassArtifact, Sri};
+use cell_protocol::{ArtifactPlatform, BlobHash, Sri};
 use claims::assert_ok;
 use db_client::v1::Client as DbClient;
 use sorg_common::{DeploymentError, RequirementTags};
@@ -26,13 +26,16 @@ impl TestApp {
         class_name: impl AsRef<str>,
         cell_sri: impl AsRef<str>,
     ) -> Result<(), DeploymentError> {
+        let class = self.class_id(class_name.as_ref()).await;
         self.sorg_client
-            .deploy_wasm_cell(
-                to_sri(cell_sri.as_ref()),
-                class_name.as_ref(),
-                RequirementTags::default(),
-            )
+            .deploy_wasm_cell(to_sri(cell_sri.as_ref()), class, RequirementTags::default())
             .await
+    }
+
+    /// The class `class_name` is bound to. Tests register a class before using it by name.
+    pub async fn class_id(&self, class_name: &str) -> BlobHash {
+        assert_ok!(self.sorg_client.resolve_class_name(class_name).await)
+            .unwrap_or_else(|| panic!("class '{class_name}' is not registered"))
     }
 
     pub async fn undeploy_cell(&self, cell_sri: impl AsRef<str>) {
@@ -87,42 +90,31 @@ impl TestApp {
         assert_ok!(self.sorg_client.subscribe_cell_event(event).await)
     }
 
-    pub async fn register_raw_class(&self, class_name: &str, wasm_bytes: Vec<u8>) {
+    /// Registers `wasm_bytes` as a wasm class named `class_name`. Returns the
+    /// class id.
+    pub async fn register_raw_class(&self, class_name: &str, wasm_bytes: Vec<u8>) -> BlobHash {
         assert_ok!(
-            sorg_common::class_registry::add_class_artifact(
-                self.session(),
-                class_name,
-                ClassArtifact::Wasm(wasm_bytes),
-                AddMode::Strict,
-            )
-            .await,
-        );
+            sorg_common::class_registry::add_class(self.session(), class_name, wasm_bytes, vec![],)
+                .await
+        )
     }
 
-    /// Stages a target-specific AOT + meta artifact pair for a class with the
-    /// given raw bytes. Used by the embedded deploy tests: the mock embedded
-    /// runtime never reads the blobs, so dummy bytes are sufficient — only the
-    /// artifact's presence (and target) matters to the orchestrator.
+    /// Stages a target-specific AOT binary under `class_name` with the given
+    /// raw bytes: added to the wasm class the name points to, else as a class of
+    /// its own. Used by the embedded deploy tests: the mock embedded runtime
+    /// never reads the blob, so dummy bytes are sufficient — only the
+    /// artifact's presence (and target) matters to the orchestrator. Returns
+    /// the AOT's id.
     pub async fn register_raw_aot(
         &self,
         class_name: &str,
         platform: ArtifactPlatform,
         aot_bytes: Vec<u8>,
-        meta_bytes: Vec<u8>,
-    ) {
+    ) -> BlobHash {
         assert_ok!(
-            sorg_common::class_registry::add_class_artifact(
-                self.session(),
-                class_name,
-                ClassArtifact::Aot {
-                    platform,
-                    aot_blob: aot_bytes,
-                    meta_blob: meta_bytes,
-                },
-                AddMode::Force,
-            )
-            .await,
-        );
+            sorg_common::class_registry::add_aot(self.session(), class_name, platform, aot_bytes)
+                .await
+        )
     }
 
     pub async fn is_cell_registered(&self, sri: &str) -> bool {

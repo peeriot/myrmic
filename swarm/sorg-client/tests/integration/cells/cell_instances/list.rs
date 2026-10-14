@@ -3,7 +3,7 @@ use claims::assert_ok;
 use cell_protocol::Sri;
 use sorg_common::FenceOutcome;
 
-use super::{CLASS_NAME, INSTANCE_SRI, SEEDED_GEN, seed_instance, sorg_client};
+use super::{INSTANCE_SRI, SEEDED_GEN, seed_instance, seeded_class, sorg_client};
 use crate::integration::spawn_db_test_app;
 
 const INSTANCE_SRI_B: &str = "test-instance-b";
@@ -31,8 +31,8 @@ async fn returns_created_instances() {
     let sri_b = Sri::from_target(INSTANCE_SRI_B).unwrap();
 
     // Arrange — seed two instances
-    seed_instance(test_app.session(), &sri_a, CLASS_NAME).await;
-    seed_instance(test_app.session(), &sri_b, CLASS_NAME).await;
+    seed_instance(test_app.session(), &sri_a).await;
+    seed_instance(test_app.session(), &sri_b).await;
 
     // Act
     let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
@@ -42,13 +42,13 @@ async fn returns_created_instances() {
     assert!(
         instances
             .iter()
-            .any(|i| i.sri == sri_a && i.class_name == CLASS_NAME),
+            .any(|i| i.sri == sri_a && i.class == seeded_class()),
         "first instance should appear with correct sri and class name"
     );
     assert!(
         instances
             .iter()
-            .any(|i| i.sri == sri_b && i.class_name == CLASS_NAME),
+            .any(|i| i.sri == sri_b && i.class == seeded_class()),
         "second instance should appear with correct sri and class name"
     );
 }
@@ -61,8 +61,8 @@ async fn reflects_erasure() {
     let sri_b = Sri::from_target(INSTANCE_SRI_B).unwrap();
 
     // Arrange — seed two instances, erase one
-    seed_instance(test_app.session(), &sri_a, CLASS_NAME).await;
-    seed_instance(test_app.session(), &sri_b, CLASS_NAME).await;
+    seed_instance(test_app.session(), &sri_a).await;
+    seed_instance(test_app.session(), &sri_b).await;
     assert_eq!(
         assert_ok!(
             sorg.erase_instance(&sri_a, SEEDED_GEN).await,

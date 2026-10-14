@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 
 use super::super::{CellMappings, PlacementOptions, preprocess};
-use super::{class_esp32c6_only, class_wasm_only, context, esp32c6_rt, linux_rt, rt_id, wasm_cell};
+use super::{
+    class_esp32c6_only, class_id, class_wasm_only, context, esp32c6_rt, linux_rt, rt_id, wasm_cell,
+};
 
 #[test]
 fn single_runtime_yields_trivial() {
     let id = rt_id("e689604085684e3e8469c5536703ec14");
     let ctx = context(
         vec![linux_rt(id)],
-        HashMap::from([("cls".to_string(), class_wasm_only("cls"))]),
+        HashMap::from([(class_id("cls"), class_wasm_only())]),
     );
     let cell = wasm_cell("cls");
 
@@ -30,7 +32,7 @@ fn two_runtimes_yields_untrivial() {
     let id2 = rt_id("1dbb066228ea49ab93ddbb0292168d40");
     let ctx = context(
         vec![linux_rt(id1), linux_rt(id2)],
-        HashMap::from([("cls".to_string(), class_wasm_only("cls"))]),
+        HashMap::from([(class_id("cls"), class_wasm_only())]),
     );
     let cell = wasm_cell("cls");
 
@@ -55,8 +57,8 @@ fn all_trivial_batch_yields_trivial() {
     let ctx = context(
         vec![linux_rt(linux_id), esp32c6_rt(esp_id)],
         HashMap::from([
-            ("linux-cls".to_string(), class_wasm_only("linux-cls")),
-            ("esp-cls".to_string(), class_esp32c6_only("esp-cls")),
+            (class_id("linux-cls"), class_wasm_only()),
+            (class_id("esp-cls"), class_esp32c6_only()),
         ]),
     );
     let cell_a = wasm_cell("linux-cls");
@@ -80,8 +82,8 @@ fn any_untrivial_cell_upgrades_batch_to_untrivial() {
     let ctx = context(
         vec![linux_rt(linux1), linux_rt(linux2), esp32c6_rt(esp)],
         HashMap::from([
-            ("linux-cls".to_string(), class_wasm_only("linux-cls")),
-            ("esp-cls".to_string(), class_esp32c6_only("esp-cls")),
+            (class_id("linux-cls"), class_wasm_only()),
+            (class_id("esp-cls"), class_esp32c6_only()),
         ]),
     );
     let cell_a = wasm_cell("linux-cls");

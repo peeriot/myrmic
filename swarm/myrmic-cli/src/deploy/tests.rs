@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 
-use cell_protocol::Sri;
+use cell_protocol::{BlobHash, Sri};
 use sorg_common::{
     BodyTemplate, CellConfig, CellDeployment, DeployRequest, HttpBridgeApi, MqttBridge,
-    RequirementTags, RestartPolicy, RestartType, WireHttpEndpoint, WireHttpRequestTemplate,
-    WireHttpResponseVariant, WireMqttEgress, WireMqttIngress,
+    RequirementTags, RestartPolicy, RestartType, SpawnLineage, WireHttpEndpoint,
+    WireHttpRequestTemplate, WireHttpResponseVariant, WireMqttEgress, WireMqttIngress,
 };
 
 use crate::args::Ctx;
@@ -100,21 +100,34 @@ fn build_deploy_request_matches_integration_test() {
         }],
     };
 
+    let class_ids = HashMap::from([
+        ("cell_1.wasm".to_owned(), BlobHash::of(b"cell_1")),
+        ("cell_2.wasm".to_owned(), BlobHash::of(b"cell_2")),
+    ]);
+
     let expected = DeployRequest::new(vec![
         CellDeployment::new(
             Sri::from_uuid(cell_protocol::sri_of_path("cell_1").unwrap()),
             CellConfig::Wasm {
-                class: "cell_1.wasm".to_owned(),
+                class: BlobHash::of(b"cell_1"),
             },
         )
-        .with_app(Some("test_app".to_owned())),
+        .with_app(Some("test_app".to_owned()))
+        .with_lineage(SpawnLineage {
+            local_name: Some("cell_1".to_owned()),
+            ..SpawnLineage::default()
+        }),
         CellDeployment::new(
             Sri::from_uuid(cell_protocol::sri_of_path("cell_2").unwrap()),
             CellConfig::Wasm {
-                class: "cell_2.wasm".to_owned(),
+                class: BlobHash::of(b"cell_2"),
             },
         )
-        .with_app(Some("test_app".to_owned())),
+        .with_app(Some("test_app".to_owned()))
+        .with_lineage(SpawnLineage {
+            local_name: Some("cell_2".to_owned()),
+            ..SpawnLineage::default()
+        }),
         CellDeployment::new(
             Sri::from_uuid(cell_protocol::sri_of_path("mqtt_bridge").unwrap()),
             CellConfig::MqttBridge(MqttBridge {
@@ -165,7 +178,7 @@ fn build_deploy_request_matches_integration_test() {
         .with_app(Some("test_app".to_owned())),
     ]);
 
-    let result = build_deploy_request(&info).expect("build deploy request");
+    let result = build_deploy_request(&info, &class_ids).expect("build deploy request");
     assert_eq!(result, expected);
 }
 
@@ -232,7 +245,9 @@ fn undeclared_restart_deploys_as_never() {
         http_bridges: vec![],
     };
 
-    let request = build_deploy_request(&info).expect("build deploy request");
+    let class_ids = HashMap::from([("cell.wasm".to_owned(), BlobHash::of(b"cell"))]);
+
+    let request = build_deploy_request(&info, &class_ids).expect("build deploy request");
     assert_eq!(request.cells[0].restart, RestartPolicy::default());
 }
 

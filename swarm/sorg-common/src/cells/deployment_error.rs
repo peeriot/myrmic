@@ -8,7 +8,7 @@
 
 use std::fmt::{self, Display};
 
-use cell_protocol::{ArtifactPlatform, RuntimeId, Sri};
+use cell_protocol::{ArtifactPlatform, BlobHash, RuntimeId, Sri};
 use serde::{Deserialize, Serialize};
 
 /// Why a cell deployment failed.
@@ -35,7 +35,7 @@ pub enum DeploymentError {
     /// A cell with this SRI is already deployed.
     DuplicateSri { sri: Sri },
     /// The referenced cell class is not present in the class registry.
-    UnknownClass { class: String },
+    UnknownClass { class: BlobHash },
     /// The Zenoh query to the orchestrator timed out before a reply arrived.
     QueryTimeout,
     /// An orchestrator-internal failure (datalayer error, serialization, …).
@@ -167,7 +167,8 @@ impl Display for DeploymentError {
             Self::DuplicateSri { sri } => write!(f, "cell '{sri}' is already deployed"),
             Self::UnknownClass { class } => write!(
                 f,
-                "class '{class}' not found in the class registry (if it was just registered, retry)"
+                "class {} not found in the class registry (if it was just registered, retry)",
+                class.to_hex()
             ),
             Self::Internal(msg) => write!(f, "{msg}"),
             Self::PlacementConflicts => write!(

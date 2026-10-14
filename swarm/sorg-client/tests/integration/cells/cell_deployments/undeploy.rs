@@ -9,11 +9,11 @@ async fn deploy_then_undeploy() {
     let (test_app, sorg) = spawn_test_app_with_dummy_cell().await;
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Arrange — deploy (this also registers the instance)
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy_cell should succeed"
     );
@@ -40,14 +40,14 @@ async fn deploy_then_undeploy() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn undeploy_erases_instance_row() {
-    let (_test_app, sorg) = spawn_test_app_with_dummy_cell().await;
+    let (test_app, sorg) = spawn_test_app_with_dummy_cell().await;
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Arrange — deploy (registers the instance), then undeploy
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy should succeed"
     );

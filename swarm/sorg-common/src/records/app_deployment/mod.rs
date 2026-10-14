@@ -1,4 +1,4 @@
-use cell_protocol::{RuntimeId, Sri};
+use cell_protocol::{BlobHash, RuntimeId, Sri};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod bridges;
@@ -126,7 +126,11 @@ impl CellDeployment {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CellConfig {
-    Wasm { class: String },
+    /// A wasm cell of the class with this id (a wasm class, or an AOT-only
+    /// class for embedded runtimes).
+    Wasm {
+        class: BlobHash,
+    },
     HttpBridge(HttpBridgeApi),
     MqttBridge(MqttBridge),
 }
@@ -134,7 +138,7 @@ pub enum CellConfig {
 impl std::fmt::Display for CellConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let details = match self {
-            CellConfig::Wasm { class } => format!("Wasm({})", class),
+            CellConfig::Wasm { class } => format!("Wasm({})", class.to_hex()),
             CellConfig::HttpBridge(bridge) => format!("Http({})", bridge.base_url),
             CellConfig::MqttBridge(bridge) => format!("Mqtt({})", bridge.broker),
         };
@@ -152,7 +156,7 @@ mod tests {
         let d = CellDeployment::new(
             Sri::of_path("root").unwrap(),
             CellConfig::Wasm {
-                class: "c".to_owned(),
+                class: BlobHash::of(b"c"),
             },
         );
         assert_eq!(d.restart.restart_type, RestartType::Never);
@@ -169,7 +173,7 @@ mod tests {
         let d = CellDeployment::new(
             Sri::of_path("root").unwrap(),
             CellConfig::Wasm {
-                class: "c".to_owned(),
+                class: BlobHash::of(b"c"),
             },
         )
         .with_restart(policy.clone());

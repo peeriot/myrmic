@@ -6,12 +6,12 @@ mod artifact_constraint;
 
 mod capacity_constraint;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
 use cell_protocol::{
-    ArtifactInfo, ArtifactPlatform, BlobHash, CapabilityTag, ClassInfo, ExecRuntimeInfo,
-    ExecutionCapabilities, RuntimeId, Sri,
+    ArtifactPlatform, BlobHash, CapabilityTag, ClassInfo, ExecRuntimeInfo, ExecutionCapabilities,
+    RuntimeId, Sri,
 };
 use sorg_common::{CellConfig, CellDeployment, DeploymentError, RejectionReason};
 use zenoh::config::ZenohId;
@@ -43,38 +43,39 @@ fn unknown_rt(id: RuntimeId) -> ExecRuntimeInfo {
     ExecRuntimeInfo::new(id, None, ExecutionCapabilities::default())
 }
 
+/// The id of the test class named `name`.
+fn class_id(name: &str) -> BlobHash {
+    BlobHash::of(name.as_bytes())
+}
+
 fn wasm_cell(class: &str) -> CellDeployment {
     CellDeployment::new(
         Sri::from_target(class).unwrap(),
         CellConfig::Wasm {
-            class: class.to_string(),
+            class: class_id(class),
         },
     )
 }
 
-fn class_wasm_only(name: &str) -> ClassInfo {
-    ClassInfo {
-        name: name.to_string(),
-        wasm_hash: Some(BlobHash::of(b"")),
-        artifacts: vec![],
+/// A wasm class with no AOT compilation.
+fn class_wasm_only() -> ClassInfo {
+    ClassInfo::Wasm {
+        aot: BTreeMap::new(),
+        spawns: vec![],
     }
 }
 
-fn class_esp32c6_only(name: &str) -> ClassInfo {
-    ClassInfo {
-        name: name.to_string(),
-        wasm_hash: None,
-        artifacts: vec![ArtifactInfo {
-            platform: ArtifactPlatform::Riscv32imac,
-            aot_hash: BlobHash::of(b"aot"),
-            meta_hash: BlobHash::of(b"meta"),
-        }],
+/// An AOT-only class for esp32c6 boards.
+fn class_esp32c6_only() -> ClassInfo {
+    ClassInfo::Aot {
+        platform: ArtifactPlatform::Riscv32imac,
+        crc: 0,
     }
 }
 
 fn context(
     execs: Vec<ExecRuntimeInfo>,
-    class_info: HashMap<String, ClassInfo>,
+    class_info: HashMap<BlobHash, ClassInfo>,
 ) -> PlacementContext {
     PlacementContext {
         execs,
@@ -88,7 +89,7 @@ fn unknown_runtime_is_rejected() {
     let id = rt_id("e689604085684e3e8469c5536703ec14");
     let ctx = context(
         vec![unknown_rt(id)],
-        HashMap::from([("cls".to_string(), class_wasm_only("cls"))]),
+        HashMap::from([(class_id("cls"), class_wasm_only())]),
     );
     let cell = wasm_cell("cls");
 
@@ -123,5 +124,9 @@ fn class_absent_from_the_read_fails_with_unknown_class() {
     let Err(DeploymentError::UnknownClass { class }) = result else {
         panic!("expected UnknownClass for a class missing from the registry read");
     };
-    assert_eq!("cls", class, "the error should name the absent class");
+    assert_eq!(
+        class_id("cls"),
+        class,
+        "the error should name the absent class"
+    );
 }

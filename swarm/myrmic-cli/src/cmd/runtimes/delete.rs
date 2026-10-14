@@ -20,16 +20,50 @@ pub struct Delete {
     #[clap(short = 'y')]
     pub yes: bool,
 
+    /// Signal sent to the runtime.
+    ///
+    /// `term` lets the runtime shut down: it says goodbye to the swarm and
+    /// cleans up. `kill` ends it abruptly, as a crash or power loss would.
+    #[clap(long, value_enum, default_value_t = Signal::Term)]
+    pub signal: Signal,
+
     /// Name of this runtime instance.
     /// Must be unique among runtimes sharing the same pid directory.
     #[clap(num_args = 1, value_delimiter = ' ')]
     pub name: Vec<String>,
 }
 
+/// The signals [`Delete`] can send: both end the runtime, so the delete can
+/// wait for it to exit.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum Signal {
+    /// SIGTERM
+    Term,
+    /// SIGKILL
+    Kill,
+}
+
+impl Signal {
+    fn number(self) -> libc::c_int {
+        match self {
+            Self::Term => libc::SIGTERM,
+            Self::Kill => libc::SIGKILL,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Term => "SIGTERM",
+            Self::Kill => "SIGKILL",
+        }
+    }
+}
+
 pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
     let Delete {
         pid_path,
         yes: _,
+        signal,
         name: mut names,
     } = cmd;
 
@@ -63,11 +97,12 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
     let pids = filtered;
 
     for pid in pids {
-        match pid.sigterm()? {
+        match pid.send_signal(signal.number())? {
             SignalOutcome::Sent(p) => {
                 crate::info!(
                     &ctx,
-                    "sent SIGTERM to runtime {:?} (pid {p})",
+                    "sent {} to runtime {:?} (pid {p})",
+                    signal.name(),
                     pid.file_stem()
                 );
                 wait_for_exit(&pid, p)?;
@@ -103,9 +138,9 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
 ///
 /// Waits on the process, not on the file: the runtime removes its PID file as
 /// soon as it receives the SIGTERM, before it has shut down and released its
-/// resources (e.g. its listen port). A SIGTERM can also arrive during daemon
-/// startup before the runtime installs its shutdown handler; in that case the
-/// process exits without cleaning up the file.
+/// resources (e.g. its listen port). The process exits without cleaning up the
+/// file on a SIGKILL, and on a SIGTERM that arrives during daemon startup
+/// before the runtime installs its shutdown handler.
 fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     while process_is_alive(process) {

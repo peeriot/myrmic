@@ -14,7 +14,7 @@
 
 use std::str::FromStr;
 
-use cell_protocol::{ArtifactPlatform, DeploymentCommand};
+use cell_protocol::{ArtifactPlatform, BlobHash, DeploymentCommand};
 use claims::{assert_err, assert_matches, assert_none, assert_ok};
 use sorg_common::{
     CellConfig, CellDeployment, CellFailureKind, DeployRequest, DeploymentError, RejectionReason,
@@ -38,17 +38,12 @@ const CELL_CLASS: &str = "embedded_cell";
 /// [`ArtifactPlatform`] back from those tags when routing the deploy dispatch.
 const TARGET: ArtifactPlatform = ArtifactPlatform::Riscv32imac;
 
-fn wasm_cell(sri: &str, class: &str) -> CellDeployment {
-    CellDeployment::new(
-        to_sri(sri),
-        CellConfig::Wasm {
-            class: class.to_owned(),
-        },
-    )
+fn wasm_cell(sri: &str, class: BlobHash) -> CellDeployment {
+    CellDeployment::new(to_sri(sri), CellConfig::Wasm { class })
 }
 
-fn embedded_cell(sri: &str) -> CellDeployment {
-    wasm_cell(sri, CELL_CLASS).with_tags(RequirementTags::new(vec![TARGET.as_str()]))
+fn embedded_cell(sri: &str, class: BlobHash) -> CellDeployment {
+    wasm_cell(sri, class).with_tags(RequirementTags::new(vec![TARGET.as_str()]))
 }
 
 fn deploy_request(cells: Vec<CellDeployment>) -> DeployRequest {
@@ -61,22 +56,23 @@ fn deploy_request(cells: Vec<CellDeployment>) -> DeployRequest {
 }
 
 // Embedded mock present, esp32c6 AOT staged; deploy an embedded-tagged
-// cell → placed on the mock, a DeploymentCommand carrying the class name is
-// delivered, success is confirmed, and the cell is registered on the mock.
+// cell → placed on the mock, a DeploymentCommand carrying the AOT binary's id
+// and CRC is delivered, success is confirmed, and the cell is registered on the
+// mock.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn deploy_success() {
     // Arrange — orch+db and a mock embedded runtime that confirms deployments
     let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — deploy an embedded-tagged cell
     assert_ok!(
-        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI)]))
+        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI, class)]))
             .await,
         "embedded deploy should succeed when the runtime confirms"
     );
@@ -91,7 +87,7 @@ async fn deploy_success() {
     );
 
     // Assert — the orchestrator handed the mock exactly the command it needs:
-    // the cell's SRI and the class name (firmware derives artifact paths from it).
+    // the cell's SRI, and the AOT binary to fetch with the CRC to check it by.
     let received = mock.received_commands();
     assert_eq!(
         received.len(),
@@ -101,6 +97,7 @@ async fn deploy_success() {
     let DeploymentCommand::Deploy {
         sri: cmd_sri,
         class: cmd_class,
+        crc: cmd_crc,
         ..
     } = &received[0]
     else {
@@ -112,8 +109,13 @@ async fn deploy_success() {
         "deployment command should name the deployed cell"
     );
     assert_eq!(
-        cmd_class, CELL_CLASS,
-        "deployment command should carry the cell's class name"
+        *cmd_class, class,
+        "deployment command should carry the AOT-only class's own binary"
+    );
+    assert_eq!(
+        *cmd_crc,
+        wasm_storage::metadata::CRC.checksum(&[0xA0]),
+        "deployment command should carry the AOT binary's CRC"
     );
 }
 
@@ -130,14 +132,14 @@ async fn deploy_runtime_reports_failure() {
         DeployResponseMode::ConfirmFailure(failure_msg.to_owned()),
     )
     .await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — deploy an embedded-tagged cell the runtime will reject
     let err = assert_err!(
-        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI)]))
+        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI, class)]))
             .await,
         "deploy should fail when the runtime reports a failure"
     );
@@ -188,14 +190,14 @@ async fn deploy_runtime_silent_times_out() {
     let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::Silent).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — deploy an embedded-tagged cell the runtime will never confirm
     let err = assert_err!(
-        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI)]))
+        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI, class)]))
             .await,
         "deploy should fail when the runtime never confirms"
     );
@@ -245,17 +247,17 @@ async fn embedded_tag_routes_to_mock_not_linux() {
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
 
     // Both artifacts available, so only the `embedded` tag can decide placement.
-    test_app
+    let class = test_app
         .register_raw_class(CELL_CLASS, vec![0x00, 0x61, 0x73, 0x6D])
         .await;
     test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — deploy an embedded-tagged cell
     assert_ok!(
-        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI)]))
+        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI, class)]))
             .await,
         "embedded deploy should succeed when the runtime confirms"
     );
@@ -289,14 +291,12 @@ async fn artifact_narrows_untagged_cell_to_linux() {
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
+    let class = test_app.class_id("embedded_routing.wasm").await;
 
     // Act — deploy an untagged cell whose class only has a wasm artifact
     assert_ok!(
-        sorg.deploy_cells(deploy_request(vec![wasm_cell(
-            CELL_SRI,
-            "embedded_routing.wasm"
-        )]))
-        .await,
+        sorg.deploy_cells(deploy_request(vec![wasm_cell(CELL_SRI, class)]))
+            .await,
         "deploy should succeed on the linux exec when only the wasm artifact is available"
     );
 
@@ -320,15 +320,16 @@ async fn embedded_at_capacity_is_infeasible() {
     let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act 1 — a first embedded cell occupies the mock
     assert_ok!(
         sorg.deploy_cells(DeployRequest::new(vec![
-            embedded_cell("embedded-cell-first").with_app(Some("embedded_app_first".to_owned())),
+            embedded_cell("embedded-cell-first", class)
+                .with_app(Some("embedded_app_first".to_owned())),
         ]))
         .await,
         "first embedded cell should deploy onto the mock"
@@ -337,7 +338,8 @@ async fn embedded_at_capacity_is_infeasible() {
     // Act 2 — a second embedded cell has no free embedded runtime
     let err = assert_err!(
         sorg.deploy_cells(DeployRequest::new(vec![
-            embedded_cell("embedded-cell-second").with_app(Some("embedded_app_second".to_owned())),
+            embedded_cell("embedded-cell-second", class)
+                .with_app(Some("embedded_app_second".to_owned())),
         ]))
         .await,
         "second embedded cell should fail when the only embedded runtime is occupied"
@@ -385,16 +387,16 @@ async fn embedded_cells_do_not_consolidate() {
         MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
     let mock_b =
         MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — deploy an app with two embedded cells
     assert_ok!(
         sorg.deploy_cells(deploy_request(vec![
-            embedded_cell("embedded-cell-a"),
-            embedded_cell("embedded-cell-b"),
+            embedded_cell("embedded-cell-a", class),
+            embedded_cell("embedded-cell-b", class),
         ]))
         .await,
         "an app with two embedded cells should deploy across the two mocks"
@@ -430,12 +432,12 @@ async fn delete_embedded_cell() {
     let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
     assert_ok!(
-        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI)]))
+        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI, class)]))
             .await,
         "setup: embedded deploy should succeed"
     );
@@ -471,12 +473,12 @@ async fn delete_runtime_silent_releases_rows() {
     let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
     assert_ok!(
-        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI)]))
+        sorg.deploy_cells(deploy_request(vec![embedded_cell(CELL_SRI, class)]))
             .await,
         "setup: embedded deploy should succeed"
     );
@@ -514,10 +516,10 @@ async fn rollback_tears_down_embedded_cell() {
     let _exec_linux = swarm_config!("cells/embedded/exec_linux.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
-    test_app
+    let failing = test_app
         .register_raw_class(FAILING_CLASS, vec![0xFF, 0xFF])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
@@ -525,8 +527,8 @@ async fn rollback_tears_down_embedded_cell() {
     // Act — deploy a two-cell app: one embedded (succeeds) + one linux (fails)
     let err = assert_err!(
         sorg.deploy_cells(deploy_request(vec![
-            embedded_cell("cell-ok"),
-            wasm_cell("cell-fail", FAILING_CLASS),
+            embedded_cell("cell-ok", class),
+            wasm_cell("cell-fail", failing),
         ]))
         .await,
         "deploy should fail when the linux cell fails to load"
@@ -608,16 +610,16 @@ async fn embedded_trivial_conflict_is_infeasible() {
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let _mock =
         MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
-    test_app
-        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0], vec![0x4E])
+    let class = test_app
+        .register_raw_aot(CELL_CLASS, TARGET, vec![0xA0])
         .await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — deploy an app with two embedded cells competing for the single runtime
     let err = assert_err!(
         sorg.deploy_cells(deploy_request(vec![
-            embedded_cell("embedded-cell-a"),
-            embedded_cell("embedded-cell-b"),
+            embedded_cell("embedded-cell-a", class),
+            embedded_cell("embedded-cell-b", class),
         ]))
         .await,
         "deploying two embedded cells onto one runtime should fail"
