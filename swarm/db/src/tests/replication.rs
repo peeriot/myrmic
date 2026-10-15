@@ -552,6 +552,41 @@ async fn an_offloader_retires_once_a_replica_covers_it() {
     assert_eq!(confirmed, held);
 }
 
+#[tokio::test]
+async fn an_offloader_does_not_retire_off_a_peer_that_has_left() {
+    let scope = api::Scope::new("d", "db", "schema");
+    let (store1, transport1, offloader) = spawn_offloader(&scope);
+
+    let subject = domain::Subject::Namespace("d".to_string());
+    let (_store2, transport2, replica) = spawn_replica(&subject);
+
+    add_key(&store1, db_scope(&scope), "a", b"1");
+    settle(&offloader, &transport1, &replica, &transport2).await;
+    assert!(store1.is_offloading(&scope));
+
+    replica.announce().await.expect("unable to announce");
+    let announce = transport2
+        .drain_outgoing()
+        .into_iter()
+        .find(|msg| matches!(msg, ReplicaMessage::Announce(_)))
+        .expect("the replica announced");
+
+    // The covering announce is received, but its handling is still queued
+    // when the replica's liveliness token goes.
+    let handling = offloader.clone().handle_message(transport2.id, announce);
+    store1.forget_peer(&transport2.id.to_le_bytes());
+    handling.await;
+
+    assert!(
+        store1.is_offloading(&scope),
+        "coverage announced before the peer left cannot vouch for the data",
+    );
+    assert!(
+        offloader.take_confirmed_coverage().is_empty(),
+        "nothing was confirmed, so nothing may be released",
+    );
+}
+
 /// The point of offloading is to stop holding the scope — but letting go must
 /// not be expressible as a deletion, or it would take the holder's copy too.
 #[tokio::test]
@@ -1604,7 +1639,7 @@ async fn peer_view_reports_the_baseline_of_a_fully_elided_announce() {
             heads: ScopeFrontier::new(),
         },
     );
-    store.record_peer_frontier([1u8; 16], known, true);
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
 
     let view = store.peer_view(&scope, std::time::Instant::now());
 
@@ -1622,7 +1657,7 @@ async fn peer_view_lists_live_peers_holding_the_scope() {
 
     let mut known = VecMap::new();
     known.insert(scope.clone(), frontier_at(7));
-    store.record_peer_frontier([1u8; 16], known, true);
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
 
     let view = store.peer_view(&scope, std::time::Instant::now());
 
@@ -1645,7 +1680,7 @@ async fn forgetting_a_peer_drops_it_from_the_peer_view() {
 
     let mut known = VecMap::new();
     known.insert(scope.clone(), frontier_at(7));
-    store.record_peer_frontier([1u8; 16], known, true);
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
     assert_eq!(store.peer_view(&scope, std::time::Instant::now()).len(), 1);
 
     store.forget_peer(&[1u8; 16]);
@@ -1659,13 +1694,61 @@ async fn forgetting_a_peer_drops_it_from_the_peer_view() {
 }
 
 #[tokio::test]
+async fn an_announce_received_before_the_peer_left_does_not_bring_it_back() {
+    let subject = domain::Subject::Namespace("d".to_string());
+    let scope = api::Scope::new("d", "db", "schema");
+    let (store1, transport1, replica1) = spawn_replica(&subject);
+    let (store2, _transport2, replica2) = spawn_replica(&subject);
+    add_key(&store1, db_scope(&scope), "a", b"1");
+
+    replica1.announce().await.expect("unable to announce");
+    let announce = transport1
+        .drain_outgoing()
+        .into_iter()
+        .find(|msg| matches!(msg, ReplicaMessage::Announce(_)))
+        .expect("replica1 announced");
+
+    // Received, but its handling still queued (a spawned task, a frontier
+    // scan behind a lock) when the sender's liveliness token goes.
+    let handling = replica2.clone().handle_message(transport1.id, announce);
+    store2.forget_peer(&transport1.id.to_le_bytes());
+    handling.await;
+
+    assert!(
+        store2
+            .peer_view(&scope, std::time::Instant::now())
+            .is_empty(),
+        "news from before the departure must not vouch for the departed peer",
+    );
+}
+
+#[tokio::test]
+async fn a_peer_that_returns_after_leaving_is_vouched_for_again() {
+    let store = super::open_tmp();
+    let scope = api::Scope::new("d", "db", "schema");
+
+    store.forget_peer(&[1u8; 16]);
+    tokio::time::sleep(Duration::from_millis(1)).await;
+
+    let mut known = VecMap::new();
+    known.insert(scope.clone(), frontier_at(7));
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
+
+    assert_eq!(
+        store.peer_view(&scope, std::time::Instant::now()).len(),
+        1,
+        "an announce received after the departure is the peer back",
+    );
+}
+
+#[tokio::test]
 async fn peer_view_reports_a_drainer_as_draining() {
     let store = super::open_tmp();
     let scope = api::Scope::new("d", "db", "schema");
 
     let mut known = VecMap::new();
     known.insert(scope.clone(), frontier_at(7));
-    store.record_peer_frontier([1u8; 16], known, false);
+    store.record_peer_frontier([1u8; 16], known, false, std::time::Instant::now());
 
     let view = store.peer_view(&scope, std::time::Instant::now());
 
@@ -1690,11 +1773,11 @@ async fn peer_view_merges_announces_across_subjects() {
 
     let mut known = VecMap::new();
     known.insert(replicated.clone(), frontier_at(7));
-    store.record_peer_frontier([1u8; 16], known, true);
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
 
     let mut known = VecMap::new();
     known.insert(drained.clone(), frontier_at(3));
-    store.record_peer_frontier([1u8; 16], known, false);
+    store.record_peer_frontier([1u8; 16], known, false, std::time::Instant::now());
 
     let now = std::time::Instant::now();
 
@@ -1726,7 +1809,7 @@ async fn peer_view_excludes_peers_last_seen_beyond_ttl() {
 
     let mut known = VecMap::new();
     known.insert(scope.clone(), frontier_at(7));
-    store.record_peer_frontier([1u8; 16], known, true);
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
 
     // Long enough after the peer was recorded that it is presumed gone.
     let now = std::time::Instant::now() + std::time::Duration::from_mins(1);
@@ -1746,7 +1829,7 @@ async fn peer_view_excludes_peers_not_holding_the_scope() {
 
     let mut known = VecMap::new();
     known.insert(other, frontier_at(7));
-    store.record_peer_frontier([1u8; 16], known, true);
+    store.record_peer_frontier([1u8; 16], known, true, std::time::Instant::now());
 
     let view = store.peer_view(&held, std::time::Instant::now());
 

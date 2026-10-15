@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cell_protocol::node_tags::LiveTags;
 use cell_protocol::{NodeLease, RuntimeId};
 use sorg_common::node_lease;
 use sorg_common::supervision::{SupervisionTiming, jittered};
-use tracing::warn;
+use tracing::{debug, warn};
 use zenoh::Session;
 
 /// Slow cadence (in renewal ticks) for healing a missing exec registry row.
@@ -40,16 +40,15 @@ pub(crate) async fn start_renewal(
     name: Option<String>,
     tags: LiveTags,
 ) -> tokio::task::JoinHandle<()> {
-    let retention = timing.lease_retention();
-    let ttl_ms = u64::try_from(timing.ttl.as_millis()).unwrap_or(u64::MAX);
     let mut tick: u64 = 1;
-    renew(&session, id, &device_id, ttl_ms, retention).await;
+    let mut failing_since: Option<Instant> = None;
+    renew(&session, id, &device_id, &timing, &mut failing_since).await;
 
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(next_renewal_delay(&timing, tick)).await;
             tick += 1;
-            renew(&session, id, &device_id, ttl_ms, retention).await;
+            renew(&session, id, &device_id, &timing, &mut failing_since).await;
 
             // The registry row should live as long as this exec, but a stale
             // leave-deregistration racing a restart (or hygiene during a lease
@@ -70,21 +69,38 @@ pub(crate) async fn start_renewal(
 }
 
 /// One renewal of this node's lease, stamped now.
+///
+/// A lost peer that won the holder draw fails renewals until zenoh's link
+/// lease notices it is gone (~10 s), then they land locally — a partition
+/// costs one failure. Only a streak long enough for observers to expire this
+/// node is a problem, so shorter streaks log at debug.
 async fn renew(
     session: &Session,
     id: RuntimeId,
     device_id: &str,
-    ttl_ms: u64,
-    retention: Duration,
+    timing: &SupervisionTiming,
+    failing_since: &mut Option<Instant>,
 ) {
     let seq = mint_seq();
     let lease = NodeLease {
         device_id: device_id.to_owned(),
         seq,
-        ttl_ms,
+        ttl_ms: u64::try_from(timing.ttl.as_millis()).unwrap_or(u64::MAX),
     };
-    if let Err(err) = node_lease::renew_lease(session, id, &lease, retention).await {
-        warn!("lease renewal {seq} failed: {err}");
+    let retention = timing.lease_retention();
+    match node_lease::renew_lease(session, id, &lease, retention).await {
+        Ok(()) => *failing_since = None,
+        Err(err) => {
+            let since = *failing_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= timing.ttl {
+                warn!(
+                    "lease renewal {seq} failed, failing for {:.0?}: {err}",
+                    since.elapsed()
+                );
+            } else {
+                debug!("lease renewal {seq} failed: {err}");
+            }
+        }
     }
 }
 
