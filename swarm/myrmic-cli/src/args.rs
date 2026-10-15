@@ -20,8 +20,9 @@ pub struct Ctx {
     #[clap(long, alias = "network_timeout", global = true)]
     pub timeout: Option<humantime::Duration>,
 
-    /// Connect directly to a runtime endpoint instead of using multicast
-    /// discovery. May be supplied more than once for fallback endpoints.
+    /// Attach to a runtime at this endpoint as a client, instead of joining
+    /// the swarm by multicast discovery. May be supplied more than once for
+    /// fallback endpoints, tried in order.
     #[clap(long, value_name = "ENDPOINT", global = true)]
     pub connect: Vec<String>,
 
@@ -37,6 +38,13 @@ pub struct Ctx {
         global = true
     )]
     pub multicast_group: Option<std::net::SocketAddr>,
+
+    /// Attach to a runtime of this zone as a client. The zone's members are
+    /// looked up on the lighthouse and reached over iroh, so the runtime may
+    /// be on another network. Multicast discovery still runs alongside, and
+    /// whichever finds a runtime first wins.
+    #[clap(long, value_name = "ZONE", conflicts_with = "connect", global = true)]
+    pub zone: Option<String>,
 }
 
 impl Ctx {
@@ -63,13 +71,41 @@ impl Ctx {
     pub async fn introspection(&self, session: zenoh::Session) -> introspection_client::v1::Client {
         introspection_client::v1::Client::new(session).await
     }
+
+    /// The flags given that only matter to a command talking to the swarm,
+    /// which a local command ignores. `--zone` counts only if `zone`;
+    /// `runtimes start` takes it for the runtime itself.
+    pub fn ignored_network_flags(&self, zone: bool) -> Vec<&'static str> {
+        let mut ignored = vec![];
+        if !self.connect.is_empty() {
+            ignored.push("--connect");
+        }
+        if self.multicast_group.is_some() {
+            ignored.push("--multicast-group");
+        }
+        if zone && self.zone.is_some() {
+            ignored.push("--zone");
+        }
+        ignored
+    }
+
+    /// Warns about each of [`Self::ignored_network_flags`].
+    pub fn warn_ignored_network_flags(&self, zone: bool) {
+        for flag in self.ignored_network_flags(zone) {
+            crate::warn!(
+                self,
+                "`{flag}` ignored: `{}` works locally",
+                crate::utils::command_path()
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
 
-    use super::Args;
+    use super::{Args, Ctx};
 
     #[test]
     fn parses_multiple_explicit_connect_endpoints() {
@@ -87,6 +123,56 @@ mod tests {
             args.ctx.connect,
             ["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"]
         );
+    }
+
+    #[test]
+    fn parses_a_zone() {
+        let args = Args::try_parse_from(["myrmic", "--zone", "blah", "network"]).unwrap();
+
+        assert_eq!(args.ctx.zone.as_deref(), Some("blah"));
+    }
+
+    #[test]
+    fn a_zone_and_an_explicit_connect_conflict() {
+        let err = Args::try_parse_from([
+            "myrmic",
+            "--connect",
+            "tcp/192.0.2.10:7447",
+            "--zone",
+            "blah",
+            "network",
+        ])
+        .err()
+        .expect("a conflict");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn a_local_command_ignores_the_network_flags() {
+        let ctx = Ctx {
+            connect: vec!["tcp/192.0.2.10:7447".to_owned()],
+            zone: Some("blah".to_owned()),
+            ..Ctx::default()
+        };
+
+        assert_eq!(ctx.ignored_network_flags(true), ["--connect", "--zone"]);
+    }
+
+    #[test]
+    fn a_local_command_without_network_flags_ignores_nothing() {
+        assert!(Ctx::default().ignored_network_flags(true).is_empty());
+    }
+
+    #[test]
+    fn a_zone_is_left_to_a_command_that_takes_it_itself() {
+        let ctx = Ctx {
+            zone: Some("blah".to_owned()),
+            ..Ctx::default()
+        };
+
+        assert!(ctx.ignored_network_flags(false).is_empty());
+        assert_eq!(ctx.ignored_network_flags(true), ["--zone"]);
     }
 }
 
