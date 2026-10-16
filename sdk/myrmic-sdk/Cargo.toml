@@ -26,7 +26,7 @@ embedded-alloc = { workspace = true, optional = true }
 embedded-hal = { workspace = true }
 spin = { workspace = true }
 paste = { workspace = true }
-heapless = { workspace = true, features = ["serde"] }
+heapless = { workspace = true }
 postcard = { workspace = true, default-features = false, features = [
     "experimental-derive",
 ] }

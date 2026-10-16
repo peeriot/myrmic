@@ -36,9 +36,9 @@ pub use cell::{
 };
 
 #[cfg(feature = "cells")]
-pub use cell::{CELL_NAME_MAX_LEN, CellName, name_of, publish_event};
-#[cfg(feature = "cells")]
 pub(crate) use cell::send_command;
+#[cfg(feature = "cells")]
+pub use cell::{name_of, publish_event};
 #[cfg(feature = "cells")]
 pub use in_memory::InMemory;
 

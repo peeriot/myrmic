@@ -5,19 +5,20 @@
 //! reserved scope a cell can't read itself, so the host reads it on its behalf.
 
 use cell_protocol::Sri;
-use myrmic_common::types::error::{ENOMEM, GENERIC_ERROR, SUCCESS};
-use tracing::{error, warn};
+use myrmic_common::types::error::{ENOENT, ENOMEM, GENERIC_ERROR};
+use tracing::warn;
 use wasmtime::Caller;
 
 use crate::wasm::cell::state::CellState;
 use crate::wasm::host_functions::{as_slice_mut, decode};
 
 /// Writes the name the cell `sri` was registered or spawned under into the
-/// guest buffer, as a postcard `Option<String>`: `None` for a cell with no
-/// recorded name, or none known at all.
+/// guest buffer, as raw UTF-8, so the guest can size the buffer to its own
+/// fixed capacity.
 ///
-/// Returns [`SUCCESS`], [`ENOMEM`] when the buffer is too small, or
-/// [`GENERIC_ERROR`] when the registry can't be read.
+/// Returns the name's length in bytes, [`ENOENT`] when no name is recorded
+/// (or the SRI is unknown), [`ENOMEM`] when the name doesn't fit the buffer,
+/// or [`GENERIC_ERROR`] when the registry can't be read.
 pub(crate) async fn cell_name_host(
     mut caller: Caller<'_, CellState>,
     sri_ptr: u32,
@@ -39,17 +40,17 @@ pub(crate) async fn cell_name_host(
         }
     };
 
-    let encoded = match postcard::to_allocvec(&name) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            error!("failed to serialise the name of {sri}: {err}");
-            return GENERIC_ERROR;
-        }
+    let Some(name) = name else {
+        return ENOENT;
     };
-    if encoded.len() > max_length as usize {
+    let bytes = name.as_bytes();
+    if bytes.len() > max_length as usize {
         return ENOMEM;
     }
+    let Ok(len) = i32::try_from(bytes.len()) else {
+        return ENOMEM;
+    };
 
-    as_slice_mut(&mut caller, buffer_ptr as usize, encoded.len()).copy_from_slice(&encoded);
-    SUCCESS
+    as_slice_mut(&mut caller, buffer_ptr as usize, bytes.len()).copy_from_slice(bytes);
+    len
 }

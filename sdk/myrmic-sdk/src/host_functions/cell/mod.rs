@@ -8,7 +8,7 @@ mod timers;
 
 pub use commands::{CommandError, send_command};
 pub use events::publish_event;
-pub use names::{CELL_NAME_MAX_LEN, CellName, name_of};
 pub use myrmic_common::cells::{ClassRef, SpawnError, SpawnRequest, TerminateError};
+pub use names::name_of;
 pub use spawning::{ClassHandle, SpawnBuilder, spawn_cell, stop_self, terminate_cell};
 pub use timers::{TimerHandle, delay, interval, interval_at};
