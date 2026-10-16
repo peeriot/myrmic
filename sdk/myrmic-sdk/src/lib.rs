@@ -179,9 +179,9 @@ pub mod monitor {
 
 #[cfg(feature = "cells")]
 pub use host_functions::{
-    ClassHandle, ClassRef, CommandError, InMemory, SpawnBuilder, SpawnError, SpawnRequest,
-    TerminateError, TimerHandle, delay, interval, interval_at, publish_event, spawn_cell,
-    stop_self, terminate_cell,
+    CELL_NAME_MAX_LEN, CellName, ClassHandle, ClassRef, CommandError, InMemory, SpawnBuilder,
+    SpawnError, SpawnRequest, TerminateError, TimerHandle, delay, interval, interval_at, name_of,
+    publish_event, spawn_cell, stop_self, terminate_cell,
 };
 
 /// Declares a reference to a child cell class by name, returning a

@@ -13,8 +13,8 @@ use crate::{
         host_functions::{
             arguments::get_arguments,
             cell::{
-                cancel_timer, create_timer, publish_event, send_command, spawn_cell, stop_self,
-                terminate_cell,
+                cancel_timer, cell_name_host, create_timer, publish_event, send_command,
+                spawn_cell, stop_self, terminate_cell,
             },
             db::{
                 blob_link, blob_move, blob_resolve, blob_store, blob_unlink, find_measurement,
@@ -159,6 +159,16 @@ pub(crate) fn link_cell_functions(
         "cancel_timer",
         move |caller: Caller<'_, CellState>, (id,): (u32,)| {
             Box::new(cancel_timer(caller, id)) as Box<dyn Future<Output = i32> + Send>
+        },
+    )?;
+
+    linker.func_wrap_async(
+        "cell",
+        "cell_name_host",
+        move |caller: Caller<'_, CellState>,
+              (sri_ptr, sri_len, buf_ptr, len): (u32, u32, u32, u32)| {
+            Box::new(cell_name_host(caller, sri_ptr, sri_len, buf_ptr, len))
+                as Box<dyn Future<Output = i32> + Send>
         },
     )?;
 

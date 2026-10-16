@@ -6873,6 +6873,7 @@ dependencies = [
  "critical-section",
  "embedded-alloc",
  "embedded-hal 1.0.0",
+ "heapless 0.9.3",
  "myrmic-common",
  "myrmic-sdk-macros",
  "myrmic-signal-layer-types",
