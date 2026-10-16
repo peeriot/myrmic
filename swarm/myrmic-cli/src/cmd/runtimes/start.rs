@@ -76,15 +76,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
     let pid = Pid::from_args(&pid_path, name)?;
     pid.ensure_parent()?;
 
-    // Don't clobber a running runtime with the same name.
-    // Don't care if it's stale, as we'll overwrite it.
-    if let PidStatus::Running(existing) = pid.status() {
-        anyhow::bail!(
-            "runtime {:?} already running (pid {existing}); see {}",
-            pid.file_stem(),
-            pid.path.display()
-        );
-    }
+    refuse_if_running(&pid)?;
 
     crate::info!(
         &ctx,
@@ -379,11 +371,12 @@ fn run(
     // Any fork precedes the runtime, so a full worker pool is fork-safe.
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     crate::block_on_with(workers, async move {
-        pid.write_self().await?;
+        // After the fork: a POSIX lock doesn't survive fork().
+        let lock = pid.acquire()?;
 
         let result = serve(&ctx, swarm, name, zid, status).await;
 
-        if let Err(err) = pid.remove_async().await {
+        if let Err(err) = lock.release() {
             crate::warn!(
                 ctx,
                 "failed to remove pid file {}: {err}",
@@ -434,6 +427,25 @@ async fn serve(
     }
 
     result
+}
+
+/// Fails fast on a name in use, while there is still a terminal to say so on.
+/// The lock taken after daemonizing is what actually guarantees it; a stale
+/// file is simply reclaimed.
+fn refuse_if_running(pid: &Pid) -> anyhow::Result<()> {
+    match pid.status() {
+        PidStatus::Running(existing) => anyhow::bail!(
+            "runtime {:?} already running (pid {existing}); see {}",
+            pid.file_stem(),
+            pid.path.display()
+        ),
+        PidStatus::Unreachable => anyhow::bail!(
+            "runtime {:?} already running in another pid namespace; see {}",
+            pid.file_stem(),
+            pid.path.display()
+        ),
+        PidStatus::Stale | PidStatus::Absent => Ok(()),
+    }
 }
 
 /// Waits for a shutdown signal.
