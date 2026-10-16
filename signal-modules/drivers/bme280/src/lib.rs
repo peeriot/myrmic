@@ -22,23 +22,48 @@
 //!
 //! # Timing
 //!
-//! [`Bme280::sample`] is non-blocking — it issues a single burst read of the
-//! latest data registers. The caller's sample loop owns the sample interval;
-//! Normal mode keeps the data registers current between samples.
+//! [`Bme280::init`] returns once the first conversion after the switch to
+//! Normal mode has landed in the data registers: it polls `STATUS.measuring`,
+//! bounded by the datasheet's `t_measure,max` for the configured oversampling
+//! (9.3 ms at ×1, 112.8 ms at ×16). The waits between polls use `embassy_time`
+//! under `#[cfg(not(test))]`; host tests drive the poll through the mock
+//! without them. [`Bme280::sample`] is then non-blocking — a single burst read
+//! of the latest data registers. The caller's sample loop owns the sample
+//! interval; Normal mode keeps the data registers current between samples.
+//! A burst that returns the registers' reset pattern (the sensor was reset
+//! underneath the driver) makes `sample` wait out one measurement window
+//! before reporting [`Bme280Error::NotReady`].
 
 #![cfg_attr(not(test), no_std)]
 
 use embedded_hal_async::i2c::I2c;
 
+// `embassy_time` is only awaited under `#[cfg(not(test))]`; keep it referenced in
+// test builds so it never trips `unused_crate_dependencies`.
+#[cfg(test)]
+use embassy_time as _;
+
 const REG_CHIP_ID: u8 = 0xD0;
 const CHIP_ID: u8 = 0x60;
 const REG_CTRL_HUM: u8 = 0xF2;
+const REG_STATUS: u8 = 0xF3;
 const REG_CTRL_MEAS: u8 = 0xF4;
 const REG_CONFIG: u8 = 0xF5;
 const REG_PRESS_MSB: u8 = 0xF7;
 const REG_CALIB_TP: u8 = 0x88; // 24 bytes: dig_T1-T3, dig_P1-P9
 const REG_CALIB_H1: u8 = 0xA1; // 1 byte:  dig_H1
 const REG_CALIB_H2: u8 = 0xE1; // 7 bytes: dig_H2-H6
+
+// Set while a conversion runs, cleared once its results have been copied to
+// the data registers (datasheet §5.4.4).
+const STATUS_MEASURING: u8 = 1 << 3;
+// Interval between `STATUS.measuring` polls while waiting for a conversion.
+const STATUS_POLL_MS: u64 = 1;
+
+// Reset values of the data registers (§5.4.4–§5.4.6): what a burst read
+// returns until the first conversion after a reset has landed.
+const ADC_RESET_20BIT: i32 = 0x8_0000;
+const ADC_RESET_16BIT: i32 = 0x8000;
 
 // Normal mode (continuous sampling) — embedded into `ctrl_meas` alongside the
 // oversampling fields. Forced/Sleep modes are not exposed; the driver always
@@ -47,11 +72,12 @@ const REG_CALIB_H2: u8 = 0xE1; // 7 bytes: dig_H2-H6
 const MODE_NORMAL: u8 = 0b11;
 
 /// Per-channel oversampling — trades noise reduction for longer conversion time.
+///
+/// The datasheet's "skipped" setting is not offered: it pins the channel's
+/// data register at its reset value, which the driver treats as not ready.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Oversampling {
-    /// Skip the channel (output fixed at 0x80000, datasheet §5.4.4/5.4.5).
-    Skip = 0,
     /// ×1 oversampling (no averaging).
     X1 = 1,
     /// ×2 oversampling.
@@ -62,6 +88,19 @@ pub enum Oversampling {
     X8 = 4,
     /// ×16 oversampling.
     X16 = 5,
+}
+
+impl Oversampling {
+    /// Samples averaged per conversion.
+    fn samples(self) -> u64 {
+        match self {
+            Self::X1 => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+            Self::X16 => 16,
+        }
+    }
 }
 
 /// IIR filter coefficient — smooths short-term fluctuations on temperature and pressure.
@@ -139,6 +178,17 @@ impl Default for Bme280Config {
     }
 }
 
+impl Bme280Config {
+    /// Upper bound of one measurement cycle, `t_measure,max` (datasheet §9.1):
+    /// 1.25 ms plus 2.3 ms per sample, with 0.575 ms of setup each for the
+    /// pressure and humidity channels.
+    fn measurement_time_max_us(self) -> u64 {
+        1250 + 2300 * self.osrs_t.samples()
+            + (2300 * self.osrs_p.samples() + 575)
+            + (2300 * self.osrs_h.samples() + 575)
+    }
+}
+
 /// One full set of compensated sensor readings.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -159,6 +209,13 @@ pub enum Bme280Error<E: core::fmt::Debug> {
     Bus(E),
     /// Chip ID register did not return `0x60` — likely wrong device or wiring.
     InvalidId(u8),
+    /// `dig_T1` or `dig_P1` read as `0` or `0xFFFF`. Neither is a programmed
+    /// trim value, so the calibration transfer did not reach the chip's NVM.
+    InvalidCalibration,
+    /// The data registers still held their reset pattern after a full
+    /// measurement window: the sensor is not converting (it sits in sleep
+    /// mode after a reset) and needs [`Bme280::init`] again.
+    NotReady,
 }
 
 impl<E: core::fmt::Debug> From<E> for Bme280Error<E> {
@@ -213,7 +270,9 @@ impl Bme280 {
 
     /// (Re-)initialise the sensor: verify the chip ID, load the calibration
     /// table, and apply the configured oversampling / filter / standby. Leaves
-    /// the sensor in Normal (continuous) mode.
+    /// the sensor in Normal (continuous) mode and returns once its first
+    /// conversion has landed, so the next [`Bme280::sample`] reads a
+    /// measurement rather than the data registers' reset pattern.
     ///
     /// Safe to call repeatedly — the generated source task re-runs `init` to
     /// recover a sensor that started failing. The stored calibration is only
@@ -224,6 +283,8 @@ impl Bme280 {
     ///
     /// - [`Bme280Error::Bus`] on any I2C transaction failure.
     /// - [`Bme280Error::InvalidId`] if the chip ID register does not read `0x60`.
+    /// - [`Bme280Error::InvalidCalibration`] if `dig_T1` or `dig_P1` reads `0`
+    ///   or `0xFFFF`.
     pub async fn init<I: I2c>(&mut self, bus: &mut I) -> Result<(), Bme280Error<I::Error>> {
         let cfg = self.cfg;
         let addr = cfg.i2c_addr;
@@ -237,6 +298,13 @@ impl Bme280 {
         // Read temp+pressure calibration (24 bytes: 0x88–0x9F)
         let mut tp = [0u8; 24];
         bus.write_read(addr, &[REG_CALIB_TP], &mut tp).await?;
+        // The two unsigned words are never programmed as 0 or 0xFFFF; reading
+        // either means the transfer returned bus idle levels, not the NVM.
+        let dig_t1 = u16::from_le_bytes([tp[0], tp[1]]);
+        let dig_p1 = u16::from_le_bytes([tp[6], tp[7]]);
+        if matches!(dig_t1, 0x0000 | 0xFFFF) || matches!(dig_p1, 0x0000 | 0xFFFF) {
+            return Err(Bme280Error::InvalidCalibration);
+        }
 
         // Read H1 (1 byte: 0xA1)
         let mut h1 = [0u8; 1];
@@ -247,10 +315,10 @@ impl Bme280 {
         bus.write_read(addr, &[REG_CALIB_H2], &mut h2_6).await?;
 
         let cal = Calibration {
-            dig_t1: u16::from_le_bytes([tp[0], tp[1]]),
+            dig_t1,
             dig_t2: i16::from_le_bytes([tp[2], tp[3]]),
             dig_t3: i16::from_le_bytes([tp[4], tp[5]]),
-            dig_p1: u16::from_le_bytes([tp[6], tp[7]]),
+            dig_p1,
             dig_p2: i16::from_le_bytes([tp[8], tp[9]]),
             dig_p3: i16::from_le_bytes([tp[10], tp[11]]),
             dig_p4: i16::from_le_bytes([tp[12], tp[13]]),
@@ -262,8 +330,9 @@ impl Bme280 {
             dig_h1: h1[0],
             dig_h2: i16::from_le_bytes([h2_6[0], h2_6[1]]),
             dig_h3: h2_6[2],
-            dig_h4: (i16::from(h2_6[3])) << 4 | (i16::from(h2_6[4]) & 0x0F),
-            dig_h5: (i16::from(h2_6[4]) >> 4) | (i16::from(h2_6[5]) << 4),
+            // 12-bit signed words: the MSB byte carries the sign (§4.2.2).
+            dig_h4: (i16::from(h2_6[3].cast_signed()) << 4) | i16::from(h2_6[4] & 0x0F),
+            dig_h5: (i16::from(h2_6[5].cast_signed()) << 4) | i16::from(h2_6[4] >> 4),
             dig_h6: h2_6[6].cast_signed(),
         };
 
@@ -274,6 +343,7 @@ impl Bme280 {
         bus.write(addr, &[REG_CTRL_HUM, ctrl_hum]).await?;
         bus.write(addr, &[REG_CONFIG, config_reg]).await?;
         bus.write(addr, &[REG_CTRL_MEAS, ctrl_meas]).await?;
+        self.wait_for_conversion(bus).await?;
 
         self.cal = cal;
         log::info!("[bme280] init OK at 0x{addr:02X}");
@@ -285,25 +355,32 @@ impl Bme280 {
     /// sensor in Normal mode so the data registers are updated continuously
     /// at the standby+conversion cadence configured in [`Bme280::init`].
     ///
+    /// A burst that returns the data registers' reset pattern means no
+    /// conversion has landed since the sensor was last reset; the driver
+    /// waits out one measurement window and reads again before giving up.
+    ///
     /// # Errors
     ///
-    /// [`Bme280Error::Bus`] on any I2C transaction failure.
+    /// - [`Bme280Error::Bus`] on any I2C transaction failure.
+    /// - [`Bme280Error::NotReady`] if the reset pattern outlives a full
+    ///   measurement window: the sensor is no longer converting and needs
+    ///   [`Bme280::init`] again.
     pub async fn sample<I: I2c>(
         &mut self,
         bus: &mut I,
     ) -> Result<Bme280Readings, Bme280Error<I::Error>> {
-        // Read press(3) + temp(3) + hum(2) = 8 bytes starting at 0xF7
-        let mut raw = [0u8; 8];
-        bus.write_read(self.cfg.i2c_addr, &[REG_PRESS_MSB], &mut raw)
-            .await?;
+        let mut raw = self.read_raw(bus).await?;
+        if raw.is_reset_pattern() {
+            self.wait_for_conversion(bus).await?;
+            raw = self.read_raw(bus).await?;
+            if raw.is_reset_pattern() {
+                return Err(Bme280Error::NotReady);
+            }
+        }
 
-        let adc_p = (i32::from(raw[0])) << 12 | (i32::from(raw[1])) << 4 | (i32::from(raw[2])) >> 4;
-        let adc_t = (i32::from(raw[3])) << 12 | (i32::from(raw[4])) << 4 | (i32::from(raw[5])) >> 4;
-        let adc_h = (i32::from(raw[6])) << 8 | i32::from(raw[7]);
-
-        let (t_fine, temperature) = compensate_temperature(adc_t, &self.cal);
-        let pressure = compensate_pressure(adc_p, t_fine, &self.cal);
-        let humidity = compensate_humidity(adc_h, t_fine, &self.cal);
+        let (t_fine, temperature) = compensate_temperature(raw.adc_t, &self.cal);
+        let pressure = compensate_pressure(raw.adc_p, t_fine, &self.cal);
+        let humidity = compensate_humidity(raw.adc_h, t_fine, &self.cal);
 
         log::debug!("[bme280] T={temperature:.1}°C P={pressure:.1}hPa H={humidity:.1}%");
         Ok(Bme280Readings {
@@ -311,6 +388,59 @@ impl Bme280 {
             pressure,
             humidity,
         })
+    }
+
+    /// Burst-read press(3) + temp(3) + hum(2) = 8 bytes starting at 0xF7.
+    async fn read_raw<I: I2c>(&self, bus: &mut I) -> Result<RawSample, Bme280Error<I::Error>> {
+        let mut raw = [0u8; 8];
+        bus.write_read(self.cfg.i2c_addr, &[REG_PRESS_MSB], &mut raw)
+            .await?;
+        Ok(RawSample {
+            adc_p: (i32::from(raw[0])) << 12 | (i32::from(raw[1])) << 4 | (i32::from(raw[2])) >> 4,
+            adc_t: (i32::from(raw[3])) << 12 | (i32::from(raw[4])) << 4 | (i32::from(raw[5])) >> 4,
+            adc_h: (i32::from(raw[6])) << 8 | i32::from(raw[7]),
+        })
+    }
+
+    /// Wait for the conversion in flight to land in the data registers: poll
+    /// `STATUS.measuring` until it clears, giving up after `t_measure,max` for
+    /// the configured oversampling, by which point the conversion is complete
+    /// whatever the bit reads. The first poll follows one interval so that a
+    /// conversion started just before the call reads as running rather than
+    /// not yet begun.
+    async fn wait_for_conversion<I: I2c>(&self, bus: &mut I) -> Result<(), Bme280Error<I::Error>> {
+        let mut polls_left = self
+            .cfg
+            .measurement_time_max_us()
+            .div_ceil(STATUS_POLL_MS * 1000);
+        loop {
+            #[cfg(not(test))]
+            embassy_time::Timer::after_millis(STATUS_POLL_MS).await;
+            let mut status = [0u8; 1];
+            bus.write_read(self.cfg.i2c_addr, &[REG_STATUS], &mut status)
+                .await?;
+            polls_left -= 1;
+            if status[0] & STATUS_MEASURING == 0 || polls_left == 0 {
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// One burst of the data registers, unpacked to the ADC words.
+struct RawSample {
+    adc_p: i32,
+    adc_t: i32,
+    adc_h: i32,
+}
+
+impl RawSample {
+    /// The registers are updated together at the end of a conversion, so the
+    /// reset pattern is only ever seen on all three channels at once.
+    fn is_reset_pattern(&self) -> bool {
+        self.adc_p == ADC_RESET_20BIT
+            && self.adc_t == ADC_RESET_20BIT
+            && self.adc_h == ADC_RESET_16BIT
     }
 }
 
@@ -359,8 +489,8 @@ fn compensate_humidity(adc_h: i32, t_fine: f64, cal: &Calibration) -> f32 {
         * (f64::from(cal.dig_h2) / 65_536.0
             * (1.0
                 + f64::from(cal.dig_h6) / 67_108_864.0
-                    * h
-                    * (1.0 + f64::from(cal.dig_h3) / 67_108_864.0 * h)));
+                    * x
+                    * (1.0 + f64::from(cal.dig_h3) / 67_108_864.0 * x)));
     let h = h * (1.0 - f64::from(cal.dig_h1) * h / 524_288.0);
     h.clamp(0.0, 100.0) as f32
 }
@@ -382,6 +512,13 @@ mod tests {
     // Defaults: t_sb=0.5ms, filter=Off → config = 0x00
     const DEFAULT_CONFIG: u8 = ((Standby::Ms0_5 as u8) << 5) | ((Filter::Off as u8) << 2);
 
+    // 7 bytes 0xE1–0xE7: dig_H2=356, dig_H3=0, dig_H4=288, dig_H5=800, dig_H6=30
+    const CAL_H2_6: [u8; 7] = [100, 1, 0, 18, 0, 50, 30];
+    // Same, with bit 11 set in dig_H4 and dig_H5: 0xE4=0x90 → dig_H4=-1782,
+    // 0xE6=0x83 → dig_H5=-2000. Both words are signed on the chip.
+    const CAL_H2_6_NEGATIVE: [u8; 7] = [100, 1, 0, 0x90, 0x0A, 0x83, 30];
+    const CAL_H1: u8 = 75;
+
     // 24 bytes: dig_T1=27504, dig_T2=26435, dig_T3=-1000, dig_P1-P9 typical silicon
     fn cal_tp_bytes() -> Vec<u8> {
         let mut v = Vec::new();
@@ -400,29 +537,40 @@ mod tests {
         v
     }
 
-    fn init_transactions() -> Vec<T> {
+    // One `STATUS` poll that finds the conversion already landed.
+    fn conversion_done() -> T {
+        T::write_read(ADDR, vec![REG_STATUS], vec![0x00])
+    }
+
+    fn init_transactions_with(h2_6: [u8; 7]) -> Vec<T> {
         vec![
             T::write_read(ADDR, vec![REG_CHIP_ID], vec![CHIP_ID]),
             T::write_read(ADDR, vec![REG_CALIB_TP], cal_tp_bytes()),
-            T::write_read(ADDR, vec![REG_CALIB_H1], vec![75]), // dig_H1
-            T::write_read(ADDR, vec![REG_CALIB_H2], vec![100, 1, 0, 18, 0, 50, 30]), // H2-H6
+            T::write_read(ADDR, vec![REG_CALIB_H1], vec![CAL_H1]),
+            T::write_read(ADDR, vec![REG_CALIB_H2], h2_6.to_vec()),
             T::write(ADDR, vec![REG_CTRL_HUM, DEFAULT_CTRL_HUM]),
             T::write(ADDR, vec![REG_CONFIG, DEFAULT_CONFIG]),
             T::write(ADDR, vec![REG_CTRL_MEAS, DEFAULT_CTRL_MEAS]),
+            conversion_done(),
         ]
     }
 
-    // Raw pressure/temp/humidity that should decode to ~25°C / ~1013 hPa / ~50%.
+    fn init_transactions() -> Vec<T> {
+        init_transactions_with(CAL_H2_6)
+    }
+
+    // Raw pressure/temp/humidity that should decode to ~25°C / ~1013 hPa / ~29%.
+    const RAW_P: i32 = 415_148;
+    const RAW_T: i32 = 519_888;
+    const RAW_H: i32 = 26_214;
+
+    // Data-register byte layout of a raw triple (datasheet §5.4.4–§5.4.6).
     // (x & 0xF) << 4 lies in 0..=240 — fits in u8.
     #[allow(clippy::cast_possible_truncation)]
-    fn raw_sample_bytes() -> Vec<u8> {
-        // These are synthetic values that produce reasonable readings
-        // adc_t = 519888 → ~25°C with the calibration above
-        // adc_p = 415148 → ~1013 hPa
-        // adc_h = 26214  → ~50%
-        let adc_p: u32 = 415_148;
-        let adc_t: u32 = 519_888;
-        let adc_h: u32 = 26_214;
+    fn raw_bytes(adc_p: i32, adc_t: i32, adc_h: i32) -> Vec<u8> {
+        let adc_p = adc_p.cast_unsigned();
+        let adc_t = adc_t.cast_unsigned();
+        let adc_h = adc_h.cast_unsigned();
         vec![
             ((adc_p >> 12) & 0xFF) as u8,
             ((adc_p >> 4) & 0xFF) as u8,
@@ -433,6 +581,198 @@ mod tests {
             ((adc_h >> 8) & 0xFF) as u8,
             (adc_h & 0xFF) as u8,
         ]
+    }
+
+    fn raw_sample_bytes() -> Vec<u8> {
+        raw_bytes(RAW_P, RAW_T, RAW_H)
+    }
+
+    // What the data registers hold until the first conversion has landed.
+    fn reset_pattern_bytes() -> Vec<u8> {
+        raw_bytes(ADC_RESET_20BIT, ADC_RESET_20BIT, ADC_RESET_16BIT)
+    }
+
+    // Transcription of the datasheet §4.2.3 double-precision compensation as
+    // Bosch's `bme280.c` implements it, decoding the calibration from the raw
+    // register bytes independently of the driver. `t_fine` is truncated to a
+    // 32-bit integer exactly as the reference does.
+    mod reference {
+        pub struct Cal {
+            t1: f64,
+            t2: f64,
+            t3: f64,
+            p: [f64; 9],
+            h1: f64,
+            h2: f64,
+            h3: f64,
+            h4: f64,
+            h5: f64,
+            h6: f64,
+        }
+
+        pub fn parse(tp: &[u8], h1: u8, h2_6: [u8; 7]) -> Cal {
+            let u = |i: usize| f64::from(u16::from_le_bytes([tp[i], tp[i + 1]]));
+            let s = |i: usize| f64::from(i16::from_le_bytes([tp[i], tp[i + 1]]));
+            Cal {
+                t1: u(0),
+                t2: s(2),
+                t3: s(4),
+                p: [u(6), s(8), s(10), s(12), s(14), s(16), s(18), s(20), s(22)],
+                h1: f64::from(h1),
+                h2: f64::from(i16::from_le_bytes([h2_6[0], h2_6[1]])),
+                h3: f64::from(h2_6[2]),
+                h4: f64::from((i16::from(h2_6[3].cast_signed()) * 16) | i16::from(h2_6[4] & 0x0F)),
+                h5: f64::from((i16::from(h2_6[5].cast_signed()) * 16) | i16::from(h2_6[4] >> 4)),
+                h6: f64::from(h2_6[6].cast_signed()),
+            }
+        }
+
+        #[allow(clippy::cast_possible_truncation)]
+        pub fn temperature(adc_t: i32, c: &Cal) -> (i32, f64) {
+            let adc_t = f64::from(adc_t);
+            let var1 = (adc_t / 16384.0 - c.t1 / 1024.0) * c.t2;
+            let var2 =
+                (adc_t / 131_072.0 - c.t1 / 8192.0) * (adc_t / 131_072.0 - c.t1 / 8192.0) * c.t3;
+            ((var1 + var2) as i32, (var1 + var2) / 5120.0)
+        }
+
+        pub fn pressure(adc_p: i32, t_fine: i32, c: &Cal) -> f64 {
+            let [p1, p2, p3, p4, p5, p6, p7, p8, p9] = c.p;
+            let var1 = f64::from(t_fine) / 2.0 - 64000.0;
+            let var2 = var1 * var1 * p6 / 32768.0;
+            let var2 = var2 + var1 * p5 * 2.0;
+            let var2 = var2 / 4.0 + p4 * 65536.0;
+            let var1 = (p3 * var1 * var1 / 524_288.0 + p2 * var1) / 524_288.0;
+            let var1 = (1.0 + var1 / 32768.0) * p1;
+            if var1 == 0.0 {
+                return 0.0;
+            }
+            let p = 1_048_576.0 - f64::from(adc_p);
+            let p = (p - var2 / 4096.0) * 6250.0 / var1;
+            let var1 = p9 * p * p / 2_147_483_648.0;
+            let var2 = p * p8 / 32768.0;
+            (p + (var1 + var2 + p7) / 16.0) / 100.0
+        }
+
+        pub fn humidity(adc_h: i32, t_fine: i32, c: &Cal) -> f64 {
+            let var_h = f64::from(t_fine) - 76800.0;
+            let var_h = (f64::from(adc_h) - (c.h4 * 64.0 + c.h5 / 16384.0 * var_h))
+                * (c.h2 / 65536.0
+                    * (1.0 + c.h6 / 67_108_864.0 * var_h * (1.0 + c.h3 / 67_108_864.0 * var_h)));
+            let var_h = var_h * (1.0 - c.h1 * var_h / 524_288.0);
+            var_h.clamp(0.0, 100.0)
+        }
+    }
+
+    // The reference truncates `t_fine` to an integer and the driver keeps it
+    // as f64; the tolerances absorb that plus the f32 output rounding.
+    const T_TOLERANCE: f64 = 0.001;
+    const P_TOLERANCE: f64 = 0.01;
+    const H_TOLERANCE: f64 = 0.01;
+
+    async fn init_with(h2_6: [u8; 7]) -> (Bme280, Mock) {
+        let mut mock = Mock::new(&init_transactions_with(h2_6));
+        let cfg = Bme280Config {
+            i2c_addr: ADDR,
+            ..Bme280Config::default()
+        };
+        let mut driver = Bme280::new(&cfg);
+        driver.init(&mut mock).await.unwrap();
+        (driver, mock)
+    }
+
+    // Grids over the raw ADC domains; a step of 0x4000 on the 20-bit words and
+    // 0x1000 on the 16-bit word spans the operating range many times over.
+    fn raw_grid_20bit() -> impl Iterator<Item = i32> {
+        (0..=0xF_FFFF).step_by(0x4000).chain([0xF_FFFF])
+    }
+
+    fn raw_grid_16bit() -> impl Iterator<Item = i32> {
+        (0..=0xFFFF).step_by(0x1000).chain([0xFFFF])
+    }
+
+    fn assert_matches_reference(h2_6: [u8; 7]) {
+        futures::executor::block_on(async {
+            let (driver, mut mock) = init_with(h2_6).await;
+            let reference = reference::parse(&cal_tp_bytes(), CAL_H1, h2_6);
+            let mut compared = 0usize;
+            for adc_t in raw_grid_20bit() {
+                let (ref_t_fine, ref_t) = reference::temperature(adc_t, &reference);
+                let (t_fine, t) = compensate_temperature(adc_t, &driver.cal);
+                assert!(
+                    (f64::from(t) - ref_t).abs() < T_TOLERANCE,
+                    "adc_t={adc_t:#x}: T={t} vs reference {ref_t}"
+                );
+                for adc_p in raw_grid_20bit() {
+                    let ref_p = reference::pressure(adc_p, ref_t_fine, &reference);
+                    let p = compensate_pressure(adc_p, t_fine, &driver.cal);
+                    assert!(
+                        (f64::from(p) - ref_p).abs() < P_TOLERANCE + 1e-6 * ref_p.abs(),
+                        "adc_t={adc_t:#x} adc_p={adc_p:#x}: P={p} vs reference {ref_p}"
+                    );
+                    compared += 1;
+                }
+                for adc_h in raw_grid_16bit() {
+                    let ref_h = reference::humidity(adc_h, ref_t_fine, &reference);
+                    let h = compensate_humidity(adc_h, t_fine, &driver.cal);
+                    assert!(
+                        (f64::from(h) - ref_h).abs() < H_TOLERANCE,
+                        "adc_t={adc_t:#x} adc_h={adc_h:#x}: H={h} vs reference {ref_h}"
+                    );
+                    compared += 1;
+                }
+            }
+            assert!(compared > 1000, "grid degenerated to {compared} points");
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn compensation_matches_reference() {
+        assert_matches_reference(CAL_H2_6);
+    }
+
+    #[test]
+    fn compensation_matches_reference_with_negative_h4_h5() {
+        assert_matches_reference(CAL_H2_6_NEGATIVE);
+    }
+
+    #[test]
+    fn init_rejects_an_all_zero_calibration() {
+        futures::executor::block_on(async {
+            let mut mock = Mock::new(&[
+                T::write_read(ADDR, vec![REG_CHIP_ID], vec![CHIP_ID]),
+                T::write_read(ADDR, vec![REG_CALIB_TP], vec![0; 24]),
+            ]);
+            let cfg = Bme280Config {
+                i2c_addr: ADDR,
+                ..Bme280Config::default()
+            };
+            let mut driver = Bme280::new(&cfg);
+            let result = driver.init(&mut mock).await;
+            assert!(matches!(result, Err(Bme280Error::InvalidCalibration)));
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn init_rejects_an_all_ones_pressure_word() {
+        futures::executor::block_on(async {
+            let mut cal = cal_tp_bytes();
+            cal[6..8].copy_from_slice(&0xFFFFu16.to_le_bytes()); // dig_P1
+            let mut mock = Mock::new(&[
+                T::write_read(ADDR, vec![REG_CHIP_ID], vec![CHIP_ID]),
+                T::write_read(ADDR, vec![REG_CALIB_TP], cal),
+            ]);
+            let cfg = Bme280Config {
+                i2c_addr: ADDR,
+                ..Bme280Config::default()
+            };
+            let mut driver = Bme280::new(&cfg);
+            let result = driver.init(&mut mock).await;
+            assert!(matches!(result, Err(Bme280Error::InvalidCalibration)));
+            mock.done();
+        });
     }
 
     #[test]
@@ -450,20 +790,23 @@ mod tests {
             driver.init(&mut mock).await.unwrap();
             let readings = driver.sample(&mut mock).await.unwrap();
 
-            // Verify values are in plausible ranges
+            let reference = reference::parse(&cal_tp_bytes(), CAL_H1, CAL_H2_6);
+            let (t_fine, t) = reference::temperature(RAW_T, &reference);
+            let p = reference::pressure(RAW_P, t_fine, &reference);
+            let h = reference::humidity(RAW_H, t_fine, &reference);
             assert!(
-                readings.temperature > 20.0 && readings.temperature < 30.0,
-                "T={}",
+                (f64::from(readings.temperature) - t).abs() < T_TOLERANCE,
+                "T={} vs reference {t}",
                 readings.temperature
             );
             assert!(
-                readings.pressure > 900.0 && readings.pressure < 1100.0,
-                "P={}",
+                (f64::from(readings.pressure) - p).abs() < P_TOLERANCE,
+                "P={} vs reference {p}",
                 readings.pressure
             );
             assert!(
-                readings.humidity >= 0.0 && readings.humidity <= 100.0,
-                "H={}",
+                (f64::from(readings.humidity) - h).abs() < H_TOLERANCE,
+                "H={} vs reference {h}",
                 readings.humidity
             );
 
@@ -500,11 +843,12 @@ mod tests {
             let mut txns = vec![
                 T::write_read(ADDR, vec![REG_CHIP_ID], vec![CHIP_ID]),
                 T::write_read(ADDR, vec![REG_CALIB_TP], cal_tp_bytes()),
-                T::write_read(ADDR, vec![REG_CALIB_H1], vec![75]),
-                T::write_read(ADDR, vec![REG_CALIB_H2], vec![100, 1, 0, 18, 0, 50, 30]),
+                T::write_read(ADDR, vec![REG_CALIB_H1], vec![CAL_H1]),
+                T::write_read(ADDR, vec![REG_CALIB_H2], CAL_H2_6.to_vec()),
                 T::write(ADDR, vec![REG_CTRL_HUM, ctrl_hum]),
                 T::write(ADDR, vec![REG_CONFIG, config_reg]),
                 T::write(ADDR, vec![REG_CTRL_MEAS, ctrl_meas]),
+                conversion_done(),
             ];
             let mut mock = Mock::new(&{
                 txns.push(T::write_read(ADDR, vec![REG_PRESS_MSB], raw_sample_bytes()));
@@ -522,6 +866,116 @@ mod tests {
             let mut driver = Bme280::new(&cfg);
             driver.init(&mut mock).await.unwrap();
             let _ = driver.sample(&mut mock).await.unwrap();
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn measurement_time_max_matches_the_datasheet() {
+        assert_eq!(Bme280Config::default().measurement_time_max_us(), 9_300);
+        let all_x16 = Bme280Config {
+            osrs_t: Oversampling::X16,
+            osrs_p: Oversampling::X16,
+            osrs_h: Oversampling::X16,
+            ..Bme280Config::default()
+        };
+        assert_eq!(all_x16.measurement_time_max_us(), 112_800);
+    }
+
+    #[test]
+    fn init_polls_measuring_until_the_conversion_lands() {
+        futures::executor::block_on(async {
+            let mut txns = init_transactions();
+            txns.pop();
+            txns.extend([
+                T::write_read(ADDR, vec![REG_STATUS], vec![STATUS_MEASURING]),
+                T::write_read(ADDR, vec![REG_STATUS], vec![STATUS_MEASURING]),
+                conversion_done(),
+            ]);
+            let mut mock = Mock::new(&txns);
+            let cfg = Bme280Config {
+                i2c_addr: ADDR,
+                ..Bme280Config::default()
+            };
+            let mut driver = Bme280::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn init_stops_polling_after_the_measurement_window() {
+        // ×1 on every channel bounds the window at 9.3 ms, i.e. ten 1 ms polls.
+        futures::executor::block_on(async {
+            let mut txns = init_transactions();
+            txns.pop();
+            txns.extend(
+                (0..10).map(|_| T::write_read(ADDR, vec![REG_STATUS], vec![STATUS_MEASURING])),
+            );
+            let mut mock = Mock::new(&txns);
+            let cfg = Bme280Config {
+                i2c_addr: ADDR,
+                ..Bme280Config::default()
+            };
+            let mut driver = Bme280::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn first_sample_waits_out_the_reset_pattern() {
+        futures::executor::block_on(async {
+            let mut txns = init_transactions();
+            txns.extend([
+                T::write_read(ADDR, vec![REG_PRESS_MSB], reset_pattern_bytes()),
+                conversion_done(),
+                T::write_read(ADDR, vec![REG_PRESS_MSB], raw_sample_bytes()),
+            ]);
+            let mut mock = Mock::new(&txns);
+            let cfg = Bme280Config {
+                i2c_addr: ADDR,
+                ..Bme280Config::default()
+            };
+            let mut driver = Bme280::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            let readings = driver.sample(&mut mock).await.unwrap();
+
+            let reference = reference::parse(&cal_tp_bytes(), CAL_H1, CAL_H2_6);
+            let (t_fine, t) = reference::temperature(RAW_T, &reference);
+            let h = reference::humidity(RAW_H, t_fine, &reference);
+            assert!(
+                (f64::from(readings.temperature) - t).abs() < T_TOLERANCE,
+                "T={} vs reference {t}",
+                readings.temperature
+            );
+            assert!(
+                (f64::from(readings.humidity) - h).abs() < H_TOLERANCE,
+                "H={} vs reference {h}",
+                readings.humidity
+            );
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn sample_is_not_ready_while_the_reset_pattern_persists() {
+        futures::executor::block_on(async {
+            let mut txns = init_transactions();
+            txns.extend([
+                T::write_read(ADDR, vec![REG_PRESS_MSB], reset_pattern_bytes()),
+                conversion_done(),
+                T::write_read(ADDR, vec![REG_PRESS_MSB], reset_pattern_bytes()),
+            ]);
+            let mut mock = Mock::new(&txns);
+            let cfg = Bme280Config {
+                i2c_addr: ADDR,
+                ..Bme280Config::default()
+            };
+            let mut driver = Bme280::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            let result = driver.sample(&mut mock).await;
+            assert!(matches!(result, Err(Bme280Error::NotReady)));
             mock.done();
         });
     }
