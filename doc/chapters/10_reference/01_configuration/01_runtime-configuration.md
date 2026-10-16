@@ -42,7 +42,7 @@ Configures storage behavior.
 
 ## `gateway`
 
-When this section is present, the runtime also runs an embedded gateway - it starts and stops together with the runtime - providing an entry point for external clients to the swarm, to send commands and publish events over HTTP and WebSocket, and serving static web assets.
+When this section is present, the runtime also runs an embedded gateway - it starts and stops together with the runtime - providing an entry point for external clients to the swarm: it delivers HTTP requests and WebSocket frames to the cells that mounted them, and serves static web assets.
 
 - `port` *(optional)* - TCP port the embedded gateway listens on. Defaults to `8080`.
 

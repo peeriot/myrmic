@@ -2,16 +2,17 @@
 
 extern crate alloc;
 
-use serde::{Deserialize, Serialize};
 use myrmic_sdk::db::Scope;
 use myrmic_sdk::db::table::Table;
-use myrmic_sdk::{Sri, String, Vec, send};
+use myrmic_sdk::gateway::{Socket, WsMessage};
+use myrmic_sdk::{Encoder, String, Vec};
+use serde::{Deserialize, Serialize};
 
 /// Keep the messages hidden from other cells.
 const SCOPE: Scope = Scope::public("chatty");
 
-/// Connected users, keyed by their SRI.
-pub const USERS: Table<User, Sri> = Table::new_in("users", SCOPE);
+/// Connected users, keyed by [`socket_key`].
+pub const USERS: Table<User, Vec<u8>> = Table::new_in("users", SCOPE);
 
 /// Chat history, keyed by big-endian timestamp so `list()` yields it
 /// oldest -> newest.
@@ -20,8 +21,8 @@ pub const MESSAGES: Table<Message, Vec<u8>> = Table::new_in("messages", SCOPE);
 /// A connected chatter.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct User {
-    /// The session SRI to deliver messages to.
-    pub sri: Sri,
+    /// The socket to deliver messages to.
+    pub socket: Socket,
     /// The chatter's stable id.
     pub id: String,
     /// Display name.
@@ -75,18 +76,29 @@ pub fn recent_messages(limit: usize) -> Vec<Message> {
     recent
 }
 
-/// Broadcasts a message to all users except the one passed in.
+/// The [`USERS`] key of the user connected on `socket`.
+pub fn socket_key(socket: &Socket) -> Vec<u8> {
+    socket.ctx().as_bytes().to_vec()
+}
+
+/// Sends `message` to the client on `socket`, as a JSON text frame.
+pub fn send_to(socket: &Socket, message: &ServerMessage) -> myrmic_sdk::Result<()> {
+    let json = String::from_utf8(message.to_bytes()?).map_err(|_| "message is not utf-8")?;
+    socket.send(WsMessage::Text(json))
+}
+
+/// Sends a message to every connected user.
 pub fn broadcast(message: &ServerMessage) -> myrmic_sdk::Result<()> {
     for user in USERS.list()? {
-        let _ = send(user.sri, "msg", message);
+        let _ = send_to(&user.socket, message);
     }
     Ok(())
 }
 
-pub fn send_user(sri: Sri, user: &User) {
-    let _ = send(
-        sri,
-        "msg",
+/// Tells the client on `socket` about `user`.
+pub fn send_user(socket: &Socket, user: &User) {
+    let _ = send_to(
+        socket,
         &ServerMessage::Connect {
             id: user.id.clone(),
             name: user.name.clone(),
