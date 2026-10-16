@@ -26,7 +26,8 @@ Replace the content of `dashboard/src/lib.rs` with:
 //! page polls. It owns no truth and makes no decisions.
 #![no_std]
 
-use myrmic_sdk::{Metadata, Result, format, gateway};
+use myrmic_sdk::gateway::{self, Asset, HttpRequest};
+use myrmic_sdk::{Callback, Metadata, Result, format};
 
 /// Payload of the grow-bed's `bed_state` event.
 #[derive(serde::Serialize, serde::Deserialize, myrmic_sdk::Message)]
@@ -40,11 +41,15 @@ struct BedState {
 #[myrmic_sdk::init]
 fn init(md: Metadata) -> Result<()> {
     gateway::assets(md.id).put("/index.html", include_bytes!("../assets/index.html"))?;
-    gateway::mount("/greenhouse")
-        .index("/index.html")
-        .bind()
-        .map_err(<&'static str>::from)?;
+    gateway::mount("/greenhouse", Callback::of::<on_http>())?;
     Ok(())
+}
+
+/// Every request is a file from the asset store.
+#[myrmic_sdk::cmd]
+fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
+    let asset = Asset::new(req.path.clone()).index("/index.html");
+    req.asset(asset)
 }
 
 /// Every `bed_state` update becomes a fresh `latest.json` for the page to poll.
@@ -61,8 +66,9 @@ fn bed_state(md: Metadata, bed: BedState) -> Result<()> {
 Reading it top to bottom:
 
 - The cell declares its *own* `BedState` struct matching the event's JSON fields - cells share wire formats, not Rust types. Each side owns its definition.
-- `gateway::assets(md.id)` - the cell's private blob store for static files. Anything written there is served by the gateway once the cell mounts a route. At init the cell uploads the web page into it.
-- `gateway::mount("/greenhouse")` - claims the URL prefix on the gateway. `.index("/index.html")` serves that file at the mount root and enables static serving for everything else in the store. See the [gateway reference](../../10_reference/02_myrmic-cli/10_gateway.md) for the full mount API (APIs, WebSockets, fallbacks).
+- `gateway::assets(md.id)` - the cell's private blob store for static files. Anything written there can be served by the gateway. At init the cell uploads the web page into it.
+- `gateway::mount("/greenhouse", Callback::of::<on_http>())` - claims the URL prefix on the gateway, and delivers every request under it to `on_http`.
+- `on_http` answers every request with an `Asset`: the gateway serves the file at the request's path from the store, and `.index("/index.html")` serves that file at the mount root. See the [gateway reference](../../10_reference/02_myrmic-cli/10_gateway.md) for everything else a request can be answered with (responses, WebSockets).
 - The `bed_state` handler is the whole application logic of this cell: every announcement from the asset is rewritten as `latest.json` in the store. The file is a *read model* - a derived copy optimized for display. The truth stays in the grow-bed; delete this cell and no information is lost.
 
 Now create the web page at `dashboard/assets/index.html`:

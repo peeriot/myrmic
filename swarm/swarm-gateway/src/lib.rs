@@ -1,51 +1,48 @@
 //! The myrmic socket gateway.
 //!
 //! A native process that joins the swarm as a peer and exposes a socket
-//! (HTTP / `WebSocket`) entrypoint into the network. External clients reach the
-//! swarm through it: static web assets are served straight out of the blob
-//! store, and a `WebSocket`/HTTP API maps requests onto cell commands and
-//! events.
+//! (HTTP / `WebSocket`) entrypoint into the network.
 //!
-//! Cells declare how they should be served in the `gateway-config` datalayer
-//! registry (see [`sorg_common::gateway_config`]). Every gateway discovers and
-//! watches that registry and builds a routing table from it, so all gateways in
-//! the network serve the same routes.
+//! Cells declare the URL prefix they serve, and the command requests under it
+//! go to, in the `gateway-config` datalayer registry (see
+//! [`sorg_common::gateway_config`]). Every gateway discovers and watches that
+//! registry, so all gateways in the network serve the same routes.
+//!
+//! Each request is sent to its route's cell as an [`HttpRequest`]; the cell
+//! answers with a response, a blob to serve, or a `WebSocket` upgrade. The
+//! gateway itself only guards routes (OIDC) and reads the blob store.
 //!
 //! This crate provides the server ([`run`]); the `myrmic gateway` CLI command
 //! is the primary way to launch it.
 
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use anyhow::{Context as _, anyhow, bail};
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use anyhow::Context as _;
+use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
-use axum::http::{Method, StatusCode, header};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header, request};
 use axum::response::{IntoResponse, Redirect, Response};
-use cell_protocol::{PlacementEntry, PlacementKind, Sri};
-use db_client::v1::models::{Scope, path_resolve};
-use futures_util::{SinkExt, Stream, StreamExt, stream};
-use myrmic_common::cells::{Command as CellCommand, Event as CellEvent};
+use myrmic_common::cells::Command;
+use myrmic_common::gateway::{self as wire, HttpReply, HttpRequest, HttpResponse};
 use serde::Deserialize;
-use sorg_common::gateway_config::{AssetConfig, Fallback};
-use sorg_common::{Mailbox, claim_placement, placement_exists, remove_placement};
-use tokio::time::Instant;
+use sorg_common::gateway_config::GatewayRoute;
+use tokio::sync::{mpsc, watch};
 use tower_sessions::cookie::time;
 use uuid::Uuid;
 use zenoh::Session;
 
-use crate::api::{ClientMessage, ServerMessage};
-use crate::sessions::Sessions;
+use crate::relay::{Relay, Reply};
 
-pub mod api;
+mod assets;
 pub mod oidc;
+mod relay;
 pub mod routes;
-pub mod sessions;
+mod ws;
 
 const DEFAULT_SESSION_INACTIVITY_TIMER_SECS: i64 = 120;
 const MINIMUM_SESSION_INACTIVITY_TIMER_SECS: i64 = 2;
@@ -53,13 +50,21 @@ const MINIMUM_SESSION_INACTIVITY_TIMER_SECS: i64 = 2;
 /// The port the gateway binds to when none is configured.
 pub const DEFAULT_PORT: u16 = 8080;
 
-/// How long an HTTP session's SRI is kept alive after its last SSE stream
-/// disconnects, so an `EventSource` auto-reconnect can re-attach to the same
-/// identity (and pending mailbox) instead of minting a fresh one.
-const HTTP_SESSION_GRACE: Duration = Duration::from_secs(30);
-
-/// Maximum accepted body size for a `POST` to the HTTP cell API (1 `MiB`).
+/// Maximum accepted request body size (1 `MiB`).
 const MAX_HTTP_BODY: usize = 1 << 20;
+
+/// How long a cell has to answer a request before the client gets a 504.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often registering the gateway's SRI is retried while the db is
+/// unreachable.
+const REGISTER_RETRY: Duration = Duration::from_secs(2);
+
+/// How long shutdown waits for open sockets to tell their cells they closed.
+const SOCKET_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The cookie carrying the gateway's own session (the OIDC login).
+const SESSION_COOKIE: &str = "myrmic_gateway_session";
 
 /// Operator-provided configuration for a gateway process.
 ///
@@ -142,11 +147,16 @@ pub struct OidcConfig {
 struct AppState {
     session: Session,
     routes: routes::Routes,
-    sessions: sessions::Sessions,
+    relay: Relay,
 
     routing: Option<RoutingView>,
 
     http_client: reqwest::Client,
+
+    /// Flips to `true` once the gateway is shutting down.
+    shutdown: watch::Receiver<bool>,
+    /// Held by every open socket, so shutdown can wait for them to close.
+    sockets_alive: mpsc::Sender<()>,
 }
 
 pub type RoutingView = Arc<RwLock<RoutingConfig>>;
@@ -210,8 +220,18 @@ where
     // The socket is bound and listening; the gateway is up.
     ready.notify_one();
 
+    let (stopping, mut shutdown_rx) = watch::channel(false);
+    tokio::spawn(async move {
+        shutdown.await;
+        let _ = stopping.send(true);
+    });
+
+    let Some((relay, relay_gen)) = register(&session, &mut shutdown_rx).await else {
+        return Ok(());
+    };
+    let pump = relay.spawn_pump();
+
     let (routes, discovery) = routes::spawn_discovery(&session, routing.as_ref());
-    let (sessions, reaper) = sessions::spawn_session_reaper(&session);
 
     // Redirects are the caller's business: the OIDC flow inspects the provider's
     // 3xx responses itself.
@@ -220,15 +240,19 @@ where
         .build()
         .context("unable to build the gateway's http client")?;
 
+    let (sockets_alive, mut sockets_done) = mpsc::channel(1);
     let state = AppState {
         session,
         routes,
-        sessions,
+        relay: relay.clone(),
         routing,
         http_client,
+        shutdown: shutdown_rx.clone(),
+        sockets_alive,
     };
 
     let sessions = tower_sessions::SessionManagerLayer::new(tower_sessions::MemoryStore::default())
+        .with_name(SESSION_COOKIE)
         .with_secure(over_https)
         .with_expiry(tower_sessions::Expiry::OnInactivity(
             time::Duration::seconds(session_inactivity_timer_secs),
@@ -243,27 +267,48 @@ where
     // .layer(TraceLayer::new_for_http());
 
     let result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.wait_for(|&stopping| stopping).await;
+        })
         .await
         .context("gateway server error");
 
+    // The router, and every sender but the sockets', is gone with the server;
+    // the channel closes once the last socket has told its cell.
+    let _ = tokio::time::timeout(SOCKET_DRAIN_TIMEOUT, sockets_done.recv()).await;
+
     discovery.abort();
-    reaper.abort();
+    pump.abort();
+    relay.stop(relay_gen).await;
 
     result?;
     tracing::info!("gateway stopped");
     Ok(())
 }
 
-/// The single fallback handler: match the request path to an application, then
-/// either hand off to its cell API (not yet implemented) or serve a static
-/// asset from its blob-store scope.
-async fn handler(State(state): State<AppState>, req: Request) -> Response {
-    let method = req.method().clone();
-    let path = req.uri().path().to_owned();
+/// Registers the gateway's SRI, retrying while the db is unreachable. `None`
+/// if the gateway was shut down first.
+async fn register(
+    session: &Session,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Option<(Relay, cell_protocol::Gen)> {
+    loop {
+        match Relay::start(session).await {
+            Ok(relay) => return Some(relay),
+            Err(err) => tracing::warn!("{err:#}; retrying"),
+        }
 
-    // verify srn
-    // verify application base
+        tokio::select! {
+            () = tokio::time::sleep(REGISTER_RETRY) => {}
+            _ = shutdown.wait_for(|&stopping| stopping) => return None,
+        }
+    }
+}
+
+/// The single fallback handler: match the request path to a route, guard it,
+/// and hand the request to the route's cell.
+async fn handler(State(state): State<AppState>, req: Request) -> Response {
+    let path = req.uri().path().to_owned();
 
     let Some(route) = routes::match_route(&state.routes, &path) else {
         return (
@@ -273,96 +318,226 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
             .into_response();
     };
 
-    let req = if let Some(routing) = state.routing.as_ref() {
-        let oidc = {
-            // Fail closed: without the config we cannot tell whether this route
-            // is guarded, so we must not serve it as if it were public.
-            let Ok(guard) = routing.read() else {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "myrmic gateway: routing configuration unavailable\n",
-                )
-                    .into_response();
-            };
-            guard
-                .routes
-                .as_ref()
-                .and_then(|map| map.get(&route.mount).and_then(|c| c.oidc.clone()))
-        };
-
-        if let Some(oidc) = oidc {
-            match oidc::apply_oidc(&state.http_client, req, oidc).await {
-                Ok(req) => req,
-                Err(err) => {
-                    return err;
-                }
-            }
-        } else {
-            req
-        }
-    } else {
-        req
+    let req = match guard(&state, &route, req).await {
+        Ok(req) => req,
+        Err(response) => return response,
     };
 
-    // Canonicalize a bare mount root to a trailing slash (the standard
-    // static-server directory redirect). The document lives at the mount, but
-    // its relative asset URLs (`./index.js`) only resolve under the mount when
-    // the browser's base ends in `/` — otherwise it treats the last segment as
-    // a file and resolves them above the mount.
-    if let Some(mut location) =
-        canonical_redirect(route.assets.is_some(), &route.mount, &method, &path)
-    {
-        if let Some(query) = req.uri().query() {
-            location.push('?');
-            location.push_str(query);
-        }
-        return Redirect::temporary(&location).into_response();
-    }
-
-    let rel = strip_mount(&route.mount, &path);
-
-    // WebSocket upgrade path → the bidirectional cell API.
-    if route.ws.as_deref().is_some_and(|p| path_is_under(&rel, p)) {
-        return ws_upgrade(state, route.owner, req).await;
-    }
-
-    // HTTP API path → the same per-session cell API as WebSocket, method-
-    // multiplexed on the single `api` path: GET opens the SSE receive stream,
-    // POST sends one fire-and-forget command/event.
-    if route.api.as_deref().is_some_and(|p| path_is_under(&rel, p)) {
-        if method == Method::GET || method == Method::HEAD {
-            return sse_stream(state, req).await;
-        }
-        if method == Method::POST {
-            return http_send(state, route.owner, req).await;
-        }
+    let (mut parts, body) = req.into_parts();
+    let Some(method) = wire_method(&parts.method) else {
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed\n").into_response();
+    };
+    // Present only when the client asked for one; the cell decides whether to
+    // accept it.
+    let upgrade = WebSocketUpgrade::from_request_parts(&mut parts, &state)
+        .await
+        .ok();
+    let Ok(body) = axum::body::to_bytes(body, MAX_HTTP_BODY).await else {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large\n").into_response();
+    };
+
+    let ctx = Uuid::new_v4();
+    let request = HttpRequest {
+        gateway: state.relay.sri(),
+        ctx,
+        method,
+        path: strip_mount(&route.mount, &path),
+        query: parts.uri.query().map(str::to_owned),
+        headers: wire_headers(&parts.headers),
+        body: body.to_vec(),
+    };
+
+    let (reply, _pending) = state.relay.expect_reply(ctx);
+    if let Err(err) = state.relay.send(&route.owner, &route.http, &request).await {
+        tracing::warn!("request {ctx} for {}: {err:#}", route.mount);
+        return (StatusCode::BAD_GATEWAY, "bad gateway\n").into_response();
     }
 
-    // Everything else is a static asset.
-    if method != Method::GET && method != Method::HEAD {
-        return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed\n").into_response();
-    }
+    let mut shutdown = state.shutdown.clone();
+    let reply = tokio::select! {
+        reply = tokio::time::timeout(REPLY_TIMEOUT, reply) => match reply {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(_)) => return (StatusCode::SERVICE_UNAVAILABLE, "unavailable\n").into_response(),
+            Err(_) => {
+                tracing::warn!("request {ctx} for {}: no reply from {}", route.mount, route.owner);
+                return (StatusCode::GATEWAY_TIMEOUT, "gateway timeout\n").into_response();
+            }
+        },
+        _ = shutdown.wait_for(|&stopping| stopping) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "shutting down\n").into_response();
+        }
+    };
 
-    match &route.assets {
-        Some(assets) => serve_asset(&state.session, assets, &rel).await,
-        None => (StatusCode::NOT_FOUND, "not found\n").into_response(),
+    answer(&state, &route, &parts, &path, upgrade, ctx, reply).await
+}
+
+/// Applies the route's OIDC guard, if the routing config gives it one.
+async fn guard(state: &AppState, route: &GatewayRoute, req: Request) -> Result<Request, Response> {
+    let Some(routing) = state.routing.as_ref() else {
+        return Ok(req);
+    };
+
+    let oidc = {
+        // Fail closed: without the config we cannot tell whether this route
+        // is guarded, so we must not serve it as if it were public.
+        let Ok(guard) = routing.read() else {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "myrmic gateway: routing configuration unavailable\n",
+            )
+                .into_response());
+        };
+        guard
+            .routes
+            .as_ref()
+            .and_then(|map| map.get(&route.mount).and_then(|c| c.oidc.clone()))
+    };
+
+    match oidc {
+        Some(oidc) => oidc::apply_oidc(&state.http_client, req, oidc).await,
+        None => Ok(req),
     }
 }
 
-/// Whether a request for a bare mount root should be redirected to the same
-/// path with a trailing slash, and to where.
-///
-/// Only asset-serving mounts need it (the redirect exists so relative asset
-/// URLs in the served document resolve under the mount), only for `GET`/`HEAD`
-/// navigations, and never for the `/` catch-all (already a directory).
-fn canonical_redirect(
-    has_assets: bool,
-    mount: &str,
-    method: &Method,
+/// Turns the cell's reply into the client's response.
+async fn answer(
+    state: &AppState,
+    route: &GatewayRoute,
+    parts: &request::Parts,
     path: &str,
-) -> Option<String> {
-    if !has_assets || mount == "/" {
+    upgrade: Option<WebSocketUpgrade>,
+    ctx: Uuid,
+    Reply { reply, sender }: Reply,
+) -> Response {
+    // Assets and sockets belong to whoever replied, which may not be the owner.
+    let replier = || {
+        sender.ok_or_else(|| {
+            tracing::warn!("request {ctx}: reply carries no sender");
+            (StatusCode::BAD_GATEWAY, "bad gateway\n").into_response()
+        })
+    };
+
+    match reply {
+        HttpReply::Response(response) => into_response(response),
+        HttpReply::Asset(asset) => {
+            let cell = match replier() {
+                Ok(cell) => cell,
+                Err(response) => return response,
+            };
+            if let Some(mut location) = canonical_redirect(&route.mount, &parts.method, path) {
+                if let Some(query) = parts.uri.query() {
+                    location.push('?');
+                    location.push_str(query);
+                }
+                return Redirect::temporary(&location).into_response();
+            }
+            assets::serve(&state.session, cell, asset).await
+        }
+        HttpReply::Upgrade { callback } => {
+            let cell = match replier() {
+                Ok(cell) => cell,
+                Err(response) => return response,
+            };
+            let Some(upgrade) = upgrade else {
+                return (StatusCode::UPGRADE_REQUIRED, "upgrade required\n").into_response();
+            };
+            // `Command`'s serde derive doesn't validate; the name is a cell's.
+            let Ok(callback) = Command::try_from(callback.as_ref()) else {
+                tracing::warn!("request {ctx}: invalid upgrade callback from {cell}");
+                return (StatusCode::BAD_GATEWAY, "bad gateway\n").into_response();
+            };
+
+            let relay = state.relay.clone();
+            let shutdown = state.shutdown.clone();
+            let alive = state.sockets_alive.clone();
+            upgrade
+                .on_upgrade(move |socket| {
+                    ws::run(relay, cell, callback, ctx, socket, shutdown, alive)
+                })
+                .into_response()
+        }
+    }
+}
+
+fn into_response(response: HttpResponse) -> Response {
+    let Ok(status) = StatusCode::from_u16(response.status.into_u16()) else {
+        tracing::warn!(
+            "cell replied with invalid status {}",
+            response.status.into_u16()
+        );
+        return (StatusCode::BAD_GATEWAY, "bad gateway\n").into_response();
+    };
+
+    let mut out = Response::new(Body::from(response.body));
+    *out.status_mut() = status;
+    for header in response.headers {
+        match (
+            HeaderName::try_from(header.name.as_str()),
+            HeaderValue::try_from(header.value.as_str()),
+        ) {
+            (Ok(name), Ok(value)) => {
+                out.headers_mut().append(name, value);
+            }
+            _ => tracing::warn!("cell replied with invalid header '{}'", header.name),
+        }
+    }
+    out
+}
+
+fn wire_method(method: &Method) -> Option<wire::Method> {
+    Some(match *method {
+        Method::OPTIONS => wire::Method::Options,
+        Method::GET => wire::Method::Get,
+        Method::POST => wire::Method::Post,
+        Method::PUT => wire::Method::Put,
+        Method::DELETE => wire::Method::Delete,
+        Method::HEAD => wire::Method::Head,
+        Method::TRACE => wire::Method::Trace,
+        Method::CONNECT => wire::Method::Connect,
+        Method::PATCH => wire::Method::Patch,
+        _ => return None,
+    })
+}
+
+/// Headers whose values are valid UTF-8; the rest are dropped. The gateway's
+/// session cookie is the client's OIDC login, so it never reaches a cell.
+fn wire_headers(headers: &HeaderMap) -> Vec<wire::Header> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            let mut value = value.to_str().ok()?.to_owned();
+            if name == header::COOKIE {
+                value = strip_session_cookie(&value)?;
+            }
+            Some(wire::Header {
+                name: name.as_str().to_owned(),
+                value,
+            })
+        })
+        .collect()
+}
+
+/// `cookies` without [`SESSION_COOKIE`], or `None` if nothing is left.
+fn strip_session_cookie(cookies: &str) -> Option<String> {
+    let kept: Vec<&str> = cookies
+        .split(';')
+        .map(str::trim)
+        .filter(|pair| {
+            !pair.is_empty() && pair.split('=').next().map(str::trim) != Some(SESSION_COOKIE)
+        })
+        .collect();
+
+    (!kept.is_empty()).then(|| kept.join("; "))
+}
+
+/// Whether an asset request for a bare mount root should be redirected to the
+/// same path with a trailing slash, and to where.
+///
+/// The redirect exists so relative asset URLs in the served document resolve
+/// under the mount. Only for `GET`/`HEAD` navigations, and never for the `/`
+/// catch-all (already a directory).
+fn canonical_redirect(mount: &str, method: &Method, path: &str) -> Option<String> {
+    if mount == "/" {
         return None;
     }
     if method != Method::GET && method != Method::HEAD {
@@ -375,489 +550,13 @@ fn canonical_redirect(
 /// starting with `/`).
 fn strip_mount(mount: &str, path: &str) -> String {
     if mount == "/" {
-        return with_leading_slash(path);
+        return assets::with_leading_slash(path);
     }
     let rest = &path[mount.len()..];
     if rest.is_empty() {
         "/".to_owned()
     } else {
         rest.to_owned()
-    }
-}
-
-/// Whether the app-relative path `rel` falls under the API sub-path `api`.
-fn path_is_under(rel: &str, api: &str) -> bool {
-    let api = with_leading_slash(api);
-    rel == api || rel.starts_with(&format!("{api}/"))
-}
-
-/// Resolves and serves a static asset for the app-relative path `rel`.
-async fn serve_asset(session: &Session, assets: &AssetConfig, rel: &str) -> Response {
-    let index = assets.index.as_deref();
-
-    // The file to fetch: directories (and the root) resolve to the index.
-    let primary = if rel == "/" || rel.is_empty() {
-        index.map(with_leading_slash)
-    } else if rel.ends_with('/') {
-        index.map(|i| format!("{rel}{}", i.trim_start_matches('/')))
-    } else {
-        Some(rel.to_owned())
-    };
-
-    let Some(primary) = primary else {
-        return (StatusCode::NOT_FOUND, "not found\n").into_response();
-    };
-
-    match fetch_blob(session, &assets.scope, &primary).await {
-        Ok(Some(bytes)) => return asset_response(&primary, bytes),
-        Ok(None) => {}
-        Err(err) => return unavailable(&err),
-    }
-
-    // SPA fallback: when enabled, a path that looks like a client-side route
-    // (no file extension) falls back to the index document.
-    if assets.fallback == Fallback::Spa
-        && let Some(index) = index
-        && !looks_like_file(&primary)
-    {
-        let index = with_leading_slash(index);
-        match fetch_blob(session, &assets.scope, &index).await {
-            Ok(Some(bytes)) => return asset_response(&index, bytes),
-            Ok(None) => {}
-            Err(err) => return unavailable(&err),
-        }
-    }
-
-    (StatusCode::NOT_FOUND, "not found\n").into_response()
-}
-
-/// Fetches a blob by path from the given scope, or `None` if it doesn't exist.
-async fn fetch_blob(
-    session: &Session,
-    scope: &Scope,
-    path: &str,
-) -> anyhow::Result<Option<Vec<u8>>> {
-    let db = db_client::v1::Client::new(session);
-    let scope = scope.clone();
-    let path = with_leading_slash(path);
-
-    let response = db
-        .read_tx_in(scope.clone(), async move |client, tx_id| {
-            client
-                .send(path_resolve::Request {
-                    id: tx_id,
-                    op: path_resolve::Op {
-                        scope,
-                        path,
-                        range: None,
-                    },
-                })
-                .await
-        })
-        .await
-        .map_err(|err| anyhow::anyhow!("unable to communicate with db: {err}"))?
-        .map_err(|err| anyhow::anyhow!("path resolve failed: {}", err.message))?;
-
-    Ok(response.blob.map(|blob| blob.blob))
-}
-
-/// Builds a 200 response for a served asset, inferring the MIME from its path.
-fn asset_response(path: &str, bytes: Vec<u8>) -> Response {
-    let content_type = mime_guess::from_path(path)
-        .first_or_octet_stream()
-        .to_string();
-    ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
-}
-
-fn unavailable(err: &anyhow::Error) -> Response {
-    tracing::warn!("asset lookup failed: {err}");
-    (StatusCode::SERVICE_UNAVAILABLE, "upstream unavailable\n").into_response()
-}
-
-/// Ensures a path has exactly one leading slash.
-fn with_leading_slash(path: &str) -> String {
-    format!("/{}", path.trim_start_matches('/'))
-}
-
-/// Heuristic: does the last path segment have a file extension?
-fn looks_like_file(path: &str) -> bool {
-    path.rsplit('/')
-        .next()
-        .is_some_and(|segment| segment.contains('.'))
-}
-
-// ---- cell command/event API (per-session SRI) --------------------------------
-
-/// Upgrades a request on the route's `ws` path to a `WebSocket` carrying
-/// `ClientMessage`/`ServerMessage`. `owner` is the cell that declared the
-/// route — the default target for messages that name none.
-async fn ws_upgrade(state: AppState, owner: Sri, req: Request) -> Response {
-    let (mut parts, _body) = req.into_parts();
-    match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-        Ok(ws) => ws
-            .on_upgrade(move |socket| handle_ws(state, owner, socket))
-            .into_response(),
-        Err(rejection) => rejection.into_response(),
-    }
-}
-
-/// Bridges one `WebSocket` session to the swarm.
-///
-/// Mints a per-session SRI, announces it as `Ready`, forwards inbound
-/// `ClientMessage`s as fire-and-forget cell commands/events (stamped with the
-/// session SRI as sender, and addressed to `owner` when they name no target),
-/// and streams the session's mailbox back as `ServerMessage`s.
-async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket) {
-    let session_uuid = Uuid::new_v4();
-    let session_sri = Sri::from_uuid(session_uuid);
-    tracing::debug!("ws session up: {session_sri}");
-
-    // Register the session as a placeholder cell so cells can deliver replies
-    // to its SRI — the host rejects commands addressed to unknown cells.
-    let gen_id = cell_protocol::Gen::from_timestamp(&state.session.new_timestamp());
-    if let Err(err) = claim_placement(
-        &state.session,
-        PlacementEntry {
-            sri: session_sri,
-            kind: PlacementKind::Placeholder,
-            app: None,
-            gen_id,
-        },
-    )
-    .await
-    {
-        tracing::warn!("failed to register session {session_sri}: {err}");
-    }
-
-    let (mut sink, mut stream) = socket.split();
-
-    // Announce the session's SRI so the client (and, through it, cells) know
-    // the address replies are delivered to.
-    let ready = serde_json::to_string(&ServerMessage::Ready {
-        session: session_uuid.to_string(),
-    })
-    .unwrap_or_default();
-    if sink.send(Message::Text(ready.into())).await.is_err() {
-        return;
-    }
-
-    // Pump: the session mailbox → client. Shares its core (subscribe → drain →
-    // map to `ServerMessage`) with the SSE transport via `session_replies`.
-    let pump = {
-        let session = state.session.clone();
-        let sri = session_sri;
-        async move {
-            let mut replies = std::pin::pin!(session_replies(session, sri));
-            while let Some(message) = replies.next().await {
-                let json = serde_json::to_string(&message).unwrap_or_default();
-                if sink.send(Message::Text(json.into())).await.is_err() {
-                    return;
-                }
-            }
-        }
-    };
-
-    // Read: client → cell.
-    let read = {
-        let session = state.session.clone();
-        async move {
-            while let Some(Ok(frame)) = stream.next().await {
-                let parsed = match frame {
-                    Message::Text(text) => serde_json::from_str::<ClientMessage>(text.as_str()),
-                    Message::Binary(bytes) => {
-                        serde_json::from_slice::<ClientMessage>(bytes.as_ref())
-                    }
-                    Message::Close(_) => break,
-                    _ => continue,
-                };
-
-                match parsed {
-                    Ok(message) => {
-                        if let Err(err) = dispatch(&session, session_uuid, owner, message).await {
-                            tracing::warn!("session {session_uuid} dispatch failed: {err}");
-                        }
-                    }
-                    Err(err) => tracing::warn!("session {session_uuid} bad client message: {err}"),
-                }
-            }
-        }
-    };
-
-    tokio::select! {
-        () = pump => {}
-        () = read => {}
-    }
-
-    tracing::debug!("ws session down: {session_sri}");
-    // Best-effort cleanup: deregister the session and clear its mailbox.
-    let _ = remove_placement(&state.session, &session_sri, gen_id).await;
-    let _ = Mailbox::new(&state.session)
-        .drain_commands(session_sri)
-        .await;
-}
-
-/// Sends one client message into the swarm as a fire-and-forget command/event,
-/// stamped with the session SRI as the sender so cells can reply to it.
-///
-/// A command naming no target goes to `owner`, the cell that declared the route
-/// the message arrived on, so a front end talking only to its own cell never
-/// has to discover an SRI.
-async fn dispatch(
-    session: &Session,
-    session_uuid: Uuid,
-    owner: Sri,
-    message: ClientMessage,
-) -> anyhow::Result<()> {
-    let mailbox = Mailbox::new(session);
-    match message {
-        ClientMessage::Command { sri, name, payload } => {
-            let target_sri = match &sri {
-                Some(sri) => {
-                    Sri::from_target(sri).map_err(|e| anyhow!("invalid target '{sri}': {e}"))?
-                }
-                None => owner,
-            };
-
-            if !placement_exists(session, &target_sri)
-                .await
-                .map_err(|e| anyhow!("placement check failed: {e}"))?
-            {
-                bail!("cell '{target_sri}' has no placement");
-            }
-
-            let command = CellCommand::try_from(name.as_str())
-                .map_err(|_| anyhow!("invalid command name '{name}'"))?;
-            mailbox
-                .send_command(&target_sri, &command, Some(payload), Some(session_uuid))
-                .await
-                .map_err(|e| anyhow!("failed to send command: {e}"))?;
-        }
-        ClientMessage::Event { name, payload } => {
-            let event = CellEvent::try_from(name.as_str())
-                .map_err(|_| anyhow!("invalid event name '{name}'"))?;
-            mailbox
-                .publish_event(&event, Some(payload), Some(session_uuid))
-                .await
-                .map_err(|e| anyhow!("failed to publish event: {e}"))?;
-        }
-    }
-    Ok(())
-}
-
-/// A stream of a session's cell replies (its inbound mailbox), shared by the
-/// `WebSocket` and SSE transports.
-///
-/// Spawns a task that subscribes to the session's mailbox, drains it on every
-/// change (with a periodic backstop for missed pokes), and forwards each queued
-/// command as a [`ServerMessage`] over a channel. The task lives until the
-/// returned stream is dropped — at which point the receiver closes, the send
-/// fails, and the subscription is released.
-/// How many replies one mailbox read pulls in.
-const REPLY_BATCH_SIZE: usize = 16;
-
-fn session_replies(session: Session, sri: Sri) -> impl Stream<Item = ServerMessage> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<ServerMessage>(32);
-
-    tokio::spawn(async move {
-        let mut commands = Mailbox::new(&session)
-            .commands(sri, Duration::from_secs(2), REPLY_BATCH_SIZE)
-            .await;
-
-        while let Some(incoming) = commands.next().await {
-            let command = incoming.command();
-            let message = ServerMessage::Command {
-                sri: command.attachment.sender().map(|u| u.to_string()),
-                name: command.cmd.as_ref().to_string(),
-                payload: command.payload.clone().unwrap_or_default(),
-            };
-
-            // Consume first; if that fails the command stays queued and
-            // redelivers, so don't forward it (avoids a duplicate).
-            if let Err(err) = incoming.consume().await {
-                tracing::warn!("session {sri} reply consume failed: {err}");
-                continue;
-            }
-
-            if tx.send(message).await.is_err() {
-                return; // the consumer dropped the stream
-            }
-        }
-    });
-
-    stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|m| (m, rx)) })
-}
-
-/// Opens an SSE receive stream for an HTTP session.
-///
-/// A fresh connection mints a new session SRI (registered as a placeholder cell
-/// so replies can be delivered) and announces it as the first `Ready` event. A
-/// connection carrying a known token — via `?token=` or the `Last-Event-ID`
-/// header that `EventSource` resends on auto-reconnect — re-attaches to the
-/// existing session within its grace window instead. The client echoes the
-/// session id in `X-Gateway-Session` on its `POST`s.
-async fn sse_stream(state: AppState, req: Request) -> Response {
-    let session_uuid = match reattach_token(&req) {
-        Some(id) if sessions::attach_stream(&state.sessions, id) => {
-            tracing::debug!("http session reattached: {id}");
-            id
-        }
-        _ => {
-            let id = Uuid::new_v4();
-            let sri = Sri::from_uuid(id);
-            let gen_id = cell_protocol::Gen::from_timestamp(&state.session.new_timestamp());
-            if let Err(err) = claim_placement(
-                &state.session,
-                PlacementEntry {
-                    sri,
-                    kind: PlacementKind::Placeholder,
-                    app: None,
-                    gen_id,
-                },
-            )
-            .await
-            {
-                tracing::warn!("failed to register http session {id}: {err}");
-            }
-            sessions::register(&state.sessions, id, gen_id);
-            tracing::debug!("http session up: {id}");
-            id
-        }
-    };
-
-    let session_sri = Sri::from_uuid(session_uuid);
-    let id = session_uuid.to_string();
-
-    // Decrements the stream count (and arms the grace countdown) when the client
-    // disconnects — the guard is dropped with the response stream below.
-    let guard = StreamGuard {
-        sessions: state.sessions.clone(),
-        id: session_uuid,
-    };
-
-    let ready = stream::once({
-        let id = id.clone();
-        async move {
-            Ok::<Event, Infallible>(sse_event(
-                &ServerMessage::Ready {
-                    session: id.clone(),
-                },
-                &id,
-            ))
-        }
-    });
-    let replies = session_replies(state.session.clone(), session_sri)
-        .map(move |message| Ok::<Event, Infallible>(sse_event(&message, &id)));
-
-    // Carry the guard in the stream's state so it drops exactly when the client
-    // goes away (stream exhausted or dropped).
-    let body = stream::unfold(
-        (Box::pin(ready.chain(replies)), guard),
-        |(mut body, guard)| async move { body.next().await.map(|item| (item, (body, guard))) },
-    );
-
-    Sse::new(body)
-        .keep_alive(KeepAlive::default())
-        .into_response()
-}
-
-/// Sends one `POST`ed [`ClientMessage`] into the swarm as a fire-and-forget
-/// command/event, stamped with the caller's session SRI so cells can reply to
-/// it, and addressed to `owner` when the message names no target.
-async fn http_send(state: AppState, owner: Sri, req: Request) -> Response {
-    let Some(session_uuid) = req
-        .headers()
-        .get("x-gateway-session")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| Uuid::parse_str(value).ok())
-    else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "missing or malformed X-Gateway-Session header\n",
-        )
-            .into_response();
-    };
-
-    if !sessions::touch(&state.sessions, session_uuid) {
-        return (StatusCode::UNAUTHORIZED, "unknown or expired session\n").into_response();
-    }
-
-    let Ok(bytes) = axum::body::to_bytes(req.into_body(), MAX_HTTP_BODY).await else {
-        return (StatusCode::BAD_REQUEST, "unable to read request body\n").into_response();
-    };
-    let message = match serde_json::from_slice::<ClientMessage>(&bytes) {
-        Ok(message) => message,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("invalid client message: {err}\n"),
-            )
-                .into_response();
-        }
-    };
-
-    match dispatch(&state.session, session_uuid, owner, message).await {
-        Ok(()) => StatusCode::ACCEPTED.into_response(),
-        Err(err) => {
-            tracing::warn!("http session {session_uuid} dispatch failed: {err}");
-            let body = serde_json::to_string(&ServerMessage::Error {
-                message: err.to_string(),
-            })
-            .unwrap_or_default();
-            (
-                StatusCode::BAD_GATEWAY,
-                [(header::CONTENT_TYPE, "application/json")],
-                body,
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Builds an SSE event for one `ServerMessage`. The `id` is the session token,
-/// so a browser resends it as `Last-Event-ID` on auto-reconnect. No `event:`
-/// name is set, so the browser dispatches it to the default `onmessage` handler
-/// carrying the same tagged JSON the `WebSocket` transport emits.
-fn sse_event(message: &ServerMessage, id: &str) -> Event {
-    Event::default()
-        .id(id)
-        .data(serde_json::to_string(message).unwrap_or_default())
-}
-
-/// Extracts a re-attach token from a stream request: the `?token=` query
-/// parameter takes precedence over the `Last-Event-ID` header.
-fn reattach_token(req: &Request) -> Option<Uuid> {
-    if let Some(query) = req.uri().query() {
-        for pair in query.split('&') {
-            if let Some(value) = pair.strip_prefix("token=")
-                && let Ok(id) = Uuid::parse_str(value)
-            {
-                return Some(id);
-            }
-        }
-    }
-    req.headers()
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| Uuid::parse_str(value).ok())
-}
-
-/// Decrements a session's stream count when an SSE response is dropped, arming
-/// the grace countdown once the last stream goes away.
-struct StreamGuard {
-    sessions: Sessions,
-    id: Uuid,
-}
-
-impl Drop for StreamGuard {
-    fn drop(&mut self) {
-        if let Ok(mut map) = self.sessions.lock()
-            && let Some(state) = map.get_mut(&self.id)
-        {
-            state.active_streams = state.active_streams.saturating_sub(1);
-            if state.active_streams == 0 {
-                state.deadline = Instant::now() + HTTP_SESSION_GRACE;
-            }
-        }
     }
 }
 
@@ -878,103 +577,74 @@ mod tests {
     }
 
     #[test]
-    fn api_sub_path() {
-        assert!(path_is_under("/api", "/api"));
-        assert!(path_is_under("/api/todos", "/api"));
-        // The API sub-path is normalized to a leading slash.
-        assert!(path_is_under("/api/todos", "api"));
-        assert!(!path_is_under("/apix", "/api"));
-        assert!(!path_is_under("/", "/api"));
-    }
-
-    #[test]
     fn trailing_slash_redirect() {
-        // Bare mount root serving assets → redirect to the slash form.
+        // Bare mount root → redirect to the slash form.
         assert_eq!(
-            canonical_redirect(true, "/chat", &Method::GET, "/chat"),
+            canonical_redirect("/chat", &Method::GET, "/chat"),
             Some("/chat/".to_owned())
         );
         assert_eq!(
-            canonical_redirect(true, "/chat", &Method::HEAD, "/chat"),
+            canonical_redirect("/chat", &Method::HEAD, "/chat"),
             Some("/chat/".to_owned())
         );
         // Already canonical, or a nested asset path → no redirect.
+        assert_eq!(canonical_redirect("/chat", &Method::GET, "/chat/"), None);
         assert_eq!(
-            canonical_redirect(true, "/chat", &Method::GET, "/chat/"),
+            canonical_redirect("/chat", &Method::GET, "/chat/index-abc.js"),
             None
         );
-        assert_eq!(
-            canonical_redirect(true, "/chat", &Method::GET, "/chat/index-abc.js"),
-            None
-        );
-        // Non-navigation methods, non-asset mounts, and the catch-all are exempt.
-        assert_eq!(
-            canonical_redirect(true, "/chat", &Method::POST, "/chat"),
-            None
-        );
-        assert_eq!(
-            canonical_redirect(false, "/chat", &Method::GET, "/chat"),
-            None
-        );
-        assert_eq!(canonical_redirect(true, "/", &Method::GET, "/"), None);
+        // Non-navigation methods and the catch-all are exempt.
+        assert_eq!(canonical_redirect("/chat", &Method::POST, "/chat"), None);
+        assert_eq!(canonical_redirect("/", &Method::GET, "/"), None);
     }
 
     #[test]
-    fn file_heuristic() {
-        assert!(looks_like_file("/assets/app.js"));
-        assert!(looks_like_file("/index.html"));
-        assert!(!looks_like_file("/dashboard"));
-        assert!(!looks_like_file("/users/42"));
-        assert!(!looks_like_file("/"));
+    fn response_conversion() {
+        let response = HttpResponse::new(myrmic_common::types::web::StatusCode::from_u16(201))
+            .header("content-type", "text/plain")
+            .header("bad header", "x")
+            .body("hi");
+        let out = into_response(response);
+
+        assert_eq!(out.status(), StatusCode::CREATED);
+        assert_eq!(out.headers()["content-type"], "text/plain");
+        assert_eq!(out.headers().len(), 1);
     }
 
     #[test]
-    fn leading_slash() {
-        assert_eq!(with_leading_slash("index.html"), "/index.html");
-        assert_eq!(with_leading_slash("/index.html"), "/index.html");
-        assert_eq!(with_leading_slash("///x"), "/x");
+    fn headers_keep_utf8_values_only() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ok", HeaderValue::from_static("yes"));
+        headers.insert("x-bin", HeaderValue::from_bytes(b"\xff").unwrap());
+
+        let wire = wire_headers(&headers);
+        assert_eq!(
+            wire,
+            vec![wire::Header {
+                name: "x-ok".to_owned(),
+                value: "yes".to_owned()
+            }]
+        );
     }
 
     #[test]
-    fn reattach_token_sources() {
-        use axum::body::Body;
+    fn session_cookie_never_reaches_cells() {
+        assert_eq!(
+            strip_session_cookie("theme=dark; myrmic_gateway_session=abc; lang=en").as_deref(),
+            Some("theme=dark; lang=en")
+        );
+        assert_eq!(strip_session_cookie("myrmic_gateway_session=abc"), None);
+        // Only an exact name match is the session cookie.
+        assert_eq!(
+            strip_session_cookie("myrmic_gateway_session_x=1").as_deref(),
+            Some("myrmic_gateway_session_x=1")
+        );
 
-        let want = Uuid::new_v4();
-
-        // `?token=` query parameter.
-        let req = axum::http::Request::builder()
-            .uri(format!("/chat/api?token={want}"))
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), Some(want));
-
-        // `Last-Event-ID` header — what EventSource resends on auto-reconnect.
-        let req = axum::http::Request::builder()
-            .uri("/chat/api")
-            .header("last-event-id", want.to_string())
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), Some(want));
-
-        // The query parameter wins over the header.
-        let other = Uuid::new_v4();
-        let req = axum::http::Request::builder()
-            .uri(format!("/chat/api?token={want}"))
-            .header("last-event-id", other.to_string())
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), Some(want));
-
-        // Absent or malformed → no token (a fresh session is minted).
-        let req = axum::http::Request::builder()
-            .uri("/chat/api")
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), None);
-        let req = axum::http::Request::builder()
-            .uri("/chat/api?token=not-a-uuid")
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), None);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("myrmic_gateway_session=abc"),
+        );
+        assert!(wire_headers(&headers).is_empty());
     }
 }

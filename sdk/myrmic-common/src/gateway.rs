@@ -1,37 +1,24 @@
-//! Wire types for the gateway routing resource a cell declares for itself.
+//! Wire types for the socket gateway: the route a cell mounts, and the frames
+//! that carry HTTP requests and `WebSocket` traffic between gateway and cell.
 //!
-//! A cell asks the host to serve it at a URL prefix; the host records the route
+//! A cell asks the host to serve it at a URL prefix, naming the command every
+//! request under that prefix is delivered to. The host records the route
 //! against the *calling* cell's SRI, so the route's lifetime is the cell's — it
 //! is torn down when the cell is undeployed, and gateways drop routes whose
 //! owner has left the cell registry.
+//!
+//! The gateway sends each request as an [`HttpRequest`]. Whoever holds it
+//! answers by sending a [`GatewayFrame`] to the request's `gateway` SRI under
+//! [`GATEWAY_COMMAND`]. All frames are postcard-encoded.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
+use crate::cells::{Command, Sri};
 use crate::db::Scope;
-
-/// What to serve when a requested asset path matches no blob.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Fallback {
-    /// Serve the index document for extensionless paths, so a single-page app
-    /// can route client-side. The default.
-    #[default]
-    Spa,
-    /// Return 404.
-    None,
-}
-
-/// Static assets to serve under the mount, read from the blob store.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AssetMount {
-    /// Blob scope holding the assets. `None` uses the cell's own asset scope —
-    /// the same one [`asset_scope`] names.
-    pub scope: Option<Scope>,
-    /// Document served at the mount root, and as the [`Fallback::Spa`] target.
-    pub index: Option<String>,
-    /// What to serve when no asset matches the request path.
-    pub fallback: Fallback,
-}
+use crate::types::web::StatusCode;
 
 /// A cell's request to be served at `mount`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,13 +26,9 @@ pub struct MountRequest {
     /// URL prefix to serve under, e.g. `/chat`. Gateways match the longest
     /// registered prefix, so mounts may nest.
     pub mount: String,
-    /// Path relative to `mount` serving the cell command/event API over HTTP:
-    /// `GET` opens the event stream, `POST` sends one message. `None` disables it.
-    pub api: Option<String>,
-    /// Path relative to `mount` for the `WebSocket` upgrade. `None` disables it.
-    pub ws: Option<String>,
-    /// Static assets, or `None` for an API-only mount.
-    pub assets: Option<AssetMount>,
+    /// The command every request under `mount` is delivered to, as an
+    /// [`HttpRequest`].
+    pub http: Command,
 }
 
 /// A cell's request to drop one of its mounts.
@@ -102,6 +85,233 @@ impl From<GatewayError> for &'static str {
     }
 }
 
+/// The command a gateway receives [`GatewayFrame`]s on.
+pub const GATEWAY_COMMAND: &str = "gateway_frame";
+
+/// Identifies one HTTP request on a gateway. A request upgraded to a
+/// `WebSocket` keeps its id for the socket's lifetime.
+pub type SessionId = Uuid;
+
+/// An HTTP request arriving under a cell's mount.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpRequest {
+    /// The gateway holding the connection; replies go here.
+    pub gateway: Sri,
+    /// This request, on that gateway.
+    pub ctx: SessionId,
+    #[allow(missing_docs)]
+    pub method: Method,
+    /// The request path relative to the mount, always starting with `/`.
+    pub path: String,
+    /// The raw query string, without the leading `?`.
+    pub query: Option<String>,
+    /// Headers whose values are valid UTF-8, in arrival order.
+    pub headers: Vec<Header>,
+    #[allow(missing_docs)]
+    pub body: Vec<u8>,
+}
+
+impl HttpRequest {
+    /// The first header named `name`, compared case-insensitively.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case(name))
+            .map(|header| header.value.as_str())
+    }
+}
+
+/// One HTTP header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct Header {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(
+    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[allow(missing_docs)]
+pub enum Method {
+    Options,
+    Get,
+    Post,
+    Put,
+    Delete,
+    Head,
+    Trace,
+    Connect,
+    Patch,
+}
+
+/// A complete HTTP response, sent to the client as is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct HttpResponse {
+    pub status: StatusCode,
+    pub headers: Vec<Header>,
+    pub body: Vec<u8>,
+}
+
+impl HttpResponse {
+    /// An empty response with `status`.
+    #[must_use]
+    pub fn new(status: StatusCode) -> Self {
+        Self {
+            status,
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+    }
+
+    /// Appends a header.
+    #[must_use]
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push(Header {
+            name: name.into(),
+            value: value.into(),
+        });
+        self
+    }
+
+    /// Replaces the body.
+    #[must_use]
+    pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
+        self.body = body.into();
+        self
+    }
+}
+
+/// Asks the gateway to answer with a blob from the store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Asset {
+    /// The blob path to serve, e.g. the request's own path.
+    pub path: String,
+    /// Blob scope to read from. `None` uses the replying cell's own asset
+    /// scope, the one [`asset_scope`] names. Resolved against the replying
+    /// cell, under the same rules as its db calls.
+    pub scope: Option<Scope>,
+    /// Document served for `/` and directory paths, and as the
+    /// [`Fallback::Spa`] target.
+    pub index: Option<String>,
+    /// What to serve when `path` matches no blob.
+    pub fallback: Fallback,
+}
+
+impl Asset {
+    /// Serves `path` from the replying cell's own asset scope, with no index.
+    #[must_use]
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            scope: None,
+            index: None,
+            fallback: Fallback::default(),
+        }
+    }
+
+    /// Reads from `scope` instead of the replying cell's asset scope.
+    #[must_use]
+    pub fn scope(mut self, scope: Scope) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// Serves `index` for `/` and directory paths, and as the SPA fallback.
+    #[must_use]
+    pub fn index(mut self, index: impl Into<String>) -> Self {
+        self.index = Some(index.into());
+        self
+    }
+
+    /// What to serve when the path matches no blob.
+    #[must_use]
+    pub fn fallback(mut self, fallback: Fallback) -> Self {
+        self.fallback = fallback;
+        self
+    }
+}
+
+/// What to serve when a requested asset path matches no blob.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Fallback {
+    /// Serve the index document for extensionless paths, so a single-page app
+    /// can route client-side. The default.
+    #[default]
+    Spa,
+    /// Return 404.
+    None,
+}
+
+/// How a cell answers an [`HttpRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HttpReply {
+    /// Send this response.
+    Response(HttpResponse),
+    /// Serve a blob.
+    Asset(Asset),
+    /// Accept the `WebSocket` upgrade, delivering its [`WsEvent`]s to
+    /// `callback` on the replying cell.
+    Upgrade {
+        #[allow(missing_docs)]
+        callback: Command,
+    },
+}
+
+/// An upgraded `WebSocket` connection on a gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Socket {
+    /// The gateway holding the connection.
+    pub gateway: Sri,
+    /// The id of the request that was upgraded.
+    pub ctx: SessionId,
+}
+
+/// One `WebSocket` data frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub enum WsMessage {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+/// What happened on a [`Socket`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WsEvent {
+    /// The upgrade completed; the socket can be sent to.
+    Open(Socket),
+    /// The client sent a frame.
+    Message(Socket, WsMessage),
+    /// The socket is gone. Nothing more arrives on it, and sends are dropped.
+    Closed(Socket),
+}
+
+/// A frame a cell sends to a gateway under [`GATEWAY_COMMAND`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GatewayFrame {
+    /// Answers the request `ctx`. Only the first reply counts.
+    Reply {
+        #[allow(missing_docs)]
+        ctx: SessionId,
+        #[allow(missing_docs)]
+        reply: HttpReply,
+    },
+    /// Sends a frame on the socket `ctx`.
+    Send {
+        #[allow(missing_docs)]
+        ctx: SessionId,
+        #[allow(missing_docs)]
+        message: WsMessage,
+    },
+    /// Closes the socket `ctx`.
+    Close {
+        #[allow(missing_docs)]
+        ctx: SessionId,
+    },
+}
+
 /// The gateway's namespace: the routing table every gateway serves from, and
 /// the static assets cells publish through it.
 ///
@@ -112,8 +322,8 @@ pub const NAMESPACE_GATEWAY: &str = "gw";
 pub const ASSETS_DB: &str = "gateway-assets";
 
 /// The blob scope a cell serves its own gateway assets from, isolated per cell
-/// by the schema component. Write assets here; a [`MountRequest`] with no
-/// explicit [`AssetMount::scope`] reads from the very same scope.
+/// by the schema component. Write assets here; an [`Asset`] reply with no
+/// explicit scope reads from the very same scope.
 ///
 /// This is the one scope in [`NAMESPACE_GATEWAY`] a cell may write: the host
 /// checks the schema against the calling cell's own identity, so a cell can
@@ -125,4 +335,25 @@ pub fn asset_scope(sri: &str) -> Scope {
         Some(String::from(ASSETS_DB)),
         Some(String::from(sri)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_round_trip() {
+        let frame = GatewayFrame::Reply {
+            ctx: Uuid::from_u128(7),
+            reply: HttpReply::Upgrade {
+                callback: Command::new(String::from("on_ws")).unwrap(),
+            },
+        };
+        let bytes = postcard::to_allocvec(&frame).unwrap();
+        let GatewayFrame::Reply { ctx, reply } = postcard::from_bytes(&bytes).unwrap() else {
+            panic!("decoded the wrong frame");
+        };
+        assert_eq!(ctx, Uuid::from_u128(7));
+        assert!(matches!(reply, HttpReply::Upgrade { callback } if callback.as_ref() == "on_ws"));
+    }
 }

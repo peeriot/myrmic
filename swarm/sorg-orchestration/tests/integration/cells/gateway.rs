@@ -1,8 +1,15 @@
 //! Gateway routes and assets are a cell's own resources: declared in its
 //! `#[init]`, they are there after a successful deploy and gone once the cell
-//! is rolled back as part of a failed batch.
+//! is rolled back as part of a failed batch. A gateway in front of the cell
+//! delivers its replies.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use claims::{assert_err, assert_ok};
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Notify;
+use tokio_tungstenite::tungstenite::Message;
 use sorg_common::gateway_config::{list_cell_assets, list_gateway_routes};
 use sorg_common::{CellConfig, CellDeployment, DeployRequest, DeploymentError};
 use sorg_tests::{register_fixture_class, swarm_config};
@@ -105,4 +112,98 @@ async fn rollback_releases_gateway_resources() {
             .is_empty(),
         "rollback should purge the rolled-back cell's assets"
     );
+}
+
+// A real gateway in front of the deployed cell: each kind of reply the cell
+// gives reaches the client.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_delivers_each_kind_of_reply() {
+    let swarm = swarm_config!("cells/cells.jsonnet");
+    register_fixture_class(GATEWAY_LOGIC, GATEWAY_CLASS, &swarm).await;
+    let test_app = spawn_test_app_with_swarm(swarm).await;
+    test_app
+        .deploy_wasm_cell("gateway_mount.wasm", GATEWAY_SRI)
+        .await;
+
+    let port = assert_ok!(std::net::TcpListener::bind("[::1]:0"))
+        .local_addr()
+        .unwrap()
+        .port();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let gateway = tokio::spawn(swarm_gateway::run(
+        swarm_gateway::Config {
+            port: Some(port),
+            ..Default::default()
+        },
+        test_app.session().clone(),
+        Arc::new(Notify::new()),
+        async move {
+            let _ = stopped.await;
+        },
+    ));
+
+    let base = format!("http://[::1]:{port}{MOUNT}");
+    let client = assert_ok!(
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+    );
+
+    // An asset, once the gateway has discovered the route.
+    let index = wait_for_ok(&client, &format!("{base}/")).await;
+    assert_eq!(index, "<h1>gateway mount test</h1>");
+
+    // The bare mount redirects, so relative links resolve under it.
+    let redirect = assert_ok!(client.get(&base).send().await);
+    assert_eq!(redirect.status(), 307);
+    assert_eq!(redirect.headers()["location"], format!("{MOUNT}/"));
+
+    // A response the cell built.
+    let echo = assert_ok!(client.post(format!("{base}/echo")).body("ping").send().await);
+    assert_eq!(echo.status(), 200);
+    assert_eq!(assert_ok!(echo.text().await), "ping");
+
+    // An upgrade for a request that didn't ask for one.
+    let no_upgrade = assert_ok!(client.get(format!("{base}/ws")).send().await);
+    assert_eq!(no_upgrade.status(), 426);
+
+    // An upgrade, echoing text and binary frames.
+    let (mut socket, _) =
+        assert_ok!(tokio_tungstenite::connect_async(format!("ws://[::1]:{port}{MOUNT}/ws")).await);
+    for frame in [Message::text("hi"), Message::binary(vec![1, 2, 3])] {
+        assert_ok!(socket.send(frame.clone()).await);
+        assert_eq!(next_data_frame(&mut socket).await, frame);
+    }
+    assert_ok!(socket.close(None).await);
+
+    let _ = stop.send(());
+    assert_ok!(assert_ok!(gateway.await));
+}
+
+/// GETs `url` until it answers 200, returning the body.
+async fn wait_for_ok(client: &reqwest::Client, url: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let response = client.get(url).send().await;
+        if let Ok(response) = response
+            && response.status() == 200
+        {
+            return assert_ok!(response.text().await);
+        }
+        assert!(Instant::now() < deadline, "{url} never answered 200");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn next_data_frame<S>(socket: &mut S) -> Message
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(10), socket.next()).await;
+        let frame = assert_ok!(assert_ok!(frame).expect("socket closed early"));
+        if frame.is_text() || frame.is_binary() {
+            return frame;
+        }
+    }
 }
