@@ -12,17 +12,13 @@
 //! undeployed or its deploy is rolled back (see [`deregister_cell_routes`],
 //! called from orchestration's undeploy and rollback paths), and gateways drop
 //! routes whose owner has left the cell registry.
-//!
-//! A [`GatewayRoute`] is modeled as typed, optional sections (assets / api /
-//! oidc) rather than an ordered rule list; the gateway applies a fixed
-//! precedence per request: OIDC guard → `WebSocket` upgrade → HTTP API → static
-//! asset → fallback.
 
 use cell_protocol::{GATEWAY_CONFIG_TABLE, Sri, gateway_config_scope};
 use db_client::v1::{
     Client as DbClient,
     models::{Scope, TxId, blob_unlink, paths_list, tb_delete, tb_get, tb_insert, tb_list},
 };
+use myrmic_common::cells::Command;
 use serde::{Deserialize, Serialize};
 use zenoh::Session;
 
@@ -33,8 +29,7 @@ use crate::{Result, custom_err};
 pub struct GatewayRoute {
     /// The cell that declared this route. Its lifecycle is bound to that cell:
     /// removed when the cell is undeployed, and dropped by gateways once the
-    /// owner is no longer in the cell registry. Messages arriving on the
-    /// route's API that name no target are addressed here.
+    /// owner is no longer in the cell registry.
     pub owner: Sri,
 
     /// URL path prefix this route is served under, e.g. `/chat` — the registry
@@ -42,47 +37,8 @@ pub struct GatewayRoute {
     /// against every route.
     pub mount: String,
 
-    /// Static front-end assets served under the mount. `None` for an
-    /// API-only route.
-    #[serde(default)]
-    pub assets: Option<AssetConfig>,
-
-    /// URL path (relative to `mount`) where the cell command/event API is
-    /// served over HTTP. Clients send `CellInteraction`s here. `None` disables
-    /// the HTTP API.
-    #[serde(default)]
-    pub api: Option<String>,
-
-    /// URL path (relative to `mount`) for the `WebSocket` upgrade carrying
-    /// `CellInteraction`s. `None` disables the `WebSocket` API.
-    #[serde(default)]
-    pub ws: Option<String>,
-}
-
-/// Static-asset serving config.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssetConfig {
-    /// Blob-store scope the assets were uploaded into (and are served from).
-    pub scope: Scope,
-    /// File served at the mount root and (with [`Fallback::Spa`]) as the
-    /// client-side-routing fallback, e.g. `/index.html`.
-    #[serde(default)]
-    pub index: Option<String>,
-    /// What to serve when a path resolves to no asset.
-    #[serde(default)]
-    pub fallback: Fallback,
-}
-
-/// Behaviour when a requested asset path is not found.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Fallback {
-    /// Serve the index document (single-page-app client-side routing) for
-    /// extensionless paths. The default.
-    #[default]
-    Spa,
-    /// Return 404.
-    None,
+    /// The owner's command every request under the mount is delivered to.
+    pub http: Command,
 }
 
 /// Inserts or replaces the route at a mount (keyed by [`GatewayRoute::mount`]),

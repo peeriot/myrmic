@@ -8,7 +8,7 @@ It continues where [Part 3](./03_one-sensor-per-bed.md) left off: four beds, fou
 
 ## Step 13 - A Dashboard That Talks Back
 
-The Smart Greenhouse dashboard only *showed* the swarm: the cell mirrored an event into a JSON file, the gateway served the file, the page polled it. That half stays. The new half is the reverse direction: the page sends `add_bed` and `add_sensor` to the roots, through the same gateway.
+The Smart Greenhouse dashboard only *showed* the swarm: the cell mirrored an event into a JSON file, the gateway served the file, the page polled it. That half stays. The new half is the reverse direction: the page asks the dashboard cell to send `add_bed` and `add_sensor` to the roots.
 
 ```bash
 myrmic new dashboard
@@ -21,7 +21,8 @@ Replace the content of `dashboard/src/lib.rs` with:
 #![no_std]
 
 use myrmic_sdk::db::state::State;
-use myrmic_sdk::{Metadata, Result, Vec, gateway};
+use myrmic_sdk::gateway::{self, Asset, HttpRequest, HttpResponse, Method, StatusCode};
+use myrmic_sdk::{Callback, Metadata, Result, Sri, String, Vec, send};
 
 /// Payload of a grow-bed's `bed_state` event. Declared here as well as in the
 /// grow-bed: cells share wire formats, not Rust types.
@@ -37,14 +38,29 @@ const BEDS: State<Vec<BedState>> = State::new_const("beds");
 #[myrmic_sdk::init]
 fn init(md: Metadata) -> Result<()> {
     gateway::assets(md.id).put("/index.html", include_bytes!("../assets/index.html"))?;
-    gateway::mount("/greenhouse")
-        .index("/index.html")
-        // GET opens a session, POST sends a command: the page's two buttons.
-        .api("/api")
-        .bind()
-        .map_err(<&'static str>::from)?;
+    gateway::mount("/greenhouse", Callback::of::<on_http>())?;
 
     Ok(())
+}
+
+/// The page's two buttons `POST` a sector to `/add_bed` or `/add_sensor`;
+/// every other request is a file from the asset store.
+#[myrmic_sdk::cmd]
+fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
+    let (root, command) = match (req.method, req.path.as_str()) {
+        (Method::Post, "/add_bed") => ("bed-root", "add_bed"),
+        (Method::Post, "/add_sensor") => ("sensor-root", "add_sensor"),
+        _ => {
+            let asset = Asset::new(req.path.clone()).index("/index.html");
+            return req.asset(asset);
+        }
+    };
+
+    let sector = String::from_utf8(req.body.clone()).map_err(|_| "sector is not utf-8")?;
+    let root = Sri::of_path(root).map_err(|_| "invalid root name")?;
+    send(root, command, &sector)?;
+
+    req.respond(HttpResponse::new(StatusCode::ACCEPTED))
 }
 
 /// Every `bed_state` refreshes that bed's entry and rewrites `beds.json`.
@@ -65,7 +81,7 @@ fn bed_state(md: Metadata, bed: BedState) -> Result<()> {
 }
 ```
 
-Two things differ from the Smart Greenhouse dashboard. The read model is a list, one entry per bed, because there are many beds now; every `bed_state` replaces its bed's entry and rewrites `beds.json`. And the mount gains `.api("/api")`: a path on which the gateway accepts messages from the browser and drops them into cells' mailboxes. The cell does nothing for that path - it only declares it.
+Two things differ from the Smart Greenhouse dashboard. The read model is a list, one entry per bed, because there are many beds now; every `bed_state` replaces its bed's entry and rewrites `beds.json`. And `on_http` no longer answers every request with a file: a `POST` to `/add_bed` or `/add_sensor` becomes a command to the matching root, carrying the request body - the sector - as its payload.
 
 Add `serde_json` to `dashboard/Cargo.toml`, and give the cell the memory a baked-in page needs:
 
@@ -104,7 +120,7 @@ Now the page. Create `dashboard/assets/index.html` with:
 </head>
 <body>
   <h1>Smart Greenhouse</h1>
-  <p id="status">connecting to the gateway...</p>
+  <p id="status">ready</p>
 
   <div class="beds" id="beds"></div>
 
@@ -132,39 +148,20 @@ Now the page. Create `dashboard/assets/index.html` with:
         </div>`).join('');
     }
 
-    // ---- writing: commands to the roots through the gateway's API path ----
-    // GET /greenhouse/api opens a session; its first message carries the
-    // session id, which every POST must present.
-    let session = null;
-    const stream = new EventSource('/greenhouse/api');
-    stream.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'ready') {
-        session = msg.session;
-        document.getElementById('status').textContent = 'connected';
-      }
-    };
-    stream.onerror = () => { document.getElementById('status').textContent = 'gateway unreachable'; };
-
-    async function command(target, name, payload) {
-      if (!session) return;
-      const res = await fetch('/greenhouse/api', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gateway-Session': session },
-        // The payload is JSON, carried as base64 inside the envelope.
-        body: JSON.stringify({ type: 'command', sri: target, name, payload: btoa(JSON.stringify(payload)) }),
-      });
+    // ---- writing: a POST per button, turned into a command by the cell ----
+    async function command(name, sector) {
+      const res = await fetch(`/greenhouse/${name}`, { method: 'POST', body: sector });
       document.getElementById('status').textContent =
-        res.ok ? `sent ${name} to ${target}` : `${name} failed: ${await res.text()}`;
+        res.ok ? `sent ${name}` : `${name} failed: ${await res.text()}`;
     }
 
     document.getElementById('add-bed').onsubmit = (e) => {
       e.preventDefault();
-      command('bed-root', 'add_bed', document.getElementById('bed-sector').value.trim());
+      command('add_bed', document.getElementById('bed-sector').value.trim());
     };
     document.getElementById('add-sensor').onsubmit = (e) => {
       e.preventDefault();
-      command('sensor-root', 'add_sensor', document.getElementById('sensor-sector').value.trim());
+      command('add_sensor', document.getElementById('sensor-sector').value.trim());
     };
 
     async function main() {
@@ -181,11 +178,11 @@ Now the page. Create `dashboard/assets/index.html` with:
 
 The reading half is the Smart Greenhouse loop, polling `beds.json` every two seconds. The writing half is new, and worth following once:
 
-1. `GET /greenhouse/api` opens a stream. Its first message is `{"type":"ready","session":"..."}`: the gateway has created a **session** for this browser tab. While the stream is open, the session is alive.
-2. A command is a `POST` to the same path, with the session id in the `X-Gateway-Session` header and a small JSON envelope: the target cell as an SRN, the command name, and the payload as base64. The payload itself is what `myrmic send` would take - here the JSON string `"sectorA"`.
-3. The gateway resolves the SRN, checks that the cell exists, and puts the command in its mailbox. The response is `202 Accepted`; the command runs in the swarm, and the page learns the outcome the same way anyone does - by watching the swarm change.
+1. **Add bed** sends `POST /greenhouse/add_bed` with the sector as its body. The gateway hands the whole request - method, path relative to the mount, headers, body - to the dashboard's `on_http`.
+2. `on_http` sends `add_bed` to `bed-root`, with the sector as the payload: the same JSON string `"sectorA"` that `myrmic send` would take.
+3. It answers `202 Accepted`. The command runs in the swarm, and the page learns the outcome the same way anyone does - by watching the swarm change.
 
-The page names its targets `bed-root` and `sensor-root`. It can, because they are roots with fixed names from `app_specs.yml`; it never handles a UUID.
+The cell names its targets `bed-root` and `sensor-root`. It can, because they are roots with fixed names from `app_specs.yml`; nobody handles a UUID. The page knows nothing about cells at all: what a URL does is the dashboard cell's own logic.
 
 ---
 
@@ -266,7 +263,7 @@ myrmic cells
   —            2b2ae79a-589a-42de-966d-a0c0c6920890  N/A   —           14s  —       —                —
 ```
 
-`bed-5` and `sensor-5`, both in sector B, both created from a browser. The button went browser → gateway → `bed-root`'s mailbox → `add_bed` → `spawn_bed`: the same path `myrmic send` took in Part 1, with a different client at the front. The nameless row below the rule is your browser tab: the gateway registers each open session as a placeholder cell so that cells can address replies to it, and the row disappears half a minute or so after the tab is closed. And the file the page polls now has five entries:
+`bed-5` and `sensor-5`, both in sector B, both created from a browser. The button went browser → gateway → `dashboard` → `bed-root`'s mailbox → `add_bed` → `spawn_bed`: from the dashboard on, the same path `myrmic send` took in Part 1. The nameless row below the rule is the gateway itself: it registers as a placeholder cell so that cells can send their answers to it, and the row goes away when the gateway stops. And the file the page polls now has five entries:
 
 ```text
 [{"index":1,"moisture":55.399963},{"index":2,"moisture":54.99996},{"index":3,"moisture":55.399963},{"index":4,"moisture":55.399963},{"index":5,"moisture":62.19999}]
@@ -296,15 +293,15 @@ A greenhouse that grows while it runs:
 - Two **roots that spawn** - one for beds, one for sensors - each remembering a short list and turning it into running cells: on request, after a loss, and after their own restart.
 - **Children with fixed identities**, so that a respawn is a resume and a bed can find its sensor by name alone.
 - **Placement from user input**: the sector typed into a command or a form decides where the new cell runs.
-- A **dashboard that talks back**, sending commands to cells it names by SRN through the gateway.
+- A **dashboard that talks back**, turning the page's requests into commands to cells it names by SRN.
 
 The layout of the greenhouse - how many beds, how many sensors, which sector - is nowhere in `app_specs.yml`. It lives in the roots' state, replicated, and the swarm rebuilds it from there.
 
 ## What Have You Learned
 
-- A page reaches the swarm through the gateway's **API path**: `GET` opens a session, `POST` sends an envelope with the target's SRN, the command name and a base64 payload.
-- The gateway does for the browser what `myrmic send` does for the terminal: it drops a command into a mailbox. Nothing in the cells knows the difference.
-- An open browser session is visible in `myrmic cells` as a placeholder row.
+- Every request under a mount reaches the cell that mounted it, which decides what each path and method does: serve a file, answer directly, or send a command on.
+- The roots can't tell a command that came from a browser from one sent with `myrmic send`.
+- A running gateway is visible in `myrmic cells` as a placeholder row.
 - Spawning, respawning and rebuilding do not care who asked. A bed added from a form is a bed like any other.
 
 > **Preview version.** Everything in this tutorial is supervision done *by your code* with the primitives available today: fixed names, `on_cell_lost`, a list in state, `myrmic replicate`. A restart policy applies to roots only, and none of this is yet part of the [guarantee contract](../../08_guarantees.md). The [Roadmap](../../09_roadmap.md) describes how supervising a tree becomes something the swarm does by itself.
@@ -312,6 +309,6 @@ The layout of the greenhouse - how many beds, how many sensors, which sector - i
 ## Where to Go Next
 
 - [Cell classes and spawning](../../10_reference/03_myrmic-sdk/04_cell-lifecycle/01_cell-classes-and-spawning.md) and [Cell monitoring](../../10_reference/03_myrmic-sdk/04_cell-lifecycle/03_cell-monitoring.md) - every spawn option, every loss reason.
-- [Gateway routes](../../10_reference/03_myrmic-sdk/06_external-systems/01_gateway-routes.md) - the API and WebSocket paths.
+- [Gateway routes](../../10_reference/03_myrmic-sdk/06_external-systems/01_gateway-routes.md) - requests, responses and WebSockets.
 - [`myrmic replicate`](../../10_reference/02_myrmic-cli/15_replicate.md) - replicating an application, a cell, or a scope.
 - [Failure Behaviour](../../07_architecture/04_failure-behaviour.md) - what happens when a node is lost, in detail.

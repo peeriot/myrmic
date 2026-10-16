@@ -22,7 +22,7 @@ pub mod cells;
 pub mod codegen;
 #[cfg(feature = "db")]
 pub mod db;
-#[cfg(feature = "db")]
+#[cfg(all(feature = "db", feature = "cells", feature = "types-web"))]
 pub mod gateway;
 
 /// Re-exports `myrmic-signal-layer-types` as `signal_layer`, making it part of

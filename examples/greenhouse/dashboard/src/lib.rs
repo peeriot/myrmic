@@ -5,7 +5,8 @@
 //! Part 5 of the Smart Greenhouse tutorial.
 #![no_std]
 
-use myrmic_sdk::{Metadata, Result, format, gateway};
+use myrmic_sdk::gateway::{self, Asset, HttpRequest};
+use myrmic_sdk::{Callback, Metadata, Result, format};
 
 /// Payload of the grow-bed's `bed_state` event. Declared here as well as in the
 /// grow-bed: cells share wire formats, not Rust types.
@@ -20,12 +21,16 @@ struct BedState {
 #[myrmic_sdk::init]
 fn init(md: Metadata) -> Result<()> {
     gateway::assets(md.id).put("/index.html", include_bytes!("../assets/index.html"))?;
-    gateway::mount("/greenhouse")
-        .index("/index.html")
-        .bind()
-        .map_err(<&'static str>::from)?;
+    gateway::mount("/greenhouse", Callback::of::<on_http>())?;
 
     Ok(())
+}
+
+/// Every request is a file from the asset store.
+#[myrmic_sdk::cmd]
+fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
+    let asset = Asset::new(req.path.clone()).index("/index.html");
+    req.asset(asset)
 }
 
 /// Every `bed_state` update becomes a fresh `latest.json` for the page to poll.

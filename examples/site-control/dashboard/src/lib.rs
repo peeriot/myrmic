@@ -1,6 +1,7 @@
 #![no_std]
 
-use myrmic_sdk::{Metadata, Result, format, gateway};
+use myrmic_sdk::gateway::{self, Asset, HttpRequest};
+use myrmic_sdk::{Callback, Metadata, Result, format};
 
 #[derive(serde::Serialize, serde::Deserialize, myrmic_sdk::Message)]
 struct SiteState {
@@ -13,12 +14,16 @@ struct SiteState {
 #[myrmic_sdk::init]
 fn init(md: Metadata) -> Result<()> {
     gateway::assets(md.id).put("/index.html", include_bytes!("../assets/index.html"))?;
-    gateway::mount("/site-control")
-        .index("/index.html")
-        .bind()
-        .map_err(<&'static str>::from)?;
+    gateway::mount("/site-control", Callback::of::<on_http>())?;
 
     Ok(())
+}
+
+/// Every request is a file from the asset store.
+#[myrmic_sdk::cmd]
+fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
+    let asset = Asset::new(req.path.clone()).index("/index.html");
+    req.asset(asset)
 }
 
 #[myrmic_sdk::evt]

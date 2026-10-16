@@ -58,8 +58,8 @@
 //!   pins, [`ble`] centrals/peripherals.
 //! - **Bridges** — [`import!`](macro@import) generates typed clients for
 //!   HTTP APIs and MQTT brokers from YAML specs.
-//! - **Gateway** — [`gateway`] mounts blob scopes as static assets and routes
-//!   HTTP to commands.
+//! - **Gateway** — [`gateway`] delivers HTTP requests and `WebSocket` frames
+//!   under a URL prefix to a command, and serves blobs as static assets.
 //!
 //! # Execution model
 //!

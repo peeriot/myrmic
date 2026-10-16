@@ -18,6 +18,7 @@ use core::str::FromStr;
 use std as sys;
 
 mod exec_runtime;
+pub mod guest_scope;
 pub use exec_runtime::{CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, RuntimeKind};
 pub mod node_tags;
 pub mod replication;

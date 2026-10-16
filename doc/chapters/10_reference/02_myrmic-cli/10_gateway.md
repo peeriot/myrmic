@@ -12,8 +12,8 @@ myrmic gateway [OPTIONS]
 
 ## Description
 
-Start a minimal swarm gateway node. The gateway exposes the swarm to the external world - it provides HTTP and WebSocket endpoints for external clients to send commands and publish events to cells,
-and serves static web assets from the blob store.
+Start a minimal swarm gateway node. The gateway exposes the swarm to the external world - it delivers HTTP requests and WebSocket frames from external clients to cells, and serves static web
+assets from the blob store when a cell asks it to.
 
 A gateway can also run embedded inside a Myrmic runtime - see [runtime configuration](../01_configuration/01_runtime-configuration.md#gateway).
 
@@ -21,26 +21,44 @@ The gateway serves no application of its own. Cells declare how they should be s
 
 ### Cell-declared routes
 
-A cell declares the routing configuration by calling `myrmic_sdk::gateway::mount`, usually from its `init` handler:
+A cell declares a route by calling `myrmic_sdk::gateway::mount`, usually from its `init` handler. Every request under the mount is delivered to the command it names, and the cell decides how
+to answer:
 
 ```rust
+use myrmic_sdk::gateway::{self, Asset, HttpRequest, WsEvent};
+use myrmic_sdk::{Callback, Metadata};
+
 #[myrmic_sdk::init]
 fn init(md: Metadata) -> myrmic_sdk::Result<()> {
-    let assets = myrmic_sdk::gateway::assets(md.id);
-    assets.put("/index.html", include_bytes!("../dist/index.html"))?;
-
-    myrmic_sdk::gateway::mount("/chat")
-        .api("/api")     // HTTP: GET opens the event stream, POST sends a message
-        .ws("/ws")       // WebSocket upgrade path
-        .index("/index.html")
-        .bind()
-        .map_err(<&'static str>::from)?;
+    gateway::assets(md.id).put("/index.html", include_bytes!("../dist/index.html"))?;
+    gateway::mount("/chat", Callback::of::<on_http>())?;
     Ok(())
+}
+
+#[myrmic_sdk::cmd]
+fn on_http(_md: Metadata, req: HttpRequest) -> myrmic_sdk::Result<()> {
+    if req.path == "/ws" {
+        // Accept the WebSocket; its frames go to `on_ws`.
+        return req.upgrade(Callback::of::<on_ws>());
+    }
+    // Serve a file from the asset store.
+    let asset = Asset::new(req.path.clone()).index("/index.html");
+    req.asset(asset)
+}
+
+#[myrmic_sdk::cmd]
+fn on_ws(_md: Metadata, event: WsEvent) -> myrmic_sdk::Result<()> {
+    match event {
+        WsEvent::Message(socket, message) => socket.send(message),
+        WsEvent::Open(_) | WsEvent::Closed(_) => Ok(()),
+    }
 }
 ```
 
-Serving assets is as easy as just uploading them to the blob-store, with a convenience function via (`myrmic_sdk::gateway::assets`). The cell can populate the store however it likes. (compiled in with
-`include_bytes!`, fetched from another cell, or written at runtime.)
+Serving assets is as easy as just uploading them to the blob-store, with a convenience function via (`myrmic_sdk::gateway::assets`), and answering with an `Asset`. The cell can populate the store
+however it likes. (compiled in with `include_bytes!`, fetched from another cell, or written at runtime.)
+
+A request that gets no answer within 30 seconds is answered with `504 Gateway Timeout`.
 
 The lifetime of the routing configuration is tied to the cell that declared it. If the owning cell goes, the routing config does as well.
 
