@@ -43,6 +43,7 @@ pub async fn handle(ctx: Ctx, cmd: Gateway) -> anyhow::Result<()> {
         over_https,
         session_inactivity_timer_secs: session_inactivity
             .map(|idle| i64::try_from(idle.as_secs()).unwrap_or(i64::MAX)),
+        mailbox_poll_interval_ms: None,
         routing: routing.map(swarm_gateway::Either::Left),
     });
     // The gateway registers no exec, so network listings would show a bare id;

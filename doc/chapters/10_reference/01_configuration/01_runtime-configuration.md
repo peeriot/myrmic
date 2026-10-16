@@ -45,6 +45,7 @@ Configures storage behavior.
 When this section is present, the runtime also runs an embedded gateway - it starts and stops together with the runtime - providing an entry point for external clients to the swarm: it delivers HTTP requests and WebSocket frames to the cells that mounted them, and serves static web assets.
 
 - `port` *(optional)* - TCP port the embedded gateway listens on. Defaults to `8080`.
+- `mailbox_poll_interval_ms` *(optional)* - How often the gateway polls its mailbox for the frames cells send their WebSockets, in milliseconds. Frames are normally picked up as soon as their mailbox event arrives; the poll only catches the ones whose event was missed. Defaults to `2000`.
 
 To run the gateway as its own process independently of a runtime, use [`myrmic gateway`](../02_myrmic-cli/10_gateway.md) instead.
 
@@ -94,6 +95,7 @@ db:
 
 gateway:
   port: 8080
+  mailbox_poll_interval_ms: 200
 
 telemetry:
   logs:

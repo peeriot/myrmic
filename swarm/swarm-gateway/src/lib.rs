@@ -64,6 +64,11 @@ const REGISTER_RETRY: Duration = Duration::from_secs(2);
 /// How long shutdown waits for open sockets to tell their cells they closed.
 const SOCKET_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How often the gateway's mailbox is polled when none is configured. A
+/// backstop: frames are picked up as soon as their mailbox event arrives, and
+/// only a missed event waits for the poll.
+pub const DEFAULT_MAILBOX_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
 /// The cookie carrying the gateway's own session (the OIDC login).
 const SESSION_COOKIE: &str = "myrmic_gateway_session";
 
@@ -88,6 +93,12 @@ pub struct Config {
     /// How long a session may sit idle before it expires. Defaults to 120s, floored at 2s.
     #[serde(default)]
     pub session_inactivity_timer_secs: Option<i64>,
+
+    /// How often the gateway's mailbox, which carries the frames cells send
+    /// their sockets, is polled, in milliseconds. A backstop for a missed
+    /// mailbox event. Defaults to [`DEFAULT_MAILBOX_POLL_INTERVAL`].
+    #[serde(default)]
+    pub mailbox_poll_interval_ms: Option<u64>,
 
     /// Which discovered routes to serve, and the OIDC provider guarding each —
     /// either inline, or a path to a JSON file holding the same. `None` serves
@@ -184,8 +195,12 @@ where
         port,
         over_https,
         session_inactivity_timer_secs,
+        mailbox_poll_interval_ms,
         routing,
     } = config;
+
+    let mailbox_poll_interval = mailbox_poll_interval_ms
+        .map_or(DEFAULT_MAILBOX_POLL_INTERVAL, Duration::from_millis);
 
     let session_inactivity_timer_secs = session_inactivity_timer_secs
         .unwrap_or(DEFAULT_SESSION_INACTIVITY_TIMER_SECS)
@@ -230,7 +245,7 @@ where
     let Some((relay, relay_gen)) = register(&session, &mut shutdown_rx).await else {
         return Ok(());
     };
-    let pump = relay.spawn_pump();
+    let pump = relay.spawn_pump(mailbox_poll_interval);
 
     let (routes, discovery) = routes::spawn_discovery(&session, routing.as_ref());
 

@@ -122,12 +122,13 @@ impl Relay {
         lock(&self.sockets).remove(&ctx);
     }
 
-    /// Drains the gateway's mailbox for as long as the gateway runs.
-    pub fn spawn_pump(&self) -> tokio::task::JoinHandle<()> {
+    /// Drains the gateway's mailbox for as long as the gateway runs, polling
+    /// it every `poll_interval` behind the mailbox events.
+    pub fn spawn_pump(&self, poll_interval: Duration) -> tokio::task::JoinHandle<()> {
         let relay = self.clone();
         tokio::spawn(async move {
             let mut commands = Mailbox::new(&relay.session)
-                .commands(relay.sri, Duration::from_secs(2), FRAME_BATCH_SIZE)
+                .commands(relay.sri, poll_interval, FRAME_BATCH_SIZE)
                 .await;
 
             while let Some(incoming) = commands.next().await {
