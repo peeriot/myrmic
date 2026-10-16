@@ -21,12 +21,12 @@ fn init(md: Metadata) -> myrmic_sdk::Result {
 
 /// `/ws` is the chat socket; everything else is the web client.
 #[myrmic_sdk::cmd]
-fn on_http(_md: Metadata, req: HttpRequest) -> myrmic_sdk::Result {
+fn on_http(_md: Metadata, req: HttpRequest<'_>) -> myrmic_sdk::Result {
     if req.path == "/ws" {
         return req.upgrade(Callback::of::<on_ws>());
     }
 
-    let asset = Asset::new(req.path.clone()).index("/index.html");
+    let asset = Asset::new(req.path).index("/index.html");
     req.asset(asset)
 }
 

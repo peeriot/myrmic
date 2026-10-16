@@ -34,8 +34,8 @@ fn init(md: Metadata) -> myrmic_sdk::Result {
 }
 
 #[myrmic_sdk::cmd]
-fn on_http(_md: Metadata, req: HttpRequest) -> myrmic_sdk::Result {
-    let asset = Asset::new(req.path.clone())
+fn on_http(_md: Metadata, req: HttpRequest<'_>) -> myrmic_sdk::Result {
+    let asset = Asset::new(req.path)
         // Served at /app/, and for any directory path.
         .index("/index.html")
         // The default: a path matching no file gets the index, which is what a

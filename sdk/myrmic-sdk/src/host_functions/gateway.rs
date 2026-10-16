@@ -20,8 +20,8 @@
 //! }
 //!
 //! #[myrmic_sdk::cmd]
-//! fn on_http(_md: Metadata, req: HttpRequest) -> myrmic_sdk::Result<()> {
-//!     match req.path.as_str() {
+//! fn on_http(_md: Metadata, req: HttpRequest<'_>) -> myrmic_sdk::Result<()> {
+//!     match req.path {
 //!         "/ws" => req.upgrade(Callback::of::<on_ws>()),
 //!         path => {
 //!             let asset = Asset::new(path).index("/index.html");
@@ -50,7 +50,9 @@ use myrmic_common::types::error::SUCCESS;
 use serde::{Deserialize, Serialize};
 
 use crate::db::store::BlobStore;
-use crate::{Bytes, Callback, Codec, Command, Decoder, Encoder, Postcard, Result, Sri, String};
+use crate::{
+    BorrowDecoder, Bytes, Callback, Codec, Command, Decoder, Encoder, Postcard, Result, Sri, String,
+};
 
 pub use myrmic_common::gateway::{
     Asset, Fallback, GatewayError, Header, HttpResponse, Method, SessionId, WsMessage,
@@ -93,7 +95,7 @@ pub fn assets(sri: Sri) -> BlobStore {
 /// [`GatewayError::MountTaken`] if another cell owns it.
 pub fn mount(
     mount: impl Into<String>,
-    http: Callback<HttpRequest>,
+    http: Callback<HttpRequest<'static>>,
 ) -> core::result::Result<(), GatewayError> {
     let request = MountRequest {
         mount: mount.into(),
@@ -123,16 +125,18 @@ pub fn unmount(mount: impl Into<String>) -> core::result::Result<(), GatewayErro
     to_result(status)
 }
 
-/// An HTTP request under one of this cell's mounts.
+/// An HTTP request under one of this cell's mounts, borrowing its path,
+/// headers and body from the invocation's payload. A handler names the
+/// lifetime: `req: HttpRequest<'_>`.
 ///
 /// Answer it exactly once, with [`respond`](Self::respond),
 /// [`asset`](Self::asset) or [`upgrade`](Self::upgrade). An unanswered request
 /// times out at the gateway. A request is a plain message, so it can be sent to
 /// another cell, which answers it in turn.
 #[derive(Debug, Clone)]
-pub struct HttpRequest(wire::HttpRequest);
+pub struct HttpRequest<'a>(wire::HttpRequest<'a>);
 
-impl HttpRequest {
+impl<'a> HttpRequest<'a> {
     /// Sends `response` to the client.
     pub fn respond(self, response: HttpResponse) -> Result<()> {
         self.reply(HttpReply::Response(response))
@@ -155,7 +159,7 @@ impl HttpRequest {
 
     /// Unwraps the wire request.
     #[must_use]
-    pub fn into_inner(self) -> wire::HttpRequest {
+    pub fn into_inner(self) -> wire::HttpRequest<'a> {
         self.0
     }
 
@@ -170,21 +174,21 @@ impl HttpRequest {
     }
 }
 
-impl Deref for HttpRequest {
-    type Target = wire::HttpRequest;
+impl<'a> Deref for HttpRequest<'a> {
+    type Target = wire::HttpRequest<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl Decoder for HttpRequest {
-    fn from_bytes(bytes: Bytes) -> Result<Self> {
-        <Postcard as Codec>::decode(&bytes).map(Self)
+impl<'de> BorrowDecoder<'de> for HttpRequest<'de> {
+    fn decode(bytes: &'de [u8]) -> Result<Self> {
+        <Postcard as Codec>::decode(bytes).map(Self)
     }
 }
 
-impl Encoder for HttpRequest {
+impl Encoder for HttpRequest<'_> {
     fn to_bytes(&self) -> Result<Bytes> {
         <Postcard as Codec>::encode(&self.0)
     }

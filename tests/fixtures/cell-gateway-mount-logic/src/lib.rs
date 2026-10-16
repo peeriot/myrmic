@@ -22,15 +22,15 @@ fn init(md: Metadata) -> Result<()> {
 /// `/echo` answers with the request body, `/ws` is an echo socket, and
 /// everything else is an asset.
 #[myrmic_sdk::cmd]
-fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
-    match req.path.as_str() {
+fn on_http(_md: Metadata, req: HttpRequest<'_>) -> Result<()> {
+    match req.path {
         "/echo" => {
-            let response = HttpResponse::new(StatusCode::OK).body(req.body.clone());
+            let response = HttpResponse::new(StatusCode::OK).body(req.body);
             req.respond(response)
         }
         "/ws" => req.upgrade(Callback::of::<on_ws>()),
         _ => {
-            let asset = Asset::new(req.path.clone()).index(INDEX);
+            let asset = Asset::new(req.path).index(INDEX);
             req.asset(asset)
         }
     }

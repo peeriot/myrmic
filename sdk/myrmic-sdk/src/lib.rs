@@ -113,7 +113,10 @@ pub use alloc::{format, string::String, vec, vec::Vec};
 pub type Bytes = Vec<u8>;
 
 #[cfg(feature = "alloc")]
-pub use codec::{Codec, Decoder, Encoder, Json, Postcard, Void};
+pub use codec::{BorrowDecoder, Codec, Decoder, Encoder, Json, Postcard, Void};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use codec::{borrow_arguments, read_arguments};
 
 #[cfg(feature = "alloc")]
 pub use serde_json::Value as JsonValue;
