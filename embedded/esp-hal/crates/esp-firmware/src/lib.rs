@@ -133,7 +133,7 @@ mod wasm;
 mod ble;
 
 pub use board::Board;
-pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError};
+pub use cell::{Cell, Message, Network, RegisterError, Registration, SendError, Sri, Command, Event};
 pub use config::Config;
 pub use esp_common::esp_network::WifiCredentials;
 pub use outlet::Outlet;

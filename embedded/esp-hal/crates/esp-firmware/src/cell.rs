@@ -29,9 +29,10 @@ use cell_protocol::{CellAttachment, MailboxCommand, MailboxEvent};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
-use myrmic_common::cells::{Command, Event, Sri};
 use wasm_runtime::CellMessage;
 use wasm_runtime::async_request::{CommandHandledGuard, DbClientRequest, DbClientResponse};
+
+pub use myrmic_common::cells::{Command, Event, Sri};
 
 /// Set once a native registration has claimed this node's cell slot.
 static SLOT_CLAIMED: AtomicBool = AtomicBool::new(false);
