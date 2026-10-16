@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use cell_protocol::{CellAttachment, MailboxCommand, MailboxEvent};
+use cell_protocol::{CellAttachment, MailboxCommand, MailboxEvent, scope_of_cell};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
@@ -268,7 +268,7 @@ impl Cell {
         payload: Vec<u8>,
     ) -> Result<(), SendError> {
         let cmd = Command::try_from(command).map_err(|_| SendError::BadName)?;
-        self.exchange(DbClientRequest::SendCommand {
+        self.deliver(DbClientRequest::SendCommand {
             dest_sri: dest,
             command: MailboxCommand {
                 cmd,
@@ -287,7 +287,7 @@ impl Cell {
     /// [`SendError::Rejected`] if the db refuses the write.
     pub async fn publish_event(&self, event: &str, payload: Vec<u8>) -> Result<(), SendError> {
         let ev = Event::try_from(event).map_err(|_| SendError::BadName)?;
-        self.exchange(DbClientRequest::PublishEvent {
+        self.deliver(DbClientRequest::PublishEvent {
             event: MailboxEvent {
                 event: ev,
                 payload,
@@ -326,15 +326,47 @@ impl Cell {
         attachment
     }
 
+    /// Writes one mailbox item — a command or an event — in a db application
+    /// of its own.
+    ///
+    /// The db service only ever defers a mailbox write into the application
+    /// that is open, so the write lands when that application commits. For a
+    /// WASM cell the dispatcher opens one around every handler. A native cell
+    /// has no handler call to join, so each send opens its own, on the cell's
+    /// own scope as the dispatcher would, and commits it straight away.
+    async fn deliver(&self, req: DbClientRequest) -> Result<(), SendError> {
+        self.request(DbClientRequest::Open(scope_of_cell(self.sri)))
+            .await;
+
+        if let Err(err) = self.exchange(req).await {
+            self.request(DbClientRequest::Rollback).await;
+            return Err(err);
+        }
+
+        match self.request(DbClientRequest::Commit).await {
+            DbClientResponse::Commit(Ok(())) => Ok(()),
+            DbClientResponse::Commit(Err(err)) => {
+                log::warn!("[esp-firmware] native cell send not committed: {err}");
+                Err(SendError::Rejected)
+            }
+            _ => Err(SendError::Rejected),
+        }
+    }
+
     async fn exchange(&self, req: DbClientRequest) -> Result<(), SendError> {
-        self.net.requests.send(req).await;
-        match self.net.responses.receive().await {
+        match self.request(req).await {
             DbClientResponse::SendCommand(result) | DbClientResponse::PublishEvent(result) => {
                 result.map_err(|_| SendError::Rejected)
             }
             DbClientResponse::SubscribeEvent | DbClientResponse::UnsubscribeEvent => Ok(()),
             _ => Err(SendError::Rejected),
         }
+    }
+
+    /// One round trip to the db service.
+    async fn request(&self, req: DbClientRequest) -> DbClientResponse {
+        self.net.requests.send(req).await;
+        self.net.responses.receive().await
     }
 }
 
