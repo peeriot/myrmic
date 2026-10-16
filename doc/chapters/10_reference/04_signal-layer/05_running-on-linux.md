@@ -27,6 +27,10 @@ The two sides fail differently when no path resolves. The pipeline process abort
 pipeline nobody can reach is not useful. The runtime keeps running and reports taps as
 unavailable.
 
+The pipeline removes the socket file when it stops. A crash leaves the file behind: a runtime
+connecting to it is refused and reports the taps as unavailable, and the next pipeline start
+removes the stale file before binding.
+
 ## Connection behaviour
 
 The runtime connects lazily, on a cell's first tap call. If the pipeline is not running,
