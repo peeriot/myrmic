@@ -39,8 +39,20 @@ const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 const WIFI_RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 /// Zenoh session lease duration
 pub const SESSION_LEASE: Duration = Duration::from_secs(30);
-/// Buffer size (bytes) for the streaming link framer
-const LINK_BUFFER_SIZE: u16 = 100;
+/// The largest zenoh batch this link carries, in bytes: offered to the peer as
+/// the transport's batch size, so it bounds every frame in both directions.
+///
+/// Anything larger is sent as fragments, and each fragment is its own TCP write
+/// that waits for the peer's ACK — a db reply or a commit split into many small
+/// fragments pays that wait many times over. At 100 bytes almost every locate
+/// reply and multi-row commit fragmented; 2048 carries them whole. Received
+/// messages are allocated at their actual length, so a large limit costs
+/// nothing until a large message arrives.
+const LINK_BUFFER_SIZE: u16 = 2048;
+/// The TCP socket's send and receive buffers, in bytes. Large enough to hold a
+/// full [`LINK_BUFFER_SIZE`] batch with its length prefix, so one batch never
+/// has to wait for window space mid-write.
+const TCP_BUFFER_SIZE: usize = 4096;
 /// Key-expression prefix for our liveliness token.
 ///
 /// Must stay in sync with `intro_liveliness` in `introspection-common`
@@ -206,7 +218,8 @@ pub async fn zenoh_session<F, Fut>(
     // All cell takes/inits must stay outside the reconnect loop - they panic on a
     // second call, so these must only run once for the lifetime of the task.
     static UDP_BUFFERS: ConstStaticCell<UdpBuffers<1>> = ConstStaticCell::new(UdpBuffers::new());
-    static TCP_BUFFERS: ConstStaticCell<TcpBuffers<1>> = ConstStaticCell::new(TcpBuffers::new());
+    static TCP_BUFFERS: ConstStaticCell<TcpBuffers<1, TCP_BUFFER_SIZE, TCP_BUFFER_SIZE>> =
+        ConstStaticCell::new(TcpBuffers::new());
     static TCP_STACK: StaticCell<Tcp<'_>> = StaticCell::new();
     // This is Sync (wraps UnsafeCell), letting us hold a &'static SessionResources
     // even though SessionResources<NoopRawMutex> is !Sync. Session::new now takes &'a
