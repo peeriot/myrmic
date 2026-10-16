@@ -201,6 +201,10 @@ impl Cell {
     pub async fn online(&self) {
         if !ONLINE.signaled() {
             ONLINE.wait().await;
+            // `wait` consumes the signal, but being online is a state, not an
+            // event: put it back, or every later call would wait for a
+            // `mark_online` that already happened.
+            ONLINE.signal(());
         }
     }
 
