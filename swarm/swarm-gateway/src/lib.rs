@@ -15,6 +15,7 @@
 //! This crate provides the server ([`run`]); the `myrmic gateway` CLI command
 //! is the primary way to launch it.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::{Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
@@ -337,14 +338,15 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
     };
 
     let ctx = Uuid::new_v4();
+    let rel = strip_mount(&route.mount, &path);
     let request = HttpRequest {
         gateway: state.relay.sri(),
         ctx,
         method,
-        path: strip_mount(&route.mount, &path),
-        query: parts.uri.query().map(str::to_owned),
+        path: &rel,
+        query: parts.uri.query(),
         headers: wire_headers(&parts.headers),
-        body: body.to_vec(),
+        body: &body,
     };
 
     let (reply, _pending) = state.relay.expect_reply(ctx);
@@ -472,8 +474,8 @@ fn into_response(response: HttpResponse) -> Response {
     *out.status_mut() = status;
     for header in response.headers {
         match (
-            HeaderName::try_from(header.name.as_str()),
-            HeaderValue::try_from(header.value.as_str()),
+            HeaderName::try_from(&*header.name),
+            HeaderValue::try_from(&*header.value),
         ) {
             (Ok(name), Ok(value)) => {
                 out.headers_mut().append(name, value);
@@ -501,16 +503,18 @@ fn wire_method(method: &Method) -> Option<wire::Method> {
 
 /// Headers whose values are valid UTF-8; the rest are dropped. The gateway's
 /// session cookie is the client's OIDC login, so it never reaches a cell.
-fn wire_headers(headers: &HeaderMap) -> Vec<wire::Header> {
+fn wire_headers(headers: &HeaderMap) -> Vec<wire::Header<'_>> {
     headers
         .iter()
         .filter_map(|(name, value)| {
-            let mut value = value.to_str().ok()?.to_owned();
-            if name == header::COOKIE {
-                value = strip_session_cookie(&value)?;
-            }
+            let value = value.to_str().ok()?;
+            let value = if name == header::COOKIE {
+                Cow::Owned(strip_session_cookie(value)?)
+            } else {
+                Cow::Borrowed(value)
+            };
             Some(wire::Header {
-                name: name.as_str().to_owned(),
+                name: Cow::Borrowed(name.as_str()),
                 value,
             })
         })
@@ -621,8 +625,8 @@ mod tests {
         assert_eq!(
             wire,
             vec![wire::Header {
-                name: "x-ok".to_owned(),
-                value: "yes".to_owned()
+                name: Cow::Borrowed("x-ok"),
+                value: Cow::Borrowed("yes")
             }]
         );
     }

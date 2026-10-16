@@ -1,5 +1,4 @@
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::{Bytes, Result};
 use alloc::string::String;
@@ -10,6 +9,10 @@ use myrmic_common::cells::Sri;
 /// Message types get this for free via `#[derive(Message)]`, which delegates to
 /// the bound [`Codec`]. The `#[cmd]`/`#[evt]` handler macros call
 /// [`from_args`](Decoder::from_args) on the handler's argument type.
+#[diagnostic::on_unimplemented(
+    note = "a payload that borrows from its buffer must name its lifetime in the handler, \
+            e.g. `HttpRequest<'_>`"
+)]
 pub trait Decoder: Sized {
     /// Reads this invocation's `length`-byte payload from the host (via
     /// [`get_arguments`](crate::get_arguments)) and decodes it with
@@ -19,23 +22,67 @@ pub trait Decoder: Sized {
     /// decoder for a mandatory payload can only describe absence as malformed
     /// input, which points at nothing the handler's author can act on.
     fn from_args(length: usize) -> Result<Self> {
-        let mut bytes = alloc::vec![0u8; length];
-        let n = crate::get_arguments(&mut bytes).map_err(|_| "failed to read arguments")?;
-        bytes.truncate(n);
+        let bytes = read_arguments(length)?;
         let absent = bytes.is_empty();
 
-        Self::from_bytes(bytes).map_err(|err| {
-            if absent {
-                "no payload was sent; declare the handler's payload as `Option<_>` \
-                 to accept an invocation sent without one"
-            } else {
-                err
-            }
-        })
+        Self::from_bytes(bytes).map_err(|err| if absent { MISSING_PAYLOAD } else { err })
     }
 
     /// Decodes `Self` from the raw payload buffer.
     fn from_bytes(bytes: Bytes) -> Result<Self>;
+}
+
+/// Decodes `Self` borrowing from the payload buffer, so strings and bytes in
+/// the payload aren't copied out of it.
+///
+/// A `#[cmd]`/`#[evt]` payload type with a lifetime, such as `Request<'_>`,
+/// is decoded with this instead of [`Decoder`]. `#[derive(Message)]` provides
+/// it for a type with lifetime parameters.
+pub trait BorrowDecoder<'de>: Sized {
+    /// Decodes `Self` from the raw payload buffer.
+    fn decode(bytes: &'de [u8]) -> Result<Self>;
+}
+
+/// The raw payload, uncopied.
+impl<'de> BorrowDecoder<'de> for &'de [u8] {
+    fn decode(bytes: &'de [u8]) -> Result<Self> {
+        Ok(bytes)
+    }
+}
+
+impl<'de, T: BorrowDecoder<'de>> BorrowDecoder<'de> for Option<T> {
+    fn decode(bytes: &'de [u8]) -> Result<Self> {
+        if bytes.is_empty() {
+            Ok(None)
+        } else {
+            T::decode(bytes).map(Some)
+        }
+    }
+}
+
+const MISSING_PAYLOAD: &str = "no payload was sent; declare the handler's payload as `Option<_>` \
+                               to accept an invocation sent without one";
+
+/// Reads this invocation's `length`-byte payload from the host.
+#[doc(hidden)]
+pub fn read_arguments(length: usize) -> Result<Bytes> {
+    let mut bytes = alloc::vec![0u8; length];
+    let n = crate::get_arguments(&mut bytes).map_err(|_| "failed to read arguments")?;
+    bytes.truncate(n);
+    Ok(bytes)
+}
+
+/// [`BorrowDecoder::decode`], reporting a failure on an empty buffer as a
+/// missing payload, as [`Decoder::from_args`] does.
+#[doc(hidden)]
+pub fn borrow_arguments<'de, T: BorrowDecoder<'de>>(bytes: &'de [u8]) -> Result<T> {
+    T::decode(bytes).map_err(|err| {
+        if bytes.is_empty() {
+            MISSING_PAYLOAD
+        } else {
+            err
+        }
+    })
 }
 
 /// Turns `Self` into a raw payload buffer.
@@ -59,7 +106,7 @@ pub trait Encoder {
 ///     fn encode<T: serde::Serialize + ?Sized>(value: &T) -> myrmic_sdk::Result<myrmic_sdk::Bytes> {
 ///         rmp_serde::to_vec(value).map_err(|_| "encode failed")
 ///     }
-///     fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> myrmic_sdk::Result<T> {
+///     fn decode<'de, T: serde::Deserialize<'de>>(bytes: &'de [u8]) -> myrmic_sdk::Result<T> {
 ///         rmp_serde::from_slice(bytes).map_err(|_| "decode failed")
 ///     }
 /// }
@@ -72,8 +119,8 @@ pub trait Encoder {
 pub trait Codec {
     /// Serializes `value` into bytes.
     fn encode<T: Serialize + ?Sized>(value: &T) -> Result<Bytes>;
-    /// Deserializes a `T` from `bytes`.
-    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T>;
+    /// Deserializes a `T` from `bytes`, which it may borrow from.
+    fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T>;
 }
 
 /// JSON codec.
@@ -84,7 +131,7 @@ impl Codec for Json {
         serde_json::to_vec(value).map_err(|_| "failed to serialize json")
     }
 
-    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T> {
         serde_json::from_slice(bytes).map_err(|_| "failed to deserialize json")
     }
 }
@@ -97,7 +144,7 @@ impl Codec for Postcard {
         postcard::to_allocvec(value).map_err(|_| "failed to serialize postcard")
     }
 
-    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    fn decode<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T> {
         postcard::from_bytes(bytes).map_err(|_| "failed to deserialize postcard")
     }
 }

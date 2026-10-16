@@ -30,9 +30,9 @@ fn init(_md: Metadata) -> myrmic_sdk::Result {
 }
 
 #[myrmic_sdk::cmd]
-fn on_http(_md: Metadata, req: HttpRequest) -> myrmic_sdk::Result {
+fn on_http(_md: Metadata, req: HttpRequest<'_>) -> myrmic_sdk::Result {
     // The path is relative to the mount: /control/status arrives as /status.
-    match req.path.as_str() {
+    match req.path {
         "/status" => req.respond(
             HttpResponse::new(StatusCode::OK)
                 .header("content-type", "application/json")
