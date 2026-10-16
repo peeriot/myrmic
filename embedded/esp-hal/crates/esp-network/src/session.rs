@@ -26,8 +26,8 @@ use zenoh_nano::link::{LinkError, StreamingLinkReceive, StreamingLinkSend};
 use zenoh_nano::network::Network;
 use zenoh_nano::rng::RandomSource;
 use zenoh_nano::scout::{
-    SCOUT_BROADCAST_IP_ADDR, SCOUT_BROADCAST_PORT, SCOUT_MTU, ScoutLinkReceive, ScoutLinkSend,
-    WhatAmIMatcher,
+    Locator, SCOUT_BROADCAST_IP_ADDR, SCOUT_BROADCAST_PORT, SCOUT_MTU, ScoutLinkReceive,
+    ScoutLinkSend, WhatAmIMatcher,
 };
 use zenoh_nano::session::{Session, SessionResources};
 
@@ -481,37 +481,15 @@ where
         UdpScoutLink(send),
         WhatAmIMatcher::empty().peer().client().router(),
         None,
-        |_, hello| {
-            for locator in &hello.locators {
-                if locator.protocol().as_ref() != "tcp" {
-                    continue;
-                }
-                log::info!("Discovered Zenoh node at {}", locator);
+        |from, hello| {
+            let candidate = choose_locator(from, &hello.locators);
 
-                let Ok(candidate) = locator.address().as_ref().parse::<SocketAddr>() else {
-                    continue;
-                };
-                let IpAddr::V4(ip) = candidate.ip() else {
-                    continue;
-                };
-
-                // A peer announces every address it listens on, including ones that only mean
-                // anything on the host itself: `127.0.0.1` (its own loopback) and `0.0.0.0`
-                // (the wildcard it bound). Dialing either from here reaches this device, not
-                // the peer, and the session then sits dead until the lease expires. Keep
-                // scanning the hello for an address that is actually routable over the WiFi
-                // link instead of taking the first TCP locator on offer.
-                if ip.is_loopback() || ip.is_unspecified() {
-                    log::debug!("Skipping non-routable locator {locator}");
-                    continue;
-                }
-
-                socket_addr = Some(candidate);
-                log::info!("Using Zenoh node at {candidate}");
-                return true;
-            }
-
-            false
+            let Some(candidate) = candidate else {
+                return false;
+            };
+            socket_addr = Some(candidate);
+            log::info!("Using Zenoh node at {candidate} (hello from {})", from.ip());
+            true
         },
     )
     .await
@@ -523,6 +501,46 @@ where
         when a Some(socket_addr) is found. This is unreachable"
     )]
     socket_addr.unwrap()
+}
+
+/// The address to dial out of a peer's hello, which `from` arrived from.
+///
+/// Only TCP v4 locators are worth dialling, and not every one of those: a peer announces every
+/// address it listens on, including ones that only mean anything on the host itself: `127.0.0.1`
+/// (its own loopback) and `0.0.0.0` (the wildcard it bound). Dialing either from here reaches
+/// this device, not the peer, and the session then sits dead until the lease expires.
+///
+/// A host with several interfaces — container bridges, VPNs — also announces addresses that mean
+/// nothing on this network, and may list one of those first. The address the hello arrived from
+/// just reached us, so a locator on it is routable from here: prefer it, and only fall back to
+/// the first routable locator when the peer answered from an address it doesn't listen on.
+fn choose_locator(from: &SocketAddr, locators: &[Locator]) -> Option<SocketAddr> {
+    let routable = |locator: &Locator| {
+        if locator.protocol().as_ref() != "tcp" {
+            return None;
+        }
+        let candidate = locator.address().as_ref().parse::<SocketAddr>().ok()?;
+        let IpAddr::V4(ip) = candidate.ip() else {
+            return None;
+        };
+        if ip.is_loopback() || ip.is_unspecified() {
+            log::debug!("Skipping non-routable locator {locator}");
+            return None;
+        }
+        Some(candidate)
+    };
+
+    for locator in locators {
+        if locator.protocol().as_ref() == "tcp" {
+            log::info!("Discovered Zenoh node at {locator}");
+        }
+    }
+
+    locators
+        .iter()
+        .filter_map(routable)
+        .find(|candidate| candidate.ip() == from.ip())
+        .or_else(|| locators.iter().find_map(routable))
 }
 
 /// Obtains the peer address either by scouting or by using the [`TCP_DIRECT_ADDR`] env
