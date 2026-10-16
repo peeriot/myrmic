@@ -39,7 +39,10 @@ async fn run(mut cell: Cell, mut led: Flex<'static>) {
     // quiet until then, so waiting is only needed for the announcement.
     cell.online().await;
     log::info!("thermostat {} is online", cell.sri());
+    // Sends and publishes land when the application they join commits.
+    cell.open().await;
     let _ = cell.publish_event("started", b"".to_vec()).await;
+    let _ = cell.commit().await;
 
     loop {
         match cell.recv().await {
@@ -48,7 +51,9 @@ async fn run(mut cell: Cell, mut led: Flex<'static>) {
             } if command.as_ref() == "set_target" => {
                 led.toggle();
                 if let Some(sender) = sender {
+                    cell.open().await;
                     let _ = cell.send_command(sender, "ack", b"ok".to_vec()).await;
+                    let _ = cell.commit().await;
                 }
             }
             Message::Command { command, .. } => {

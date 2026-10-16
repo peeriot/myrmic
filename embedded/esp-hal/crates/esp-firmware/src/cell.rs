@@ -253,14 +253,54 @@ impl Cell {
         }
     }
 
+    /// Opens a db application for this cell's sends and publishes.
+    ///
+    /// A send or publish only buffers its write into the open application, and
+    /// the writes land together when it [commits](Self::commit) — one round
+    /// trip for all of them. Opening costs nothing: no transaction is placed
+    /// until the commit, so it is fine to hold one open while more work turns
+    /// up. A WASM cell gets one opened around every handler; a native cell
+    /// opens its own.
+    ///
+    /// Opening over an application that was never committed or rolled back
+    /// discards it.
+    pub async fn open(&self) {
+        self.request(DbClientRequest::Open(scope_of_cell(self.sri)))
+            .await;
+    }
+
+    /// Commits the open application, delivering everything sent or published
+    /// since [`open`](Self::open). All or none.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::Rejected`] if the db refuses the transaction or cannot be
+    /// reached, or if no application is open. Nothing was delivered.
+    pub async fn commit(&self) -> Result<(), SendError> {
+        match self.request(DbClientRequest::Commit).await {
+            DbClientResponse::Commit(Ok(())) => Ok(()),
+            DbClientResponse::Commit(Err(err)) => {
+                log::warn!("[esp-firmware] native cell commit failed: {err}");
+                Err(SendError::Rejected)
+            }
+            _ => Err(SendError::Rejected),
+        }
+    }
+
+    /// Abandons the open application: nothing sent or published since
+    /// [`open`](Self::open) is delivered.
+    pub async fn rollback(&self) {
+        self.request(DbClientRequest::Rollback).await;
+    }
+
     /// Sends a fire-and-forget command to another cell, stamped as from this
-    /// one.
+    /// one. Delivered when the open application [commits](Self::commit).
     ///
     /// # Errors
     ///
     /// [`SendError::BadName`] if `command` is not a valid identifier, and
-    /// [`SendError::Rejected`] if the destination has no placement or the db
-    /// refuses the write.
+    /// [`SendError::Rejected`] if no application is [open](Self::open) or it
+    /// can no longer commit.
     pub async fn send_command(
         &self,
         dest: Sri,
@@ -268,7 +308,7 @@ impl Cell {
         payload: Vec<u8>,
     ) -> Result<(), SendError> {
         let cmd = Command::try_from(command).map_err(|_| SendError::BadName)?;
-        self.deliver(DbClientRequest::SendCommand {
+        self.exchange(DbClientRequest::SendCommand {
             dest_sri: dest,
             command: MailboxCommand {
                 cmd,
@@ -279,15 +319,17 @@ impl Cell {
         .await
     }
 
-    /// Publishes an event, stamped as from this cell.
+    /// Publishes an event, stamped as from this cell. Delivered when the open
+    /// application [commits](Self::commit).
     ///
     /// # Errors
     ///
     /// [`SendError::BadName`] if `event` is not a valid identifier, and
-    /// [`SendError::Rejected`] if the db refuses the write.
+    /// [`SendError::Rejected`] if no application is [open](Self::open) or it
+    /// can no longer commit.
     pub async fn publish_event(&self, event: &str, payload: Vec<u8>) -> Result<(), SendError> {
         let ev = Event::try_from(event).map_err(|_| SendError::BadName)?;
-        self.deliver(DbClientRequest::PublishEvent {
+        self.exchange(DbClientRequest::PublishEvent {
             event: MailboxEvent {
                 event: ev,
                 payload,
@@ -324,33 +366,6 @@ impl Cell {
         let mut attachment = CellAttachment::default();
         attachment.set_sender(Some(self.sri.as_uuid()));
         attachment
-    }
-
-    /// Writes one mailbox item — a command or an event — in a db application
-    /// of its own.
-    ///
-    /// The db service only ever defers a mailbox write into the application
-    /// that is open, so the write lands when that application commits. For a
-    /// WASM cell the dispatcher opens one around every handler. A native cell
-    /// has no handler call to join, so each send opens its own, on the cell's
-    /// own scope as the dispatcher would, and commits it straight away.
-    async fn deliver(&self, req: DbClientRequest) -> Result<(), SendError> {
-        self.request(DbClientRequest::Open(scope_of_cell(self.sri)))
-            .await;
-
-        if let Err(err) = self.exchange(req).await {
-            self.request(DbClientRequest::Rollback).await;
-            return Err(err);
-        }
-
-        match self.request(DbClientRequest::Commit).await {
-            DbClientResponse::Commit(Ok(())) => Ok(()),
-            DbClientResponse::Commit(Err(err)) => {
-                log::warn!("[esp-firmware] native cell send not committed: {err}");
-                Err(SendError::Rejected)
-            }
-            _ => Err(SendError::Rejected),
-        }
     }
 
     async fn exchange(&self, req: DbClientRequest) -> Result<(), SendError> {
