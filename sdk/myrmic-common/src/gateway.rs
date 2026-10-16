@@ -11,6 +11,7 @@
 //! answers by sending a [`GatewayFrame`] to the request's `gateway` SRI under
 //! [`GATEWAY_COMMAND`]. All frames are postcard-encoded.
 
+use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
@@ -92,9 +93,10 @@ pub const GATEWAY_COMMAND: &str = "gateway_frame";
 /// `WebSocket` keeps its id for the socket's lifetime.
 pub type SessionId = Uuid;
 
-/// An HTTP request arriving under a cell's mount.
+/// An HTTP request arriving under a cell's mount, borrowing its strings and
+/// body from the buffer it was decoded from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpRequest {
+pub struct HttpRequest<'a> {
     /// The gateway holding the connection; replies go here.
     pub gateway: Sri,
     /// This request, on that gateway.
@@ -102,32 +104,47 @@ pub struct HttpRequest {
     #[allow(missing_docs)]
     pub method: Method,
     /// The request path relative to the mount, always starting with `/`.
-    pub path: String,
+    pub path: &'a str,
     /// The raw query string, without the leading `?`.
-    pub query: Option<String>,
+    #[serde(borrow)]
+    pub query: Option<&'a str>,
     /// Headers whose values are valid UTF-8, in arrival order.
-    pub headers: Vec<Header>,
+    #[serde(borrow)]
+    pub headers: Vec<Header<'a>>,
     #[allow(missing_docs)]
-    pub body: Vec<u8>,
+    pub body: &'a [u8],
 }
 
-impl HttpRequest {
+impl HttpRequest<'_> {
     /// The first header named `name`, compared case-insensitively.
     #[must_use]
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|header| header.name.eq_ignore_ascii_case(name))
-            .map(|header| header.value.as_str())
+            .map(|header| &*header.value)
     }
 }
 
 /// One HTTP header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(missing_docs)]
-pub struct Header {
-    pub name: String,
-    pub value: String,
+pub struct Header<'a> {
+    #[serde(borrow)]
+    pub name: Cow<'a, str>,
+    #[serde(borrow)]
+    pub value: Cow<'a, str>,
+}
+
+impl Header<'_> {
+    /// Copies out anything borrowed.
+    #[must_use]
+    pub fn into_owned(self) -> Header<'static> {
+        Header {
+            name: Cow::Owned(self.name.into_owned()),
+            value: Cow::Owned(self.value.into_owned()),
+        }
+    }
 }
 
 #[derive(
@@ -151,8 +168,17 @@ pub enum Method {
 #[allow(missing_docs)]
 pub struct HttpResponse {
     pub status: StatusCode,
-    pub headers: Vec<Header>,
+    #[serde(deserialize_with = "owned_headers")]
+    pub headers: Vec<Header<'static>>,
     pub body: Vec<u8>,
+}
+
+fn owned_headers<'de, D>(deserializer: D) -> Result<Vec<Header<'static>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let headers = Vec::<Header<'de>>::deserialize(deserializer)?;
+    Ok(headers.into_iter().map(Header::into_owned).collect())
 }
 
 impl HttpResponse {
@@ -170,8 +196,8 @@ impl HttpResponse {
     #[must_use]
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push(Header {
-            name: name.into(),
-            value: value.into(),
+            name: Cow::Owned(name.into()),
+            value: Cow::Owned(value.into()),
         });
         self
     }
@@ -355,5 +381,43 @@ mod tests {
         };
         assert_eq!(ctx, Uuid::from_u128(7));
         assert!(matches!(reply, HttpReply::Upgrade { callback } if callback.as_ref() == "on_ws"));
+    }
+
+    #[test]
+    fn responses_outlive_their_buffer() {
+        let response = HttpResponse::new(StatusCode::from_u16(200))
+            .header("content-type", "text/plain")
+            .body("hi");
+        let bytes = postcard::to_allocvec(&response).unwrap();
+        let decoded: HttpResponse = postcard::from_bytes(&bytes).unwrap();
+        drop(bytes);
+
+        assert_eq!(decoded.headers[0].value, "text/plain");
+        assert_eq!(decoded.body, b"hi");
+    }
+
+    #[test]
+    fn requests_borrow_from_their_buffer() {
+        let request = HttpRequest {
+            gateway: Sri::NIL,
+            ctx: Uuid::from_u128(7),
+            method: Method::Post,
+            path: "/echo",
+            query: Some("a=1"),
+            headers: alloc::vec![Header {
+                name: Cow::Borrowed("Content-Type"),
+                value: Cow::Borrowed("text/plain"),
+            }],
+            body: b"ping",
+        };
+        let bytes = postcard::to_allocvec(&request).unwrap();
+        let decoded: HttpRequest<'_> = postcard::from_bytes(&bytes).unwrap();
+
+        assert_eq!(decoded.path, "/echo");
+        assert_eq!(decoded.query, Some("a=1"));
+        assert_eq!(decoded.header("content-type"), Some("text/plain"));
+        assert_eq!(decoded.body, b"ping");
+        assert!(matches!(decoded.headers[0].value, Cow::Borrowed(_)));
+        assert!(bytes.as_ptr_range().contains(&decoded.body.as_ptr()));
     }
 }

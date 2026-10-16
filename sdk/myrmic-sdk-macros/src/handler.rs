@@ -12,10 +12,13 @@
 //! rejects any non-empty payload. It must return `myrmic_sdk::Result<_>`.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote_spanned};
+use quote::{ToTokens, format_ident, quote_spanned};
 use syn::{
-    Expr, ExprLit, FnArg, ItemFn, Lit, LitStr, Meta, PatType, Token, parse::Parser,
-    punctuated::Punctuated, spanned::Spanned,
+    Expr, ExprLit, FnArg, ItemFn, Lifetime, Lit, LitStr, Meta, PatType, Token, Type, TypeReference,
+    parse::Parser,
+    punctuated::Punctuated,
+    spanned::Spanned,
+    visit_mut::{self, VisitMut},
 };
 
 /// Which handler kind is being generated — selects the export name
@@ -114,13 +117,28 @@ pub(crate) fn handler_impl(
         ),
         [_meta, decoder] => {
             let decoder_ty = &decoder.ty;
-            (
-                quote_spanned! { span =>
-                    let __arg = <#decoder_ty as #root::Decoder>::from_args(arg_size as usize)?;
-                    #fn_ident(__md, __arg)?;
-                },
-                quote_spanned! { span => #decoder_ty },
-            )
+            match relifetime(decoder_ty, "'_") {
+                // A payload with a lifetime borrows from the argument buffer,
+                // which lives on until the handler returns.
+                (borrowed_ty, true) => {
+                    let (static_ty, _) = relifetime(decoder_ty, "'static");
+                    (
+                        quote_spanned! { span =>
+                            let __buf = #root::read_arguments(arg_size as usize)?;
+                            let __arg = #root::borrow_arguments::<#borrowed_ty>(&__buf)?;
+                            #fn_ident(__md, __arg)?;
+                        },
+                        quote_spanned! { span => #static_ty },
+                    )
+                }
+                (_, false) => (
+                    quote_spanned! { span =>
+                        let __arg = <#decoder_ty as #root::Decoder>::from_args(arg_size as usize)?;
+                        #fn_ident(__md, __arg)?;
+                    },
+                    quote_spanned! { span => #decoder_ty },
+                ),
+            }
         }
         _ => {
             return syn::Error::new(
@@ -213,6 +231,40 @@ pub(crate) fn handler_impl(
     }
 }
 
+/// `ty` with every lifetime, elided reference lifetimes included, replaced by
+/// `lifetime`, and whether it had any. A type hiding its lifetime (`Request`
+/// for `Request<'_>`) can't be seen here, so borrowed payloads must name theirs.
+fn relifetime(ty: &Type, lifetime: &str) -> (TokenStream, bool) {
+    struct Relifetime {
+        lifetime: Lifetime,
+        found: bool,
+    }
+
+    impl VisitMut for Relifetime {
+        fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
+            self.found = true;
+            *lifetime = self.lifetime.clone();
+        }
+
+        fn visit_type_reference_mut(&mut self, reference: &mut TypeReference) {
+            if reference.lifetime.is_none() {
+                self.found = true;
+                reference.lifetime = Some(self.lifetime.clone());
+            }
+            visit_mut::visit_type_reference_mut(self, reference);
+        }
+    }
+
+    let mut ty = ty.clone();
+    let mut visitor = Relifetime {
+        lifetime: Lifetime::new(lifetime, ty.span()),
+        found: false,
+    };
+    visitor.visit_type_mut(&mut ty);
+
+    (ty.into_token_stream(), visitor.found)
+}
+
 /// Parses the macro's attribute arguments, extracting an optional
 /// `name = "..."` override for the export symbol's name component. Returns
 /// `None` when no attribute is supplied.
@@ -303,6 +355,47 @@ mod tests {
             out.contains("command_handle"),
             "cmd should emit its export:\n{out}"
         );
+    }
+
+    fn expand_with(payload: &TokenStream) -> String {
+        let item = quote! {
+            fn handle<'a>(md: myrmic_sdk::Metadata, msg: #payload) -> myrmic_sdk::Result<()> { Ok(()) }
+        };
+        handler_impl(
+            TokenStream::new(),
+            item,
+            &quote!(::myrmic_sdk),
+            Kind::Command,
+        )
+        .to_string()
+    }
+
+    #[test]
+    fn owned_payload_decodes_from_owned_bytes() {
+        let out = expand(Kind::Command);
+        assert!(out.contains("Decoder > :: from_args"), "{out}");
+        assert!(!out.contains("borrow_arguments"), "{out}");
+    }
+
+    #[test]
+    fn payload_with_a_lifetime_borrows() {
+        for payload in [
+            quote!(Request<'_>),
+            quote!(Request<'a>),
+            quote!(Option<&[u8]>),
+        ] {
+            let out = expand_with(&payload);
+            assert!(out.contains("borrow_arguments"), "{out}");
+            assert!(!out.contains("Decoder > :: from_args"), "{out}");
+            // The callback marker can't name the handler's lifetime.
+            let arg = out
+                .split("type Arg = ")
+                .nth(1)
+                .and_then(|rest| rest.split(';').next())
+                .unwrap_or_default();
+            assert!(arg.contains("'static"), "{out}");
+            assert!(!arg.contains("'a") && !arg.contains("'_"), "{out}");
+        }
     }
 
     #[test]

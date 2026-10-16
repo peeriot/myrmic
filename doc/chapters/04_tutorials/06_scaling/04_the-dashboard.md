@@ -46,17 +46,17 @@ fn init(md: Metadata) -> Result<()> {
 /// The page's two buttons `POST` a sector to `/add_bed` or `/add_sensor`;
 /// every other request is a file from the asset store.
 #[myrmic_sdk::cmd]
-fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
-    let (root, command) = match (req.method, req.path.as_str()) {
+fn on_http(_md: Metadata, req: HttpRequest<'_>) -> Result<()> {
+    let (root, command) = match (req.method, req.path) {
         (Method::Post, "/add_bed") => ("bed-root", "add_bed"),
         (Method::Post, "/add_sensor") => ("sensor-root", "add_sensor"),
         _ => {
-            let asset = Asset::new(req.path.clone()).index("/index.html");
+            let asset = Asset::new(req.path).index("/index.html");
             return req.asset(asset);
         }
     };
 
-    let sector = String::from_utf8(req.body.clone()).map_err(|_| "sector is not utf-8")?;
+    let sector = String::from_utf8(req.body.to_vec()).map_err(|_| "sector is not utf-8")?;
     let root = Sri::of_path(root).map_err(|_| "invalid root name")?;
     send(root, command, &sector)?;
 

@@ -21,8 +21,8 @@ fn init(md: Metadata) -> Result<()> {
 
 /// Every request is a file from the asset store.
 #[myrmic_sdk::cmd]
-fn on_http(_md: Metadata, req: HttpRequest) -> Result<()> {
-    let asset = Asset::new(req.path.clone()).index("/index.html");
+fn on_http(_md: Metadata, req: HttpRequest<'_>) -> Result<()> {
+    let asset = Asset::new(req.path).index("/index.html");
     req.asset(asset)
 }
 
