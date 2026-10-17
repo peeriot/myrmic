@@ -25,13 +25,15 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use cell_protocol::{CellAttachment, MailboxCommand, MailboxEvent};
+use cell_protocol::{CellAttachment, MailboxCommand, MailboxEvent, scope_of_cell};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
-use myrmic_common::cells::{Command, Event, Sri};
+use serde::Serialize;
 use wasm_runtime::CellMessage;
 use wasm_runtime::async_request::{CommandHandledGuard, DbClientRequest, DbClientResponse};
+
+pub use myrmic_common::cells::{Command, Event, Sri};
 
 /// Set once a native registration has claimed this node's cell slot.
 static SLOT_CLAIMED: AtomicBool = AtomicBool::new(false);
@@ -161,6 +163,7 @@ impl Network {
             sri,
             net: self,
             handling: false,
+            abandoned: false,
         })
     }
 }
@@ -180,6 +183,9 @@ pub struct Cell {
     /// the next one back until we say we are done, and only removes the
     /// current one then — so delivery survives a reset mid-handling.
     handling: bool,
+    /// Whether a [`Tx`] was dropped without being committed or rolled back,
+    /// leaving its application open in the db service.
+    abandoned: bool,
 }
 
 impl Cell {
@@ -195,6 +201,10 @@ impl Cell {
     pub async fn online(&self) {
         if !ONLINE.signaled() {
             ONLINE.wait().await;
+            // `wait` consumes the signal, but being online is a state, not an
+            // event: put it back, or every later call would wait for a
+            // `mark_online` that already happened.
+            ONLINE.signal(());
         }
     }
 
@@ -252,48 +262,31 @@ impl Cell {
         }
     }
 
-    /// Sends a fire-and-forget command to another cell, stamped as from this
-    /// one.
+    /// Opens a db application, and returns the [`Tx`] that sends and publishes
+    /// through it.
     ///
-    /// # Errors
+    /// Nothing reaches the swarm until the `Tx` [commits](Tx::commit): a send
+    /// or publish only buffers its write, and the commit delivers them all in
+    /// one round trip. Opening costs nothing — no transaction is placed until
+    /// the commit — so it is fine to hold one open while more work turns up. A
+    /// WASM cell gets one opened around every handler; a native cell opens its
+    /// own.
     ///
-    /// [`SendError::BadName`] if `command` is not a valid identifier, and
-    /// [`SendError::Rejected`] if the destination has no placement or the db
-    /// refuses the write.
-    pub async fn send_command(
-        &self,
-        dest: Sri,
-        command: &str,
-        payload: Vec<u8>,
-    ) -> Result<(), SendError> {
-        let cmd = Command::try_from(command).map_err(|_| SendError::BadName)?;
-        self.exchange(DbClientRequest::SendCommand {
-            dest_sri: dest,
-            command: MailboxCommand {
-                cmd,
-                payload: Some(payload),
-                attachment: self.attachment(),
-            },
-        })
-        .await
-    }
-
-    /// Publishes an event, stamped as from this cell.
-    ///
-    /// # Errors
-    ///
-    /// [`SendError::BadName`] if `event` is not a valid identifier, and
-    /// [`SendError::Rejected`] if the db refuses the write.
-    pub async fn publish_event(&self, event: &str, payload: Vec<u8>) -> Result<(), SendError> {
-        let ev = Event::try_from(event).map_err(|_| SendError::BadName)?;
-        self.exchange(DbClientRequest::PublishEvent {
-            event: MailboxEvent {
-                event: ev,
-                payload,
-                attachment: self.attachment(),
-            },
-        })
-        .await
+    /// The `Tx` borrows the cell, so there is one at a time and nothing else,
+    /// [`recv`](Self::recv) included, can interleave with it.
+    pub async fn open(&mut self) -> Tx<'_> {
+        if self.abandoned {
+            // `Drop` can't wait on the db service, so a `Tx` dropped without
+            // being finished is rolled back here instead.
+            self.request(DbClientRequest::Rollback).await;
+            self.abandoned = false;
+        }
+        self.request(DbClientRequest::Open(scope_of_cell(self.sri)))
+            .await;
+        Tx {
+            cell: self,
+            finished: false,
+        }
     }
 
     /// Subscribes this cell to `event`, so published instances arrive via
@@ -326,13 +319,151 @@ impl Cell {
     }
 
     async fn exchange(&self, req: DbClientRequest) -> Result<(), SendError> {
-        self.net.requests.send(req).await;
-        match self.net.responses.receive().await {
+        match self.request(req).await {
             DbClientResponse::SendCommand(result) | DbClientResponse::PublishEvent(result) => {
                 result.map_err(|_| SendError::Rejected)
             }
             DbClientResponse::SubscribeEvent | DbClientResponse::UnsubscribeEvent => Ok(()),
             _ => Err(SendError::Rejected),
+        }
+    }
+
+    /// One round trip to the db service.
+    async fn request(&self, req: DbClientRequest) -> DbClientResponse {
+        self.net.requests.send(req).await;
+        self.net.responses.receive().await
+    }
+}
+
+/// A db application a [`Cell`] sends and publishes through, from
+/// [`Cell::open`].
+///
+/// Every send and publish buffers into it, and [`commit`](Self::commit)
+/// delivers them all, or none. Dropping it without committing delivers
+/// nothing; it is rolled back on the cell's next [`open`](Cell::open).
+#[must_use = "nothing is delivered until the transaction is committed"]
+#[derive(Debug)]
+pub struct Tx<'a> {
+    cell: &'a mut Cell,
+    /// Committed or rolled back.
+    finished: bool,
+}
+
+impl Tx<'_> {
+    /// Sends `value` as `command` to another cell, stamped as from this one.
+    ///
+    /// The payload is JSON, the SDK's default codec, so a cell that takes a
+    /// typed payload decodes it as usual — like `myrmic_sdk::send`.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::Encode`] if `value` does not serialize, otherwise as
+    /// [`send_command`](Self::send_command).
+    pub async fn send<T: Serialize + ?Sized>(
+        &mut self,
+        dest: Sri,
+        command: &str,
+        value: &T,
+    ) -> Result<(), SendError> {
+        let payload = serde_json::to_vec(value).map_err(|_| SendError::Encode)?;
+        self.send_command(dest, command, payload).await
+    }
+
+    /// Publishes `value` as `event`, stamped as from this cell. JSON, like
+    /// `myrmic_sdk::publish`.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::Encode`] if `value` does not serialize, otherwise as
+    /// [`publish_event`](Self::publish_event).
+    pub async fn publish<T: Serialize + ?Sized>(
+        &mut self,
+        event: &str,
+        value: &T,
+    ) -> Result<(), SendError> {
+        let payload = serde_json::to_vec(value).map_err(|_| SendError::Encode)?;
+        self.publish_event(event, payload).await
+    }
+
+    /// Sends a command with a raw payload to another cell, stamped as from
+    /// this one.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::BadName`] if `command` is not a valid identifier, and
+    /// [`SendError::Rejected`] if the application can no longer commit.
+    pub async fn send_command(
+        &mut self,
+        dest: Sri,
+        command: &str,
+        payload: Vec<u8>,
+    ) -> Result<(), SendError> {
+        let cmd = Command::try_from(command).map_err(|_| SendError::BadName)?;
+        let attachment = self.cell.attachment();
+        self.cell
+            .exchange(DbClientRequest::SendCommand {
+                dest_sri: dest,
+                command: MailboxCommand {
+                    cmd,
+                    payload: Some(payload),
+                    attachment,
+                },
+            })
+            .await
+    }
+
+    /// Publishes an event with a raw payload, stamped as from this cell.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::BadName`] if `event` is not a valid identifier, and
+    /// [`SendError::Rejected`] if the application can no longer commit.
+    pub async fn publish_event(&mut self, event: &str, payload: Vec<u8>) -> Result<(), SendError> {
+        let ev = Event::try_from(event).map_err(|_| SendError::BadName)?;
+        let attachment = self.cell.attachment();
+        self.cell
+            .exchange(DbClientRequest::PublishEvent {
+                event: MailboxEvent {
+                    event: ev,
+                    payload,
+                    attachment,
+                },
+            })
+            .await
+    }
+
+    /// Delivers everything sent and published through this transaction, in
+    /// one round trip. All or none.
+    ///
+    /// # Errors
+    ///
+    /// [`SendError::Rejected`] if the db refuses the transaction or cannot be
+    /// reached. Nothing was delivered.
+    pub async fn commit(mut self) -> Result<(), SendError> {
+        let response = self.cell.request(DbClientRequest::Commit).await;
+        self.finished = true;
+        match response {
+            DbClientResponse::Commit(Ok(())) => Ok(()),
+            DbClientResponse::Commit(Err(err)) => {
+                log::warn!("[esp-firmware] native cell commit failed: {err}");
+                Err(SendError::Rejected)
+            }
+            _ => Err(SendError::Rejected),
+        }
+    }
+
+    /// Abandons the transaction: nothing sent or published through it is
+    /// delivered.
+    pub async fn rollback(mut self) {
+        self.cell.request(DbClientRequest::Rollback).await;
+        self.finished = true;
+    }
+}
+
+impl Drop for Tx<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.cell.abandoned = true;
         }
     }
 }
@@ -367,6 +498,8 @@ pub enum SendError {
     BadName,
     /// The swarm refused it — no placement for the destination, or a db error.
     Rejected,
+    /// The value could not be serialized.
+    Encode,
 }
 
 impl core::fmt::Display for SendError {
@@ -374,6 +507,7 @@ impl core::fmt::Display for SendError {
         match self {
             Self::BadName => f.write_str("not a valid command or event name"),
             Self::Rejected => f.write_str("the swarm rejected the request"),
+            Self::Encode => f.write_str("the value could not be serialized"),
         }
     }
 }

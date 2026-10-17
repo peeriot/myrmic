@@ -11,7 +11,7 @@ An Application interacts with Covered Code through this interface when its WebAs
 |---|---|---|
 | `arguments` | 1 | `get_arguments` |
 | `ble` | 9 | `ble_connect`, `ble_disconnect`, `ble_read`, `ble_scan`, `ble_set_pair_passkey`, `ble_stop_scan`, `ble_subscribe`, `ble_unsubscribe`, `ble_write` |
-| `cell` | 7 | `cancel_timer`, `create_timer`, `publish_event`, `send_command`, `spawn_cell_host`, `stop_self_host`, `terminate_cell_host` |
+| `cell` | 8 | `cancel_timer`, `cell_name_host`, `create_timer`, `publish_event`, `send_command`, `spawn_cell_host`, `stop_self_host`, `terminate_cell_host` |
 | `db` | 21 | `blob_link`, `blob_move`, `blob_resolve`, `blob_store`, `blob_unlink`, `find_measurement`, `key_delete`, `key_get`, `key_prefix`, `key_put`, `path_resolve`, `paths_list`, `publish_measurement`, `sem_select`, `sem_update`, `tb_append`, `tb_count`, `tb_delete`, `tb_get`, `tb_insert`, `tb_list` |
 | `error` | 1 | `report_error` |
 | `gateway` | 2 | `gateway_mount`, `gateway_unmount` |
@@ -22,7 +22,7 @@ An Application interacts with Covered Code through this interface when its WebAs
 | `tap` | 6 | `tap_list_entry`, `tap_list_len`, `tap_read_retained`, `tap_resolve`, `tap_take_event`, `tap_type_id` |
 | `time` | 3 | `now_host`, `uptime_host`, `wait_host` |
 
-**Total:** 12 namespaces, 64 functions.
+**Total:** 12 namespaces, 65 functions.
 <!-- END GENERATED: namespaces -->
 
 ## Generation
@@ -36,6 +36,7 @@ The declarations live in:
 - `sdk/myrmic-sdk/src/host_functions/ble.rs`
 - `sdk/myrmic-sdk/src/host_functions/cell/commands.rs`
 - `sdk/myrmic-sdk/src/host_functions/cell/events.rs`
+- `sdk/myrmic-sdk/src/host_functions/cell/names.rs`
 - `sdk/myrmic-sdk/src/host_functions/cell/spawning.rs`
 - `sdk/myrmic-sdk/src/host_functions/cell/timers.rs`
 - `sdk/myrmic-sdk/src/host_functions/db/blob.rs`

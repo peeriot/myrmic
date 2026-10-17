@@ -177,7 +177,7 @@ pub mod monitor {
 #[cfg(feature = "cells")]
 pub use host_functions::{
     ClassHandle, ClassRef, CommandError, InMemory, SpawnBuilder, SpawnError, SpawnRequest,
-    TerminateError, TimerHandle, delay, interval, interval_at, publish_event, spawn_cell,
+    TerminateError, TimerHandle, delay, interval, interval_at, name_of, publish_event, spawn_cell,
     stop_self, terminate_cell,
 };
 

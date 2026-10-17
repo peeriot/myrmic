@@ -355,6 +355,7 @@ dependencies = [
  "critical-section",
  "embedded-alloc",
  "embedded-hal",
+ "heapless",
  "myrmic-common",
  "myrmic-sdk-macros",
  "myrmic-signal-layer-types",
