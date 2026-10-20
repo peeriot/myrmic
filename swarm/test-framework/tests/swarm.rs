@@ -32,11 +32,11 @@ impl SwarmSpec for Node {
 #[tokio::test(flavor = "multi_thread")]
 async fn cells_are_placed_on_every_runtime() {
     let swarm: Swarm<_, Node> = Swarm::start(Local::new()).await.unwrap();
-    let cell = new_cell(swarm.myrmic()).await;
+    let cell = new_cell(swarm.client()).await;
 
     for node in Node::all() {
         let zid = swarm.runtime(node).zid();
-        let placed_on = deploy_pinned(swarm.myrmic(), &cell, zid).await;
+        let placed_on = deploy_pinned(swarm.client(), &cell, zid).await;
         assert_eq!(placed_on, zid.to_string(), "the cell pinned to {node:?}");
     }
 }
@@ -48,11 +48,11 @@ async fn parallel_swarms_are_isolated() {
     let (one, other) = tokio::join!(Swarm::start(Local::new()), Swarm::start(Local::new()));
     let one: Swarm<_, Node> = one.unwrap();
     let other: Swarm<_, Node> = other.unwrap();
-    let cell = new_cell(one.myrmic()).await;
+    let cell = new_cell(one.client()).await;
 
     let foreign = runtime_tag(other.runtime(Node::A).zid().into());
     let deployed = one
-        .myrmic()
+        .client()
         .cell(cell.as_path())
         .tags(&[&foreign])
         .deploy()
@@ -82,8 +82,8 @@ async fn a_killed_runtime_restarts_under_the_same_zid() {
     swarm.runtime_mut(Node::B).restart().await.unwrap();
     assert_eq!(swarm.runtime(Node::B).zid(), zid);
 
-    let cell = new_cell(swarm.myrmic()).await;
-    let placed_on = deploy_pinned(swarm.myrmic(), &cell, zid).await;
+    let cell = new_cell(swarm.client()).await;
+    let placed_on = deploy_pinned(swarm.client(), &cell, zid).await;
     assert_eq!(placed_on, zid.to_string());
 }
 

@@ -2,7 +2,7 @@
 //! host over SSH, or inside a docker container.
 
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 
@@ -71,11 +71,37 @@ pub struct Myrmic<B> {
 /// A private myrmic setup on the host (see [`Myrmic::local_isolated`]).
 struct Isolation {
     /// holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs), `run/`
-    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read) and the runtime config
-    dir: tempfile::TempDir,
+    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read) and the runtime
+    /// configs; shared with the shims [`Myrmic::cut_off`] creates
+    dir: Arc<tempfile::TempDir>,
     /// the multicast group (`<address>:<port>`) its runtimes scout on, and the CLI and
     /// [`Myrmic::connect_session`] discover them by
     multicast_group: String,
+    /// the runtime config in `dir` that sets `multicast_group`
+    config: PathBuf,
+}
+
+impl Isolation {
+    /// An isolation in `dir` on a multicast group no other isolation uses, with the runtime
+    /// config for it.
+    fn new(dir: Arc<tempfile::TempDir>) -> Self {
+        let multicast_group = isolated_multicast_group();
+        // JSON is YAML, which `runtimes start` parses
+        let config_content = serde_json::json!({
+            "zenoh": { "scouting": { "multicast": { "address": multicast_group } } },
+        });
+        let config = dir.path().join(format!(
+            "runtime-{}.yaml",
+            multicast_group.replace(':', "_")
+        ));
+        std::fs::write(&config, config_content.to_string())
+            .expect("failed to write the isolated runtime's config");
+        Self {
+            dir,
+            multicast_group,
+            config,
+        }
+    }
 }
 
 impl Myrmic<LocalBinary> {
@@ -103,19 +129,23 @@ impl Myrmic<LocalBinary> {
             std::fs::create_dir(dir.path().join(subdir))
                 .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
         }
-        let multicast_group = isolated_multicast_group();
-        // JSON is YAML, which `runtimes start` parses
-        let config = serde_json::json!({
-            "zenoh": { "scouting": { "multicast": { "address": multicast_group } } },
-        });
-        std::fs::write(dir.path().join("runtime.yaml"), config.to_string())
-            .expect("failed to write the isolated runtime's config");
         Self {
             backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
-            isolation: Some(Arc::new(Isolation {
-                dir,
-                multicast_group,
-            })),
+            isolation: Some(Arc::new(Isolation::new(Arc::new(dir)))),
+        }
+    }
+
+    /// A shim on this [`Self::local_isolated`] shim's state directories but on a multicast group
+    /// of its own. A runtime it starts has the identity and database it has on this shim, but
+    /// reaches none of this shim's runtimes, nor those of another cut-off shim.
+    pub fn cut_off(&self) -> Self {
+        let isolation = self
+            .isolation
+            .as_ref()
+            .expect("only an isolated shim has state directories to share");
+        Self {
+            backend: self.backend.clone(),
+            isolation: Some(Arc::new(Isolation::new(isolation.dir.clone()))),
         }
     }
 
@@ -539,12 +569,12 @@ where
                 self.config.is_none(),
                 "an isolated shim generates the runtime config itself"
             );
-            isolation.dir.path().join("runtime.yaml")
+            &isolation.config
         });
         if let Some(config) = &self.config {
             args.push(config);
         }
-        if let Some(config) = &isolated_config {
+        if let Some(config) = isolated_config {
             args.push(path_arg(config));
         }
         let output = self.myrmic.run(&args).await?;
