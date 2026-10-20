@@ -9,11 +9,11 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::time::Duration;
 
-use cell_protocol::{RuntimeId, Sri};
+use cell_protocol::{PlacementEntry, RuntimeId, Sri};
 use zenoh::config::ZenohId;
 
-pub use backend::SwarmBackend;
 pub use backend::local::Local;
+pub use backend::{CutOff, SwarmBackend};
 
 use crate::myrmic::{self, Error};
 
@@ -166,7 +166,7 @@ where
     }
 
     /// the runtime `id`, to kill, restart or delete it
-    pub fn runtime_mut(&mut self, id: S) -> RuntimeMut<'_, B::Cli, S> {
+    pub fn runtime_mut(&mut self, id: S) -> RuntimeMut<'_, B, S> {
         let others = self
             .runtimes
             .iter()
@@ -179,7 +179,7 @@ where
                 .runtimes
                 .get_mut(&id)
                 .expect("every runtime was started"),
-            shim: self.backend.shim(&format!("{id:?}")),
+            backend: &self.backend,
             introspection: &self.introspection,
             others,
         }
@@ -191,13 +191,7 @@ where
     /// A killed runtime keeps its placements until the swarm has declared it dead, so during a
     /// failover this still names the killed runtime for a while.
     pub async fn host_of(&self, sri: &str) -> Option<S> {
-        let sri: Sri = sri.parse().expect("a deployed cell's SRI is valid");
-        let placement = self
-            .sorg
-            .get_placement(&sri)
-            .await
-            .expect("failed to query the cell's placement");
-        let host = placement?.kind.host()?;
+        let host = self.placement(sri).await?.kind.host()?;
         let (id, _) = self
             .runtimes
             .iter()
@@ -206,20 +200,24 @@ where
         Some(*id)
     }
 
+    /// The placement row of the cell `sri`, or `None` while it has none.
+    pub async fn placement(&self, sri: &str) -> Option<PlacementEntry> {
+        let sri: Sri = sri.parse().expect("a deployed cell's SRI is valid");
+        self.sorg
+            .get_placement(&sri)
+            .await
+            .expect("failed to query the cell's placement")
+    }
+
     /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
     pub fn session(&self) -> &zenoh::Session {
         &self.session
     }
 
-    /// The shim of a running runtime, for the CLI commands that act on the whole swarm, e.g.
-    /// [`myrmic::Myrmic::cell`] to deploy a cell: the CLI reaches the whole swarm from there.
-    pub fn myrmic(&self) -> &myrmic::Myrmic<B::Cli> {
-        let runtime = self
-            .runtimes
-            .values()
-            .find(|runtime| runtime.is_running())
-            .expect("the CLI only reaches the swarm while one of its runtimes is running");
-        self.backend.shim(&runtime.name)
+    /// The CLI for the commands that act on the whole swarm, e.g. [`myrmic::Myrmic::cell`] to
+    /// deploy a cell (see [`SwarmBackend::client`]).
+    pub fn client(&self) -> &myrmic::Myrmic<B::Client> {
+        self.backend.client()
     }
 }
 
@@ -282,23 +280,22 @@ where
 ///
 /// It borrows the swarm: a restart waits for the swarm to be connected again, so it needs the
 /// other runtimes to stay as they are.
-pub struct RuntimeMut<'a, C, S>
+pub struct RuntimeMut<'a, B, S>
 where
-    C: myrmic::MyrmicBackend,
+    B: SwarmBackend,
     S: SwarmSpec,
 {
     id: S,
-    runtime: &'a mut Runtime<C>,
-    /// the shim the runtime runs on
-    shim: &'a myrmic::Myrmic<C>,
+    runtime: &'a mut Runtime<B::Cli>,
+    backend: &'a B,
     introspection: &'a introspection_client::v1::Client,
     /// the zids of the swarm's other running runtimes
     others: BTreeSet<ZenohId>,
 }
 
-impl<C, S> RuntimeMut<'_, C, S>
+impl<B, S> RuntimeMut<'_, B, S>
 where
-    C: myrmic::MyrmicBackend,
+    B: SwarmBackend,
     S: SwarmSpec,
 {
     /// End the runtime abruptly (see [`myrmic::Runtime::kill`]). Returns once its process is
@@ -315,26 +312,48 @@ where
     /// Start the killed or deleted runtime again under its name, so under the same zid. Returns
     /// once the swarm, with this runtime, is connected again.
     pub async fn restart(&mut self) -> Result<(), Error> {
+        let shim = self.backend.shim(&self.runtime.name);
+        self.start_on(shim).await?;
+        let mut expected = self.others.clone();
+        expected.insert(self.runtime.zid);
+        wait_until_connected(self.introspection, &expected).await
+    }
+
+    /// Start the killed or deleted runtime under its name on `shim`.
+    async fn start_on(&mut self, shim: &myrmic::Myrmic<B::Cli>) -> Result<(), Error> {
         let id = self.id;
         assert!(!self.runtime.is_running(), "{id:?} is still running");
-        let started = start_runtime(self.shim, self.runtime.name.clone(), id).await?;
+        let started = start_runtime(shim, self.runtime.name.clone(), id).await?;
         assert_eq!(
             started.zid(),
             self.runtime.zid,
             "{id:?} came back under a different zid"
         );
         self.runtime.running = Some(started);
-        let mut expected = self.others.clone();
-        expected.insert(self.runtime.zid);
-        wait_until_connected(self.introspection, &expected).await
+        Ok(())
     }
 
     /// the running runtime, now marked as no longer running
-    fn take_running(&mut self) -> myrmic::Runtime<C> {
+    fn take_running(&mut self) -> myrmic::Runtime<B::Cli> {
         let id = self.id;
         self.runtime
             .running
             .take()
             .unwrap_or_else(|| panic!("{id:?} is not running"))
+    }
+}
+
+impl<B, S> RuntimeMut<'_, B, S>
+where
+    B: CutOff,
+    S: SwarmSpec,
+{
+    /// Start the killed or deleted runtime again under its name, so with its zid and database,
+    /// but cut off from the rest of the swarm (see [`CutOff`]). Returns once it is ready; no
+    /// connectivity check, it reaches no other runtime. [`Self::delete`] or [`Self::kill`] it
+    /// before a [`Self::restart`] brings it back into the swarm.
+    pub async fn start_cut_off(&mut self) -> Result<(), Error> {
+        let shim = self.backend.cut_off_shim(&self.runtime.name);
+        self.start_on(&shim).await
     }
 }
