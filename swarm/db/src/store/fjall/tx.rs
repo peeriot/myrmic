@@ -1303,25 +1303,9 @@ impl<M> Transaction<M> {
         // We want to remove the null encoding
         key.pop();
 
-        let mut out = vec![];
-
-        let iter = self.prefix_of_untracked(&key);
-        for g in iter {
-            let key = g.key()?;
-            let (user_key, _ts, kind) = decode(&key)?;
-            match kind {
-                KeyKind::Insertion => (),
-                KeyKind::Deletion => {
-                    continue;
-                }
-            }
-
-            let user_key = UserKey::decode_exact(user_key)?;
-
-            out.push(String::from(user_key.key));
-        }
-
-        Ok(out)
+        self.prefix_latest_untracked(&key)
+            .map(|user_key| Ok(String::from(UserKey::decode_exact(&user_key?)?.key)))
+            .collect()
     }
 
     pub fn tb_count(&mut self, table: Table<'_>) -> anyhow::Result<usize> {

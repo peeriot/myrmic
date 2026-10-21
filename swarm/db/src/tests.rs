@@ -137,6 +137,41 @@ async fn test_key_prefix() {
     }
 }
 
+/// The listing reflects each key's newest version: a key written twice is listed once, a
+/// deleted key not at all.
+#[tokio::test(flavor = "current_thread")]
+async fn test_key_prefix_lists_each_live_key_once() {
+    let store = open_tmp();
+
+    let scope = Scope::default();
+
+    for value in [b"1".as_slice(), b"2"] {
+        let mut tx = write(&store);
+        tx.key_put(scope.kv("k-overwritten"), value)
+            .expect("unable to insert");
+        tx.commit().expect("unable to commit");
+    }
+
+    {
+        let mut tx = write(&store);
+        tx.key_put(scope.kv("k-deleted"), b"1")
+            .expect("unable to insert");
+        tx.commit().expect("unable to commit");
+    }
+
+    {
+        let mut tx = write(&store);
+        tx.key_delete(scope.kv("k-deleted"))
+            .expect("unable to delete");
+        tx.commit().expect("unable to commit");
+    }
+
+    let mut tx = read(&store);
+
+    let keys = tx.key_prefix(scope, "k-").expect("unable to query db");
+    assert_eq!(keys, ["k-overwritten"]);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn repro_concurrent_same_scope_disjoint_keys() {
     // Two transactions touch the SAME scope but DISJOINT keys (like two cells
