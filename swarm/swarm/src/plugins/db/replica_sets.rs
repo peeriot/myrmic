@@ -9,12 +9,13 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use cell_protocol::generations::{GENERATIONS, newest_placements};
 use cell_protocol::node_tags::LiveTags;
 use cell_protocol::replication::{
     CUSTODY_TABLE, CustodyRow, REPLICATION_TABLE, ReplicaEntry, ReplicaSelector, custody_winner,
     replication_scope,
 };
-use cell_protocol::{PLACEMENT_TABLE, PlacementEntry, placement_scope};
+use cell_protocol::{PlacementEntry, placement_scope};
 use db_client::PolledTable;
 use db_commons::models;
 use db_commons::models::locate::HolderState;
@@ -54,6 +55,8 @@ pub fn unconditional() -> Vec<models::Subject> {
 pub async fn run(context: StoreContext, db: db_client::v1::Client, tags: LiveTags) {
     let mut retagged = tags.subscribe();
 
+    // Placements are key-value rows, which publish no table events: a cell
+    // newly deployed into an application is picked up by the periodic poll.
     let polled = PolledTable::tables(
         &db,
         [
@@ -62,7 +65,6 @@ pub async fn run(context: StoreContext, db: db_client::v1::Client, tags: LiveTag
                 REPLICATION_TABLE,
             ),
             (models::Subject::Scope(replication_scope()), CUSTODY_TABLE),
-            (models::Subject::Scope(placement_scope()), PLACEMENT_TABLE),
         ],
     )
     .await;
@@ -290,14 +292,11 @@ async fn read_placements(db: &db_client::v1::Client) -> anyhow::Result<Vec<Place
     let response = db
         .read_tx_in(placement_scope(), async move |client, tx_id| {
             client
-                .send(models::tb_list::Request {
+                .send(models::key_list::Request {
                     id: tx_id,
-                    op: models::tb_list::Op {
+                    op: models::key_list::Op {
                         scope: placement_scope(),
-                        table: String::from(PLACEMENT_TABLE),
-                        cursor: None,
-                        limit: None,
-                        order: None,
+                        prefix: String::from(GENERATIONS),
                     },
                 })
                 .await
@@ -306,7 +305,16 @@ async fn read_placements(db: &db_client::v1::Client) -> anyhow::Result<Vec<Place
         .map_err(|err| anyhow::anyhow!("unable to reach a node holding the placements: {err}"))?
         .map_err(|err| anyhow::anyhow!("unable to list the placements: {}", err.message))?;
 
-    Ok(decode_rows(&response, "placement"))
+    // Like `decode_row`: one malformed row shouldn't stall replication for the
+    // rest.
+    Ok(newest_placements(response.entries)
+        .into_iter()
+        .filter_map(|placement| {
+            placement
+                .inspect_err(|err| tracing::warn!("skipping placement row: {err}"))
+                .ok()
+        })
+        .collect())
 }
 
 fn selects_an_app(entries: &[ReplicaEntry]) -> bool {

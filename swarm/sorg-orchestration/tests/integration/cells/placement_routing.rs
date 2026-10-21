@@ -1,5 +1,5 @@
 //! Placement makes four reads - the cell-class registry, the exec registry, the
-//! node leases and the placement table - and each of them lives in its own DB
+//! node leases and the placements - and each of them lives in its own DB
 //! scope. A scope is resolved to a holder by its own locate round on its own
 //! keyexpr, so a read addressed through some other scope's holder can be
 //! answered by a node that does not have the rows.
@@ -17,21 +17,22 @@
 //! in `NoRuntimesAvailable`, so without that refusal a read that wandered into
 //! the wrong stand-in would look like the outcome the test wants.
 //!
-//! The placement table has a fifth reader on the same terms: the guard that
+//! The placements have a fifth reader on the same terms: the guard that
 //! stops an instance erase from removing a live cell's row. That erase writes
 //! in the instance registry's scope, so its placement read has to be located
 //! on its own rather than ride the transaction doing the writing.
 
 use std::time::{Duration, Instant};
 
+use cell_protocol::generations::generation_key;
 use cell_protocol::{
     ArtifactPlatform, BlobHash, CellInstance, ClassInfo, Gen, PlacementEntry, PlacementKind,
     SpawnLineage,
 };
 use claims::{assert_err, assert_ok};
 use db_commons::models::{
-    self, DbRequest, Scope, TxOp, TxOpResponse, locate, tb_get, tb_list, tx_apply, tx_commit,
-    tx_rollback,
+    self, DbRequest, Scope, TxOp, TxOpResponse, key_list, locate, tb_get, tb_list, tx_apply,
+    tx_commit, tx_rollback,
 };
 use sorg_common::{
     DeploymentError, RejectionReason, RequirementTags, class_registry, exec_registry,
@@ -337,10 +338,10 @@ async fn placement_retries_while_only_an_artifact_is_missing() {
     declare_stand_in_holder(
         &mut test_app,
         &cell_protocol::class_registry_scope(),
-        Some(encode(&ClassInfo::Aot {
+        Some(StandInRow::Table(encode(&ClassInfo::Aot {
             platform: ArtifactPlatform::Riscv32imac,
             crc: 0,
-        })),
+        }))),
     )
     .await;
 
@@ -406,15 +407,19 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
 
     // Act - a stand-in holder serving a placement of the erase's own
     // generation, which is what the guard refuses on.
+    let placement = PlacementEntry {
+        sri,
+        kind: PlacementKind::Placeholder,
+        app: None,
+        gen_id: ERASE_GEN,
+    };
     declare_stand_in_holder(
         &mut test_app,
         &cell_protocol::placement_scope(),
-        Some(encode(&PlacementEntry {
-            sri,
-            kind: PlacementKind::Placeholder,
-            app: None,
-            gen_id: ERASE_GEN,
-        })),
+        Some(StandInRow::Key(
+            generation_key(&sri, ERASE_GEN),
+            encode(&placement.row()),
+        )),
     )
     .await;
 
@@ -481,7 +486,15 @@ fn store_topic_of(node: models::NodeId) -> OwnedKeyExpr {
 /// carries its own scope whatever holder it reaches, so a read that belongs
 /// elsewhere and lands here fails the deploy with an internal error instead of
 /// passing for an empty registry and standing in for the property under test.
-async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Option<Vec<u8>>) {
+/// The one row a stand-in holder serves, in the shape its scope stores rows.
+enum StandInRow {
+    /// A table row's value, served to any table read.
+    Table(Vec<u8>),
+    /// A key-value row, served to a listing of a prefix of its key.
+    Key(String, Vec<u8>),
+}
+
+async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Option<StandInRow>) {
     test_app
         .set_up_queryable_with_reply(locate_topic_of(scope), |_| {
             Ok(encode(&locate::Response {
@@ -496,7 +509,7 @@ async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Opt
     let held = scope.clone();
     test_app
         .set_up_queryable_with_reply(store_topic_of(STAND_IN_HOLDER), move |payload| {
-            stand_in_store_reply(&payload, &held, row.as_deref())
+            stand_in_store_reply(&payload, &held, row.as_ref())
         })
         .await;
 }
@@ -508,7 +521,7 @@ async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Opt
 fn stand_in_store_reply(
     payload: &[u8],
     held: &Scope,
-    row: Option<&[u8]>,
+    row: Option<&StandInRow>,
 ) -> Result<Vec<u8>, Vec<u8>> {
     let Ok(request) = postcard::from_bytes::<DbRequest>(payload) else {
         return Err(refusal("an unreadable db request", held));
@@ -523,14 +536,31 @@ fn stand_in_store_reply(
             let last = match application.ops.last() {
                 None => None,
                 Some(TxOp::TbGet(op)) if op.scope == *held => {
-                    Some(TxOpResponse::TbGet(tb_get::Response {
-                        value: row.map(<[u8]>::to_vec),
-                    }))
+                    let value = match row {
+                        Some(StandInRow::Table(value)) => Some(value.clone()),
+                        None => None,
+                        Some(StandInRow::Key(..)) => {
+                            panic!("a stand-in holding a key-value row got a table read")
+                        }
+                    };
+                    Some(TxOpResponse::TbGet(tb_get::Response { value }))
                 }
                 Some(TxOp::TbList(op)) if op.scope == *held => {
                     Some(TxOpResponse::TbList(tb_list::Response {
                         entities: Vec::new(),
                     }))
+                }
+                Some(TxOp::KeyList(op)) if op.scope == *held => {
+                    let entries = match row {
+                        Some(StandInRow::Key(key, value)) if key.starts_with(&op.prefix) => {
+                            vec![(key.clone(), value.clone())]
+                        }
+                        Some(StandInRow::Key(..)) | None => vec![],
+                        Some(StandInRow::Table(_)) => {
+                            panic!("a stand-in holding a table row got a key-value read")
+                        }
+                    };
+                    Some(TxOpResponse::KeyList(key_list::Response { entries }))
                 }
                 Some(other) => return Err(refusal(other.name(), held)),
             };

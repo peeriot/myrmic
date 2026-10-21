@@ -4,7 +4,8 @@ use core::future::pending;
 
 use cell_protocol::supervision::{FencingState, LeaseTracker, WatchedCell};
 use cell_protocol::{
-    DEPLOYMENT_TABLE, MESSAGES_TABLE, Sri, WatchdogResetReport, scope_of_cell, scope_of_deployment,
+    DEPLOYMENT_TABLE, Gen, MESSAGES_TABLE, Sri, WatchdogResetReport, scope_of_cell,
+    scope_of_deployment,
 };
 use db_client::application::Application;
 use db_client::v1::models::{Cursor, Id, Subject};
@@ -124,7 +125,7 @@ pub async fn service(
     let mut watched: Option<WatchedCell> = None;
     let mut fencing = FencingState::new();
     let mut lease_tracker = LeaseTracker::new();
-    let mut owed_cleanup: Vec<Sri> = Vec::new();
+    let mut owed_cleanup: Vec<(Sri, Gen)> = Vec::new();
     // Rows left behind by a previous boot are swept once per boot.
     let mut swept = false;
     // A boot returns this node to its flashed tags: the overlay a previous run

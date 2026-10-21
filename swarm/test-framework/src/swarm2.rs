@@ -9,7 +9,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::time::Duration;
 
-use cell_protocol::{PlacementEntry, RuntimeId, Sri};
+use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use zenoh::config::ZenohId;
 
 pub use backend::local::Local;
@@ -207,6 +207,14 @@ where
             .get_placement(&sri)
             .await
             .expect("failed to query the cell's placement")
+    }
+
+    /// The instance row of the cell `sri`, or `None` while it has none.
+    pub async fn instance(&self, sri: &str) -> Option<CellInstance> {
+        let sri: Sri = sri.parse().expect("a deployed cell's SRI is valid");
+        sorg_common::instance_registry::get_instance(&self.session, &sri)
+            .await
+            .expect("failed to query the cell's instance")
     }
 
     /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
