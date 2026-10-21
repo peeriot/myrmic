@@ -17,6 +17,7 @@ mod embedded;
 mod fs;
 mod http_mock;
 mod log_tracker;
+mod modbus_mock;
 mod mqtt;
 mod pub_sub;
 mod queryables;
@@ -32,6 +33,7 @@ pub use embedded::{DeployResponseMode, MockEmbeddedExec};
 pub use fs::load_into_db;
 pub use http_mock::HttpMockHandle;
 pub use log_tracker::{StateTracker, TaskStatus, set_up_log_tracker};
+pub use modbus_mock::{ModbusMockHandle, SilentModbusServer};
 pub use myrmic_tags::Platform;
 pub use swarm::{
     KillableProcess, ScopedProcess, scope_test_multicast, set_up_killable_swarm,

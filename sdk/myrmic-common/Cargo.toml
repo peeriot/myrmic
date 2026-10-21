@@ -41,6 +41,8 @@ types-web = [
     "serde/derive",
 ]
 url-serde = ["types-web"]
+# Serde helpers for durations written as `500ms`, `2min` (host-only).
+human-duration = ["std", "serde/std", "dep:humantime"]
 # Host-only code generation for cell macros and build tools. Pulls in `std` and
 # the heavy `syn`/`typify`/`schemars` stack, so it is never enabled for a wasm
 # cell target - only by `myrmic-sdk-macros` and the host build tooling.
@@ -50,7 +52,7 @@ codegen = [
     "serde/derive",
     "dep:heck",
     "dep:http",
-    "dep:humantime",
+    "human-duration",
     "dep:proc-macro2",
     "dep:quote",
     "dep:syn",

@@ -5,12 +5,13 @@ use crate::MqttConnection;
 use serde::{Deserialize, Serialize};
 
 pub use myrmic_common::codegen::bridge_api::{
-    WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseTemplate, WireHttpResponseVariant,
-    WireMqttEgress, WireMqttIngress,
+    ModbusByteOrder, ModbusRegister, ModbusWritableRegister, WireHttpEndpoint,
+    WireHttpRequestTemplate, WireHttpResponseTemplate, WireHttpResponseVariant, WireModbusPoll,
+    WireModbusRead, WireModbusWrite, WireMqttEgress, WireMqttIngress,
 };
 pub use myrmic_common::codegen::status::status_variant_name;
 pub use myrmic_common::codegen::template::{
-    BodyTemplate, ResponseHeaderTemplate, TemplateSegment, TemplateSegments,
+    BodyTemplate, ModbusValueTemplate, ResponseHeaderTemplate, TemplateSegment, TemplateSegments,
 };
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -63,4 +64,73 @@ pub struct MqttBridgeDef {
 
     pub egress: Vec<WireMqttEgress>,
     pub ingress: Vec<WireMqttIngress>,
+}
+
+/// A Modbus bridge as the deploy path carries it: the spec's entries with their
+/// `${type:name}` templates already parsed, and the bridge named by its cell.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct ModbusBridge {
+    pub cell_name: String,
+    pub host: String,
+    pub port: u16,
+    pub unit_id: Option<u8>,
+    #[serde(with = "myrmic_common::human_duration::option")]
+    pub timeout: Option<std::time::Duration>,
+
+    pub poll: Vec<WireModbusPoll>,
+    pub read: Vec<WireModbusRead>,
+    pub write: Vec<WireModbusWrite>,
+}
+
+impl ModbusBridge {
+    /// The server the bridge connects to.
+    pub fn server_address(&self) -> ModbusServerAddress {
+        ModbusServerAddress {
+            host: self.host.clone(),
+            port: self.port,
+        }
+    }
+}
+
+/// The host and port of a Modbus TCP server. The host stays a name here; it is
+/// resolved when the bridge connects.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ModbusServerAddress {
+    pub host: String,
+    pub port: u16,
+}
+
+impl core::fmt::Display for ModbusServerAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // An IPv6 address is bracketed, so its colons are not taken for the port.
+        if self.host.contains(':') {
+            write!(f, "[{}]:{}", self.host, self.port)
+        } else {
+            write!(f, "{}:{}", self.host, self.port)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModbusServerAddress;
+
+    fn address(host: &str, port: u16) -> String {
+        ModbusServerAddress {
+            host: host.to_owned(),
+            port,
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn modbus_server_address_shows_host_and_port() {
+        assert_eq!(address("plc.local", 502), "plc.local:502");
+        assert_eq!(address("192.168.1.50", 5020), "192.168.1.50:5020");
+    }
+
+    #[test]
+    fn modbus_server_address_brackets_an_ipv6_host() {
+        assert_eq!(address("fe80::1", 1502), "[fe80::1]:1502");
+    }
 }

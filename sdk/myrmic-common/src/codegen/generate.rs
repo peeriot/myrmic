@@ -1,6 +1,6 @@
 //! Code generation for `import!`-ed bridge specs.
 //!
-//! Two entry points, one per bridge kind:
+//! One entry point per bridge kind:
 //!
 //! * [`http_bridge`] — the request/response payload types come from the
 //!   bridge's embedded **JSON Schema** and are generated with [`typify`]. Each
@@ -8,8 +8,11 @@
 //! * [`mqtt_bridge`] — MQTT specs carry no schema; their payload types are
 //!   still derived from the `${kind:name}` template placeholders, via the
 //!   [`crate::codegen::cell_api`] model.
+//! * [`modbus_bridge`] — like MQTT, the types come from the `${kind:name}`
+//!   value templates: polled values become events, written values commands,
+//!   and read values commands with a callback, like HTTP endpoints.
 //!
-//! Both emit a `<Name>Client` whose methods dispatch commands with
+//! Each emits a `<Name>Client` whose methods dispatch commands with
 //! `myrmic_sdk::send`, plus the payload/event types those methods reference.
 //!
 //! [`typify`]: typify_impl
@@ -20,7 +23,9 @@ use heck::ToUpperCamelCase;
 use proc_macro2::TokenStream as Ts;
 use quote::{format_ident, quote};
 
-use crate::codegen::bridge_api::{UserHttpBridgeApi, UserHttpEndpoint, UserMqttBridge};
+use crate::codegen::bridge_api::{
+    UserHttpBridgeApi, UserHttpEndpoint, UserModbusBridge, UserModbusRead, UserMqttBridge,
+};
 use crate::codegen::cell_api::{ApiCommand, ApiEvent, ApiField, ApiType, CellApi};
 use crate::codegen::status::status_variant_name;
 use crate::codegen::template::{RawSeg, Seg, Segments};
@@ -400,6 +405,117 @@ pub fn mqtt_bridge(root: &Ts, api: UserMqttBridge) -> Result<Ts, String> {
     Ok(cell_api_tokens(root, &cell_api))
 }
 
+/// Modbus `poll` entries become event payload types (implementing
+/// `myrmic_sdk::CellEvent`), `write` entries fire-and-forget `<id>` client
+/// methods, each typed by the entry's single value placeholder: the same shapes
+/// an MQTT ingress and egress get, and the same JSON the bridge exchanges.
+///
+/// `read` entries become `<id>` client methods taking a `Callback`, like HTTP
+/// endpoints; see [`modbus_read`] for the reply the callback receives.
+pub fn modbus_bridge(root: &Ts, api: UserModbusBridge) -> Result<Ts, String> {
+    let reads = api
+        .read
+        .iter()
+        .map(|read| modbus_read(root, read))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (read_defs, mut methods): (Vec<_>, Vec<_>) = reads.into_iter().unzip();
+    let cell_api = convert_modbus(api)?;
+
+    let mut type_defs = Vec::new();
+    if let Some(types) = &cell_api.types {
+        for (name, ty) in types {
+            type_defs.push(struct_def(root, name, ty, /* event */ None));
+        }
+    }
+
+    let mut event_defs = Vec::new();
+    for (name, event) in &cell_api.events {
+        event_defs.push(struct_def(root, name, event.as_ref(), Some(name)));
+    }
+
+    for (name, cmd) in &cell_api.commands {
+        methods.extend(command_methods(root, name, cmd));
+    }
+
+    let client = client_struct(&cell_api.cell, &methods);
+
+    Ok(quote! {
+        #(#type_defs)*
+        #(#event_defs)*
+        #(#read_defs)*
+        #client
+    })
+}
+
+/// The types and the client method for one Modbus `read` entry `<id>`:
+///
+/// - `<Id>Value`, the value under its field name, e.g. `{ setpoint: i16 }`,
+/// - `<Id>Reply`, what the callback receives: `Ok(<Id>Value)`, the Modbus
+///   `Exception` code the device answered with, or `Failed` with the reason the
+///   bridge got no answer,
+/// - a private `__<Id>Payload` with nothing but the reserved `__callback` key,
+///   since a read takes no arguments.
+fn modbus_read(root: &Ts, read: &UserModbusRead) -> Result<(Ts, Ts), String> {
+    let camel = read.id.to_upper_camel_case();
+    let value_name = format!("{camel}Value");
+    let value_ident = format_ident!("{value_name}");
+    let reply_ident = format_ident!("{camel}Reply");
+    let payload_ident = format_ident!("__{camel}Payload");
+    let serde_crate = format!("{root}::codegen::exports::serde");
+
+    let mut fields = FieldCollector::default();
+    fields.push(&read.value.0)?;
+    let value_ty = ApiType {
+        description: None,
+        fields: fields.into_fields(),
+    };
+    let value_def = struct_def(root, &value_name, &value_ty, /* event */ None);
+
+    let defs = quote! {
+        #value_def
+
+        #[derive(
+            Debug,
+            Clone,
+            #root::codegen::exports::serde::Serialize,
+            #root::codegen::exports::serde::Deserialize,
+            #root::Message,
+        )]
+        #[serde(crate = #serde_crate)]
+        pub enum #reply_ident {
+            Ok(#value_ident),
+            Exception(u8),
+            Failed(#root::String),
+        }
+
+        #[derive(
+            #root::codegen::exports::serde::Serialize,
+            #root::codegen::exports::serde::Deserialize,
+            #root::Message,
+        )]
+        #[serde(crate = #serde_crate)]
+        struct #payload_ident {
+            __callback: #root::String,
+        }
+    };
+
+    let method_ident = format_ident!("{}", read.id);
+    let command_name = &read.id;
+    let method = quote! {
+        pub fn #method_ident(&self, cb: #root::Callback<#reply_ident>) -> #root::Result<()> {
+            let sri = #root::Sri::from_target(self.target)
+                .map_err(|_| "invalid bridge target")?;
+            let __cb: #root::Command = cb.into();
+            let __payload = #payload_ident {
+                __callback: __cb.as_ref().into(),
+            };
+            #root::send(sri, #command_name, &__payload)
+        }
+    };
+
+    Ok((defs, method))
+}
+
 // ---------------------------------------------------------------------------
 // Shared client / method generation
 // ---------------------------------------------------------------------------
@@ -605,6 +721,62 @@ fn convert_mqtt(api: UserMqttBridge) -> Result<CellApi, String> {
 
     Ok(CellApi {
         cell: name,
+        types: if types.is_empty() { None } else { Some(types) },
+        commands,
+        events,
+    })
+}
+
+/// Converts a `UserModbusBridge` into a `CellApi`: writes -> commands (+ arg
+/// types), polls -> events. Reads are left to [`modbus_read`]. The spec is
+/// expected to be validated.
+fn convert_modbus(api: UserModbusBridge) -> Result<CellApi, String> {
+    let UserModbusBridge {
+        name, poll, write, ..
+    } = api;
+
+    let mut types: HashMap<String, ApiType> = HashMap::new();
+    let mut events: HashMap<String, ApiEvent> = HashMap::new();
+    let mut commands: HashMap<String, ApiCommand> = HashMap::new();
+
+    for write in write {
+        let cmd_name = write.id.to_upper_camel_case();
+
+        let mut fields = FieldCollector::default();
+        fields.push(&write.value.0)?;
+
+        types.insert(
+            cmd_name.clone(),
+            ApiType {
+                description: None,
+                fields: fields.into_fields(),
+            },
+        );
+
+        commands.insert(
+            write.id,
+            ApiCommand {
+                description: None,
+                args: Some(cmd_name),
+            },
+        );
+    }
+
+    for poll in poll {
+        let mut fields = FieldCollector::default();
+        fields.push(&poll.value.0)?;
+
+        events.insert(
+            poll.id.to_upper_camel_case(),
+            ApiEvent(ApiType {
+                description: None,
+                fields: fields.into_fields(),
+            }),
+        );
+    }
+
+    Ok(CellApi {
+        cell: name.to_upper_camel_case(),
         types: if types.is_empty() { None } else { Some(types) },
         commands,
         events,
