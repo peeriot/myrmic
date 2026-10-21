@@ -1,74 +1,47 @@
-use cell_protocol::{Gen, PLACEMENT_TABLE, PlacementEntry, Sri, placement_scope};
+use cell_protocol::generations::{GENERATIONS, generation_key, generations_of, newest_placements};
+use cell_protocol::{Gen, PlacementEntry, Sri, placement_claim_key, placement_scope};
 use db_client::v1::{
     Client as DbClient,
-    models::{TxId, tb_delete, tb_get, tb_insert, tb_list},
+    models::{TxId, key_get, key_prefix},
 };
 use zenoh::Session;
 
-use super::fence::{self, FenceOutcome};
+use super::fence::FenceOutcome;
+use super::generation_rows;
 use crate::{Result, custom_err};
 
-/// Returns the placements of all currently placed cells.
+/// Returns the placements of all currently placed cells: each cell's newest
+/// generation.
 pub async fn list_placements(session: &Session) -> Result<Vec<PlacementEntry>> {
     let db = DbClient::new(session);
 
-    let response = db
+    let entries = db
         .read_tx_in(placement_scope(), async move |client, tx_id| {
-            let request = tb_list::Request {
-                id: tx_id,
-                op: tb_list::Op {
-                    scope: placement_scope(),
-                    table: PLACEMENT_TABLE.to_owned(),
-                    cursor: None,
-                    limit: None,
-                    order: None,
-                },
-            };
-            client.send(request).await
+            Ok(
+                generation_rows::list(client, tx_id, &placement_scope(), GENERATIONS.to_owned())
+                    .await,
+            )
         })
         .await
-        .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
-        .map_err(|err| custom_err!("unable to list table: {}", err.message))?;
+        .map_err(|err| custom_err!("unable to communicate with db: {}", err))??;
 
-    response
-        .entities
+    newest_placements(entries)
         .into_iter()
-        .map(|(_id, value)| {
-            postcard::from_bytes::<PlacementEntry>(&value)
-                .map_err(|_| custom_err!("failed to deserialize placement entry"))
-        })
+        .map(|placement| placement.map_err(|err| custom_err!("unable to read placements: {err}")))
         .collect()
 }
 
-/// Returns the placement of a cell, or `None` if it has none.
+/// Returns the placement of a cell, its newest generation, or `None` if it has
+/// none.
 pub async fn get_placement(session: &Session, sri: &Sri) -> Result<Option<PlacementEntry>> {
     let db = DbClient::new(session);
-    let eid = sri.to_string().into_bytes();
+    let sri = *sri;
 
-    let response = db
-        .read_tx_in(placement_scope(), async move |client, tx_id| {
-            let request = tb_get::Request {
-                id: tx_id,
-                op: tb_get::Op {
-                    scope: placement_scope(),
-                    table: PLACEMENT_TABLE.to_owned(),
-                    eid,
-                },
-            };
-            client.send(request).await
-        })
-        .await
-        .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
-        .map_err(|err| custom_err!("unable to get entity: {}", err.message))?;
-
-    match response.value {
-        Some(bytes) => {
-            let entry = postcard::from_bytes::<PlacementEntry>(&bytes)
-                .map_err(|_| custom_err!("failed to deserialize placement entry"))?;
-            Ok(Some(entry))
-        }
-        None => Ok(None),
-    }
+    db.read_tx_in(placement_scope(), async move |client, tx_id| {
+        Ok(get_placement_in_tx(client, tx_id, &sri).await)
+    })
+    .await
+    .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
 }
 
 /// Returns a cell's placement within an existing transaction. Private on
@@ -81,41 +54,29 @@ async fn get_placement_in_tx(
     tx_id: TxId,
     sri: &Sri,
 ) -> Result<Option<PlacementEntry>> {
-    let response = db
-        .send(tb_get::Request {
-            id: tx_id,
-            op: tb_get::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                eid: sri.to_string().into_bytes(),
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("unable to send get request: {}", err))?
-        .map_err(|err| custom_err!("unable to get placement: {}", err.message))?;
+    let entries = generation_rows::list(db, tx_id, &placement_scope(), generations_of(sri)).await?;
 
-    response
-        .value
-        .map(|bytes| {
-            postcard::from_bytes::<PlacementEntry>(&bytes)
-                .map_err(|_| custom_err!("failed to deserialize placement entry"))
-        })
-        .transpose()
+    let mut placements = newest_placements(entries)
+        .into_iter()
+        .collect::<core::result::Result<Vec<_>, _>>()
+        .map_err(|err| custom_err!("unable to read placement: {err}"))?;
+
+    // The prefix covers this one SRI, so at most one placement comes back.
+    Ok(placements.pop())
 }
 
 /// Checks whether the cell with the given SRI has a placement.
 pub async fn placement_exists(session: &Session, sri: &Sri) -> Result<bool> {
     let db = DbClient::new(session);
-    let eid = sri.to_string().into_bytes();
+    let prefix = generations_of(sri);
 
-    let found = db
+    let keys = db
         .read_tx_in(placement_scope(), async move |client, tx_id| {
-            let request = tb_get::Request {
+            let request = key_prefix::Request {
                 id: tx_id,
-                op: tb_get::Op {
+                op: key_prefix::Op {
                     scope: placement_scope(),
-                    table: PLACEMENT_TABLE.to_owned(),
-                    eid,
+                    prefix,
                 },
             };
             client.send(request).await
@@ -123,10 +84,9 @@ pub async fn placement_exists(session: &Session, sri: &Sri) -> Result<bool> {
         .await
         .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
         .map_err(|err| custom_err!("unable to get placement: {}", err.message))?
-        .value
-        .is_some();
+        .keys;
 
-    Ok(found)
+    Ok(!keys.is_empty())
 }
 
 pub async fn ensure_placement_exists(session: &Session, sri: &Sri) -> Result<(), &'static str> {
@@ -165,12 +125,9 @@ pub async fn claim_placement(
     entry: PlacementEntry,
 ) -> Result<PlacementClaimOutcome> {
     let db = DbClient::new(session);
-    let eid = entry.sri.to_string().as_bytes().to_vec();
-    let value = postcard::to_allocvec(&entry)
-        .map_err(|_| custom_err!("failed to serialize placement entry"))?;
 
     db.write_tx_in(placement_scope(), async move |client, tx_id| {
-        Ok(do_claim(client, tx_id, eid, value).await)
+        Ok(do_claim(client, tx_id, &entry).await)
     })
     .await
     .map_err(|err| custom_err!("failed to write placement: {err}"))?
@@ -179,88 +136,67 @@ pub async fn claim_placement(
 async fn do_claim(
     client: &DbClient,
     tx_id: TxId,
-    eid: Vec<u8>,
-    value: Vec<u8>,
+    entry: &PlacementEntry,
 ) -> Result<PlacementClaimOutcome> {
-    let existing = client
-        .send(tb_get::Request {
+    let scope = placement_scope();
+
+    // Read and written by every claim of this SRI, so two concurrent claims
+    // conflict at commit; the generation listing below is not conflict-tracked.
+    let claim_key = placement_claim_key(&entry.sri);
+    client
+        .send(key_get::Request {
             id: tx_id,
-            op: tb_get::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                eid: eid.clone(),
+            op: key_get::Op {
+                scope: scope.clone(),
+                key: claim_key.clone(),
             },
         })
         .await
-        .map_err(|err| custom_err!("placement get failed: {err}"))?
-        .map_err(|err| custom_err!("placement get failed: {}", err.message))?;
+        .map_err(|err| custom_err!("placement claim read failed: {err}"))?
+        .map_err(|err| custom_err!("placement claim read failed: {}", err.message))?;
 
-    if existing.value.is_some() {
+    if get_placement_in_tx(client, tx_id, &entry.sri)
+        .await?
+        .is_some()
+    {
         return Ok(PlacementClaimOutcome::AlreadyExists);
     }
 
-    client
-        .send(tb_insert::Request {
-            id: tx_id,
-            op: tb_insert::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                eid: Some(eid),
-                value,
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("placement insert failed: {err}"))?
-        .map_err(|err| custom_err!("placement insert failed: {}", err.message))?;
+    generation_rows::put(client, tx_id, &scope, claim_key, vec![]).await?;
+    put_placement(client, tx_id, entry).await?;
 
     Ok(PlacementClaimOutcome::Claimed)
 }
 
 /// Replaces the Placeholder written by [`claim_placement`] with the real
-/// `PlacementKind`, provided the row still carries `entry.gen_id`. A row of
-/// another generation — or none, after an undeploy — means this deployment was
-/// overtaken and must not publish itself; nothing is written then.
+/// `PlacementKind`, provided the cell's newest generation is still
+/// `entry.gen_id`. Another generation, or none after an undeploy, means this
+/// deployment was overtaken and must not publish itself; nothing is written
+/// then.
 pub async fn commit_placement(session: &Session, entry: PlacementEntry) -> Result<FenceOutcome> {
     let db = DbClient::new(session);
-    let value = postcard::to_allocvec(&entry)
-        .map_err(|_| custom_err!("failed to serialize placement entry"))?;
 
     db.write_tx_in(placement_scope(), async move |client, tx_id| {
-        Ok(do_commit(client, tx_id, &entry, value).await)
+        Ok(do_commit(client, tx_id, &entry).await)
     })
     .await
     .map_err(|err| custom_err!("failed to write placement: {err}"))?
 }
 
-async fn do_commit(
-    client: &DbClient,
-    tx_id: TxId,
-    entry: &PlacementEntry,
-    value: Vec<u8>,
-) -> Result<FenceOutcome> {
-    let existing = get_placement_in_tx(client, tx_id, &entry.sri).await?;
-    if let Err(outcome) = fence::admit(existing.map(|e| e.gen_id), entry.gen_id) {
+async fn do_commit(client: &DbClient, tx_id: TxId, entry: &PlacementEntry) -> Result<FenceOutcome> {
+    let admitted =
+        generation_rows::admit(client, tx_id, &placement_scope(), &entry.sri, entry.gen_id).await?;
+    if let Err(outcome) = admitted {
         return Ok(outcome);
     }
 
-    client
-        .send(tb_insert::Request {
-            id: tx_id,
-            op: tb_insert::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                eid: Some(entry.sri.to_string().into_bytes()),
-                value,
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("placement insert failed: {err}"))?
-        .map_err(|err| custom_err!("placement insert failed: {}", err.message))?;
+    put_placement(client, tx_id, entry).await?;
 
     Ok(FenceOutcome::Applied)
 }
 
-/// Removes a cell's placement, provided the row still carries `gen_id`.
+/// Removes generation `gen_id` of a cell's placement, provided it is the
+/// cell's newest generation.
 pub async fn remove_placement(session: &Session, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
     let db = DbClient::new(session);
     let sri = *sri;
@@ -273,23 +209,26 @@ pub async fn remove_placement(session: &Session, sri: &Sri, gen_id: Gen) -> Resu
 }
 
 async fn do_remove(client: &DbClient, tx_id: TxId, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
-    let existing = get_placement_in_tx(client, tx_id, sri).await?;
-    if let Err(outcome) = fence::admit(existing.map(|e| e.gen_id), gen_id) {
+    let scope = placement_scope();
+    if let Err(outcome) = generation_rows::admit(client, tx_id, &scope, sri, gen_id).await? {
         return Ok(outcome);
     }
 
-    client
-        .send(tb_delete::Request {
-            id: tx_id,
-            op: tb_delete::Op {
-                scope: placement_scope(),
-                table: PLACEMENT_TABLE.to_owned(),
-                eid: sri.to_string().into_bytes(),
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("placement delete failed: {err}"))?
-        .map_err(|err| custom_err!("placement delete failed: {}", err.message))?;
+    generation_rows::delete(client, tx_id, &scope, generation_key(sri, gen_id)).await?;
 
     Ok(FenceOutcome::Applied)
+}
+
+async fn put_placement(client: &DbClient, tx_id: TxId, entry: &PlacementEntry) -> Result<()> {
+    let value = postcard::to_allocvec(&entry.row())
+        .map_err(|_| custom_err!("failed to serialize placement row"))?;
+
+    generation_rows::put(
+        client,
+        tx_id,
+        &placement_scope(),
+        generation_key(&entry.sri, entry.gen_id),
+        value,
+    )
+    .await
 }

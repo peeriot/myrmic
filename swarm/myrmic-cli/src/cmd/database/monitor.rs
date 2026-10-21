@@ -7,8 +7,9 @@ use std::io::IsTerminal as _;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
+use cell_protocol::generations::{GENERATIONS, newest_placements};
 use cell_protocol::replication::ReplicaSelector;
-use cell_protocol::{PLACEMENT_TABLE, PlacementEntry, Sri, placement_scope};
+use cell_protocol::{PlacementEntry, Sri, placement_scope};
 use db_client::v1::models;
 use db_commons::models::replication::{Announce, ChangeSet, ChangeSetReq, Probe, SyncMarker};
 use db_commons::models::{ReplicaMessage, Subject};
@@ -491,14 +492,11 @@ async fn read_placements(ctx: Ctx, session: &zenoh::Session) -> Result<Vec<Place
     let response = db
         .read_tx_in(placement_scope(), async move |client, tx_id| {
             client
-                .send(models::tb_list::Request {
+                .send(models::key_list::Request {
                     id: tx_id,
-                    op: models::tb_list::Op {
+                    op: models::key_list::Op {
                         scope: placement_scope(),
-                        table: String::from(PLACEMENT_TABLE),
-                        cursor: None,
-                        limit: None,
-                        order: None,
+                        prefix: String::from(GENERATIONS),
                     },
                 })
                 .await
@@ -507,19 +505,12 @@ async fn read_placements(ctx: Ctx, session: &zenoh::Session) -> Result<Vec<Place
         .map_err(|err| anyhow::anyhow!("unable to communicate with db: {err}"))?
         .map_err(|err| anyhow::anyhow!("unable to list the placements: {}", err.message))?;
 
-    Ok(response
-        .entities
-        .iter()
-        .filter_map(|(id, value)| match postcard::from_bytes(value) {
-            Ok(row) => Some(row),
-            Err(err) => {
-                warn!(
-                    ctx,
-                    "skipping undecodable placement row [{}]: {err}",
-                    String::from_utf8_lossy(id)
-                );
-                None
-            }
+    Ok(newest_placements(response.entries)
+        .into_iter()
+        .filter_map(|placement| {
+            placement
+                .inspect_err(|err| warn!(ctx, "skipping placement row: {err}"))
+                .ok()
         })
         .collect())
 }
