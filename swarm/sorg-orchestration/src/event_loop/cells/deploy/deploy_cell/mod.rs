@@ -31,6 +31,7 @@ impl Runtime {
             // execution engine. Bridges are always roots, so no lineage to thread.
             CellConfig::HttpBridge(api) => self.deploy_http_bridge(sri, api).await,
             CellConfig::MqttBridge(bridge) => self.deploy_mqtt_bridge(sri, bridge).await,
+            CellConfig::ModbusBridge(bridge) => self.deploy_modbus_bridge(sri, bridge).await,
         }
     }
 

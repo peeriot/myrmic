@@ -10053,6 +10053,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-modbus",
  "tokio-stream",
  "tower-http",
  "tracing",
@@ -10076,6 +10077,7 @@ dependencies = [
  "futures",
  "introspection-client",
  "module-examples-common",
+ "myrmic-common",
  "postcard",
  "serde",
  "serde_json",
@@ -10119,6 +10121,7 @@ dependencies = [
  "swarm",
  "tempfile",
  "tokio",
+ "tokio-modbus",
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
@@ -11101,6 +11104,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "tokio-modbus"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95d06136e737e962c71d922a09148f5a264f6609a021fdf031ad16ffd172c818"
+dependencies = [
+ "async-trait",
+ "byteorder",
+ "bytes",
+ "crc",
+ "futures-core",
+ "futures-util",
+ "log",
+ "socket2 0.6.5",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

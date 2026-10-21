@@ -1,0 +1,62 @@
+name: ur20
+host: 192.168.0.222
+
+poll:
+  - id: temperature
+    register: input
+    address: 0x0001
+    value: "${i16:tenths}"
+    interval: 1s
+  - id: heat_button
+    register: discrete_input
+    address: 0x0000
+    value: "${bool:pressed}"
+    interval: 50ms
+    on_change: true
+  - id: rtd_module
+    register: holding
+    address: 0x2A02
+    value: "${u32:id}"
+    interval: 10s
+  - id: do_module
+    register: holding
+    address: 0x2A04
+    value: "${u32:id}"
+    interval: 10s
+  - id: heat_button_input_delay
+    register: holding
+    address: 0xC000
+    value: "${u16:delay}"
+    interval: 10s
+  - id: pt100_measurement_range
+    register: holding
+    address: 0xC101
+    value: "${u16:range}"
+    interval: 10s
+  - id: pt100_connection_type
+    register: holding
+    address: 0xC102
+    value: "${u16:connection}"
+    interval: 10s
+
+write:
+  - id: fan_on
+    register: coil
+    address: 0x8000
+    value: "${bool:on}"
+  - id: heater_on
+    register: coil
+    address: 0x8001
+    value: "${bool:on}"
+  - id: set_heat_button_input_delay
+    register: holding
+    address: 0xC000
+    value: "${u16:delay}"
+  - id: set_pt100_measurement_range
+    register: holding
+    address: 0xC101
+    value: "${u16:range}"
+  - id: set_pt100_connection_type
+    register: holding
+    address: 0xC102
+    value: "${u16:connection}"
