@@ -2,8 +2,11 @@ name: Notify CI
 
 # Tells another repository's CI that there is work, since it cannot see events here.
 # It reports what happened and does not decide what runs; the router on the other
-# side does that from the payload.
+# side does that from the payload, with the tests .ci/tests.ref pins.
 on:
+  # The nightly: 02:37 Berlin summer time, 01:37 in winter.
+  schedule:
+    - cron: '37 0 * * *'
   push:
     branches: [master]
     tags: ['myrmic/v*']
