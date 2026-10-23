@@ -110,6 +110,18 @@ fn main() -> std::process::ExitCode {
 
     let args::Args { ctx, command } = clap::Parser::parse();
 
+    // Local commands open no swarm session, so a network flag there does
+    // nothing; `runtimes start` takes `--zone` for the runtime itself.
+    match &command {
+        args::Command::New(_)
+        | args::Command::Build(_)
+        | args::Command::Flash(_)
+        | args::Command::Monitor(_)
+        | args::Command::Platforms(_) => ctx.warn_ignored_network_flags(true),
+        args::Command::Runtimes(cmd) => ctx.warn_ignored_network_flags(!cmd.is_start()),
+        _ => {}
+    }
+
     let result = match command {
         // Project
         args::Command::New(cmd) => cmd::new::handle(&ctx, cmd),
