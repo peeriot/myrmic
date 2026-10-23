@@ -145,6 +145,8 @@ pub enum Error {
 pub fn terminate_module() {
     log::trace!("Received request to terminate WASM module");
     TERMINATE.store(true, Ordering::Release);
+    // Wake a pump parked on a full cell queue so it re-checks termination now.
+    service::CELL_QUEUE_FREED.signal(());
 }
 
 /// Returns whether the runtime has been terminated
