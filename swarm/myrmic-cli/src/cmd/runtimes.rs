@@ -166,7 +166,7 @@ fn implicit_runtime_name(pid_path: &Path) -> anyhow::Result<String> {
 
     let mut running = pids
         .iter()
-        .filter(|pid| matches!(pid.status(), PidStatus::Running(_)));
+        .filter(|pid| matches!(pid.status(), PidStatus::Running(_) | PidStatus::Unreachable));
     if let (Some(only), None) = (running.next(), running.next()) {
         return Ok(only.file_stem().to_owned());
     }
@@ -270,13 +270,15 @@ fn resolve_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pid::test_support::{LockHolder, hold_lock};
 
     fn pid_file(dir: &Path, name: &str, contents: &str) {
         std::fs::write(dir.join(format!("{name}.pid")), contents).expect("write pid file");
     }
 
-    fn own_pid() -> String {
-        format!("{}\n", std::process::id())
+    /// A child process holding the lock on `<name>.pid`, i.e. a live runtime.
+    fn running(dir: &Path, name: &str) -> LockHolder {
+        hold_lock(&dir.join(format!("{name}.pid")))
     }
 
     #[test]
@@ -291,7 +293,7 @@ mod tests {
     #[test]
     fn the_only_running_runtime_wins_over_dead_ones() {
         let dir = tempfile::tempdir().expect("tempdir");
-        pid_file(dir.path(), "alive", &own_pid());
+        let _alive = running(dir.path(), "alive");
         pid_file(dir.path(), "dead", "garbage");
         pid_file(dir.path(), "gone", "garbage");
 
@@ -312,8 +314,8 @@ mod tests {
     #[test]
     fn several_running_runtimes_are_ambiguous() {
         let dir = tempfile::tempdir().expect("tempdir");
-        pid_file(dir.path(), "one", &own_pid());
-        pid_file(dir.path(), "two", &own_pid());
+        let _one = running(dir.path(), "one");
+        let _two = running(dir.path(), "two");
 
         let err = implicit_runtime_name(dir.path()).expect_err("ambiguous");
         assert!(err.to_string().contains("pass a name"), "{err}");
