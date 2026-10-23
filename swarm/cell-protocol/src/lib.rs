@@ -68,6 +68,11 @@ pub fn placement_scope() -> Scope {
 /// [`placement_scope`], so that two concurrent claims of it on one node
 /// conflict at commit: listing the generations is not tracked by the conflict
 /// check, a point read is.
+///
+/// The key carries no data, so removing a placement removes it too, whichever
+/// generation that was: a later claim writes it again. Its tombstone stays in
+/// storage for now, like those of the generation rows, but marks the key as
+/// gone for the storage cleanup that is left for later.
 #[must_use]
 pub fn placement_claim_key(sri: &Sri) -> String {
     format!("claim/{sri}")
@@ -769,46 +774,6 @@ mod tests {
         assert_eq!(recovered.trace_id(), span_ctx.trace_id());
         assert_eq!(recovered.span_id(), span_ctx.span_id());
         assert_eq!(recovered.trace_flags(), span_ctx.trace_flags());
-    }
-}
-
-#[cfg(test)]
-mod instance_row_tests {
-    use super::*;
-
-    fn sri() -> Sri {
-        sri_of_path("row-test-app").unwrap().into()
-    }
-
-    #[test]
-    fn cell_instance_round_trips() {
-        let v = CellInstance {
-            sri: sri(),
-            class: BlobHash::of(b"c"),
-            gen_id: Gen::from_parts(7, 1),
-            lineage: SpawnLineage {
-                parent: None,
-                parent_gen_id: Some(Gen::from_parts(9, 1)),
-                detached: true,
-                local_name: Some("pump".into()),
-                grace_ms: Some(30_000),
-                deadline_ms: Some(120_000),
-            },
-        };
-        let bytes = postcard::to_allocvec(&v).unwrap();
-        assert_eq!(postcard::from_bytes::<CellInstance>(&bytes).unwrap(), v);
-    }
-
-    #[test]
-    fn placement_entry_round_trips() {
-        let v = PlacementEntry {
-            sri: sri(),
-            kind: PlacementKind::Placeholder,
-            app: None,
-            gen_id: Gen::from_parts(3, 1),
-        };
-        let bytes = postcard::to_allocvec(&v).unwrap();
-        assert_eq!(postcard::from_bytes::<PlacementEntry>(&bytes).unwrap(), v);
     }
 }
 

@@ -116,6 +116,8 @@ fn key_put(tx: &mut StoreTx, op: key_put::Op) -> Result<key_put::Response, Strin
 
     tx.key_put(key, &op.value)
         .map_err(|err| format_error(&err))?;
+    tx.metadata_or_default()
+        .insert((op.scope, String::from(events::KEY_EVENTS)));
 
     Ok(key_put::Response {})
 }

@@ -13,10 +13,6 @@ use crate::{Result, custom_err};
 
 /// [`fence::admit`] for a write to generation `gen_id` of `sri` in `scope`:
 /// the cell's newest generation must be `gen_id`.
-///
-/// Also point-reads that generation's own key: listing the generations is not
-/// tracked by the store's conflict check, a point read is, so a concurrent
-/// write to the same generation on the same node fails one of the two commits.
 pub(crate) async fn admit(
     client: &DbClient,
     tx_id: TxId,
@@ -24,6 +20,59 @@ pub(crate) async fn admit(
     sri: &Sri,
     gen_id: Gen,
 ) -> Result<core::result::Result<(), FenceOutcome>> {
+    let newest = newest_generation(client, tx_id, scope, sri, gen_id).await?;
+
+    Ok(fence::admit(newest, gen_id))
+}
+
+/// Removes generation `gen_id` of `sri`'s row in `scope`. A key per generation
+/// means this can't touch another generation, so it is never refused. The
+/// outcome reports the cell's newest generation as this transaction sees it,
+/// the way [`admit`] does for a write.
+///
+/// The tombstone is written whether or not this transaction sees the row: its
+/// holder can be a write behind on `scope` (a caller's transaction routed to
+/// another scope), and a tombstone for a row that is already gone is harmless.
+pub(crate) async fn remove(
+    client: &DbClient,
+    tx_id: TxId,
+    scope: &Scope,
+    sri: &Sri,
+    gen_id: Gen,
+) -> Result<FenceOutcome> {
+    let newest = newest_generation(client, tx_id, scope, sri, gen_id).await?;
+
+    client
+        .send(key_delete::Request {
+            id: tx_id,
+            op: key_delete::Op {
+                scope: scope.clone(),
+                key: generation_key(sri, gen_id),
+            },
+        })
+        .await
+        .map_err(|err| custom_err!("unable to send delete request: {err}"))?
+        .map_err(|err| custom_err!("unable to remove row: {}", err.message))?;
+
+    Ok(match fence::admit(newest, gen_id) {
+        Ok(()) => FenceOutcome::Applied,
+        Err(outcome) => outcome,
+    })
+}
+
+/// The newest generation of `sri` in `scope`, for a mutation of generation
+/// `gen_id`.
+///
+/// Also point-reads `gen_id`'s own key: listing the generations is not tracked
+/// by the store's conflict check, a point read is, so a concurrent write to the
+/// same generation on the same node fails one of the two commits.
+async fn newest_generation(
+    client: &DbClient,
+    tx_id: TxId,
+    scope: &Scope,
+    sri: &Sri,
+    gen_id: Gen,
+) -> Result<Option<Gen>> {
     client
         .send(key_get::Request {
             id: tx_id,
@@ -35,12 +84,11 @@ pub(crate) async fn admit(
         .await
         .map_err(|err| custom_err!("unable to send get request: {err}"))?
         .map_err(|err| custom_err!("unable to read generation: {}", err.message))?;
-    let newest = generations(client, tx_id, scope, sri)
+
+    Ok(generations(client, tx_id, scope, sri)
         .await?
         .into_iter()
-        .max();
-
-    Ok(fence::admit(newest, gen_id))
+        .max())
 }
 
 /// Every generation of `sri` in `scope`.
@@ -112,28 +160,6 @@ pub(crate) async fn put(
         .await
         .map_err(|err| custom_err!("unable to send put request: {err}"))?
         .map_err(|err| custom_err!("unable to write row: {}", err.message))?;
-
-    Ok(())
-}
-
-/// Adds a tombstone for `key`, so the row reads as gone.
-pub(crate) async fn delete(
-    client: &DbClient,
-    tx_id: TxId,
-    scope: &Scope,
-    key: String,
-) -> Result<()> {
-    client
-        .send(key_delete::Request {
-            id: tx_id,
-            op: key_delete::Op {
-                scope: scope.clone(),
-                key,
-            },
-        })
-        .await
-        .map_err(|err| custom_err!("unable to send delete request: {err}"))?
-        .map_err(|err| custom_err!("unable to delete row: {}", err.message))?;
 
     Ok(())
 }

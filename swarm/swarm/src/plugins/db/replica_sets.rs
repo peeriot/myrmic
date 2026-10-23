@@ -55,8 +55,6 @@ pub fn unconditional() -> Vec<models::Subject> {
 pub async fn run(context: StoreContext, db: db_client::v1::Client, tags: LiveTags) {
     let mut retagged = tags.subscribe();
 
-    // Placements are key-value rows, which publish no table events: a cell
-    // newly deployed into an application is picked up by the periodic poll.
     let polled = PolledTable::tables(
         &db,
         [
@@ -65,6 +63,10 @@ pub async fn run(context: StoreContext, db: db_client::v1::Client, tags: LiveTag
                 REPLICATION_TABLE,
             ),
             (models::Subject::Scope(replication_scope()), CUSTODY_TABLE),
+            (
+                models::Subject::Scope(placement_scope()),
+                models::events::KEY_EVENTS,
+            ),
         ],
     )
     .await;

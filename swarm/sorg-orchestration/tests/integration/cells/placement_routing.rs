@@ -18,7 +18,7 @@
 //! the wrong stand-in would look like the outcome the test wants.
 //!
 //! The placements have a fifth reader on the same terms: the guard that
-//! stops an instance erase from removing a live cell's row. That erase writes
+//! stops an instance removal from removing a live cell's row. That removal writes
 //! in the instance registry's scope, so its placement read has to be located
 //! on its own rather than ride the transaction doing the writing.
 
@@ -52,12 +52,12 @@ const PROBE_SRI: &str = "routing_probe_cell";
 /// while the placement decision is still being made.
 const UNMET_TAG: &str = "fpga";
 
-/// The cell whose instance row the erase test seeds, and the generation it
-/// carries. The erase names that generation, and so does the placement row the
-/// stand-in serves - a guard only refuses on a placement of the erase's own
+/// The cell whose instance row the removal test seeds, and the generation it
+/// carries. The removal names that generation, and so does the placement row the
+/// stand-in serves - a guard only refuses on a placement of the removal's own
 /// incarnation.
-const ERASE_SRI: &str = "instance_erase_probe";
-const ERASE_GEN: Gen = Gen::from_parts(1, 1);
+const REMOVAL_SRI: &str = "instance_removal_probe";
+const REMOVAL_GEN: Gen = Gen::from_parts(1, 1);
 
 /// The stand-in holder's node id. Every byte is non-zero, so its `uhlc::ID`
 /// renders in full and the store keyexpr derived from it is stable.
@@ -372,21 +372,21 @@ async fn placement_retries_while_only_an_artifact_is_missing() {
     );
 }
 
-// The instance erase writes in the instance registry's scope and reads the
-// placement to refuse erasing a live cell's row. An op carries its own scope
+// The instance removal writes in the instance registry's scope and reads the
+// placement to refuse removing a live cell's row. An op carries its own scope
 // wherever it lands, so a placement read riding that write transaction is
 // answered by the node holding the instance registry - which can be a write
 // behind on the placement scope. That read has to be located on its own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn instance_erase_reads_the_placement_through_its_own_scope() {
+async fn instance_removal_reads_the_placement_through_its_own_scope() {
     // Arrange - an instance row and no placement for it. No cell class and no
     // exec: nothing here deploys, the rows are seeded and read directly.
     let mut test_app = spawn_test_app_with_swarm(swarm_config!("cells/orch_only.jsonnet")).await;
-    let sri = to_sri(ERASE_SRI);
+    let sri = to_sri(REMOVAL_SRI);
     let record = CellInstance {
         sri,
-        class: BlobHash::of(b"erase_probe"),
-        gen_id: ERASE_GEN,
+        class: BlobHash::of(b"removal_probe"),
+        gen_id: REMOVAL_GEN,
         lineage: SpawnLineage::default(),
     };
     assert_ok!(
@@ -394,8 +394,8 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
         "seeding the instance row should succeed"
     );
 
-    // Guard against a vacuous pass: the erase is refused only by a placement,
-    // and there is none on the real holder, so an erase that reads the
+    // Guard against a vacuous pass: the removal is refused only by a placement,
+    // and there is none on the real holder, so a removal that reads the
     // placement anywhere else finds nothing in its way and goes through. The
     // refusal below can therefore only come from the stand-in.
     let placed = assert_ok!(get_placement(test_app.session(), &sri).await);
@@ -405,37 +405,37 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
          otherwise this test proves nothing"
     );
 
-    // Act - a stand-in holder serving a placement of the erase's own
+    // Act - a stand-in holder serving a placement of the removal's own
     // generation, which is what the guard refuses on.
     let placement = PlacementEntry {
         sri,
         kind: PlacementKind::Placeholder,
         app: None,
-        gen_id: ERASE_GEN,
+        gen_id: REMOVAL_GEN,
     };
     declare_stand_in_holder(
         &mut test_app,
         &cell_protocol::placement_scope(),
         Some(StandInRow::Key(
-            generation_key(&sri, ERASE_GEN),
+            generation_key(&sri, REMOVAL_GEN),
             encode(&placement.row()),
         )),
     )
     .await;
 
-    // Assert - the erase consulted the holder the placement scope resolves to,
+    // Assert - the removal consulted the holder the placement scope resolves to,
     // found the cell deployed there, and refused. Had that read gone through
     // the instance registry's holder it would have found no placement and
-    // erased a row that a live cell owns.
+    // removed a row that a live cell owns.
     assert_err!(
-        instance_registry::erase_instance(test_app.session(), &sri, ERASE_GEN).await,
-        "erasing an instance the placement scope reports as deployed must fail"
+        instance_registry::remove_instance(test_app.session(), &sri, REMOVAL_GEN).await,
+        "removing an instance the placement scope reports as deployed must fail"
     );
     let instances = assert_ok!(instance_registry::list_instances(test_app.session()).await);
     assert_eq!(
         instances.len(),
         1,
-        "the refused erase must leave the instance row alone"
+        "the refused removal must leave the instance row alone"
     );
 }
 

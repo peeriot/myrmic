@@ -81,18 +81,20 @@ impl DeployTransaction {
             // The placement is the claim: while it stands no successor can
             // start writing rows of its own, so it goes after everything a
             // successor could otherwise share. The instance row follows — its
-            // erase is refused while a same-generation placement exists.
+            // removal is refused while a same-generation placement exists.
             match remove_placement(&rt.session, sri, *gen_id).await {
                 Ok(FenceOutcome::Applied) => {}
-                Ok(outcome) => debug!("rollback: placement '{sri}' not removed: {outcome:?}"),
+                Ok(outcome) => {
+                    debug!("rollback: placement '{sri}' was not the newest: {outcome:?}");
+                }
                 Err(err) => warn!("rollback: failed to remove placement '{sri}': {err}"),
             }
             // Written by the exec at init, or by the orchestrator for embedded
             // cells; absent when the deploy never got that far.
-            match sorg_common::instance_registry::erase_instance(&rt.session, sri, *gen_id).await {
+            match sorg_common::instance_registry::remove_instance(&rt.session, sri, *gen_id).await {
                 Ok(FenceOutcome::Applied | FenceOutcome::Absent) => {}
-                Ok(outcome) => debug!("rollback: instance '{sri}' not erased: {outcome:?}"),
-                Err(err) => warn!("rollback: failed to erase instance '{sri}': {err}"),
+                Ok(outcome) => debug!("rollback: instance '{sri}' was not the newest: {outcome:?}"),
+                Err(err) => warn!("rollback: failed to remove instance '{sri}': {err}"),
             }
         }
     }

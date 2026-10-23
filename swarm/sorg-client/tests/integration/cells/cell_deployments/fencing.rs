@@ -24,6 +24,15 @@ fn placeholder(sri: Sri, gen_id: Gen) -> PlacementEntry {
     }
 }
 
+fn instance(sri: Sri, gen_id: Gen) -> CellInstance {
+    CellInstance {
+        sri,
+        class: cell_protocol::BlobHash::of(b"fenced"),
+        gen_id,
+        lineage: SpawnLineage::default(),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn placement_mutations_are_fenced_by_generation() {
     let test_app = spawn_db_test_app().await;
@@ -77,39 +86,71 @@ async fn placement_mutations_are_fenced_by_generation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn instance_erase_is_fenced_by_generation() {
+async fn instance_removal_is_fenced_by_generation() {
     let test_app = spawn_db_test_app().await;
     let session = test_app.session();
     let sri = Sri::from_target(SRI).unwrap();
-    let record = CellInstance {
-        sri,
-        class: cell_protocol::BlobHash::of(b"fenced"),
-        gen_id: FIRST,
-        lineage: SpawnLineage::default(),
-    };
-    assert_ok!(instance_registry::insert_registry_entry(session, &record).await);
+    assert_ok!(instance_registry::insert_registry_entry(session, &instance(sri, FIRST)).await);
     assert_ok!(claim_placement(session, placeholder(sri, FIRST)).await);
 
     // Deployed under the same generation: the row is a live cell's record.
     assert_err!(
-        instance_registry::erase_instance(session, &sri, FIRST).await,
-        "erasing a deployed incarnation's row should be refused"
+        instance_registry::remove_instance(session, &sri, FIRST).await,
+        "removing a deployed incarnation's row should be refused"
     );
 
     // The incarnation is undeployed and a successor claims the SRI: the
-    // successor cannot erase the predecessor's row, but the predecessor can.
+    // successor is deployed now, so its row is refused the same way, while the
+    // predecessor removes its own.
     assert_ok!(remove_placement(session, &sri, FIRST).await);
     assert_ok!(claim_placement(session, placeholder(sri, SECOND)).await);
-    assert_eq!(
-        assert_ok!(instance_registry::erase_instance(session, &sri, SECOND).await),
-        FenceOutcome::Superseded { current: FIRST }
+    assert_err!(
+        instance_registry::remove_instance(session, &sri, SECOND).await,
+        "removing the deployed successor's row should be refused"
     );
     assert_eq!(
-        assert_ok!(instance_registry::erase_instance(session, &sri, FIRST).await),
+        assert_ok!(instance_registry::remove_instance(session, &sri, FIRST).await),
         FenceOutcome::Applied
     );
     assert_eq!(
-        assert_ok!(instance_registry::erase_instance(session, &sri, FIRST).await),
+        assert_ok!(instance_registry::remove_instance(session, &sri, FIRST).await),
         FenceOutcome::Absent
+    );
+}
+
+/// Removing an older generation while a newer one exists removes it, without
+/// touching the newer one, so nothing comes back once the newer one is removed
+/// too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn an_older_generation_is_removed_next_to_a_newer_one() {
+    let test_app = spawn_db_test_app().await;
+    let session = test_app.session();
+    let sri = Sri::from_target(SRI).unwrap();
+    // Two live generations, as after a merge: the newer one is written first,
+    // so the older one's insert finds no older generation to retire.
+    for gen_id in [SECOND, FIRST] {
+        assert_ok!(instance_registry::insert_registry_entry(session, &instance(sri, gen_id)).await);
+    }
+
+    assert_eq!(
+        assert_ok!(instance_registry::remove_instance(session, &sri, FIRST).await),
+        FenceOutcome::Superseded { current: SECOND }
+    );
+    assert_eq!(
+        assert_some!(assert_ok!(
+            instance_registry::get_instance(session, &sri).await
+        ))
+        .gen_id,
+        SECOND,
+        "the newer generation should be untouched"
+    );
+
+    assert_eq!(
+        assert_ok!(instance_registry::remove_instance(session, &sri, SECOND).await),
+        FenceOutcome::Applied
+    );
+    assert!(
+        assert_ok!(instance_registry::get_instance(session, &sri).await).is_none(),
+        "the older generation must not come back"
     );
 }

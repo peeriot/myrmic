@@ -226,6 +226,13 @@ impl Subject {
 pub mod events {
     use super::{Scope, Table, Version};
 
+    /// The name a scope's key-value writes publish their events under, in place
+    /// of a table name: a commit that put keys into a scope sends one event for
+    /// them, as a commit that inserted rows into a table does for that table.
+    /// The `@` keeps it apart from table names in topics, where a `*` doesn't
+    /// match it.
+    pub const KEY_EVENTS: &str = "@keys";
+
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     pub enum TableEvent {
         /// Carries the version the commit landed at, usable as a

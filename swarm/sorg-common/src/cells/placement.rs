@@ -2,7 +2,7 @@ use cell_protocol::generations::{GENERATIONS, generation_key, generations_of, ne
 use cell_protocol::{Gen, PlacementEntry, Sri, placement_claim_key, placement_scope};
 use db_client::v1::{
     Client as DbClient,
-    models::{TxId, key_get},
+    models::{TxId, key_delete, key_get},
 };
 use zenoh::Session;
 
@@ -186,8 +186,10 @@ async fn do_commit(client: &DbClient, tx_id: TxId, entry: &PlacementEntry) -> Re
     Ok(FenceOutcome::Applied)
 }
 
-/// Removes generation `gen_id` of a cell's placement, provided it is the
-/// cell's newest generation.
+/// Removes generation `gen_id` of a cell's placement, if it is there; a newer
+/// generation is never touched. The outcome says whether `gen_id` was the
+/// cell's newest generation (see [`FenceOutcome`]). Also removes the cell's
+/// claim key (see [`placement_claim_key`]).
 pub async fn remove_placement(session: &Session, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
     let db = DbClient::new(session);
     let sri = *sri;
@@ -200,14 +202,20 @@ pub async fn remove_placement(session: &Session, sri: &Sri, gen_id: Gen) -> Resu
 }
 
 async fn do_remove(client: &DbClient, tx_id: TxId, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
-    let scope = placement_scope();
-    if let Err(outcome) = generation_rows::admit(client, tx_id, &scope, sri, gen_id).await? {
-        return Ok(outcome);
-    }
+    let outcome = generation_rows::remove(client, tx_id, &placement_scope(), sri, gen_id).await?;
+    client
+        .send(key_delete::Request {
+            id: tx_id,
+            op: key_delete::Op {
+                scope: placement_scope(),
+                key: placement_claim_key(sri),
+            },
+        })
+        .await
+        .map_err(|err| custom_err!("placement claim removal failed: {err}"))?
+        .map_err(|err| custom_err!("placement claim removal failed: {}", err.message))?;
 
-    generation_rows::delete(client, tx_id, &scope, generation_key(sri, gen_id)).await?;
-
-    Ok(FenceOutcome::Applied)
+    Ok(outcome)
 }
 
 async fn put_placement(client: &DbClient, tx_id: TxId, entry: &PlacementEntry) -> Result<()> {

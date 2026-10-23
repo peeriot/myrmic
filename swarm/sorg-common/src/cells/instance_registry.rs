@@ -3,33 +3,27 @@ use cell_protocol::{CellInstance, Gen, Sri, instance_registry_scope};
 use db_client::v1::{Client as DbClient, models::TxId};
 use zenoh::Session;
 
-use super::fence::{self, FenceOutcome};
+use super::fence::FenceOutcome;
 use super::{generation_rows, placement};
 use crate::{Result, bail, custom_err};
 
-/// Erases the instance row of one incarnation, provided it is still the cell's
-/// newest generation `gen_id`. Refused while that incarnation is deployed: a
-/// placement of the same generation means the row is a live cell's record. An
-/// absent row is reported, not an error — callers routinely race undeploy's
-/// own erase.
-pub async fn erase_instance(session: &Session, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
-    // Each row is read through its own scope's locate round. Issued on this
-    // function's transaction, a placement read is answered by the node holding
-    // the instance registry, which can be a write behind on the placement scope
-    // and then reports a placement that is already gone.
-    //
-    // The row's own generation decides first: a row of another incarnation is
-    // not this caller's to erase, whatever the placement says.
-    let existing = get_instance(session, sri).await?;
-    if let Err(outcome) = fence::admit(existing.map(|record| record.gen_id), gen_id) {
-        return Ok(outcome);
-    }
+/// Removes the instance row of generation `gen_id`, if it is there; a newer
+/// generation is never touched. The outcome says whether `gen_id` was the
+/// cell's newest generation (see [`FenceOutcome`]). Refused while that
+/// incarnation is deployed: a placement of the same generation means the row
+/// is a live cell's record. An absent row is reported, not an error — callers
+/// routinely race undeploy's own removal.
+pub async fn remove_instance(session: &Session, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
+    // The placement is read through its own scope's locate round. Issued on
+    // this function's transaction, it would be answered by the node holding the
+    // instance registry, which can be a write behind on the placement scope and
+    // then reports a placement that is already gone.
     if placement::get_placement(session, sri)
         .await?
         .is_some_and(|entry| entry.gen_id == gen_id)
     {
         bail!(
-            "cannot erase instance '{}': cell is currently deployed",
+            "cannot remove instance '{}': cell is currently deployed",
             sri
         );
     }
@@ -38,7 +32,7 @@ pub async fn erase_instance(session: &Session, sri: &Sri, gen_id: Gen) -> Result
     let db = DbClient::new(session);
 
     db.write_tx_in(instance_registry_scope(), async move |client, tx_id| {
-        Ok(do_erase(client, tx_id, &sri, gen_id).await)
+        Ok(generation_rows::remove(client, tx_id, &instance_registry_scope(), &sri, gen_id).await)
     })
     .await
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
@@ -74,7 +68,7 @@ pub async fn insert_registry_entry_in_tx(
         .map_err(|err| custom_err!("unable to communicate with db: {}", err))??;
 
     let db = DbClient::new(session);
-    do_insert_registry_entry(&db, tx_id, record, generations).await
+    write_registry_entry(&db, tx_id, record, generations).await
 }
 
 /// Inserts a registry entry in its own write transaction.
@@ -83,17 +77,7 @@ pub async fn insert_registry_entry(session: &Session, record: &CellInstance) -> 
     let db = DbClient::new(session);
 
     db.write_tx_in(instance_registry_scope(), async move |client, tx_id| {
-        Ok(async {
-            let generations = generation_rows::generations(
-                client,
-                tx_id,
-                &instance_registry_scope(),
-                &record.sri,
-            )
-            .await?;
-            do_insert_registry_entry(client, tx_id, &record, generations).await
-        }
-        .await)
+        Ok(do_insert_registry_entry(client, tx_id, &record).await)
     })
     .await
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
@@ -109,17 +93,6 @@ pub async fn get_instance(session: &Session, sri: &Sri) -> Result<Option<CellIns
     })
     .await
     .map_err(|err| custom_err!("unable to communicate with db: {}", err))?
-}
-
-async fn do_erase(client: &DbClient, tx_id: TxId, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
-    let scope = instance_registry_scope();
-    if let Err(outcome) = generation_rows::admit(client, tx_id, &scope, sri, gen_id).await? {
-        return Ok(outcome);
-    }
-
-    generation_rows::delete(client, tx_id, &scope, generation_key(sri, gen_id)).await?;
-
-    Ok(FenceOutcome::Applied)
 }
 
 async fn do_list(client: &DbClient, tx_id: TxId) -> Result<Vec<CellInstance>> {
@@ -154,10 +127,23 @@ async fn do_get(client: &DbClient, tx_id: TxId, sri: &Sri) -> Result<Option<Cell
     Ok(instances.pop())
 }
 
-/// Writes `record`'s generation and tombstones the older ones among the SRI's
-/// `generations` in the same transaction: an older generation left behind
-/// would come back into view once this one is erased.
+/// [`write_registry_entry`] with the generations read in the same transaction,
+/// which is routed to the registry's own scope.
 async fn do_insert_registry_entry(
+    client: &DbClient,
+    tx_id: TxId,
+    record: &CellInstance,
+) -> Result<()> {
+    let generations =
+        generation_rows::generations(client, tx_id, &instance_registry_scope(), &record.sri)
+            .await?;
+    write_registry_entry(client, tx_id, record, generations).await
+}
+
+/// Writes `record`'s generation and removes the older ones among the SRI's
+/// `generations` in the same transaction: an older generation left behind
+/// would come back into view once this one is removed.
+async fn write_registry_entry(
     client: &DbClient,
     tx_id: TxId,
     record: &CellInstance,
@@ -168,7 +154,9 @@ async fn do_insert_registry_entry(
         .into_iter()
         .filter(|gen_id| *gen_id < record.gen_id);
     for gen_id in older {
-        generation_rows::delete(client, tx_id, &scope, generation_key(&record.sri, gen_id)).await?;
+        // The outcome only reports which generation is newest, and this insert
+        // is about to make that `record`'s.
+        generation_rows::remove(client, tx_id, &scope, &record.sri, gen_id).await?;
     }
 
     let value = postcard::to_allocvec(&record.row())

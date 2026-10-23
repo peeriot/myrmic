@@ -270,6 +270,69 @@ async fn commit_publishes_insert_event() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn commit_publishes_a_key_event() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+
+    let (events_tx, events_rx) = flume::unbounded();
+    let _sub = client
+        .subscribe(
+            Subject::Scope(scope()),
+            models::events::KEY_EVENTS,
+            move |notification| {
+                if events_tx.send(notification).is_err() {
+                    // the test has stopped listening
+                }
+            },
+        )
+        .await
+        .expect("unable to subscribe");
+
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+
+    for key in ["a", "b"] {
+        client
+            .send(models::key_put::Request {
+                id: tx.id,
+                op: models::key_put::Op {
+                    scope: scope(),
+                    key: String::from(key),
+                    value: b"1".to_vec(),
+                },
+            })
+            .await
+            .expect("send failed")
+            .expect("put failed");
+    }
+
+    client
+        .send(models::tx_commit::Request { id: tx.id })
+        .await
+        .expect("send failed")
+        .expect("commit failed");
+
+    let notification = tokio::time::timeout(Duration::from_secs(10), events_rx.recv_async())
+        .await
+        .expect("no event within 10s")
+        .expect("event channel closed");
+
+    assert_eq!(notification.scope, scope());
+    assert_eq!(notification.table, models::events::KEY_EVENTS);
+    assert!(matches!(notification.event, TableEvent::Inserted(_)));
+
+    // Both puts landed in one commit, so there is exactly one poke.
+    let extra = tokio::time::timeout(Duration::from_millis(500), events_rx.recv_async()).await;
+    assert!(
+        extra.is_err(),
+        "expected a single key event per scope per commit"
+    );
+}
+
 /// Configures a replication set pinning `subject` to the node (via its runtime
 /// tag), so a locate queryable covering it is declared (a routed `tx_begin`
 /// finds a holder via locate over replicating nodes). The watcher applies the

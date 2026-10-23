@@ -127,28 +127,33 @@ pub enum RowError {
     #[error("malformed generation key {0:?}")]
     Key(String),
     /// A value that does not decode as the scope's row type.
-    #[error("undecodable row under {0:?}")]
-    Value(String),
+    #[error("undecodable row under {key:?}: {reason}")]
+    Value {
+        /// The row's key.
+        key: String,
+        /// Why it doesn't decode.
+        reason: postcard::Error,
+    },
 }
 
 /// The newest placement of each SRI among `entries`, as listed (keys with
 /// values) under [`GENERATIONS`] or [`generations_of`] in the placement scope.
-/// Rows that can't be read come back as errors next to the others, for the
-/// caller to fail on or skip.
+/// Rows that can't be read come back as errors after the readable ones, for
+/// the caller to fail on or skip.
 pub fn newest_placements(entries: Vec<(String, Vec<u8>)>) -> Vec<Result<PlacementEntry, RowError>> {
     newest(entries, PlacementEntry::from_row)
 }
 
 /// The newest instance of each SRI among `entries`, as listed (keys with
 /// values) under [`GENERATIONS`] or [`generations_of`] in the instance
-/// registry scope. Rows that can't be read come back as errors next to the
-/// others, for the caller to fail on or skip.
+/// registry scope. Rows that can't be read come back as errors after the
+/// readable ones, for the caller to fail on or skip.
 pub fn newest_instances(entries: Vec<(String, Vec<u8>)>) -> Vec<Result<CellInstance, RowError>> {
     newest(entries, CellInstance::from_row)
 }
 
 /// Keeps each SRI's newest generation among `entries` and assembles it from
-/// its key and decoded value.
+/// its key and decoded value; the errors go last.
 fn newest<R, T>(
     entries: Vec<(String, Vec<u8>)>,
     assemble: fn(Sri, Gen, R) -> T,
@@ -175,7 +180,8 @@ where
     newest
         .into_iter()
         .map(|(sri, (gen_id, key, value))| {
-            let row = postcard::from_bytes(&value).map_err(|_| RowError::Value(key))?;
+            let row =
+                postcard::from_bytes(&value).map_err(|reason| RowError::Value { key, reason })?;
             Ok(assemble(sri, gen_id, row))
         })
         .chain(malformed)
@@ -227,12 +233,51 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_key_is_an_error_next_to_the_readable_rows() {
+    fn a_malformed_key_is_an_error_after_the_readable_rows() {
         let good = entry(sri("a"), Gen::from_parts(1, 1), "a");
         let malformed = (String::from("gen/not-a-key"), good.1.clone());
-        let placements = newest_placements(vec![good, malformed]);
+        let placements = newest_placements(vec![malformed, good]);
         assert_eq!(placements.len(), 2);
         assert!(placements[0].is_ok());
         assert!(matches!(placements[1], Err(RowError::Key(_))));
+    }
+
+    #[test]
+    fn a_placement_round_trips_through_its_row() {
+        let placement = PlacementEntry {
+            sri: sri("a"),
+            kind: PlacementKind::Bridge { sri: sri("bridge") },
+            app: Some("app".into()),
+            gen_id: Gen::from_parts(3, 1),
+        };
+        let bytes = postcard::to_allocvec(&placement.row()).unwrap();
+        let row = postcard::from_bytes::<PlacementRow>(&bytes).unwrap();
+        assert_eq!(
+            PlacementEntry::from_row(placement.sri, placement.gen_id, row),
+            placement
+        );
+    }
+
+    #[test]
+    fn an_instance_round_trips_through_its_row() {
+        let instance = CellInstance {
+            sri: sri("a"),
+            class: BlobHash::of(b"c"),
+            gen_id: Gen::from_parts(7, 1),
+            lineage: SpawnLineage {
+                parent: None,
+                parent_gen_id: Some(Gen::from_parts(9, 1)),
+                detached: true,
+                local_name: Some("pump".into()),
+                grace_ms: Some(30_000),
+                deadline_ms: Some(120_000),
+            },
+        };
+        let bytes = postcard::to_allocvec(&instance.row()).unwrap();
+        let row = postcard::from_bytes::<InstanceRow>(&bytes).unwrap();
+        assert_eq!(
+            CellInstance::from_row(instance.sri, instance.gen_id, row),
+            instance
+        );
     }
 }
