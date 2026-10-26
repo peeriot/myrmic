@@ -32,6 +32,10 @@ Sets the runtime instance name. Defaults to `default`.
 
 Adds a capability tag to this runtime instance. Can be specified multiple times to add multiple tags. Merged with any tags in the configuration file.
 
+`--zone ZONE` / `-z ZONE`
+
+Joins the zone with this id, in addition to local multicast discovery. Runtimes sharing a zone id find each other through a lighthouse service and connect directly over the internet, so a swarm can span networks. The id admits a runtime to the zone, so treat it as a shared secret.
+
 `--detached` / `-d`
 
 Start the runtime as a background daemon. The command returns once the runtime is ready, so a deploy right after it can place cells on it. If the runtime exits before it is ready, the command fails and names the directory with its logs.

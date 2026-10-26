@@ -28,6 +28,13 @@ pub struct Runtimes {
     cmd: Option<Cmd>,
 }
 
+impl Runtimes {
+    /// Whether this starts a runtime, the one subcommand `--zone` is for.
+    pub fn is_start(&self) -> bool {
+        matches!(self.cmd, Some(Cmd::Start(_)))
+    }
+}
+
 #[derive(clap::Subcommand)]
 pub enum Cmd {
     /// List runtimes discovered started via `runtime start`
@@ -338,5 +345,37 @@ mod tests {
 
         merge_names(Some(String::from("a")), Some(String::from("b")))
             .expect_err("two names conflict");
+    }
+
+    fn parse(argv: &[&str]) -> (crate::args::Ctx, Runtimes) {
+        use clap::Parser as _;
+
+        let args =
+            crate::args::Args::try_parse_from(argv).unwrap_or_else(|err| panic!("parses: {err}"));
+        let crate::args::Command::Runtimes(runtimes) = args.command else {
+            panic!("not a runtimes command");
+        };
+        (args.ctx, runtimes)
+    }
+
+    /// The global `--zone` (the CLI's own session) has the same name; clap
+    /// leaves this subcommand its own argument.
+    #[test]
+    fn start_keeps_its_own_zone_argument() {
+        let (_, runtimes) = parse(&["myrmic", "runtimes", "start", "--zone", "blah"]);
+
+        assert!(runtimes.is_start());
+        let Some(Cmd::Start(start)) = runtimes.cmd else {
+            panic!("not a runtimes start");
+        };
+        assert_eq!(start.zone.as_deref(), Some("blah"));
+    }
+
+    #[test]
+    fn another_subcommand_gets_the_global_zone() {
+        let (ctx, runtimes) = parse(&["myrmic", "runtimes", "list", "--zone", "blah"]);
+
+        assert!(!runtimes.is_start());
+        assert_eq!(ctx.zone.as_deref(), Some("blah"));
     }
 }

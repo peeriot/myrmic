@@ -162,6 +162,7 @@ zenoh = { workspace = true, default-features = true, features = [
     "unstable",
     "internal",
     "tracing-instrument",
+    "transport_iroh",
 ] }
 swarm-api = { workspace = true }
 

@@ -105,36 +105,61 @@ pub fn validate_name(name: &str) -> anyhow::Result<()> {
 }
 
 impl Ctx {
-    pub async fn session(&self) -> anyhow::Result<zenoh::Session> {
-        let mut zenoh_config = zenoh::Config::default();
-        zenoh_config
-            .set_mode(Some(zenoh::config::WhatAmI::Peer))
-            .expect("setting mode cannot fail here");
+    /// The zenoh configuration this invocation opens with. With `--connect`
+    /// the CLI is a client of those endpoints: it tries them in order, keeps
+    /// one transport, listens on nothing and skips multicast discovery. With
+    /// `--zone` it is a client that looks the zone's members up and connects
+    /// to one of them, while multicast discovery races it. Without either,
+    /// it scouts the local network as a peer.
+    pub fn session_config(&self) -> anyhow::Result<zenoh::Config> {
+        let mut config = zenoh::Config::default();
 
         if !self.connect.is_empty() {
             let endpoints = serde_json::to_string(&self.connect)
                 .expect("serializing CLI connect endpoints cannot fail");
-            zenoh_config
+            config
                 .insert_json5("connect/endpoints", &endpoints)
                 .map_err(|err| anyhow::anyhow!("invalid --connect endpoint: {err}"))?;
-            zenoh_config
+            config
                 .insert_json5("scouting/multicast/enabled", "false")
                 .expect("disabling multicast scouting cannot fail");
-            zenoh_config
-                .insert_json5("open/return_conditions/connect_scouted", "true")
-                .expect("setting explicit connect return condition cannot fail");
         }
+        if let Some(zone) = &self.zone {
+            let zone_id: zenoh::config::ZoneId = zone
+                .clone()
+                .try_into()
+                .map_err(|err| anyhow::anyhow!("invalid --zone: {err}"))?;
+            config
+                .set_zone(Some(zenoh::config::ZoneConf::Id(zone_id)))
+                .map_err(|err| anyhow::anyhow!("failed to set zone: {err:?}"))?;
+        }
+
+        // A peer would join the zone as a member for every invocation, and
+        // have the runtimes dial it; a client only looks the zone up.
+        let mode = if self.connect.is_empty() && self.zone.is_none() {
+            zenoh::config::WhatAmI::Peer
+        } else {
+            zenoh::config::WhatAmI::Client
+        };
+        config
+            .set_mode(Some(mode))
+            .expect("setting mode cannot fail here");
+
         let multicast_group = match self.multicast_group {
             Some(group) => Some(group),
             None => multicast_group_from_env()?,
         };
         if let Some(group) = multicast_group {
-            zenoh_config
+            config
                 .insert_json5("scouting/multicast/address", &format!("\"{group}\""))
                 .map_err(|err| anyhow::anyhow!("invalid multicast group {group}: {err}"))?;
         }
 
-        let session = zenoh::open(zenoh_config)
+        Ok(config)
+    }
+
+    pub async fn session(&self) -> anyhow::Result<zenoh::Session> {
+        let session = zenoh::open(self.session_config()?)
             .await
             .map_err(|zen_err| sorg_common::zenoh_err!("unable to open myrmic session", zen_err))?;
 
@@ -386,5 +411,65 @@ mod tests {
     fn ping_window_honours_its_floor() {
         // a tiny --timeout still leaves room for a local round-trip
         assert_eq!(ping_window(Duration::from_millis(50)), MIN_PING_WINDOW);
+    }
+
+    fn endpoints(config: &zenoh::Config) -> serde_json::Value {
+        serde_json::to_value(config.connect().endpoints()).expect("endpoints serialize")
+    }
+
+    #[test]
+    fn an_explicit_connect_makes_the_cli_a_client_of_that_endpoint() {
+        let ctx = Ctx {
+            connect: vec!["tcp/192.0.2.10:7447".to_owned()],
+            ..Ctx::default()
+        };
+
+        let config = ctx.session_config().expect("config");
+
+        assert_eq!(config.mode(), &Some(zenoh::config::WhatAmI::Client));
+        assert_eq!(
+            endpoints(&config),
+            serde_json::json!(["tcp/192.0.2.10:7447"])
+        );
+        assert_eq!(config.scouting().multicast().enabled(), &Some(false));
+    }
+
+    #[test]
+    fn without_connect_the_cli_stays_a_scouting_peer() {
+        let config = Ctx::default().session_config().expect("config");
+
+        assert_eq!(config.mode(), &Some(zenoh::config::WhatAmI::Peer));
+        assert_eq!(endpoints(&config), serde_json::json!([]));
+        assert_eq!(config.scouting().multicast().enabled(), &None);
+        assert!(config.zone().is_none());
+    }
+
+    #[test]
+    fn a_zone_makes_the_cli_a_client_that_looks_the_zone_up() {
+        let ctx = Ctx {
+            zone: Some("blah".to_owned()),
+            ..Ctx::default()
+        };
+
+        let config = ctx.session_config().expect("config");
+
+        assert_eq!(config.mode(), &Some(zenoh::config::WhatAmI::Client));
+        assert_eq!(
+            config.zone().as_ref().map(|zone| zone.resolve().id),
+            Some("blah".to_owned())
+        );
+        // multicast scouting still runs: on the runtime's own network it wins the race
+        assert_eq!(endpoints(&config), serde_json::json!([]));
+        assert_eq!(config.scouting().multicast().enabled(), &None);
+    }
+
+    #[test]
+    fn an_empty_zone_is_refused() {
+        let ctx = Ctx {
+            zone: Some(String::new()),
+            ..Ctx::default()
+        };
+
+        assert!(ctx.session_config().is_err());
     }
 }
