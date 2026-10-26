@@ -90,6 +90,13 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2026-0192
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; transitive dep of typst, no safe upgrade available." },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; transitive dep of typst, no safe upgrade available." },
+    # crypto-bigint 0.5 has secret-dependent timing in arithmetic meant to be constant-time; the
+    # fix is only in 0.7.6, which needs p256 0.14. openidconnect 4.0.1 and embedded-tls 0.19, the
+    # latest releases, both still require p256 0.13. In shipped builds p256 only verifies OIDC ID
+    # token signatures, on public data. embedded-tls signs with a device key, but is only built
+    # for zenoh-nano's own tests (its `tls` feature): enabling that feature anywhere else makes
+    # this advisory real.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 via p256 0.13 (openidconnect, embedded-tls); only public data in shipped builds, see comment." },
     # object 0.37/0.39 pin ruzstd ^0.8 (via espflash and backtrace); the fix is only in 0.9.1.
     { id = "RUSTSEC-2026-0344", reason = "ruzstd 0.8 pinned by object via espflash/backtrace; host-only ELF/debuginfo decoding of our own binaries." },
     # Uncritical
