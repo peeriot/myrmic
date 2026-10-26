@@ -87,10 +87,12 @@ async fn a_killed_runtime_restarts_under_the_same_zid() {
     assert_eq!(placed_on, zid.to_string());
 }
 
-/// a fresh cell from `myrmic new`
+/// a fresh cell from `myrmic new`, against the SDK in this checkout: the git default pins the
+/// revision the CLI was built from, which only exists once pushed to the myrmic remote
 async fn new_cell(myrmic: &Myrmic<LocalBinary>) -> CellSpec<LocalBinary> {
     let name = format!("Cell{}", uuid::Uuid::new_v4().simple());
-    myrmic.new_cell(&name, None).await.unwrap()
+    let sdk = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sdk/myrmic-sdk");
+    myrmic.new_cell(&name, Some(sdk)).await.unwrap()
 }
 
 /// Deploy `cell` pinned to the runtime `zid` by its runtime tag; returns the runtime `myrmic
