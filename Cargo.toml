@@ -446,7 +446,13 @@ which = "8.0.2"
 libc = "0.2.186"
 
 tryhard = "0.5.2"
-wasmtime = "49.0.4"
+# The defaults minus `cache`: nothing uses the on-disk module cache, and it is the only path to `zstd`.
+wasmtime = { version = "49.0.4", default-features = false, features = [
+    "anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling",
+    "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump",
+    "debug-builtins", "runtime", "component-model", "component-model-async", "threads",
+    "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser",
+] }
 
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 
