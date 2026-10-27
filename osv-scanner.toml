@@ -82,3 +82,12 @@ reason = "crypto-bigint 0.5 via p256 0.13 (openidconnect, embedded-tls); only pu
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0449"
 reason = "The unsafe-libyaml crate is unmaintained, but needed by zenoh-config via serde_yaml. Only parses our own config files."
+
+# block-buffer 0.10.4 comes in via digest 0.10, i.e. the whole RustCrypto 0.10 generation (sha2,
+# hmac, p256, ed25519-dalek, ...); the fixed 0.12.1 needs digest 0.11. The advisory is about the
+# inline cursor of `EagerBuffer`/`ReadBuffer` in 0.11+, kept in a byte of the block itself, which a
+# panicking callback can leave invalid. 0.10.4 has no `ReadBuffer` and keeps the cursor in its own
+# `pos` field, which is only written after the callback returns, so a panic leaves it valid.
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+reason = "block-buffer 0.10.4 via digest 0.10 keeps its cursor outside the block, so the inline-cursor corruption cannot happen; see comment."
