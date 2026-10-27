@@ -48,7 +48,9 @@
 //! # WiFi credentials
 //!
 //! The board uses `WIFI_SSID` and `WIFI_PASS` from the build environment by
-//! default. A firmware can replace them during setup:
+//! default. A variable that is unset or empty falls back to the placeholder
+//! `"test"`, and the network service logs a warning naming it at startup. A
+//! firmware can replace the credentials during setup:
 //!
 //! ```ignore
 //! use esp_firmware::{Board, WifiCredentials};

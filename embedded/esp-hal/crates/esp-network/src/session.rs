@@ -75,23 +75,23 @@ fn stable_zid() -> zenoh_nano::scout::ZenohIdProto {
 }
 
 /// Set your Wifi SSID via the `WIFI_SSID` environment variable
-const WIFI_SSID: &str = if let Some(wifi_ssid) = option_env!("WIFI_SSID") {
-    wifi_ssid
-} else {
-    "test"
+const WIFI_SSID: Option<&str> = match option_env!("WIFI_SSID") {
+    Some(value) if !value.is_empty() => Some(value),
+    _ => None,
 };
 
 /// Set your Wifi password via the `WIFI_PASS` environment variable
-const WIFI_PASS: &str = if let Some(wifi_pass) = option_env!("WIFI_PASS") {
-    wifi_pass
-} else {
-    "test"
+const WIFI_PASS: Option<&str> = match option_env!("WIFI_PASS") {
+    Some(value) if !value.is_empty() => Some(value),
+    _ => None,
 };
 
 /// WiFi station credentials supplied to the network service at startup.
 pub struct WifiCredentials {
     ssid: String,
     password: String,
+    /// Whether these are the build-environment defaults, which may hold placeholders.
+    from_build_env: bool,
 }
 
 /// WiFi driver buffer counts. Every one of these buffers lives in internal RAM, the budget shared
@@ -114,6 +114,7 @@ impl WifiCredentials {
         Self {
             ssid: ssid.into(),
             password: password.into(),
+            from_build_env: false,
         }
     }
 
@@ -130,11 +131,15 @@ impl WifiCredentials {
     }
 }
 
+/// The credentials from the `WIFI_SSID` and `WIFI_PASS` build environment variables. Each one that
+/// is unset or empty falls back to the placeholder `"test"` on its own, and the network service
+/// logs a warning naming it when it starts with these credentials.
 impl Default for WifiCredentials {
     fn default() -> Self {
         Self {
-            ssid: WIFI_SSID.into(),
-            password: WIFI_PASS.into(),
+            ssid: WIFI_SSID.unwrap_or("test").into(),
+            password: WIFI_PASS.unwrap_or("test").into(),
+            from_build_env: true,
         }
     }
 }
@@ -144,6 +149,7 @@ impl core::fmt::Debug for WifiCredentials {
         f.debug_struct("WifiCredentials")
             .field("ssid", &self.ssid)
             .field("password", &"[redacted]")
+            .field("from_build_env", &self.from_build_env)
             .finish()
     }
 }
@@ -169,6 +175,15 @@ pub fn init_stack(
 ) {
     static STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
     let stack_resources = STACK_RESOURCES.init(StackResources::new());
+
+    if credentials.from_build_env {
+        if WIFI_SSID.is_none() {
+            log::warn!("WIFI_SSID was not set at build time: using the placeholder 'test'");
+        }
+        if WIFI_PASS.is_none() {
+            log::warn!("WIFI_PASS was not set at build time: using the placeholder 'test'");
+        }
+    }
 
     let station_config = station_config(credentials);
     #[expect(
