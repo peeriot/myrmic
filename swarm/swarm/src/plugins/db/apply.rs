@@ -453,7 +453,7 @@ fn paths_list(tx: &mut StoreTx, op: paths_list::Op) -> Result<paths_list::Respon
 
 fn sem_update(tx: &mut StoreTx, op: sem_update::Op) -> Result<sem_update::Response, String> {
     let update = db::semantic::Update::parse(&op.query, op.base_iri.as_deref())
-        .map_err(|err| format!("{}", err))?;
+        .map_err(|err| format_error(&err))?;
 
     tx.sem_update(key_scope(&op.scope), update)
         .map_err(|err| format_error(&err))?;
@@ -469,7 +469,7 @@ fn sem_query(
     expected: &'static str,
     is_expected: fn(&db::semantic::QueryKind) -> bool,
 ) -> Result<db::semantic::Query, String> {
-    let query = db::semantic::Query::parse(query, base_iri).map_err(|err| format!("{}", err))?;
+    let query = db::semantic::Query::parse(query, base_iri).map_err(|err| format_error(&err))?;
 
     if !is_expected(query.kind()) {
         return Err(format!(

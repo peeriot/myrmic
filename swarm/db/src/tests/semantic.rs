@@ -1215,3 +1215,316 @@ async fn sem_drop_and_insert_in_one_update() {
         "the clear should remove the preceding insert"
     );
 }
+
+/// A named SPARQL text built with `n` levels or list items.
+type Construct = (&'static str, fn(usize) -> String);
+
+fn numbered(n: usize, item: impl Fn(usize) -> String) -> String {
+    (0..n).map(item).collect::<Vec<_>>().concat()
+}
+
+/// Each construct spargebra, sparopt or spareval recurse on.
+const NESTED_QUERIES: &[Construct] = &[
+    ("group", |n| {
+        format!(
+            "SELECT * WHERE {{ {}?s ?p ?o{} }}",
+            "{ ".repeat(n),
+            " }".repeat(n)
+        )
+    }),
+    ("bang", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER({}true) }}",
+            "!".repeat(n)
+        )
+    }),
+    ("paren", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER({}true{}) }}",
+            "(".repeat(n),
+            ")".repeat(n)
+        )
+    }),
+    ("plus", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER(1{} = 2) }}",
+            "+1".repeat(n)
+        )
+    }),
+    ("or", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER(false{}) }}",
+            "||false".repeat(n)
+        )
+    }),
+    ("union", |n| {
+        format!(
+            "SELECT * WHERE {{ {{?s ?p ?o}}{} }}",
+            " UNION {?s ?p ?o}".repeat(n)
+        )
+    }),
+    ("join", |n| {
+        format!("SELECT * WHERE {{ {} }}", "{?s ?p ?o} ".repeat(n))
+    }),
+    ("filters", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o {} }}",
+            "FILTER(true) ".repeat(n)
+        )
+    }),
+    ("optional", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o {} }}",
+            "OPTIONAL {?s ?p ?o} ".repeat(n)
+        )
+    }),
+    ("minus", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o {} }}",
+            "MINUS {?s ?p ?o} ".repeat(n)
+        )
+    }),
+    ("binds", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o {} }}",
+            numbered(n, |i| format!("BIND(1 AS ?b{i}) "))
+        )
+    }),
+    ("path-paren", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s {}<http://x/p>{} ?o }}",
+            "(".repeat(n),
+            ")".repeat(n)
+        )
+    }),
+    ("path-seq", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s <http://x/p>{} ?o }}",
+            "/<http://x/p>".repeat(n)
+        )
+    }),
+    ("path-alt", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s <http://x/p>{} ?o }}",
+            "|<http://x/p>".repeat(n)
+        )
+    }),
+    ("path-star", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s {}<http://x/p>{} ?o }}",
+            "(".repeat(n),
+            ")*".repeat(n)
+        )
+    }),
+    ("bnode", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s <http://x/p> {}?o{} }}",
+            "[<http://x/p> ".repeat(n),
+            "]".repeat(n)
+        )
+    }),
+    ("collection", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s <http://x/p> {}?o{} }}",
+            "(".repeat(n),
+            ")".repeat(n)
+        )
+    }),
+    ("triple-term", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s <http://x/p> {}?o{} }}",
+            "<<( ?s <http://x/p> ".repeat(n),
+            ")>>".repeat(n)
+        )
+    }),
+    ("reified", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s <http://x/p> {}?o{} }}",
+            "<< ?s <http://x/p> ".repeat(n),
+            ">>".repeat(n)
+        )
+    }),
+    ("exists", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o {}{} }}",
+            "FILTER EXISTS { ".repeat(n),
+            "}".repeat(n)
+        )
+    }),
+    ("not-exists", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o {}{} }}",
+            "FILTER NOT EXISTS { ".repeat(n),
+            "}".repeat(n)
+        )
+    }),
+    ("subselect", |n| {
+        format!(
+            "SELECT * WHERE {{ {}?s ?p ?o{} }}",
+            "{ SELECT * WHERE { ".repeat(n),
+            " } }".repeat(n)
+        )
+    }),
+    ("call", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER({}true{}) }}",
+            "STR(".repeat(n),
+            ")".repeat(n)
+        )
+    }),
+    ("in", |n| {
+        format!(
+            "SELECT * WHERE {{ ?s ?p ?o FILTER(1 IN (1{})) }}",
+            ",1".repeat(n)
+        )
+    }),
+    ("triples", |n| {
+        format!("SELECT * WHERE {{ {} }}", "?s ?p ?o . ".repeat(n))
+    }),
+    ("objects", |n| {
+        format!("SELECT * WHERE {{ ?s ?p ?o{} }}", ", ?o".repeat(n))
+    }),
+    ("predicates", |n| {
+        format!("SELECT * WHERE {{ ?s ?p ?o{} }}", "; ?p ?o".repeat(n))
+    }),
+    ("projection", |n| {
+        format!("SELECT {}{{}}", numbered(n, |i| format!("(1 AS ?x{i}) ")))
+    }),
+    ("collection", |n| {
+        format!("SELECT * WHERE {{ ?s <http://x/p> ( {}) }}", "1 ".repeat(n))
+    }),
+    ("quoted", |n| {
+        format!(
+            "SELECT * WHERE {{ {}?s <http://x/p> ?o >>{} <http://x/q> ?c }}",
+            "<< ".repeat(n),
+            " <http://x/p> ?o >>".repeat(n - 1)
+        )
+    }),
+];
+
+/// Lists spargebra, sparopt and spareval walk without recursing.
+const FLAT_QUERIES: &[Construct] = &[
+    ("values", |n| {
+        format!(
+            "SELECT * WHERE {{ VALUES (?a ?b) {{ {} }} }}",
+            "(-1 <http://x/a>) ".repeat(n)
+        )
+    }),
+    ("variables", |n| {
+        format!(
+            "SELECT {} WHERE {{ ?s ?p ?o }} ORDER BY {}",
+            numbered(n, |i| format!("?x{i} ")),
+            "?s ".repeat(n)
+        )
+    }),
+];
+
+const NESTED_UPDATES: &[Construct] = &[
+    ("insert-where", |n| {
+        format!(
+            "INSERT {{ ?s ?p ?o }} WHERE {{ {}?s ?p ?o{} }}",
+            "{ ".repeat(n),
+            " }".repeat(n)
+        )
+    }),
+    ("delete-where", |n| {
+        format!("DELETE WHERE {{ {} }}", "?s ?p ?o . ".repeat(n))
+    }),
+];
+
+const FLAT_UPDATES: &[Construct] = &[
+    ("operations", |n| {
+        "INSERT DATA { <http://x/a> <http://x/b> -1 } ; ".repeat(n) + "CLEAR DEFAULT"
+    }),
+    ("data", |n| {
+        format!(
+            "INSERT DATA {{ {} }}",
+            "[ <http://x/p> (-1 -2) ] <http://x/q> -1 . ".repeat(n)
+        )
+    }),
+    ("template", |n| {
+        format!(
+            "INSERT {{ {} }} WHERE {{}}",
+            "<http://x/a> <http://x/b> -1 . ".repeat(n)
+        )
+    }),
+];
+
+/// Comfortably past any chain [`NESTED_QUERIES`] would overflow at.
+const FLAT_LENGTH: usize = 5_000;
+
+fn nests_too_deep(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains("nests deeper than")
+}
+
+/// The largest `n` whose text the depth bound accepts.
+fn deepest_accepted(
+    build: fn(usize) -> String,
+    parse: impl Fn(&str) -> anyhow::Result<()>,
+) -> usize {
+    (1..FLAT_LENGTH)
+        .find(|&n| parse(&build(n + 1)).is_err_and(|err| nests_too_deep(&err)))
+        .unwrap_or_else(|| panic!("{} is never rejected", build(1)))
+}
+
+/// Runs `f` on a thread with a tokio worker's default stack, where a stack
+/// overflow would abort the test binary.
+fn on_worker_stack(f: impl FnOnce() + Send + 'static) {
+    let runtime = tokio::runtime::Runtime::new().expect("unable to start runtime");
+    let handle = runtime.handle().clone();
+
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let _runtime = handle.enter();
+            f();
+        })
+        .expect("unable to spawn thread")
+        .join()
+        .expect("thread panicked");
+}
+
+#[test]
+fn sem_nesting_is_bounded_before_it_overflows() {
+    on_worker_stack(|| {
+        let store = open_tmp();
+        let scope = Scope::default();
+        let mut tx = write(&store);
+
+        let nested_queries = NESTED_QUERIES.iter().map(|&(name, build)| {
+            (
+                name,
+                build(deepest_accepted(build, |q| Query::parse(q, None).map(drop))),
+            )
+        });
+        let flat_queries = FLAT_QUERIES
+            .iter()
+            .map(|&(name, build)| (name, build(FLAT_LENGTH)));
+
+        for (name, query) in nested_queries.chain(flat_queries) {
+            let query = Query::parse(&query, None)
+                .unwrap_or_else(|err| panic!("{name} does not parse: {err:#}"));
+            tx.sem_solution(scope, query, 0, 10)
+                .unwrap_or_else(|err| panic!("{name} does not evaluate: {err:#}"));
+        }
+
+        let nested_updates = NESTED_UPDATES.iter().map(|&(name, build)| {
+            (
+                name,
+                build(deepest_accepted(build, |u| {
+                    Update::parse(u, None).map(drop)
+                })),
+            )
+        });
+        let flat_updates = FLAT_UPDATES
+            .iter()
+            .map(|&(name, build)| (name, build(FLAT_LENGTH)));
+
+        for (name, update) in nested_updates.chain(flat_updates) {
+            let update = Update::parse(&update, None)
+                .unwrap_or_else(|err| panic!("{name} does not parse: {err:#}"));
+            tx.sem_update(scope, update)
+                .unwrap_or_else(|err| panic!("{name} does not apply: {err:#}"));
+        }
+    });
+}

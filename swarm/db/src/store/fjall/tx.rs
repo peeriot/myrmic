@@ -3,7 +3,7 @@ use crate::domain::{
     Blob, BlobId, BlobRef, Entity, Fields, Hash, Id, IdRef, Key, Measurement, MeasurementBody,
     Meta, Path, RawKey, Scope, SyncPoint, Table, Tags, Timestamp, UserKey, Value, ValueRef, api,
 };
-use crate::semantic::{Query, Update};
+use crate::semantic::{Query, Update, with_stack};
 use anyhow::Context as _;
 use db_commons::models::replication::{SyncMarker, SyncMeta};
 use db_commons::models::{SyncPointId, TbOrderBy, TsOrderBy};
@@ -1719,6 +1719,10 @@ impl<M> Transaction<M> {
     }
 
     pub fn sem_update(&mut self, scope: Scope<'_>, update: Update) -> anyhow::Result<()> {
+        with_stack(|| self.run_sem_update(scope, update))
+    }
+
+    fn run_sem_update(&mut self, scope: Scope<'_>, update: Update) -> anyhow::Result<()> {
         // We're just calling this to track the scope, the functions inside the sem-engine call functions
         // that use the timestamp already embedded in the tx.
         let _ts = self.write_scope(scope.namespace, scope.database, scope.schema)?;
@@ -1798,6 +1802,16 @@ impl<M> Transaction<M> {
         skip: usize,
         limit: usize,
     ) -> anyhow::Result<crate::semantic::QuerySolution> {
+        with_stack(|| self.run_sem_solution(scope, query, skip, limit))
+    }
+
+    fn run_sem_solution(
+        &mut self,
+        scope: Scope<'_>,
+        query: Query,
+        skip: usize,
+        limit: usize,
+    ) -> anyhow::Result<crate::semantic::QuerySolution> {
         let QueryResults::Solutions(it) =
             semantic::sem_eval(&mut *self, scope, query).context("unable to evaluate query")?
         else {
@@ -1847,6 +1861,16 @@ impl<M> Transaction<M> {
         skip: usize,
         limit: usize,
     ) -> anyhow::Result<Vec<(String, String, String)>> {
+        with_stack(|| self.run_sem_graph(scope, query, skip, limit))
+    }
+
+    fn run_sem_graph(
+        &mut self,
+        scope: Scope<'_>,
+        query: Query,
+        skip: usize,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, String, String)>> {
         let QueryResults::Graph(it) =
             semantic::sem_eval(&mut *self, scope, query).context("unable to evaluate query")?
         else {
@@ -1883,6 +1907,10 @@ impl<M> Transaction<M> {
     }
 
     pub fn sem_ask(&mut self, scope: Scope<'_>, query: Query) -> anyhow::Result<bool> {
+        with_stack(|| self.run_sem_ask(scope, query))
+    }
+
+    fn run_sem_ask(&mut self, scope: Scope<'_>, query: Query) -> anyhow::Result<bool> {
         let QueryResults::Boolean(answer) =
             semantic::sem_eval(&mut *self, scope, query).context("unable to evaluate query")?
         else {
