@@ -116,6 +116,17 @@ impl DebugListener {
     pub async fn next_entry_timeout(&mut self, timeout: Duration) -> Option<DebugEntry> {
         tokio::time::timeout(timeout, self.next_entry()).await.ok()
     }
+
+    /// The entries the CLI has printed so far, as far as they can be read without waiting. Entries
+    /// the CLI still holds back (it batches them, see `myrmic telemetry debug`) are not among them;
+    /// a line that was only partly printed is kept for the next call.
+    pub async fn buffered_entries(&mut self) -> Vec<DebugEntry> {
+        let mut entries = vec![];
+        while let Some(entry) = self.next_entry_timeout(Duration::ZERO).await {
+            entries.push(entry);
+        }
+        entries
+    }
 }
 
 // Stopping the CLI takes three steps in this order: interrupt it, close our end of its stdout

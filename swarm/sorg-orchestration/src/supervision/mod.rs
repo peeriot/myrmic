@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use cell_protocol::{CellInstance, Gen, PlacementEntry, RuntimeId, Sri};
 use sorg_common::root_death::RootDeath;
 use sorg_common::supervision::{
-    ExpiryGate, LeaseTracker, RestartBudget, SupervisionTiming, jittered,
+    ExpiryGate, LeaseTracker, RESTART_DEPLOY_TIMEOUT, RestartBudget, SupervisionTiming, jittered,
 };
 use sorg_common::{
     CellDeployment, DeployRequest, DeploymentError, FenceOutcome, LostReason, deploy_cells,
@@ -369,9 +369,6 @@ async fn run_hygiene(
         tracker.forget(*id);
     }
 }
-
-/// Wall-clock budget for a self-issued restart deploy.
-const RESTART_DEPLOY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Two-pass confirmation for the reconciliation sweep: a spec is dropped only
 /// after looking orphaned (root gone, no death signal) on two consecutive
