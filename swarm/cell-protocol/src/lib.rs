@@ -19,6 +19,7 @@ use std as sys;
 
 mod exec_runtime;
 pub use exec_runtime::{CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, RuntimeKind};
+pub mod generations;
 pub mod node_tags;
 pub mod replication;
 pub mod supervision;
@@ -39,6 +40,7 @@ use opentelemetry::{SpanId, TraceFlags, TraceId};
 use serde::{Deserialize, Serialize};
 use sys::borrow::ToOwned;
 use sys::collections::BTreeMap;
+use sys::format;
 use sys::string::ToString;
 use sys::{string::String, vec::Vec};
 use uuid::Uuid;
@@ -55,12 +57,25 @@ use zenoh_protocol::core::ZenohIdProto;
 
 /// Database of cell placements
 pub const PLACEMENT_DB: &str = "cell-placement";
-/// Table of the placement entries
-pub const PLACEMENT_TABLE: &str = "entries";
 
-/// Returns the DB scope for cell placements.
+/// Returns the DB scope for cell placements, one row per generation of a cell
+/// (see [`generations`]).
 pub fn placement_scope() -> Scope {
     Scope::new(NAMESPACE_SORG, PLACEMENT_DB, "p")
+}
+
+/// The key every placement claim of `sri` reads and writes in
+/// [`placement_scope`], so that two concurrent claims of it on one node
+/// conflict at commit: listing the generations is not tracked by the conflict
+/// check, a point read is.
+///
+/// The key carries no data, so removing a placement removes it too, whichever
+/// generation that was: a later claim writes it again. Its tombstone stays in
+/// storage for now, like those of the generation rows, but marks the key as
+/// gone for the storage cleanup that is left for later.
+#[must_use]
+pub fn placement_claim_key(sri: &Sri) -> String {
+    format!("claim/{sri}")
 }
 
 const CLASS_REGISTRY_DB: &str = "cell-class-registry";
@@ -72,8 +87,6 @@ pub const CLASS_REGISTRY_TABLE: &str = "entries";
 pub const CLASS_NAMES_TABLE: &str = "names";
 
 const INSTANCE_REGISTRY_DB: &str = "cell-instance-registry";
-/// Table of the cell instances in the registry
-pub const INSTANCE_REGISTRY_TABLE: &str = "entries";
 
 /// Returns the DB scope for the cell class registry.
 pub fn class_registry_scope() -> Scope {
@@ -97,7 +110,8 @@ pub fn class_blob_id(id: BlobHash) -> BlobId {
     }
 }
 
-/// Returns the DB scope for the cell instance registry.
+/// Returns the DB scope for the cell instance registry, one row per generation
+/// of a cell (see [`generations`]).
 pub fn instance_registry_scope() -> Scope {
     Scope::new(NAMESPACE_SORG, INSTANCE_REGISTRY_DB, "p")
 }
@@ -322,9 +336,10 @@ pub struct SpawnLineage {
     pub deadline_ms: Option<u64>,
 }
 
-/// A cell instance: one *life* of an SRI. The row is keyed by the SRI and
-/// stores the full struct (sri included) as its value. Postcard-serialized
-/// identically by the sorg execution layer and the embedded cell host.
+/// A cell instance: one *life* of an SRI. Stored as an [`InstanceRow`] under
+/// the key of its generation (see [`generations`]).
+///
+/// [`InstanceRow`]: generations::InstanceRow
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellInstance {
     /// The SRI identifying this instance.
@@ -338,7 +353,10 @@ pub struct CellInstance {
     pub lineage: SpawnLineage,
 }
 
-/// A cell's placement — where it currently lives — stored in the datalayer.
+/// A cell's placement — where it currently lives. Stored as a
+/// [`PlacementRow`] under the key of its generation (see [`generations`]).
+///
+/// [`PlacementRow`]: generations::PlacementRow
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlacementEntry {
     /// The cell's self-referential identifier.
@@ -756,46 +774,6 @@ mod tests {
         assert_eq!(recovered.trace_id(), span_ctx.trace_id());
         assert_eq!(recovered.span_id(), span_ctx.span_id());
         assert_eq!(recovered.trace_flags(), span_ctx.trace_flags());
-    }
-}
-
-#[cfg(test)]
-mod instance_row_tests {
-    use super::*;
-
-    fn sri() -> Sri {
-        sri_of_path("row-test-app").unwrap().into()
-    }
-
-    #[test]
-    fn cell_instance_round_trips() {
-        let v = CellInstance {
-            sri: sri(),
-            class: BlobHash::of(b"c"),
-            gen_id: Gen::from_parts(7, 1),
-            lineage: SpawnLineage {
-                parent: None,
-                parent_gen_id: Some(Gen::from_parts(9, 1)),
-                detached: true,
-                local_name: Some("pump".into()),
-                grace_ms: Some(30_000),
-                deadline_ms: Some(120_000),
-            },
-        };
-        let bytes = postcard::to_allocvec(&v).unwrap();
-        assert_eq!(postcard::from_bytes::<CellInstance>(&bytes).unwrap(), v);
-    }
-
-    #[test]
-    fn placement_entry_round_trips() {
-        let v = PlacementEntry {
-            sri: sri(),
-            kind: PlacementKind::Placeholder,
-            app: None,
-            gen_id: Gen::from_parts(3, 1),
-        };
-        let bytes = postcard::to_allocvec(&v).unwrap();
-        assert_eq!(postcard::from_bytes::<PlacementEntry>(&bytes).unwrap(), v);
     }
 }
 

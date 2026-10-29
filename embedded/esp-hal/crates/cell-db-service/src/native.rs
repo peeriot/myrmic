@@ -14,15 +14,17 @@
 //! registration and lease renewal, so a reconnect or a db outage heals rather
 //! than silently un-registering the cell.
 
-use alloc::borrow::ToOwned;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
-use cell_protocol::{
-    CellInstance, Gen, INSTANCE_REGISTRY_TABLE, NATIVE_FIRMWARE_CLASS, PLACEMENT_TABLE,
-    PlacementEntry, PlacementKind, SpawnLineage, Sri, instance_registry_scope, placement_scope,
+use cell_protocol::generations::{
+    InstanceRow, PlacementRow, generation_key, generations_of, parse_generation_key,
 };
-use db_client::v1::models::tb_insert;
+use cell_protocol::{
+    Gen, NATIVE_FIRMWARE_CLASS, PlacementKind, SpawnLineage, Sri, instance_registry_scope,
+    placement_scope,
+};
+use db_client::v1::models::{key_delete, key_prefix, key_put};
 use db_client::v1::{Client, models::Scope};
 use embassy_time::with_timeout;
 use myrmic_common::cells::Command;
@@ -57,18 +59,16 @@ pub(crate) async fn claim(
     native: &NativeCell,
     gen_id: Gen,
 ) -> bool {
-    if !write_row(
+    if !write_generation(
         client,
         placement_scope(),
-        PLACEMENT_TABLE,
         native.sri,
-        &PlacementEntry {
-            sri: native.sri,
+        gen_id,
+        &PlacementRow {
             kind: PlacementKind::Native {
                 runtime: zid.into(),
             },
             app: None,
-            gen_id,
         },
     )
     .await
@@ -78,15 +78,13 @@ pub(crate) async fn claim(
 
     // Best effort: without it the cell is still addressable, just anonymous in
     // `m cells`. Not worth failing the claim over.
-    let _ = write_row(
+    let instance_written = write_generation(
         client,
         instance_registry_scope(),
-        INSTANCE_REGISTRY_TABLE,
         native.sri,
-        &CellInstance {
-            sri: native.sri,
+        gen_id,
+        &InstanceRow {
             class: NATIVE_FIRMWARE_CLASS,
-            gen_id,
             lineage: SpawnLineage {
                 // A native cell is a root: nothing spawned it, so nothing
                 // fences it and no parent is owed a `cell_lost`.
@@ -100,37 +98,78 @@ pub(crate) async fn claim(
         },
     )
     .await;
+    if !instance_written {
+        log::warn!("[native] instance row of '{}' not written", native.sri);
+    }
 
     true
 }
 
-async fn write_row<T: serde::Serialize>(
+/// Writes generation `gen_id` of `sri`'s row in `scope` and tombstones the
+/// older ones in the same transaction: each boot is a new generation, and the
+/// previous boot's row must not stay current next to it.
+async fn write_generation<T: serde::Serialize>(
     client: &Client,
     scope: Scope,
-    table: &str,
     sri: Sri,
+    gen_id: Gen,
     value: &T,
 ) -> bool {
     let Ok(bytes) = postcard::to_allocvec(value) else {
-        log::error!("[native] failed to serialize the {table} row");
+        log::error!(
+            "[native] failed to serialize the row for {}",
+            scope.database
+        );
         return false;
     };
-    let eid = sri.to_string().into_bytes();
-    let table = table.to_owned();
     let write = client.write_tx_in(scope.clone(), async move |client, tx_id| {
-        client
-            .send(tb_insert::Request {
+        let keys = client
+            .send(key_prefix::Request {
                 id: tx_id,
-                op: tb_insert::Op {
+                op: key_prefix::Op {
+                    scope: scope.clone(),
+                    prefix: generations_of(&sri),
+                },
+            })
+            .await
+            .map_err(|e| zerror!("unable to send prefix read: {e}"))?
+            .map_err(|e| zerror!("prefix read rejected: {}", e.message))?
+            .keys;
+        let generations = keys
+            .into_iter()
+            .map(|key| match parse_generation_key(&key) {
+                Some((_, existing)) => Ok((key, existing)),
+                None => Err(zerror!("malformed generation key {key:?}")),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let older = generations
+            .into_iter()
+            .filter(|(_, existing)| *existing < gen_id);
+        for (key, _) in older {
+            client
+                .send(key_delete::Request {
+                    id: tx_id,
+                    op: key_delete::Op {
+                        scope: scope.clone(),
+                        key,
+                    },
+                })
+                .await
+                .map_err(|e| zerror!("unable to send delete: {e}"))?
+                .map_err(|e| zerror!("delete rejected: {}", e.message))?;
+        }
+        client
+            .send(key_put::Request {
+                id: tx_id,
+                op: key_put::Op {
                     scope,
-                    table,
-                    eid: Some(eid),
+                    key: generation_key(&sri, gen_id),
                     value: bytes,
                 },
             })
             .await
-            .map_err(|e| zerror!("unable to send insert: {e}"))?
-            .map_err(|e| zerror!("insert rejected: {}", e.message))?;
+            .map_err(|e| zerror!("unable to send put: {e}"))?
+            .map_err(|e| zerror!("put rejected: {}", e.message))?;
         Ok(())
     });
 

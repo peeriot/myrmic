@@ -54,19 +54,19 @@ async fn returns_created_instances() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn reflects_erasure() {
+async fn reflects_removal() {
     let test_app = spawn_db_test_app().await;
     let sorg = sorg_client(test_app.session());
     let sri_a = Sri::from_target(INSTANCE_SRI).unwrap();
     let sri_b = Sri::from_target(INSTANCE_SRI_B).unwrap();
 
-    // Arrange — seed two instances, erase one
+    // Arrange — seed two instances, remove one
     seed_instance(test_app.session(), &sri_a).await;
     seed_instance(test_app.session(), &sri_b).await;
     assert_eq!(
         assert_ok!(
-            sorg.erase_instance(&sri_a, SEEDED_GEN).await,
-            "erase_instance should succeed"
+            sorg.remove_instance(&sri_a, SEEDED_GEN).await,
+            "remove_instance should succeed"
         ),
         FenceOutcome::Applied
     );
@@ -78,10 +78,10 @@ async fn reflects_erasure() {
     assert_eq!(
         1,
         instances.len(),
-        "only one instance should remain after erasure"
+        "only one instance should remain after removal"
     );
     assert_eq!(
         sri_b, instances[0].sri,
-        "remaining instance should be the one that was not erased"
+        "remaining instance should be the one that was not removed"
     );
 }

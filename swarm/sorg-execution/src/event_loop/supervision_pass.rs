@@ -44,7 +44,7 @@ impl Runtime {
         self.cleanup
             .push(CleanupAction::ReleaseCell(sri, meta.gen_id));
         self.cleanup
-            .push(CleanupAction::EraseInstance(sri, meta.gen_id));
+            .push(CleanupAction::RemoveInstance(sri, meta.gen_id));
         let session = self.session.clone();
         tokio::spawn(async move {
             if let Err(err) = report_cell_death(
@@ -161,7 +161,7 @@ impl Runtime {
                 self.cleanup
                     .push(CleanupAction::ReleaseCell(cell.sri, cell.gen_id));
                 self.cleanup
-                    .push(CleanupAction::EraseInstance(cell.sri, cell.gen_id));
+                    .push(CleanupAction::RemoveInstance(cell.sri, cell.gen_id));
             }
         }
     }
@@ -227,7 +227,7 @@ impl Runtime {
             self.cleanup.push(CleanupAction::ReleaseCell(sri, gen_id));
             if let Some(instance_gen) = instance_gen {
                 self.cleanup
-                    .push(CleanupAction::EraseInstance(sri, instance_gen));
+                    .push(CleanupAction::RemoveInstance(sri, instance_gen));
             }
         }
         done
@@ -250,8 +250,8 @@ impl Runtime {
                         .await
                         .map(|_| ())
                 }
-                CleanupAction::EraseInstance(sri, gen_id) => {
-                    sorg_common::instance_registry::erase_instance(&self.session, sri, *gen_id)
+                CleanupAction::RemoveInstance(sri, gen_id) => {
+                    sorg_common::instance_registry::remove_instance(&self.session, sri, *gen_id)
                         .await
                         .map(|_| ())
                 }

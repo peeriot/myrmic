@@ -62,6 +62,7 @@ pub fn apply(tx: &mut StoreTx, op: TxOp) -> Result<TxOpResponse, String> {
         TxOp::KeyGet(op) => key_get(tx, op)?.into(),
         TxOp::KeyDelete(op) => key_delete(tx, op)?.into(),
         TxOp::KeyPrefix(op) => key_prefix(tx, op)?.into(),
+        TxOp::KeyList(op) => key_list(tx, op)?.into(),
         TxOp::TbInsert(op) => tb_insert(tx, op)?.into(),
         TxOp::TbAppend(op) => tb_append(tx, op)?.into(),
         TxOp::TbInsertBatched(op) => tb_insert_batched(tx, op)?.into(),
@@ -115,6 +116,8 @@ fn key_put(tx: &mut StoreTx, op: key_put::Op) -> Result<key_put::Response, Strin
 
     tx.key_put(key, &op.value)
         .map_err(|err| format_error(&err))?;
+    tx.metadata_or_default()
+        .insert((op.scope, String::from(events::KEY_EVENTS)));
 
     Ok(key_put::Response {})
 }
@@ -141,6 +144,14 @@ fn key_prefix(tx: &mut StoreTx, op: key_prefix::Op) -> Result<key_prefix::Respon
         .map_err(|err| format_error(&err))?;
 
     Ok(key_prefix::Response { keys })
+}
+
+fn key_list(tx: &mut StoreTx, op: key_list::Op) -> Result<key_list::Response, String> {
+    let entries = tx
+        .key_list(key_scope(&op.scope), &op.prefix)
+        .map_err(|err| format_error(&err))?;
+
+    Ok(key_list::Response { entries })
 }
 
 /// Inserts a row and reports the id it landed under. `eid: None` mints one from

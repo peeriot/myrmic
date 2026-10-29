@@ -121,7 +121,7 @@ struct Runtime {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CleanupAction {
     ReleaseCell(Sri, Gen),
-    EraseInstance(Sri, Gen),
+    RemoveInstance(Sri, Gen),
 }
 
 impl Runtime {

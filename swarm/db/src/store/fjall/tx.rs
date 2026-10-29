@@ -1303,25 +1303,30 @@ impl<M> Transaction<M> {
         // We want to remove the null encoding
         key.pop();
 
-        let mut out = vec![];
+        self.prefix_latest_untracked(&key)
+            .map(|user_key| Ok(String::from(UserKey::decode_exact(&user_key?)?.key)))
+            .collect()
+    }
 
-        let iter = self.prefix_of_untracked(&key);
-        for g in iter {
-            let key = g.key()?;
-            let (user_key, _ts, kind) = decode(&key)?;
-            match kind {
-                KeyKind::Insertion => (),
-                KeyKind::Deletion => {
-                    continue;
-                }
-            }
+    /// [`Self::key_prefix`] with each key's value.
+    pub fn key_list(
+        &mut self,
+        scope: Scope<'_>,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<(String, Value)>> {
+        let mut key = scope.only_kv().key(prefix).encode()?;
 
-            let user_key = UserKey::decode_exact(user_key)?;
+        // We want to remove the null encoding
+        key.pop();
 
-            out.push(String::from(user_key.key));
-        }
-
-        Ok(out)
+        let (lower, upper) = skey::prefix_to_range(&key);
+        self.range_latest_kv_untracked(lower, upper)
+            .map(|entry| {
+                let (user_key, value) = entry?;
+                let key = String::from(UserKey::decode_exact(&user_key)?.key);
+                Ok((key, value.to_vec()))
+            })
+            .collect()
     }
 
     pub fn tb_count(&mut self, table: Table<'_>) -> anyhow::Result<usize> {

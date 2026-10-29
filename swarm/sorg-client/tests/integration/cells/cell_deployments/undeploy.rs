@@ -59,15 +59,15 @@ async fn undeploy_erases_instance_row() {
 
     // Act — the follow-up sweep teardown does: finds nothing, tolerates it
     let outcome = assert_ok!(
-        sorg.erase_instance(&sri, instance.gen_id).await,
-        "redundant erase should be tolerated after undeploy"
+        sorg.remove_instance(&sri, instance.gen_id).await,
+        "redundant removal should be tolerated after undeploy"
     );
 
-    // Assert — undeploy itself erased the row, and none remain
+    // Assert — undeploy itself removed the row, and none remain
     assert_eq!(
         outcome,
         FenceOutcome::Absent,
-        "undeploy should have already erased the instance row"
+        "undeploy should have already removed the instance row"
     );
     let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
     assert!(
