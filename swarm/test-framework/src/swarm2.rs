@@ -10,7 +10,7 @@ use std::hash::Hash;
 use std::time::Duration;
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
-use db_client::v1::models::Subject;
+use db_client::v1::models::{Scope, Subject};
 use zenoh::config::ZenohId;
 
 pub use backend::local::Local;
@@ -201,24 +201,24 @@ where
         Some(*id)
     }
 
-    /// The runtime holding the data of the cell `sri`, which need not be its host. Call it only
-    /// while the cell has no replication entry: until then its data has exactly one holder.
-    pub async fn holder_of(&self, sri: &str) -> S {
-        let scope = cell_protocol::scope_of_cell(sri);
+    /// The runtime holding the db scope `scope`; for a cell's data (`scope_of_cell`) it need not
+    /// be the cell's host. Call it only while no replication entry covers the scope: until then
+    /// it has exactly one holder.
+    pub async fn scope_holder(&self, scope: &Scope) -> S {
         let holders =
             db_client::replica_v1::Client::new(&self.session, Subject::Scope(scope.clone()))
                 .expect("failed to open a db replica client")
-                .locate(&scope, None)
+                .locate(scope, None)
                 .await
-                .expect("failed to locate the cell's data");
+                .expect("failed to locate the scope");
         let [holder] = holders.as_slice() else {
-            panic!("the data of {sri} has {} holders, not one", holders.len());
+            panic!("scope {scope:?} has {} holders, not one", holders.len());
         };
         let (id, _) = self
             .runtimes
             .iter()
             .find(|(_, runtime)| runtime.zid.to_le_bytes() == holder.id)
-            .unwrap_or_else(|| panic!("the data of {sri} is held by a runtime not in the swarm"));
+            .unwrap_or_else(|| panic!("scope {scope:?} is held by a runtime not in the swarm"));
         *id
     }
 
