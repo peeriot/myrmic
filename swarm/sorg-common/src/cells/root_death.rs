@@ -5,26 +5,16 @@
 //! the orchestrator consumes it (restart or give up) and deletes it, so rows
 //! are short-lived and a reconciliation drops any that lack a matching spec.
 
+pub use cell_protocol::RootDeath;
 use cell_protocol::{Gen, ROOT_DEATH_TABLE, Sri, root_death_scope};
 use db_client::v1::{
     Client as DbClient,
     models::{TxId, tb_delete, tb_get, tb_insert, tb_list},
 };
 use myrmic_common::cells::LostReason;
-use serde::{Deserialize, Serialize};
 use zenoh::Session;
 
 use crate::{Result, custom_err};
-
-/// A root that died on a live node, and why. `gen_id` is the dead instance's
-/// generation, so the orchestrator can tell an uncleaned corpse from a root
-/// already restarted at a newer generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RootDeath {
-    pub sri: Sri,
-    pub gen_id: Gen,
-    pub reason: LostReason,
-}
 
 /// Records a root's death (last write wins for a given SRI).
 pub async fn record(session: &Session, sri: Sri, gen_id: Gen, reason: LostReason) -> Result<()> {
