@@ -132,6 +132,19 @@ where
         self.myrmic.send(&self.sri, command, payload).await
     }
 
+    /// run: myrmic replicate `sri` --tag `tag`...; every runtime carrying any one of `tags` then
+    /// holds a replica of the cell's data
+    pub async fn replicate<const N: usize>(&self, tags: [&str; N]) -> Result<(), Error> {
+        // without tags, the command only shows the cell's entry
+        const { assert!(N > 0, "replicate needs at least one tag") };
+        let mut args = vec!["replicate", self.sri.as_str()];
+        for tag in tags {
+            args.extend(["--tag", tag]);
+        }
+        self.myrmic.run(&args).await?;
+        Ok(())
+    }
+
     /// run: myrmic delete --cell `sri`; returns once the SRI is no longer in `myrmic cells status`
     pub async fn delete(self) -> Result<(), Error> {
         self.myrmic.run(&["delete", "--cell", &self.sri]).await?;
