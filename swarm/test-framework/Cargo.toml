@@ -16,7 +16,7 @@ rumqttc = { workspace = true }
 rumqttd = { workspace = true }
 cell-protocol = { workspace = true, default-features = true }
 claims = { workspace = true }
-db-client = { workspace = true, features = ["zenoh"] }
+db-client = { workspace = true, features = ["zenoh", "replica"] }
 futures = { workspace = true }
 hex = { workspace = true }
 introspection-client = { workspace = true }
