@@ -57,7 +57,7 @@ impl Image {
 
     /// start the docker container with idle command
     pub async fn run_idle(&self, docker: DockerDaemon, name: &str) -> ManagedContainer {
-        ManagedContainer::run(self, docker, &["sh", "-c", "tail -f /dev/null"], &[], name).await
+        ManagedContainer::run(self, docker, &["sh", "-c", "tail -f /dev/null"], None, name).await
     }
 
     /// start the docker container with specified command
@@ -67,7 +67,7 @@ impl Image {
         command: &[&str],
         name: &str,
     ) -> ManagedContainer {
-        ManagedContainer::run(self, docker, command, &[], name).await
+        ManagedContainer::run(self, docker, command, None, name).await
     }
 }
 

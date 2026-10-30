@@ -6,12 +6,12 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Debug;
+use std::future::Future;
 use std::time::Duration;
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use db_client::v1::models::{Scope, Subject};
-use enum_map::{Enum, EnumMap};
-use futures::FutureExt;
+use enum_map::{Array, Enum, EnumMap};
 use zenoh::config::ZenohId;
 
 pub use backend::local::Local;
@@ -119,18 +119,10 @@ where
             "two runtimes print the same name: {names:?}"
         );
 
-        // Started concurrently, so the results arrive as a list; each is placed by its id, as
-        // the map's iteration order is not specified.
-        let started = futures::future::join_all(names.iter().map(|(id, name)| {
-            start_runtime(backend.shim(id), name.clone(), id).map(move |runtime| (id, runtime))
-        }))
-        .await;
-        let mut by_id = EnumMap::<S, Option<Result<myrmic::Runtime<B::Cli>, Error>>>::default();
-        for (id, runtime) in started {
-            by_id[id] = Some(runtime);
-        }
-        let runtimes = by_id.try_map(|_, runtime| {
-            let runtime = runtime.expect("every runtime was started")?;
+        let started =
+            join_enum_map(|id: S| start_runtime(backend.shim(id), names[id].clone(), id)).await;
+        let runtimes = started.try_map(|_, runtime| {
+            let runtime = runtime?;
             Ok::<_, Error>(Runtime {
                 name: runtime.name().to_owned(),
                 zid: runtime.zid(),
@@ -277,6 +269,23 @@ async fn wait_until_connected(
 /// itself for the leader: two leaders both handle a deploy, and the second answers "already
 /// deployed". Nothing reports who considers itself leader, so this is a fixed wait.
 const LEADER_SETTLE_TIME: Duration = Duration::from_secs(1);
+
+/// `f` of every value of `S`, awaited concurrently: [`EnumMap::from_fn`] for an async `f`.
+async fn join_enum_map<S, F>(f: impl Fn(S) -> F) -> EnumMap<S, F::Output>
+where
+    S: Enum,
+    F: Future,
+{
+    let outputs =
+        futures::future::join_all((0..S::Array::<()>::LENGTH).map(|i| f(S::from_usize(i)))).await;
+    // `join_all` keeps the order of its futures, so output `i` is variant `i`'s
+    let mut outputs: Vec<_> = outputs.into_iter().map(Some).collect();
+    EnumMap::from_fn(|id: S| {
+        outputs[id.into_usize()]
+            .take()
+            .expect("one output per variant")
+    })
+}
 
 /// `myrmic runtimes start` of the runtime `id`, named `name`.
 async fn start_runtime<B, S>(

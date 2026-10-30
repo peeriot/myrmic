@@ -1,7 +1,9 @@
-use std::{ops::Deref, path::Path};
+use std::{ops::Deref, path::Path, sync::Arc};
 
 use bollard::{
-    models::{ContainerCreateBody, EndpointSettings, HostConfig, NetworkingConfig},
+    models::{
+        ContainerCreateBody, EndpointSettings, HostConfig, NetworkCreateRequest, NetworkingConfig,
+    },
     query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions},
 };
 
@@ -15,6 +17,9 @@ use crate::docker::{DockerDaemon, container::ConnectedContainer, image::Image};
 /// `Myrmic::attach(Arc::new(container))`.
 pub struct ManagedContainer {
     container: ConnectedContainer,
+    /// Kept alive for the network it is attached to: fields drop after [`Drop::drop`], so the
+    /// network is released only once the container is removed.
+    _network: Option<Arc<ManagedNetwork>>,
 }
 
 impl Deref for ManagedContainer {
@@ -26,26 +31,30 @@ impl Deref for ManagedContainer {
 }
 
 impl ManagedContainer {
-    /// run a docker image with command and connect to networks
+    /// run a docker image with command, attached to `network` if given
     pub(crate) async fn run(
         image: &Image,
         docker: DockerDaemon,
         command: &[&str],
-        networks: &[&str],
+        network: Option<Arc<ManagedNetwork>>,
         name: &str,
     ) -> Self {
         let options = CreateContainerOptionsBuilder::default().name(name).build();
-        let first_network = networks.first().copied();
         let created = docker
             .create_container(
                 Some(options),
-                container_config_with_command(image.tag().into(), command, first_network),
+                container_config_with_command(
+                    image.tag().into(),
+                    command,
+                    network.as_deref().map(ManagedNetwork::name),
+                ),
             )
             .await
             .unwrap();
         // owned from here on, so a failure below still removes the container
         let managed = Self {
             container: ConnectedContainer::attach(docker, created.id),
+            _network: network,
         };
 
         managed
@@ -53,37 +62,92 @@ impl ManagedContainer {
             .await
             .unwrap();
 
-        for network in networks.iter().skip(1) {
-            managed.connect_network(network).await;
-        }
-
         managed
     }
 }
 
 impl Drop for ManagedContainer {
     fn drop(&mut self) {
-        let result = self
-            .container
-            .docker_cli()
-            .args(["rm", "-f", self.container.id()])
-            .output();
-        match result {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => eprintln!(
-                "ManagedContainer drop-guard: docker rm -f {} failed: {}",
-                self.container.id(),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            Err(err) => eprintln!("ManagedContainer drop-guard: failed to run docker: {err}"),
+        let mut rm = self.container.docker_cli();
+        rm.args(["rm", "-f", self.container.id()]);
+        run_cleanup("ManagedContainer", rm);
+    }
+}
+
+/// a docker network that was created by this framework and is removed when dropped
+///
+/// The [`ManagedContainer`]s attached to it hold it, so it outlives them.
+pub struct ManagedNetwork {
+    docker: DockerDaemon,
+    name: String,
+    /// a running container this framework did not create (e.g. the one the test runs in),
+    /// attached at creation and detached before removal: docker refuses to remove a network
+    /// that has a container attached
+    outsider: Option<String>,
+}
+
+impl ManagedNetwork {
+    /// create a bridge network named `name`, with the running container `outsider` attached
+    pub(crate) async fn create(docker: DockerDaemon, name: &str, outsider: Option<&str>) -> Self {
+        docker
+            .create_network(NetworkCreateRequest {
+                name: name.to_owned(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_or_else(|err| panic!("failed to create docker network `{name}`: {err}"));
+        // owned from here on, so a failure below still removes the network
+        let mut network = Self {
+            docker,
+            name: name.to_owned(),
+            outsider: None,
+        };
+        if let Some(outsider) = outsider {
+            ConnectedContainer::attach(network.docker.clone(), outsider)
+                .connect_network(name)
+                .await;
+            network.outsider = Some(outsider.to_owned());
         }
+        network
+    }
+
+    /// the network's name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Drop for ManagedNetwork {
+    fn drop(&mut self) {
+        if let Some(outsider) = &self.outsider {
+            let mut disconnect = self.docker.cli();
+            disconnect.args(["network", "disconnect", &self.name, outsider]);
+            run_cleanup("ManagedNetwork", disconnect);
+        }
+        let mut rm = self.docker.cli();
+        rm.args(["network", "rm", &self.name]);
+        run_cleanup("ManagedNetwork", rm);
+    }
+}
+
+/// Run the docker `command` of the drop-guard `guard`. A failure is reported, not raised: a panic
+/// during unwinding aborts the process and hides the original one.
+fn run_cleanup(guard: &str, mut command: std::process::Command) {
+    let invocation = format!("{command:?}");
+    match command.output() {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => eprintln!(
+            "{guard} drop-guard: {invocation} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(err) => eprintln!("{guard} drop-guard: failed to run {invocation}: {err}"),
     }
 }
 
 fn container_config_with_command(
     image: String,
     command: &[&str],
-    first_network: Option<&str>,
+    network: Option<&str>,
 ) -> ContainerCreateBody {
     let mut env = None;
     let mut host_config = None;
@@ -113,7 +177,7 @@ fn container_config_with_command(
                 .collect::<Vec<_>>()
         }),
         env,
-        networking_config: first_network.map(|name| NetworkingConfig {
+        networking_config: network.map(|name| NetworkingConfig {
             endpoints_config: Some(std::collections::HashMap::from([(
                 name.to_owned(),
                 EndpointSettings::default(),
