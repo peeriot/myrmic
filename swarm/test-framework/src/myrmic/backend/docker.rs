@@ -41,4 +41,8 @@ impl MyrmicBackend for Docker<'_> {
         // cannot be invoked; 127: the program does not exist in the container
         &[125, 126, 127]
     }
+
+    fn runtime_config(&self) -> Option<String> {
+        None
+    }
 }

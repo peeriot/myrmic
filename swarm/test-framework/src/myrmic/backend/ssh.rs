@@ -46,6 +46,10 @@ impl MyrmicBackend for Ssh {
         // found no such program
         &[127, 255]
     }
+
+    fn runtime_config(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The remote invocation of `program args` as a single, fully quoted shell

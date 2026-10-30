@@ -51,7 +51,7 @@ impl DebugListener {
     pub(super) async fn spawn<B: MyrmicBackend>(myrmic: &Myrmic<B>, args: &[&str]) -> Self {
         let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", &myrmic.binary];
         sh_args.extend_from_slice(args);
-        let mut command = myrmic.command("sh", &sh_args);
+        let mut command = myrmic.backend.command("sh", &sh_args);
         command.stdin(Stdio::null()).stdout(Stdio::piped());
         let invocation = format!("{command:?}");
 
@@ -71,7 +71,7 @@ impl DebugListener {
         let pid: u32 = pid
             .parse()
             .unwrap_or_else(|err| panic!("{invocation} reported `{pid}` as its PID: {err}"));
-        let interrupt = myrmic.command("sh", &["-c", "kill -INT \"$1\"", "sh", &pid.to_string()]);
+        let interrupt = myrmic.backend.command("sh", &["-c", "kill -INT \"$1\"", "sh", &pid.to_string()]);
 
         Self {
             lines,

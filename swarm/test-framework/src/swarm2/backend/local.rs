@@ -1,6 +1,7 @@
 use std::future::Future;
 
 use super::{CutOff, SwarmBackend};
+use crate::swarm2::SwarmSpec;
 use crate::myrmic::{self, Myrmic};
 
 /// [`SwarmBackend`] that runs every runtime on the host, through one
@@ -25,12 +26,12 @@ impl Default for Local {
     }
 }
 
-impl SwarmBackend for Local {
+impl<S: SwarmSpec> SwarmBackend<S> for Local {
     type Cli = myrmic::Local;
     type Client = myrmic::Local;
 
     /// the one shim, whichever runtime it is
-    fn shim(&self, _runtime: &str) -> &Myrmic<myrmic::Local> {
+    fn shim(&self, _runtime: S) -> &Myrmic<myrmic::Local> {
         &self.myrmic
     }
 
@@ -44,9 +45,9 @@ impl SwarmBackend for Local {
     }
 }
 
-impl CutOff for Local {
+impl<S: SwarmSpec> CutOff<S> for Local {
     /// a fresh [`Myrmic::cut_off`] of the one shim, whichever runtime it is
-    fn cut_off_shim(&self, _runtime: &str) -> Myrmic<myrmic::Local> {
+    fn cut_off_shim(&self, _runtime: S) -> Myrmic<myrmic::Local> {
         self.myrmic.cut_off()
     }
 }

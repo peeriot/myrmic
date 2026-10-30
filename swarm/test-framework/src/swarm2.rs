@@ -59,7 +59,7 @@ pub trait SwarmSpec: Copy + Eq + Hash + Debug {
 /// Dropping it deletes the runtimes that are still running (see [`myrmic::Runtime`]).
 pub struct Swarm<B, S>
 where
-    B: SwarmBackend,
+    B: SwarmBackend<S>,
     S: SwarmSpec,
 {
     // Declared before `backend`, so the runtimes are deleted while the backend's shims are still
@@ -104,7 +104,7 @@ where
 
 impl<B, S> Swarm<B, S>
 where
-    B: SwarmBackend,
+    B: SwarmBackend<S>,
     S: SwarmSpec,
 {
     /// Start every runtime of `S` on `backend`.
@@ -131,7 +131,7 @@ where
         let started = futures::future::join_all(
             ids.iter()
                 .zip(names)
-                .map(|(&id, name)| start_runtime(backend.shim(&name), name, id)),
+                .map(|(&id, name)| start_runtime(backend.shim(id), name, id)),
         )
         .await;
         let runtimes = ids
@@ -312,7 +312,7 @@ where
 /// other runtimes to stay as they are.
 pub struct RuntimeMut<'a, B, S>
 where
-    B: SwarmBackend,
+    B: SwarmBackend<S>,
     S: SwarmSpec,
 {
     id: S,
@@ -325,7 +325,7 @@ where
 
 impl<B, S> RuntimeMut<'_, B, S>
 where
-    B: SwarmBackend,
+    B: SwarmBackend<S>,
     S: SwarmSpec,
 {
     /// End the runtime abruptly (see [`myrmic::Runtime::kill`]). Returns once its process is
@@ -342,7 +342,7 @@ where
     /// Start the killed or deleted runtime again under its name, so under the same zid. Returns
     /// once the swarm, with this runtime, is connected again.
     pub async fn restart(&mut self) -> Result<(), Error> {
-        let shim = self.backend.shim(&self.runtime.name);
+        let shim = self.backend.shim(self.id);
         self.start_on(shim).await?;
         let mut expected = self.others.clone();
         expected.insert(self.runtime.zid);
@@ -375,7 +375,7 @@ where
 
 impl<B, S> RuntimeMut<'_, B, S>
 where
-    B: CutOff,
+    B: CutOff<S>,
     S: SwarmSpec,
 {
     /// Start the killed or deleted runtime again under its name, so with its zid and database,
@@ -383,7 +383,7 @@ where
     /// connectivity check, it reaches no other runtime. [`Self::delete`] or [`Self::kill`] it
     /// before a [`Self::restart`] brings it back into the swarm.
     pub async fn start_cut_off(&mut self) -> Result<(), Error> {
-        let shim = self.backend.cut_off_shim(&self.runtime.name);
+        let shim = self.backend.cut_off_shim(self.id);
         self.start_on(&shim).await
     }
 }
