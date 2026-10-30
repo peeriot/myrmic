@@ -4,13 +4,14 @@
 //! The name is temporary: this replaces [`crate::swarm`] and takes over its name once that is
 //! gone.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
-use std::hash::Hash;
 use std::time::Duration;
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use db_client::v1::models::{Scope, Subject};
+use enum_map::{Enum, EnumMap};
+use futures::FutureExt;
 use zenoh::config::ZenohId;
 
 pub use backend::local::Local;
@@ -24,14 +25,14 @@ mod check;
 /// The makeup of a swarm: the implementing type names its runtimes, one value per runtime, and
 /// says how each one is started.
 ///
-/// A test names its runtimes with an enum, one variant per runtime:
+/// A test names its runtimes with an enum, one variant per runtime; deriving [`Enum`] makes its
+/// variants the swarm's runtimes, each once:
 ///
 /// ```ignore
-/// #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+/// #[derive(Clone, Copy, PartialEq, Eq, Debug, enum_map::Enum)]
 /// enum Node { Leader, Follower }
 ///
 /// impl SwarmSpec for Node {
-///     fn all() -> Vec<Self> { vec![Node::Leader, Node::Follower] }
 ///     fn tags(self) -> Vec<String> {
 ///         match self {
 ///             Node::Leader => vec!["leader".to_owned()],
@@ -43,10 +44,7 @@ mod check;
 /// ```
 ///
 /// A value's `Debug` output is its runtime's name, so distinct values must print distinctly.
-pub trait SwarmSpec: Copy + Eq + Hash + Debug {
-    /// every runtime of the swarm, each once
-    fn all() -> Vec<Self>;
-
+pub trait SwarmSpec: Enum + Copy + Eq + Debug {
     /// the tags the runtime is started with
     fn tags(self) -> Vec<String>;
 
@@ -64,7 +62,7 @@ where
 {
     // Declared before `backend`, so the runtimes are deleted while the backend's shims are still
     // there.
-    runtimes: HashMap<S, Runtime<B::Cli>>,
+    runtimes: EnumMap<S, Runtime<B::Cli>>,
     introspection: introspection_client::v1::Client,
     sorg: sorg_client::Client,
     session: zenoh::Session,
@@ -113,40 +111,32 @@ where
     /// linked to all the other runtimes, and no other runtime answers.
     pub async fn start(backend: B) -> Result<Self, Error> {
         // Checked before anything starts: two runtimes under one name would race in the CLI.
-        let ids = S::all();
-        let distinct_ids: HashSet<S> = ids.iter().copied().collect();
-        assert_eq!(
-            distinct_ids.len(),
-            ids.len(),
-            "`all()` lists a runtime twice: {ids:?}"
-        );
-        let names: Vec<String> = ids.iter().map(|id| format!("{id:?}")).collect();
-        let distinct_names: BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        let names = EnumMap::<S, String>::from_fn(|id| format!("{id:?}"));
+        let distinct_names: BTreeSet<&str> = names.values().map(String::as_str).collect();
         assert_eq!(
             distinct_names.len(),
             names.len(),
             "two runtimes print the same name: {names:?}"
         );
 
-        let started = futures::future::join_all(
-            ids.iter()
-                .zip(names)
-                .map(|(&id, name)| start_runtime(backend.shim(id), name, id)),
-        )
+        // Started concurrently, so the results arrive as a list; each is placed by its id, as
+        // the map's iteration order is not specified.
+        let started = futures::future::join_all(names.iter().map(|(id, name)| {
+            start_runtime(backend.shim(id), name.clone(), id).map(move |runtime| (id, runtime))
+        }))
         .await;
-        let runtimes = ids
-            .into_iter()
-            .zip(started)
-            .map(|(id, runtime)| {
-                let runtime = runtime?;
-                let swarm_runtime = Runtime {
-                    name: runtime.name().to_owned(),
-                    zid: runtime.zid(),
-                    running: Some(runtime),
-                };
-                Ok((id, swarm_runtime))
+        let mut by_id = EnumMap::<S, Option<Result<myrmic::Runtime<B::Cli>, Error>>>::default();
+        for (id, runtime) in started {
+            by_id[id] = Some(runtime);
+        }
+        let runtimes = by_id.try_map(|_, runtime| {
+            let runtime = runtime.expect("every runtime was started")?;
+            Ok::<_, Error>(Runtime {
+                name: runtime.name().to_owned(),
+                zid: runtime.zid(),
+                running: Some(runtime),
             })
-            .collect::<Result<HashMap<_, _>, Error>>()?;
+        })?;
 
         let session = backend.connect_session().await;
         let swarm = Self {
@@ -163,7 +153,12 @@ where
 
     /// the runtime `id`
     pub fn runtime(&self, id: S) -> &Runtime<B::Cli> {
-        self.runtimes.get(&id).expect("every runtime was started")
+        &self.runtimes[id]
+    }
+
+    /// every runtime with its id, in no particular order
+    pub fn runtimes(&self) -> impl Iterator<Item = (S, &Runtime<B::Cli>)> {
+        self.runtimes.iter()
     }
 
     /// the runtime `id`, to kill, restart or delete it
@@ -171,15 +166,12 @@ where
         let others = self
             .runtimes
             .iter()
-            .filter(|(other, runtime)| **other != id && runtime.is_running())
+            .filter(|(other, runtime)| *other != id && runtime.is_running())
             .map(|(_, runtime)| runtime.zid)
             .collect();
         RuntimeMut {
             id,
-            runtime: self
-                .runtimes
-                .get_mut(&id)
-                .expect("every runtime was started"),
+            runtime: &mut self.runtimes[id],
             backend: &self.backend,
             introspection: &self.introspection,
             others,
@@ -198,7 +190,7 @@ where
             .iter()
             .find(|(_, runtime)| RuntimeId::from(runtime.zid) == host)
             .unwrap_or_else(|| panic!("{sri} is placed on {host}, which is not in the swarm"));
-        Some(*id)
+        Some(id)
     }
 
     /// The runtime holding the db scope `scope`; for a cell's data (`scope_of_cell`) it need not
@@ -219,7 +211,7 @@ where
             .iter()
             .find(|(_, runtime)| runtime.zid.to_le_bytes() == holder.id)
             .unwrap_or_else(|| panic!("scope {scope:?} is held by a runtime not in the swarm"));
-        *id
+        id
     }
 
     /// The placement row of the cell `sri`, or `None` while it has none.
@@ -246,7 +238,7 @@ where
 
     /// The CLI for the commands that act on the whole swarm, e.g. [`myrmic::Myrmic::cell`] to
     /// deploy a cell (see [`SwarmBackend::client`]).
-    pub fn client(&self) -> &myrmic::Myrmic<B::Client> {
+    pub fn client(&self) -> myrmic::Myrmic<B::Client> {
         self.backend.client()
     }
 }
@@ -288,7 +280,7 @@ const LEADER_SETTLE_TIME: Duration = Duration::from_secs(1);
 
 /// `myrmic runtimes start` of the runtime `id`, named `name`.
 async fn start_runtime<B, S>(
-    myrmic: &myrmic::Myrmic<B>,
+    myrmic: myrmic::Myrmic<B>,
     name: String,
     id: S,
 ) -> Result<myrmic::Runtime<B>, Error>
@@ -350,7 +342,7 @@ where
     }
 
     /// Start the killed or deleted runtime under its name on `shim`.
-    async fn start_on(&mut self, shim: &myrmic::Myrmic<B::Cli>) -> Result<(), Error> {
+    async fn start_on(&mut self, shim: myrmic::Myrmic<B::Cli>) -> Result<(), Error> {
         let id = self.id;
         assert!(!self.runtime.is_running(), "{id:?} is still running");
         let started = start_runtime(shim, self.runtime.name.clone(), id).await?;
@@ -384,6 +376,6 @@ where
     /// before a [`Self::restart`] brings it back into the swarm.
     pub async fn start_cut_off(&mut self) -> Result<(), Error> {
         let shim = self.backend.cut_off_shim(self.id);
-        self.start_on(&shim).await
+        self.start_on(shim).await
     }
 }

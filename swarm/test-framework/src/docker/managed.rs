@@ -11,7 +11,8 @@ use crate::docker::{DockerDaemon, container::ConnectedContainer, image::Image};
 /// force-removed when dropped (panic-safe cleanup)
 ///
 /// Not `Clone`: exactly one value owns the container. Borrow it (it derefs to
-/// [`ConnectedContainer`]) to work with it, e.g. `Myrmic::attach(&container)`.
+/// [`ConnectedContainer`]) to work with it, or share it in an `Arc`, e.g.
+/// `Myrmic::attach(Arc::new(container))`.
 pub struct ManagedContainer {
     container: ConnectedContainer,
 }

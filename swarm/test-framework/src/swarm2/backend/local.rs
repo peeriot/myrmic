@@ -31,13 +31,13 @@ impl<S: SwarmSpec> SwarmBackend<S> for Local {
     type Client = myrmic::Local;
 
     /// the one shim, whichever runtime it is
-    fn shim(&self, _runtime: S) -> &Myrmic<myrmic::Local> {
-        &self.myrmic
+    fn shim(&self, _runtime: S) -> Myrmic<myrmic::Local> {
+        self.myrmic.clone()
     }
 
     /// the one shim: it already runs next to the test
-    fn client(&self) -> &Myrmic<myrmic::Local> {
-        &self.myrmic
+    fn client(&self) -> Myrmic<myrmic::Local> {
+        self.myrmic.clone()
     }
 
     fn connect_session(&self) -> impl Future<Output = zenoh::Session> + Send {

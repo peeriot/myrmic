@@ -5,6 +5,7 @@ use std::future::Future;
 use super::SwarmSpec;
 use crate::myrmic::{Myrmic, MyrmicBackend};
 
+pub mod docker;
 pub mod local;
 
 /// Where the runtimes of a [`super::Swarm`] of `S` run and how a test joins them.
@@ -19,11 +20,11 @@ pub trait SwarmBackend<S: SwarmSpec> {
     type Client: MyrmicBackend;
 
     /// the shim the runtime `runtime` runs on
-    fn shim(&self, runtime: S) -> &Myrmic<Self::Cli>;
+    fn shim(&self, runtime: S) -> Myrmic<Self::Cli>;
 
-    /// the CLI the test acts on the whole swarm through: it runs next to the test, joins the
-    /// swarm like [`Self::connect_session`] and runs no runtime itself
-    fn client(&self) -> &Myrmic<Self::Client>;
+    /// the CLI the test acts on the whole swarm through: it joins the swarm like
+    /// [`Self::connect_session`] and runs no runtime itself
+    fn client(&self) -> Myrmic<Self::Client>;
 
     /// open a zenoh session that is part of the swarm
     fn connect_session(&self) -> impl Future<Output = zenoh::Session> + Send;

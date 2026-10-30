@@ -3,6 +3,7 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 
 pub use backend::MyrmicBackend;
 pub use backend::docker::Docker;
@@ -16,7 +17,7 @@ use sorg_common::RestartType;
 use crate::{
     CommandOutput,
     clients::sorg::SorgHandle,
-    docker::container::ConnectedContainer,
+    docker::managed::ManagedContainer,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
 };
 
@@ -132,10 +133,10 @@ impl Myrmic<Local> {
     }
 }
 
-impl<'c> Myrmic<Docker<'c>> {
+impl Myrmic<Docker> {
     /// create a shim that runs the myrmic CLI inside `container`, which has `myrmic` on its
-    /// `PATH`; see [`Docker`] for why it is borrowed
-    pub fn attach(container: &'c ConnectedContainer) -> Self {
+    /// `PATH`; the container is removed once the last shim or guard using it drops
+    pub fn attach(container: Arc<ManagedContainer>) -> Self {
         Self {
             backend: Docker::attach(container),
             binary: "myrmic".to_owned(),
