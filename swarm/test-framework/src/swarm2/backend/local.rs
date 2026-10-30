@@ -1,13 +1,13 @@
 use std::future::Future;
 
 use super::{CutOff, SwarmBackend};
-use crate::myrmic::{LocalBinary, Myrmic};
+use crate::myrmic::{self, Myrmic};
 
 /// [`SwarmBackend`] that runs every runtime on the host, through one
 /// [`Myrmic::local_isolated`] shim: its runtimes find each other on the shim's multicast group,
 /// and nothing outside the swarm sees them.
 pub struct Local {
-    myrmic: Myrmic<LocalBinary>,
+    myrmic: Myrmic<myrmic::Local>,
 }
 
 impl Local {
@@ -26,16 +26,16 @@ impl Default for Local {
 }
 
 impl SwarmBackend for Local {
-    type Cli = LocalBinary;
-    type Client = LocalBinary;
+    type Cli = myrmic::Local;
+    type Client = myrmic::Local;
 
     /// the one shim, whichever runtime it is
-    fn shim(&self, _runtime: &str) -> &Myrmic<LocalBinary> {
+    fn shim(&self, _runtime: &str) -> &Myrmic<myrmic::Local> {
         &self.myrmic
     }
 
     /// the one shim: it already runs next to the test
-    fn client(&self) -> &Myrmic<LocalBinary> {
+    fn client(&self) -> &Myrmic<myrmic::Local> {
         &self.myrmic
     }
 
@@ -46,7 +46,7 @@ impl SwarmBackend for Local {
 
 impl CutOff for Local {
     /// a fresh [`Myrmic::cut_off`] of the one shim, whichever runtime it is
-    fn cut_off_shim(&self, _runtime: &str) -> Myrmic<LocalBinary> {
+    fn cut_off_shim(&self, _runtime: &str) -> Myrmic<myrmic::Local> {
         self.myrmic.cut_off()
     }
 }

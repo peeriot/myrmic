@@ -1,38 +1,22 @@
 use super::MyrmicBackend;
 
-/// [`MyrmicBackend`] that runs the myrmic CLI on a remote host over SSH.
+/// [`MyrmicBackend`] that runs programs on a remote host over SSH.
 ///
 /// Every command shells out to the system `ssh` binary (`ssh <host> <program> <args>...`) rather
-/// than using an SSH client crate, like [`super::docker::DockerBinary`] shells out to the system
+/// than using an SSH client crate, like [`super::docker::Docker`] shells out to the system
 /// `docker` binary: [`MyrmicBackend::command`] is a plain process on the host, so the async and
 /// the blocking (Drop-guard) paths run the same invocation.
 #[derive(Clone)]
-pub struct SshBinary {
+pub struct Ssh {
     /// SSH destination, e.g. `user@rack-node-1.example` - anything `ssh` itself accepts
     /// (host aliases from `~/.ssh/config` included).
     host: String,
-    /// path to the myrmic binary on the remote host (defaults to `myrmic`, i.e. resolved via the
-    /// remote user's `PATH`).
-    binary: String,
 }
 
-impl SshBinary {
-    /// wrap the myrmic binary reachable via `ssh host myrmic ...`, resolving `myrmic` on the
-    /// remote `PATH`
+impl Ssh {
+    /// run programs on `host`
     pub fn new(host: impl Into<String>) -> Self {
-        Self {
-            host: host.into(),
-            binary: "myrmic".to_owned(),
-        }
-    }
-
-    /// like [`Self::new`], but the remote myrmic binary lives at `binary` rather than on `PATH`
-    /// (e.g. a path a benchmark harness `scp`'d it to)
-    pub fn at(host: impl Into<String>, binary: impl Into<String>) -> Self {
-        Self {
-            host: host.into(),
-            binary: binary.into(),
-        }
+        Self { host: host.into() }
     }
 
     /// the SSH destination this backend targets
@@ -41,11 +25,7 @@ impl SshBinary {
     }
 }
 
-impl MyrmicBackend for SshBinary {
-    fn binary(&self) -> &str {
-        &self.binary
-    }
-
+impl MyrmicBackend for Ssh {
     /// `ssh [-i identity] [-o UserKnownHostsFile=..] <host> <quoted remote command>`
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut command = std::process::Command::new("ssh");
@@ -76,7 +56,7 @@ impl MyrmicBackend for SshBinary {
 /// again — so passing them as separate argv entries quotes nothing. An app
 /// spec under a path with a space arrives as two arguments, and a `;`,
 /// backtick or `$(…)` in a tag or a command payload runs as a command on
-/// the rack node. [`super::local::LocalBinary`] is unaffected because it
+/// the rack node. [`super::local::Local`] is unaffected because it
 /// execs directly; this is the only path with a shell in it.
 fn remote_command(program: &str, args: &[&str]) -> String {
     std::iter::once(program)

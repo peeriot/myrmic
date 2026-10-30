@@ -10,9 +10,6 @@ pub mod ssh;
 /// A backend only builds host commands. [`super::Myrmic`] runs them and holds all knowledge of
 /// the CLI's commands and output, so the backends cannot drift apart.
 pub trait MyrmicBackend: Clone {
-    /// the myrmic binary, as [`Self::command`] finds it on the target
-    fn binary(&self) -> &str;
-
     /// `program args` as a command on the host that runs them on the target: the program itself,
     /// or the `ssh`/`docker exec` invocation around it
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command;

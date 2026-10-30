@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 
 pub use backend::MyrmicBackend;
-pub use backend::docker::DockerBinary;
-pub use backend::local::LocalBinary;
-pub use backend::ssh::SshBinary;
+pub use backend::docker::Docker;
+pub use backend::local::Local;
+pub use backend::ssh::Ssh;
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
 use myrmic_build::PlatformFamily;
@@ -55,7 +55,7 @@ pub enum Error {
 }
 
 /// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
-/// [`MyrmicBackend`]: a binary on the host, on a remote host over SSH, or inside a container.
+/// [`MyrmicBackend`]: on the host, on a remote host over SSH, or inside a container.
 ///
 /// Every operation returns a [`Result`]; a test `.unwrap()`s or `.expect(..)`s what it assumes to
 /// succeed. A command that cannot be started at all (binary, `ssh` or `docker` missing, host or
@@ -63,6 +63,8 @@ pub enum Error {
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
+    /// the myrmic binary, as the backend's commands find it on the target
+    binary: String,
     /// set by [`Myrmic::local_isolated`]; shared by the clones, so its directories live as long
     /// as any runtime or cell handle that may still need them for cleanup
     isolation: Option<Arc<Isolation>>,
@@ -104,11 +106,16 @@ impl Isolation {
     }
 }
 
-impl Myrmic<LocalBinary> {
+impl Myrmic<Local> {
     /// create a shim around a locally built myrmic binary (see [`crate::resolve_binary!`])
     pub fn local() -> Self {
+        let binary = crate::resolve_binary!("myrmic");
         Self {
-            backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
+            backend: Local,
+            binary: binary
+                .to_str()
+                .unwrap_or_else(|| panic!("myrmic binary path {} is not UTF-8", binary.display()))
+                .to_owned(),
             isolation: None,
         }
     }
@@ -130,8 +137,8 @@ impl Myrmic<LocalBinary> {
                 .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
         }
         Self {
-            backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
             isolation: Some(Arc::new(Isolation::new(Arc::new(dir)))),
+            ..Self::local()
         }
     }
 
@@ -145,6 +152,7 @@ impl Myrmic<LocalBinary> {
             .expect("only an isolated shim has state directories to share");
         Self {
             backend: self.backend.clone(),
+            binary: self.binary.clone(),
             isolation: Some(Arc::new(Isolation::new(isolation.dir.clone()))),
         }
     }
@@ -196,23 +204,25 @@ fn isolated_multicast_group() -> String {
     )
 }
 
-impl<'c> Myrmic<DockerBinary<'c>> {
+impl<'c> Myrmic<Docker<'c>> {
     /// create a shim that runs the myrmic CLI inside `container`, which has `myrmic` on its
-    /// `PATH`; see [`DockerBinary`] for why it is borrowed
+    /// `PATH`; see [`Docker`] for why it is borrowed
     pub fn attach(container: &'c ConnectedContainer) -> Self {
         Self {
-            backend: DockerBinary::attach(container),
+            backend: Docker::attach(container),
+            binary: "myrmic".to_owned(),
             isolation: None,
         }
     }
 }
 
-impl Myrmic<SshBinary> {
+impl Myrmic<Ssh> {
     /// create a shim that runs the myrmic CLI on `host` over SSH, resolving `myrmic` on the
     /// remote user's `PATH`
     pub fn ssh(host: impl Into<String>) -> Self {
         Self {
-            backend: SshBinary::new(host),
+            backend: Ssh::new(host),
+            binary: "myrmic".to_owned(),
             isolation: None,
         }
     }
@@ -221,7 +231,8 @@ impl Myrmic<SshBinary> {
     /// (e.g. a path a benchmark harness `scp`'d it to)
     pub fn ssh_at(host: impl Into<String>, binary: impl Into<String>) -> Self {
         Self {
-            backend: SshBinary::at(host, binary),
+            backend: Ssh::new(host),
+            binary: binary.into(),
             isolation: None,
         }
     }
@@ -342,7 +353,7 @@ where
 
     /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
-        let output = self.run_program(self.backend.binary(), args).await;
+        let output = self.run_program(&self.binary, args).await;
         if output.success {
             Ok(output)
         } else {
@@ -367,7 +378,7 @@ where
 
     /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
-        self.run_program_blocking(self.backend.binary(), args)
+        self.run_program_blocking(&self.binary, args)
     }
 
     /// Blocking run of `program args` on the target for `Drop`, returning the raw output. A

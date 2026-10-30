@@ -49,7 +49,7 @@ impl DebugListener {
     /// On a remote target it is the only handle that reaches the CLI: stopping the local `ssh` or
     /// `docker exec` would leave it running.
     pub(super) async fn spawn<B: MyrmicBackend>(myrmic: &Myrmic<B>, args: &[&str]) -> Self {
-        let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", myrmic.backend.binary()];
+        let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", &myrmic.binary];
         sh_args.extend_from_slice(args);
         let mut command = myrmic.command("sh", &sh_args);
         command.stdin(Stdio::null()).stdout(Stdio::piped());

@@ -2,7 +2,7 @@
 //! [`test_framework::resolve_binary!`]).
 
 use cell_protocol::replication::runtime_tag;
-use test_framework::myrmic::{Error, LocalBinary, Myrmic, cell::CellSpec};
+use test_framework::myrmic::{self, Error, Myrmic, cell::CellSpec};
 use test_framework::swarm2::{Local, Swarm, SwarmSpec};
 use zenoh::config::ZenohId;
 
@@ -89,7 +89,7 @@ async fn a_killed_runtime_restarts_under_the_same_zid() {
 
 /// a fresh cell from `myrmic new`, against the SDK in this checkout: the git default pins the
 /// revision the CLI was built from, which only exists once pushed to the myrmic remote
-async fn new_cell(myrmic: &Myrmic<LocalBinary>) -> CellSpec<LocalBinary> {
+async fn new_cell(myrmic: &Myrmic<myrmic::Local>) -> CellSpec<myrmic::Local> {
     let name = format!("Cell{}", uuid::Uuid::new_v4().simple());
     let sdk = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sdk/myrmic-sdk");
     myrmic.new_cell(&name, Some(sdk)).await.unwrap()
@@ -98,8 +98,8 @@ async fn new_cell(myrmic: &Myrmic<LocalBinary>) -> CellSpec<LocalBinary> {
 /// Deploy `cell` pinned to the runtime `zid` by its runtime tag; returns the runtime `myrmic
 /// deploy` reports it was placed on. The deployed cell is deleted again on return.
 async fn deploy_pinned(
-    myrmic: &Myrmic<LocalBinary>,
-    cell: &CellSpec<LocalBinary>,
+    myrmic: &Myrmic<myrmic::Local>,
+    cell: &CellSpec<myrmic::Local>,
     zid: ZenohId,
 ) -> String {
     let tag = runtime_tag(zid.into());
