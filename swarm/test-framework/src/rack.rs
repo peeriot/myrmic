@@ -596,7 +596,7 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
     futures::future::join_all(hosts.iter().map(|host| async move {
         let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
-        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic/mod.rs`) already
+        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"
         // message — isn't a failure, it's this backstop confirming there was nothing left to do.
