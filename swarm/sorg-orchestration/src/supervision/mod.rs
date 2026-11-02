@@ -37,11 +37,11 @@ pub(crate) struct CellLostNote {
 pub(crate) struct HygienePlan {
     pub notes: Vec<CellLostNote>,
     /// Ordered: placement rows are released before instance rows —
-    /// instance-erase refuses while a placement row of the same incarnation
+    /// instance removal refuses while a placement row of the same incarnation
     /// exists. Both releases are fenced by the generations of the scan that
     /// produced this plan, so a cell redeployed since is left alone.
     pub release_cells: Vec<Sri>,
-    pub erase_instances: Vec<Sri>,
+    pub remove_instances: Vec<Sri>,
     /// Nodes whose every placed cell is being released: only then may the
     /// exec row and (last) the lease row go — while any placement row
     /// remains, the expired lease must survive as evidence.
@@ -125,7 +125,7 @@ pub(crate) fn plan_hygiene(
             continue;
         }
         plan.release_cells.push(cell.sri);
-        plan.erase_instances.push(cell.sri);
+        plan.remove_instances.push(cell.sri);
 
         let Some(instance) = by_sri.get(&cell.sri) else {
             continue;
@@ -301,7 +301,7 @@ async fn run_hygiene(
     // reconciliation sweep doesn't mistake it for a deliberate removal.
     let instance_by_sri: HashMap<Sri, &CellInstance> =
         instances.iter().map(|i| (i.sri, i)).collect();
-    for sri in &plan.erase_instances {
+    for sri in &plan.remove_instances {
         if let Some(inst) = instance_by_sri
             .get(sri)
             .filter(|i| i.lineage.parent.is_none())
@@ -341,18 +341,18 @@ async fn run_hygiene(
         };
         match remove_placement(session, sri, *gen_id).await {
             Ok(FenceOutcome::Applied) => {}
-            Ok(outcome) => debug!("hygiene: placement row '{sri}' left alone: {outcome:?}"),
+            Ok(outcome) => debug!("hygiene: placement row '{sri}' was not the newest: {outcome:?}"),
             Err(err) => warn!("hygiene: releasing placement row '{sri}' failed: {err}"),
         }
     }
-    for sri in &plan.erase_instances {
+    for sri in &plan.remove_instances {
         let Some(inst) = instance_by_sri.get(sri) else {
             continue;
         };
-        match instance_registry::erase_instance(session, sri, inst.gen_id).await {
+        match instance_registry::remove_instance(session, sri, inst.gen_id).await {
             Ok(FenceOutcome::Applied) => {}
-            Ok(outcome) => debug!("hygiene: instance row '{sri}' left alone: {outcome:?}"),
-            Err(err) => debug!("hygiene: erasing instance row '{sri}': {err}"),
+            Ok(outcome) => debug!("hygiene: instance row '{sri}' was not the newest: {outcome:?}"),
+            Err(err) => debug!("hygiene: removing instance row '{sri}': {err}"),
         }
     }
     for id in &plan.teardown_nodes {
@@ -677,7 +677,7 @@ mod tests {
             &TIMING,
         );
         assert_eq!(plan.release_cells, vec![p, c, d]);
-        assert_eq!(plan.erase_instances, vec![p, c, d]);
+        assert_eq!(plan.remove_instances, vec![p, c, d]);
         assert_eq!(plan.notes.len(), 1);
         assert_eq!(plan.notes[0].parent, gp);
         assert_eq!(plan.notes[0].cell, p);

@@ -226,6 +226,13 @@ impl Subject {
 pub mod events {
     use super::{Scope, Table, Version};
 
+    /// The name a scope's key-value writes publish their events under, in place
+    /// of a table name: a commit that put keys into a scope sends one event for
+    /// them, as a commit that inserted rows into a table does for that table.
+    /// The `@` keeps it apart from table names in topics, where a `*` doesn't
+    /// match it.
+    pub const KEY_EVENTS: &str = "@keys";
+
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     pub enum TableEvent {
         /// Carries the version the commit landed at, usable as a
@@ -454,6 +461,7 @@ operations! {
     key_get => KeyGet, tail, "KEY_GET";
     key_delete => KeyDelete, deferrable, "KEY_DELETE";
     key_prefix => KeyPrefix, tail, "KEY_PREFIX";
+    key_list => KeyList, tail, "KEY_LIST";
     tb_insert => TbInsert, tail, "TB_INSERT";
     tb_append => TbAppend, deferrable, "TB_APPEND";
     tb_insert_batched => TbInsertBatched, tail, "TB_INSERT_BATCHED";
@@ -827,6 +835,30 @@ pub mod key_prefix {
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     pub struct Response {
         pub keys: Vec<String>,
+    }
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    pub struct Error {
+        pub message: String,
+    }
+}
+
+/// Like [`key_prefix`], with each key's value: one round trip for what would
+/// otherwise take a [`key_get`] per key.
+pub mod key_list {
+    use super::{Scope, String, Value, Vec};
+
+    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+    pub struct Op {
+        pub scope: Scope,
+        pub prefix: String,
+    }
+
+    pub type Request = super::Tx<Op>;
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    pub struct Response {
+        pub entries: Vec<(String, Value)>,
     }
 
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1504,7 +1536,7 @@ mod tests {
                 // Target::New, Constraint::Routed("n"/"d"/"s")
                 0, 0, 1, b'n', 1, b'd', 1, b's', // Access::Write, retention_period: None
                 1, 0, // one op: TxOp::TbAppend
-                1, 7, // scope "n"/"d"/"s", table "t"
+                1, 8, // scope "n"/"d"/"s", table "t"
                 1, b'n', 1, b'd', 1, b's', 1, b't', // eid Some([7]), value [9]
                 1, 1, 7, 1, 9, // Finish::Commit
                 1,

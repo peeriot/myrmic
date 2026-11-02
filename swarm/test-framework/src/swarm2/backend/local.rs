@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use super::SwarmBackend;
+use super::{CutOff, SwarmBackend};
 use crate::myrmic::{LocalBinary, Myrmic};
 
 /// [`SwarmBackend`] that runs every runtime on the host, through one
@@ -27,13 +27,26 @@ impl Default for Local {
 
 impl SwarmBackend for Local {
     type Cli = LocalBinary;
+    type Client = LocalBinary;
 
     /// the one shim, whichever runtime it is
     fn shim(&self, _runtime: &str) -> &Myrmic<LocalBinary> {
         &self.myrmic
     }
 
+    /// the one shim: it already runs next to the test
+    fn client(&self) -> &Myrmic<LocalBinary> {
+        &self.myrmic
+    }
+
     fn connect_session(&self) -> impl Future<Output = zenoh::Session> + Send {
         self.myrmic.connect_session()
+    }
+}
+
+impl CutOff for Local {
+    /// a fresh [`Myrmic::cut_off`] of the one shim, whichever runtime it is
+    fn cut_off_shim(&self, _runtime: &str) -> Myrmic<LocalBinary> {
+        self.myrmic.cut_off()
     }
 }
