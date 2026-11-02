@@ -4,16 +4,20 @@ use std::sync::Arc;
 
 use bollard::{
     Docker,
+    container::LogOutput,
+    exec::{CreateExecOptions, StartExecResults},
     models::{
         ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
     },
     query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions},
 };
+use futures::StreamExt;
 
+use crate::CommandOutput;
 use crate::docker::{DockerDaemon, image::Image, network::ManagedNetwork, run_cleanup};
 
 #[derive(Clone)]
-/// a thin wrapper for interacting with a running docker container (exec, logs, network shaping)
+/// a thin wrapper for interacting with a running docker container (address, networks, exec)
 pub struct ConnectedContainer {
     docker: DockerDaemon,
     container_id: String,
@@ -69,6 +73,53 @@ impl ConnectedContainer {
             .unwrap()
     }
 
+    /// Run `cmd` in the container and capture its output. Panics when docker cannot run it:
+    /// broken test infrastructure, not a result.
+    pub async fn exec(&self, cmd: &[&str]) -> CommandOutput {
+        let exec = self
+            .docker
+            .create_exec(
+                &self.container_id,
+                CreateExecOptions {
+                    cmd: Some(cmd.to_vec()),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_or_else(|err| panic!("failed to create exec of {cmd:?}: {err}"));
+        let StartExecResults::Attached { mut output, .. } = self
+            .docker
+            .start_exec(&exec.id, None)
+            .await
+            .unwrap_or_else(|err| panic!("failed to start exec of {cmd:?}: {err}"))
+        else {
+            panic!("an exec started without `detach` is attached");
+        };
+
+        let mut stdout = vec![];
+        let mut stderr = vec![];
+        while let Some(chunk) = output.next().await {
+            match chunk.unwrap_or_else(|err| panic!("failed to read output of {cmd:?}: {err}")) {
+                LogOutput::StdOut { message } => stdout.extend_from_slice(&message),
+                LogOutput::StdErr { message } => stderr.extend_from_slice(&message),
+                other => panic!("an exec without a tty or stdin printed {other:?}"),
+            }
+        }
+        let inspect = self
+            .docker
+            .inspect_exec(&exec.id)
+            .await
+            .unwrap_or_else(|err| panic!("failed to inspect exec of {cmd:?}: {err}"));
+
+        CommandOutput {
+            success: inspect.exit_code == Some(0),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        }
+    }
+
     /// connect container to a network
     pub async fn connect_network(&self, network: &str) {
         self.docker
@@ -106,30 +157,76 @@ impl Deref for ManagedContainer {
 }
 
 impl ManagedContainer {
-    /// run the docker image `image` with command, attached to `network` if given
-    pub(crate) async fn run(
-        image: &Image,
+    /// describe a container `name` of the docker image `image` on `docker`; finish with
+    /// [`ContainerBuilder::run`]
+    pub(crate) fn builder<'a>(
+        image: &'a Image,
         docker: DockerDaemon,
-        command: &[&str],
-        network: Option<Arc<ManagedNetwork>>,
-        name: &str,
-    ) -> Self {
-        let options = CreateContainerOptionsBuilder::default().name(name).build();
-        let created = docker
-            .create_container(
-                Some(options),
-                container_config_with_command(
-                    image.tag().to_owned(),
-                    command,
-                    network.as_deref().map(ManagedNetwork::name),
-                ),
-            )
+        name: &'a str,
+    ) -> ContainerBuilder<'a> {
+        ContainerBuilder {
+            image,
+            docker,
+            name,
+            command: &[],
+            capabilities: &[],
+            tmpfs: vec![],
+            network: None,
+        }
+    }
+}
+
+/// Options for one docker container, created by [`ManagedContainer::builder`].
+pub(crate) struct ContainerBuilder<'a> {
+    image: &'a Image,
+    docker: DockerDaemon,
+    name: &'a str,
+    command: &'a [&'a str],
+    capabilities: &'a [&'a str],
+    tmpfs: Vec<(&'a str, &'a str)>,
+    network: Option<Arc<ManagedNetwork>>,
+}
+
+impl<'a> ContainerBuilder<'a> {
+    /// the command the container runs; defaults to the image's
+    pub(crate) fn command(mut self, command: &'a [&'a str]) -> Self {
+        self.command = command;
+        self
+    }
+
+    /// extra Linux capabilities, e.g. `NET_ADMIN`
+    pub(crate) fn capabilities(mut self, capabilities: &'a [&'a str]) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// a tmpfs mounted at `path`, with the mount `options` (e.g. `size=64m`)
+    pub(crate) fn tmpfs(mut self, path: &'a str, options: &'a str) -> Self {
+        self.tmpfs.push((path, options));
+        self
+    }
+
+    /// the network the container is attached to; it stays alive at least as long as the
+    /// container
+    pub(crate) fn network(mut self, network: Arc<ManagedNetwork>) -> Self {
+        self.network = Some(network);
+        self
+    }
+
+    /// Create and start the container.
+    pub(crate) async fn run(self) -> ManagedContainer {
+        let options = CreateContainerOptionsBuilder::default()
+            .name(self.name)
+            .build();
+        let created = self
+            .docker
+            .create_container(Some(options), self.create_body())
             .await
             .unwrap();
         // owned from here on, so a failure below still removes the container
-        let managed = Self {
-            container: ConnectedContainer::attach(docker, created.id),
-            _network: network,
+        let managed = ManagedContainer {
+            container: ConnectedContainer::attach(self.docker, created.id),
+            _network: self.network,
         };
 
         managed
@@ -139,6 +236,59 @@ impl ManagedContainer {
 
         managed
     }
+
+    /// the container's settings for docker's create API
+    fn create_body(&self) -> ContainerCreateBody {
+        let mut env = None;
+        let mut binds = None;
+
+        if let Ok(profile_file) = std::env::var("LLVM_PROFILE_FILE") {
+            let profile_path = Path::new(&profile_file);
+            let host_dir = profile_path
+                .parent()
+                .map_or_else(|| ".".to_owned(), |p| p.to_string_lossy().into_owned());
+            let filename = profile_path.file_name().map_or_else(
+                || "default.profraw".to_owned(),
+                |f| f.to_string_lossy().into_owned(),
+            );
+            env = Some(vec![format!("LLVM_PROFILE_FILE=/coverage/{filename}")]);
+            binds = Some(vec![format!("{host_dir}:/coverage")]);
+        }
+
+        ContainerCreateBody {
+            image: Some(self.image.tag().to_owned()),
+            cmd: (!self.command.is_empty()).then(|| {
+                self.command
+                    .iter()
+                    .map(|arg| (*arg).to_owned())
+                    .collect::<Vec<_>>()
+            }),
+            env,
+            networking_config: self.network.as_deref().map(|network| NetworkingConfig {
+                endpoints_config: Some(std::collections::HashMap::from([(
+                    network.name().to_owned(),
+                    EndpointSettings::default(),
+                )])),
+            }),
+            host_config: Some(HostConfig {
+                binds,
+                cap_add: Some(
+                    self.capabilities
+                        .iter()
+                        .map(|capability| (*capability).to_owned())
+                        .collect(),
+                ),
+                tmpfs: Some(
+                    self.tmpfs
+                        .iter()
+                        .map(|(path, options)| ((*path).to_owned(), (*options).to_owned()))
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
 }
 
 impl Drop for ManagedContainer {
@@ -146,49 +296,5 @@ impl Drop for ManagedContainer {
         let mut rm = self.container.docker_cli();
         rm.args(["rm", "-f", self.container.id()]);
         run_cleanup("ManagedContainer", rm);
-    }
-}
-
-fn container_config_with_command(
-    image: String,
-    command: &[&str],
-    network: Option<&str>,
-) -> ContainerCreateBody {
-    let mut env = None;
-    let mut host_config = None;
-
-    if let Ok(profile_file) = std::env::var("LLVM_PROFILE_FILE") {
-        let profile_path = Path::new(&profile_file);
-        let host_dir = profile_path
-            .parent()
-            .map_or_else(|| ".".to_owned(), |p| p.to_string_lossy().into_owned());
-        let filename = profile_path.file_name().map_or_else(
-            || "default.profraw".to_owned(),
-            |f| f.to_string_lossy().into_owned(),
-        );
-        env = Some(vec![format!("LLVM_PROFILE_FILE=/coverage/{filename}")]);
-        host_config = Some(HostConfig {
-            binds: Some(vec![format!("{host_dir}:/coverage")]),
-            ..Default::default()
-        });
-    }
-
-    ContainerCreateBody {
-        image: Some(image),
-        cmd: (!command.is_empty()).then(|| {
-            command
-                .iter()
-                .map(|arg| (*arg).to_owned())
-                .collect::<Vec<_>>()
-        }),
-        env,
-        networking_config: network.map(|name| NetworkingConfig {
-            endpoints_config: Some(std::collections::HashMap::from([(
-                name.to_owned(),
-                EndpointSettings::default(),
-            )])),
-        }),
-        host_config,
-        ..Default::default()
     }
 }

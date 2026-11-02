@@ -691,6 +691,42 @@ where
             .await?;
         Ok(())
     }
+
+    /// Freeze the runtime's process (`SIGSTOP`), as a stalled machine would: it keeps its state
+    /// and connections but does nothing, timers and lease renewals included, until
+    /// [`Self::resume`].
+    pub async fn pause(&self) -> Result<(), Error> {
+        self.signal("-STOP").await
+    }
+
+    /// let the process [`Self::pause`] froze run again (`SIGCONT`)
+    pub async fn resume(&self) -> Result<(), Error> {
+        self.signal("-CONT").await
+    }
+
+    /// Send `signal` to the runtime's process on the target. Its pid comes from `myrmic runtimes
+    /// list`, so this works on every backend.
+    async fn signal(&self, signal: &str) -> Result<(), Error> {
+        let output = self.myrmic.run(&["runtimes", "list", &self.name]).await?;
+        // `<name>\trunning\tpid=<pid>`
+        let pid = output
+            .stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{}\trunning\tpid=", self.name)))
+            .unwrap_or_else(|| {
+                panic!(
+                    "`runtimes list` shows no running `{}`: {}",
+                    self.name, output.stdout
+                )
+            });
+        let killed = self.myrmic.run_program("kill", &[signal, pid]).await;
+        assert!(
+            killed.success,
+            "failed to send {signal} to `{}`: {}",
+            self.name, killed.stderr
+        );
+        Ok(())
+    }
 }
 
 impl<B> Drop for Runtime<B>

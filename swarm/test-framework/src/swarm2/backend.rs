@@ -37,3 +37,44 @@ pub trait CutOff<S: SwarmSpec>: SwarmBackend<S> {
     /// no other runtime of the swarm, cut off or not.
     fn cut_off_shim(&self, runtime: S) -> Myrmic<Self::Cli>;
 }
+
+/// A [`SwarmBackend`] that can isolate a running runtime: cut it off the network and connect it
+/// again, while it keeps running (see [`super::RuntimeMut::isolate`]).
+pub trait Isolate<S: SwarmSpec>: SwarmBackend<S> {
+    /// Drop all traffic between the runtime `runtime` and everything else: the other runtimes
+    /// and the test. Dropped, not rejected, so to the others it falls silent.
+    fn isolate(&self, runtime: S) -> impl Future<Output = ()> + Send;
+
+    /// lift [`Self::isolate`] of the runtime `runtime`
+    fn heal(&self, runtime: S) -> impl Future<Output = ()> + Send;
+}
+
+/// A [`SwarmBackend`] that can move a running runtime to another address on its network, as when a
+/// host's address changes, without telling the runtime or the swarm (see
+/// [`super::RuntimeMut::readdress`]).
+pub trait Readdress<S: SwarmSpec>: SwarmBackend<S> {
+    /// Move the runtime `runtime` to another address. It keeps running.
+    fn readdress(&self, runtime: S) -> impl Future<Output = ()> + Send;
+}
+
+/// A [`SwarmBackend`] that can fill the disk a running runtime keeps its data on, as when a host's
+/// disk runs full (see [`super::RuntimeMut::fill_disk`]).
+pub trait FillDisk<S: SwarmSpec>: SwarmBackend<S> {
+    /// Fill the disk the runtime `runtime` keeps its data on (its database, its logs) up to
+    /// `room` free bytes. It keeps running.
+    fn fill_disk(&self, runtime: S, room: u64) -> impl Future<Output = ()> + Send;
+
+    /// lift [`Self::fill_disk`] of the runtime `runtime`
+    fn free_disk(&self, runtime: S) -> impl Future<Output = ()> + Send;
+}
+
+/// A [`SwarmBackend`] that can cut single links while everything else stays connected, e.g. to
+/// leave two runtimes reaching each other only through a third (see [`super::Swarm::block`]).
+pub trait Block<S: SwarmSpec>: SwarmBackend<S> {
+    /// Drop all traffic between the runtimes `a` and `b`.
+    fn block(&self, a: S, b: S) -> impl Future<Output = ()> + Send;
+
+    /// Drop all traffic between the runtime `runtime` and the router the test reaches the swarm
+    /// through, so the test reaches it only through other runtimes.
+    fn block_router(&self, runtime: S) -> impl Future<Output = ()> + Send;
+}

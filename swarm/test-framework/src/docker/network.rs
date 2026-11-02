@@ -44,6 +44,30 @@ impl ManagedNetwork {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// the prefix length of the network's `IPv4` subnet, e.g. 16 for `172.19.0.0/16`
+    pub async fn ipv4_prefix_len(&self) -> u8 {
+        let inspect = self
+            .docker
+            .inspect_network(&self.name, None)
+            .await
+            .unwrap_or_else(|err| {
+                panic!("failed to inspect docker network `{}`: {err}", self.name)
+            });
+        let subnet = inspect
+            .ipam
+            .and_then(|ipam| ipam.config)
+            .into_iter()
+            .flatten()
+            .find_map(|config| config.subnet.filter(|subnet| subnet.contains('.')))
+            .unwrap_or_else(|| panic!("docker network `{}` has no IPv4 subnet", self.name));
+        let (_, len) = subnet
+            .split_once('/')
+            .unwrap_or_else(|| panic!("docker gave the subnet `{subnet}` without a prefix length"));
+        len.parse().unwrap_or_else(|err| {
+            panic!("docker gave the subnet `{subnet}` a bad prefix length: {err}")
+        })
+    }
 }
 
 impl Drop for ManagedNetwork {

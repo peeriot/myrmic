@@ -16,7 +16,7 @@ use zenoh::config::ZenohId;
 
 pub use backend::docker::Docker;
 pub use backend::local::Local;
-pub use backend::{CutOff, SwarmBackend};
+pub use backend::{Block, CutOff, FillDisk, Isolate, Readdress, SwarmBackend};
 
 use crate::myrmic::{self, Error};
 
@@ -44,8 +44,9 @@ mod check;
 /// }
 /// ```
 ///
-/// A value's `Debug` output is its runtime's name, so distinct values must print distinctly.
-pub trait SwarmSpec: Enum + Copy + Eq + Debug {
+/// A value's `Debug` output is its runtime's name, so distinct values must print distinctly. It
+/// is `Send` because the backends' `Send` futures hold it across their awaits.
+pub trait SwarmSpec: Enum + Copy + Eq + Debug + Send {
     /// the tags the runtime is started with
     fn tags(self) -> Vec<String>;
 
@@ -172,18 +173,23 @@ where
     }
 
     /// The runtime the cell `sri` is placed on, or `None` while it has no placement or its
-    /// placement names no host yet.
+    /// placement names no host yet. Fails like [`Self::placement`].
     ///
     /// A killed runtime keeps its placements until the swarm has declared it dead, so during a
     /// failover this still names the killed runtime for a while.
-    pub async fn host_of(&self, sri: &str) -> Option<S> {
-        let host = self.placement(sri).await?.kind.host()?;
-        let (id, _) = self
-            .runtimes
-            .iter()
-            .find(|(_, runtime)| RuntimeId::from(runtime.zid) == host)
-            .unwrap_or_else(|| panic!("{sri} is placed on {host}, which is not in the swarm"));
-        Some(id)
+    pub async fn host_of(&self, sri: &str) -> Result<Option<S>, sorg_client::Error> {
+        let host = self
+            .placement(sri)
+            .await?
+            .and_then(|placement| placement.kind.host());
+        Ok(host.map(|host| {
+            let (id, _) = self
+                .runtimes
+                .iter()
+                .find(|(_, runtime)| RuntimeId::from(runtime.zid) == host)
+                .unwrap_or_else(|| panic!("{sri} is placed on {host}, which is not in the swarm"));
+            id
+        }))
     }
 
     /// The runtime holding the db scope `scope`; for a cell's data (`scope_of_cell`) it need not
@@ -208,20 +214,20 @@ where
     }
 
     /// The placement row of the cell `sri`, or `None` while it has none.
-    pub async fn placement(&self, sri: &str) -> Option<PlacementEntry> {
+    ///
+    /// Fails while the runtime holding the swarm's placement table is unreachable, until the
+    /// swarm has moved the table (up to a minute after a runtime is lost, see the operating
+    /// guide). A test that reads it while runtimes are lost or cut off retries.
+    pub async fn placement(&self, sri: &str) -> Result<Option<PlacementEntry>, sorg_client::Error> {
         let sri: Sri = sri.parse().expect("a deployed cell's SRI is valid");
-        self.sorg
-            .get_placement(&sri)
-            .await
-            .expect("failed to query the cell's placement")
+        self.sorg.get_placement(&sri).await
     }
 
-    /// The instance row of the cell `sri`, or `None` while it has none.
-    pub async fn instance(&self, sri: &str) -> Option<CellInstance> {
+    /// The instance row of the cell `sri`, or `None` while it has none. Fails like
+    /// [`Self::placement`], for the instance table.
+    pub async fn instance(&self, sri: &str) -> Result<Option<CellInstance>, sorg_client::Error> {
         let sri: Sri = sri.parse().expect("a deployed cell's SRI is valid");
-        sorg_common::instance_registry::get_instance(&self.session, &sri)
-            .await
-            .expect("failed to query the cell's instance")
+        Ok(sorg_common::instance_registry::get_instance(&self.session, &sri).await?)
     }
 
     /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
@@ -233,6 +239,60 @@ where
     /// deploy a cell (see [`SwarmBackend::client`]).
     pub fn client(&self) -> myrmic::Myrmic<B::Client> {
         self.backend.client()
+    }
+}
+
+impl<B, S> Swarm<B, S>
+where
+    B: Block<S>,
+    S: SwarmSpec,
+{
+    /// Cut the link between the runtimes `a` and `b` (see [`Block::block`]). Both stay connected
+    /// to everything else, and may still reach each other through it.
+    pub async fn block(&self, a: S, b: S) {
+        self.backend.block(a, b).await;
+    }
+
+    /// Cut the link between the runtime `runtime` and the test's router (see
+    /// [`Block::block_router`]).
+    pub async fn block_router(&self, runtime: S) {
+        self.backend.block_router(runtime).await;
+    }
+}
+
+impl<B, S> Swarm<B, S>
+where
+    B: Isolate<S>,
+    S: SwarmSpec,
+{
+    /// Cut every running runtime off the network at once (see [`RuntimeMut::isolate`]): each
+    /// keeps running, alone.
+    pub async fn isolate_all(&mut self) {
+        for (id, runtime) in self.runtimes.iter() {
+            if runtime.is_running() {
+                self.backend.isolate(id).await;
+            }
+        }
+    }
+
+    /// Connect every running runtime again, each of which must be isolated (see
+    /// [`Self::isolate_all`]). Returns once the swarm is connected again.
+    ///
+    /// For runtimes isolated together: [`RuntimeMut::heal`] of one of them waits for it to reach
+    /// the others, which can't happen while they are still isolated.
+    pub async fn heal_all(&mut self) -> Result<(), Error> {
+        for (id, runtime) in self.runtimes.iter() {
+            if runtime.is_running() {
+                self.backend.heal(id).await;
+            }
+        }
+        let expected = self
+            .runtimes
+            .values()
+            .filter(|runtime| runtime.is_running())
+            .map(Runtime::zid)
+            .collect();
+        wait_until_connected(&self.introspection, &expected).await
     }
 }
 
@@ -365,6 +425,30 @@ where
         Ok(())
     }
 
+    /// Freeze the running runtime (see [`myrmic::Runtime::pause`]). It keeps running, but the
+    /// rest of the swarm hears nothing from it until [`Self::resume`].
+    pub async fn pause(&mut self) -> Result<(), Error> {
+        self.running().pause().await
+    }
+
+    /// Let the paused runtime run again. Returns once the swarm, with this runtime, is connected
+    /// again.
+    pub async fn resume(&mut self) -> Result<(), Error> {
+        self.running().resume().await?;
+        let mut expected = self.others.clone();
+        expected.insert(self.runtime.zid);
+        wait_until_connected(self.introspection, &expected).await
+    }
+
+    /// the running runtime
+    fn running(&self) -> &myrmic::Runtime<B::Cli> {
+        let id = self.id;
+        self.runtime
+            .running
+            .as_ref()
+            .unwrap_or_else(|| panic!("{id:?} is not running"))
+    }
+
     /// the running runtime, now marked as no longer running
     fn take_running(&mut self) -> myrmic::Runtime<B::Cli> {
         let id = self.id;
@@ -372,6 +456,63 @@ where
             .running
             .take()
             .unwrap_or_else(|| panic!("{id:?} is not running"))
+    }
+}
+
+impl<B, S> RuntimeMut<'_, B, S>
+where
+    B: Isolate<S>,
+    S: SwarmSpec,
+{
+    /// Cut the running runtime off the network (see [`Isolate::isolate`]). It keeps running, and
+    /// the rest of the swarm only notices its silence.
+    pub async fn isolate(&mut self) {
+        let id = self.id;
+        assert!(self.runtime.is_running(), "{id:?} is not running");
+        self.backend.isolate(id).await;
+    }
+
+    /// Connect the isolated runtime again. Returns once the swarm, with this runtime, is
+    /// connected again.
+    pub async fn heal(&mut self) -> Result<(), Error> {
+        self.backend.heal(self.id).await;
+        let mut expected = self.others.clone();
+        expected.insert(self.runtime.zid);
+        wait_until_connected(self.introspection, &expected).await
+    }
+}
+
+impl<B, S> RuntimeMut<'_, B, S>
+where
+    B: Readdress<S>,
+    S: SwarmSpec,
+{
+    /// Move the running runtime to another address (see [`Readdress::readdress`]). Returns at
+    /// once: finding back into the swarm is the runtime's own business.
+    pub async fn readdress(&mut self) {
+        let id = self.id;
+        assert!(self.runtime.is_running(), "{id:?} is not running");
+        self.backend.readdress(id).await;
+    }
+}
+
+impl<B, S> RuntimeMut<'_, B, S>
+where
+    B: FillDisk<S>,
+    S: SwarmSpec,
+{
+    /// Fill the disk the running runtime keeps its data on up to `room` free bytes (see
+    /// [`FillDisk::fill_disk`]). It keeps running, and its writes start failing once the room is
+    /// used up.
+    pub async fn fill_disk(&mut self, room: u64) {
+        let id = self.id;
+        assert!(self.runtime.is_running(), "{id:?} is not running");
+        self.backend.fill_disk(id, room).await;
+    }
+
+    /// Free the disk filled by [`Self::fill_disk`] again.
+    pub async fn free_disk(&mut self) {
+        self.backend.free_disk(self.id).await;
     }
 }
 
