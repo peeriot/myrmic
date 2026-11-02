@@ -13,7 +13,8 @@ use crate::{
 };
 
 /// [`SwarmBackend`] that runs every runtime in a docker container of its own, on a network of its
-/// own, next to a test-side container that runs the CLI and a zenoh router.
+/// own, next to a container running a zenoh router. The test's CLI and session run on the test's
+/// host and join the swarm through that router, which faults on runtimes never cut off.
 ///
 /// The test reaches the router at its address on that network. On a host that runs the test
 /// directly, the host is on every docker network. A test that runs in a container itself (e.g. a
@@ -21,9 +22,12 @@ use crate::{
 /// attaches it to the swarm's network.
 pub struct Docker<S: SwarmSpec> {
     container_map: EnumMap<S, Arc<ManagedContainer>>,
-    /// runs no runtime: the CLI of [`SwarmBackend::client`] and the zenoh router
-    container: Arc<ManagedContainer>,
-    network: Arc<ManagedNetwork>,
+    /// kept for the router it runs
+    _router: ManagedContainer,
+    /// the router's endpoint, e.g. `tcp/172.23.0.5:7447`
+    router_endpoint: String,
+    /// the CLI on the test's host, connected to the router
+    client: Myrmic<myrmic::Local>,
 }
 
 /// The image's Dockerfile; its binaries come from the workspace build.
@@ -36,7 +40,7 @@ pub const TEST_CONTAINER: &str = "MYRMIC_TEST_CONTAINER";
 const ROUTER_PORT: u16 = 7447;
 
 impl<S: SwarmSpec> Docker<S> {
-    /// Create the swarm's network, a container per runtime and the test-side container.
+    /// Create the swarm's network, a container per runtime and the router's container.
     pub async fn init(dockerd: &DockerDaemon) -> Self {
         let image = ensure_image(dockerd).await;
         let test_container = match std::env::var(TEST_CONTAINER) {
@@ -65,20 +69,25 @@ impl<S: SwarmSpec> Docker<S> {
             }
         })
         .await;
-        let client_name = format!("{}-client", network.name());
-        let client = ManagedContainer::run(
+        let router_name = format!("{}-router", network.name());
+        let router = ManagedContainer::run(
             image,
             dockerd.clone(),
             &["zenoh-router"],
             Some(network.clone()),
-            &client_name,
+            &router_name,
         )
         .await;
+        let router_endpoint = format!(
+            "tcp/{}:{ROUTER_PORT}",
+            router.container_ip(network.name()).await
+        );
 
         Self {
             container_map,
-            container: Arc::new(client),
-            network,
+            _router: router,
+            client: Myrmic::local_connected(router_endpoint.clone()),
+            router_endpoint,
         }
     }
 }
@@ -154,19 +163,18 @@ where
 {
     type Cli = myrmic::Docker;
 
-    type Client = myrmic::Docker;
+    type Client = myrmic::Local;
 
     fn shim(&self, runtime: S) -> Myrmic<myrmic::Docker> {
         Myrmic::attach(self.container_map[runtime].clone())
     }
 
-    fn client(&self) -> Myrmic<myrmic::Docker> {
-        Myrmic::attach(self.container.clone())
+    fn client(&self) -> Myrmic<myrmic::Local> {
+        self.client.clone()
     }
 
-    /// a client session on the test-side container's router
+    /// a client session on the router
     async fn connect_session(&self) -> zenoh::Session {
-        let router = self.container.container_ip(self.network.name()).await;
         let mut config = zenoh::Config::default();
         config
             .set_mode(Some(zenoh::config::WhatAmI::Client))
@@ -174,7 +182,7 @@ where
         config
             .insert_json5(
                 "connect/endpoints",
-                &serde_json::json!([format!("tcp/{router}:{ROUTER_PORT}")]).to_string(),
+                &serde_json::json!([self.router_endpoint]).to_string(),
             )
             .expect("the router's address is a valid zenoh endpoint");
         config

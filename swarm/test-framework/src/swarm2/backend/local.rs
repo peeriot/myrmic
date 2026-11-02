@@ -1,5 +1,3 @@
-use std::future::Future;
-
 use super::{CutOff, SwarmBackend};
 use crate::myrmic::{self, Myrmic};
 use crate::swarm2::SwarmSpec;
@@ -40,8 +38,10 @@ impl<S: SwarmSpec> SwarmBackend<S> for Local {
         self.myrmic.clone()
     }
 
-    fn connect_session(&self) -> impl Future<Output = zenoh::Session> + Send {
-        self.myrmic.connect_session()
+    async fn connect_session(&self) -> zenoh::Session {
+        zenoh::open(self.myrmic.backend().zenoh_config())
+            .await
+            .expect("failed to open zenoh session")
     }
 }
 

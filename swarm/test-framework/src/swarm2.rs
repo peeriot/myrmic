@@ -14,6 +14,7 @@ use db_client::v1::models::{Scope, Subject};
 use enum_map::{Array, Enum, EnumMap};
 use zenoh::config::ZenohId;
 
+pub use backend::docker::Docker;
 pub use backend::local::Local;
 pub use backend::{CutOff, SwarmBackend};
 

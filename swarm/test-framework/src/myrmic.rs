@@ -77,10 +77,18 @@ impl Myrmic<Local> {
     ///
     /// The shim gets its own state directories and its own multicast group, on which its
     /// runtimes scout and every CLI call (through `DEFAULT_MYRMIC_MULTICAST_GROUP`) and
-    /// [`Self::connect_session`] discover them, the same way as on the default group.
+    /// sessions from [`Local::zenoh_config`] discover them, the same way as on the default group.
     /// [`RuntimeBuilder::config`] is not available, the shim generates the config itself.
     pub fn local_isolated() -> Self {
         Self::local_on(Local::isolated())
+    }
+
+    /// Like [`Self::local`], but every CLI call (through `DEFAULT_MYRMIC_CONNECT`) and sessions
+    /// from [`Local::zenoh_config`] reach the swarm through `endpoint` (e.g. `tcp/192.0.2.10:7447`,
+    /// a router's) instead of by multicast scouting. The swarm runs elsewhere: the shim starts no
+    /// runtime.
+    pub fn local_connected(endpoint: impl Into<String>) -> Self {
+        Self::local_on(Local::connected(endpoint.into()))
     }
 
     /// A shim on this [`Self::local_isolated`] shim's state directories but on a multicast group
@@ -91,33 +99,6 @@ impl Myrmic<Local> {
             backend: self.backend.cut_off(),
             binary: self.binary.clone(),
         }
-    }
-
-    /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI: in peer mode,
-    /// found by multicast scouting, on [`Self::local_isolated`]'s own group if it is one.
-    ///
-    /// It does not use the shim: the receiver only restricts it to the local backend, whose
-    /// runtimes are on this host and so reachable by multicast scouting. A remote mesh needs a
-    /// route in instead, e.g. rack's SSH tunnel to a pinned listen port.
-    ///
-    /// Use the returned session to create [`crate::clients::db::DbHandle`],
-    /// [`crate::clients::sorg::SorgHandle`], etc.
-    pub async fn connect_session(&self) -> zenoh::Session {
-        let mut config = zenoh::Config::default();
-        config
-            .set_mode(Some(zenoh::config::WhatAmI::Peer))
-            .expect("setting zenoh mode cannot fail");
-        if let Some(multicast_group) = self.backend.multicast_group() {
-            config
-                .insert_json5(
-                    "scouting/multicast/address",
-                    &serde_json::json!(multicast_group).to_string(),
-                )
-                .expect("the isolated multicast group is a valid zenoh multicast address");
-        }
-        zenoh::open(config)
-            .await
-            .expect("failed to open zenoh session")
     }
 
     /// the locally built myrmic binary on `backend`
@@ -168,6 +149,11 @@ impl<B> Myrmic<B>
 where
     B: MyrmicBackend,
 {
+    /// where this shim's commands run
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
     /// describe a `myrmic runtimes start` with `tags`; finish with [`RuntimeBuilder::start`]
     pub fn runtime<'a>(&'a self, tags: &'a [&'a str]) -> RuntimeBuilder<'a, B> {
         RuntimeBuilder {
