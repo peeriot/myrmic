@@ -71,7 +71,9 @@ impl DebugListener {
         let pid: u32 = pid
             .parse()
             .unwrap_or_else(|err| panic!("{invocation} reported `{pid}` as its PID: {err}"));
-        let interrupt = myrmic.backend.command("sh", &["-c", "kill -INT \"$1\"", "sh", &pid.to_string()]);
+        let interrupt = myrmic
+            .backend
+            .command("sh", &["-c", "kill -INT \"$1\"", "sh", &pid.to_string()]);
 
         Self {
             lines,

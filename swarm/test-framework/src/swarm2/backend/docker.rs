@@ -6,11 +6,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 
 use crate::{
-    docker::{
-        DockerDaemon,
-        image::Image,
-        managed::{ManagedContainer, ManagedNetwork},
-    },
+    docker::{DockerDaemon, container::ManagedContainer, image::Image, network::ManagedNetwork},
     myrmic::{self, Myrmic},
     resolve_binary,
     swarm2::{SwarmBackend, SwarmSpec, join_enum_map},
@@ -54,7 +50,6 @@ impl<S: SwarmSpec> Docker<S> {
         );
 
         let container_map = join_enum_map(|id: S| {
-            let image = &image;
             let network = network.clone();
             async move {
                 let name = format!("{}-{id:?}", network.name());
@@ -72,7 +67,7 @@ impl<S: SwarmSpec> Docker<S> {
         .await;
         let client_name = format!("{}-client", network.name());
         let client = ManagedContainer::run(
-            &image,
+            image,
             dockerd.clone(),
             &["zenoh-router"],
             Some(network.clone()),
@@ -93,9 +88,9 @@ impl<S: SwarmSpec> Docker<S> {
 ///
 /// It strips the binaries and tags the image with a hash of them and the Dockerfile, so an image
 /// is built once per build of the binaries and reused by every later run, in any process.
-async fn ensure_image(dockerd: &DockerDaemon) -> Image {
-    static TAG: OnceCell<String> = OnceCell::const_new();
-    let tag = TAG
+async fn ensure_image(dockerd: &DockerDaemon) -> &'static Image {
+    static IMAGE: OnceCell<Image> = OnceCell::const_new();
+    IMAGE
         .get_or_init(|| async {
             let stripped =
                 tempfile::tempdir().expect("failed to create a directory for the binaries");
@@ -113,26 +108,20 @@ async fn ensure_image(dockerd: &DockerDaemon) -> Image {
             }
             let tag = format!("myrmic-swarm:{}", &hex::encode(hash.finalize())[..16]);
 
-            match dockerd.inspect_image(&tag).await {
-                Ok(_) => {}
-                // not built yet
-                Err(bollard::errors::Error::DockerResponseServerError {
-                    status_code: 404, ..
-                }) => {
+            match Image::find(dockerd, &tag).await {
+                Some(image) => image,
+                None => {
                     Image::build(
                         dockerd,
-                        tag.clone(),
+                        tag,
                         Path::new(DOCKERFILE),
                         &[(&myrmic, "myrmic"), (&router, "zenoh-router")],
                     )
-                    .await;
+                    .await
                 }
-                Err(err) => panic!("failed to inspect image `{tag}`: {err}"),
             }
-            tag
         })
-        .await;
-    Image::new(tag.clone())
+        .await
 }
 
 /// Copy `binary` to `stripped` without its debug info: the debug build's binaries are mostly

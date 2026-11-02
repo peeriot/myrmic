@@ -79,7 +79,10 @@ where
             .expect("the directory came from `mktemp` output, which is UTF-8");
         let output = self
             .myrmic
-            .run_program("sh", &["-c", "printf '%s' \"$1\" > \"$2\"", "sh", content, path_str])
+            .run_program(
+                "sh",
+                &["-c", "printf '%s' \"$1\" > \"$2\"", "sh", content, path_str],
+            )
             .await;
         assert!(
             output.success,

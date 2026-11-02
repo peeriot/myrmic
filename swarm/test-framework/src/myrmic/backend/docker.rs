@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::docker::{container::ConnectedContainer, managed::ManagedContainer};
+use crate::docker::container::{ConnectedContainer, ManagedContainer};
 
 use super::MyrmicBackend;
 

@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use super::{CutOff, SwarmBackend};
-use crate::swarm2::SwarmSpec;
 use crate::myrmic::{self, Myrmic};
+use crate::swarm2::SwarmSpec;
 
 /// [`SwarmBackend`] that runs every runtime on the host, through one
 /// [`Myrmic::local_isolated`] shim: its runtimes find each other on the shim's multicast group,

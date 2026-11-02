@@ -17,7 +17,7 @@ use sorg_common::RestartType;
 use crate::{
     CommandOutput,
     clients::sorg::SorgHandle,
-    docker::managed::ManagedContainer,
+    docker::container::ManagedContainer,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
 };
 
