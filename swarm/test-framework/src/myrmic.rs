@@ -162,6 +162,8 @@ where
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
             config: None,
+            connect: vec![],
+            listen: vec![],
         }
     }
 
@@ -425,6 +427,8 @@ pub struct RuntimeBuilder<'a, B> {
     name: String,
     persistent: bool,
     config: Option<String>,
+    connect: Vec<String>,
+    listen: Vec<String>,
 }
 
 impl<B> RuntimeBuilder<'_, B>
@@ -448,6 +452,19 @@ where
         self
     }
 
+    /// `--connect`: a peer endpoint the runtime connects to, merged with its config file's;
+    /// repeatable
+    pub fn connect(mut self, endpoint: &str) -> Self {
+        self.connect.push(endpoint.to_owned());
+        self
+    }
+
+    /// `--listen`: an endpoint the runtime listens on, merged with its config file's; repeatable
+    pub fn listen(mut self, endpoint: &str) -> Self {
+        self.listen.push(endpoint.to_owned());
+        self
+    }
+
     /// a config file for `myrmic runtimes start <path>`, already present on the target (e.g. to
     /// pin the zenoh listen port, or to set `db.directory`)
     pub fn config(mut self, path: &str) -> Self {
@@ -455,7 +472,8 @@ where
         self
     }
 
-    /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] [`config`]
+    /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] [--connect
+    /// `endpoint`...] [--listen `endpoint`...] [`config`]
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
@@ -480,6 +498,12 @@ where
         }
         for tag in self.tags {
             args.extend(["--tag", tag]);
+        }
+        for endpoint in &self.connect {
+            args.extend(["--connect", endpoint]);
+        }
+        for endpoint in &self.listen {
+            args.extend(["--listen", endpoint]);
         }
         if let Some(config) = &self.config {
             args.push(config);
