@@ -6825,6 +6825,7 @@ dependencies = [
  "swarm-telemetry",
  "tar",
  "tempfile",
+ "test-framework",
  "textus",
  "tokio",
  "toml 0.8.23",
