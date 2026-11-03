@@ -3,7 +3,7 @@
 //! A firmware crate names its chip family in `[package.metadata.myrmic]
 //! firmware`, which is what tells it apart from a cell crate; its own cargo
 //! features pick the chip. It compiles in release mode for the family's
-//! bare-metal RISC-V target with the link flags esp-hal needs, and hands
+//! bare-metal RISC-V target with the flags esp-hal needs, and hands
 //! `esp-firmware-build` a default partition layout when the crate ships no
 //! `partitions.toml` of its own.
 
@@ -22,8 +22,9 @@ use crate::compile::{Selector, TOOLCHAIN, resolve_selector};
 /// The bare-metal target every supported chip compiles for.
 pub const TARGET: &str = "riscv32imac-unknown-none-elf";
 const RUSTFLAGS_ENV: &str = "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS";
-/// esp-hal's linker script, frame pointers for its backtraces, and lld.
-const RUSTFLAGS: &str = "-C link-arg=-Tlinkall.x -C force-frame-pointers -C linker=rust-lld";
+/// Frame pointers for esp-hal's backtraces, and lld. esp-hal's linker script
+/// comes from the crate's build script (`esp_firmware_build::configure`).
+const RUSTFLAGS: &str = "-C force-frame-pointers -C linker=rust-lld";
 /// Compile-time configuration the firmware expects. A value already in the
 /// caller's environment wins, so `ESP_LOG=debug myrmic build` works.
 const DEFAULT_ENV: [(&str, &str); 2] = [
@@ -368,17 +369,16 @@ mod tests {
     const M: u64 = 1024 * 1024;
 
     #[test]
-    fn configure_links_with_the_esp_flags_for_the_riscv_target() {
+    fn configure_sets_the_esp_flags_without_the_linker_script() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
         configure(&mut cmd, dir.path(), None, None, |_| false).unwrap();
 
+        // The firmware's build script links the script; passing it here too
+        // would define every memory region twice.
         let rustflags = env_of(&cmd, RUSTFLAGS_ENV).expect("rustflags are set");
-        for flag in [
-            "link-arg=-Tlinkall.x",
-            "force-frame-pointers",
-            "linker=rust-lld",
-        ] {
+        assert!(!rustflags.contains("linkall"), "{rustflags}");
+        for flag in ["force-frame-pointers", "linker=rust-lld"] {
             assert!(rustflags.contains(flag), "{rustflags}");
         }
         assert_eq!(env_of(&cmd, "ESP_LOG").as_deref(), Some("info"));

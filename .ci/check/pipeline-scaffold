@@ -69,6 +69,28 @@ FIRMWARE="$WORK/firmware"
 # needs; the chip comes from the scaffold manifest's default feature.
 "$MYRMIC" build "$FIRMWARE"
 
+# The scaffold's `.cargo/config.toml` and build script carry everything a plain
+# `cargo build` needs (an IDE, rust-analyzer, a user's own CI), and the image
+# must come out with the layout `myrmic build` produces: the segments, which
+# are what gets flashed. The symbol and string tables differ with cargo's
+# metadata hash and are not part of the image. Same target dir: the differing
+# rustflags give the two builds separate artifacts, and the final ELF is read
+# before the second build overwrites it.
+FIRMWARE_ELF="$CARGO_TARGET_DIR/riscv32imac-unknown-none-elf/release/firmware"
+readelf -l --wide "$FIRMWARE_ELF" > "$WORK/myrmic.layout"
+( cd "$FIRMWARE" && cargo build --release )
+readelf -l --wide "$FIRMWARE_ELF" > "$WORK/cargo.layout"
+diff "$WORK/myrmic.layout" "$WORK/cargo.layout"
+
+# A crate trimmed to its one chip must not warn about the other chips' cfgs,
+# which `esp_firmware::board!` expands in the crate.
+sed -i -E '/^esp32c(5|61) *=/d' "$FIRMWARE/Cargo.toml"
+( cd "$FIRMWARE" && cargo build --release 2>&1 | tee "$WORK/trimmed.log" )
+if grep -q 'unexpected_cfgs' "$WORK/trimmed.log"; then
+    printf 'the firmware scaffold trimmed to one chip warns about unexpected cfgs\n' >&2
+    exit 1
+fi
+
 printf "\n\n--== Signal Layer modules: scaffold + build ==--\n\n"
 MODS="$WORK/mods"
 "$MYRMIC" signal-layer driver demo_i2c  --bus i2c --registry-dir "$MODS"
