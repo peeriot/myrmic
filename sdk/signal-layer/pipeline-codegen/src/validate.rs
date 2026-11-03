@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use crate::descriptor::{DriverSchema, Scope};
+use crate::descriptor::{DriverSchema, OutputMode, Scope};
 use crate::manifest::BoardManifest;
 use crate::pipeline::{PipelineFile, TapKind};
 
@@ -233,6 +233,27 @@ pub fn validate_pipeline_against_manifest(
         }
     }
 
+    // Every hardware key must be one the driver declares. `freq_khz` on a PWM
+    // output is read by the backends themselves, so no descriptor carries it.
+    for device in &manifest.devices {
+        let Some(schema) = driver_schemas.get(device.driver.as_str()) else {
+            continue;
+        };
+        let pwm = schema
+            .writes
+            .as_ref()
+            .is_some_and(|w| w.mode == OutputMode::Pwm);
+        for key in device.hardware.keys() {
+            let builtin = pwm && key == "freq_khz";
+            if !builtin && !schema.config_schema.contains_key(key.as_str()) {
+                errors.push(ValidationError::new(format!(
+                    "device `{}`: unknown hardware key `{key}`",
+                    device.id
+                )));
+            }
+        }
+    }
+
     for src in &pipeline.sources {
         // Each source's `device:` must exist in the manifest.
         let Some(device) = device_map.get(src.device.as_str()) else {
@@ -245,18 +266,25 @@ pub fn validate_pipeline_against_manifest(
 
         // If a schema is available for this driver, validate config scopes and bus needs.
         if let Some(schema) = driver_schemas.get(device.driver.as_str()) {
-            // Pipeline config must not contain hardware-scope fields.
+            // Pipeline config must not contain hardware-scope fields, and every
+            // other key must be declared. `sample_interval_ms` is read by
+            // codegen itself, so no descriptor needs to carry it.
             for key in src.config.keys() {
-                if schema
-                    .config_schema
-                    .get(key.as_str())
-                    .is_some_and(|f| f.scope == Scope::Hardware)
-                {
-                    errors.push(ValidationError::new(format!(
-                        "source `{}`: field `{key}` has scope `hardware` and must be set \
-                         in the board manifest, not the pipeline",
-                        src.id
-                    )));
+                match schema.config_schema.get(key.as_str()) {
+                    Some(f) if f.scope == Scope::Hardware => {
+                        errors.push(ValidationError::new(format!(
+                            "source `{}`: field `{key}` has scope `hardware` and must be set \
+                             in the board manifest, not the pipeline",
+                            src.id
+                        )));
+                    }
+                    None if key != "sample_interval_ms" => {
+                        errors.push(ValidationError::new(format!(
+                            "source `{}`: unknown config key `{key}`",
+                            src.id
+                        )));
+                    }
+                    _ => {}
                 }
             }
 
@@ -443,18 +471,25 @@ pub fn validate_pipeline_against_manifest(
                 Some(_) => {}
             }
 
-            // Pipeline (outlet) config must not contain hardware-scope fields.
+            // Pipeline (outlet) config must not contain hardware-scope fields,
+            // and every other key must be declared. `write_interval_ms` is
+            // read by codegen itself, so no descriptor needs to carry it.
             for key in outlet.config.keys() {
-                if schema
-                    .config_schema
-                    .get(key.as_str())
-                    .is_some_and(|f| f.scope == Scope::Hardware)
-                {
-                    errors.push(ValidationError::new(format!(
-                        "outlet `{}`: field `{key}` has scope `hardware` and must be set \
-                         in the board manifest, not the pipeline",
-                        outlet.name
-                    )));
+                match schema.config_schema.get(key.as_str()) {
+                    Some(f) if f.scope == Scope::Hardware => {
+                        errors.push(ValidationError::new(format!(
+                            "outlet `{}`: field `{key}` has scope `hardware` and must be set \
+                             in the board manifest, not the pipeline",
+                            outlet.name
+                        )));
+                    }
+                    None if key != "write_interval_ms" => {
+                        errors.push(ValidationError::new(format!(
+                            "outlet `{}`: unknown config key `{key}`",
+                            outlet.name
+                        )));
+                    }
+                    _ => {}
                 }
             }
 
@@ -1035,7 +1070,10 @@ devices:
         let mut schemas = IndexMap::new();
         schemas.insert(
             "bme280".into(),
-            driver_schema(&[], Some(crate::manifest::BusTransport::I2c)),
+            DriverSchema {
+                config_schema: schema_with(&[("i2c_addr", Scope::Hardware)]).config_schema,
+                ..driver_schema(&[], Some(crate::manifest::BusTransport::I2c))
+            },
         );
         let errors = validate_pipeline_against_manifest(
             &pipeline,
@@ -1077,6 +1115,137 @@ devices:
                 .any(|e| e.message.contains("tap `temp`") && e.message.contains("u32")),
             "got: {errors:?}"
         );
+    }
+
+    #[test]
+    fn unknown_source_config_key_is_rejected() {
+        let manifest = simple_manifest();
+        let pipeline = pipeline_with_source("bme280", &[("sample_intervall_ms", "1000")]);
+        let mut schemas = IndexMap::new();
+        schemas.insert(
+            "bme280".into(),
+            schema_with(&[("i2c_addr", Scope::Hardware)]),
+        );
+        let errors = validate_pipeline_against_manifest(
+            &pipeline,
+            &manifest,
+            &schemas,
+            &IndexMap::new(),
+            32,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("source `src`")
+                && e.message.contains("`sample_intervall_ms`")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn sample_interval_ms_needs_no_descriptor_entry() {
+        let manifest = simple_manifest();
+        let pipeline = pipeline_with_source("bme280", &[("sample_interval_ms", "1000")]);
+        let mut schemas = IndexMap::new();
+        schemas.insert(
+            "bme280".into(),
+            schema_with(&[("i2c_addr", Scope::Hardware)]),
+        );
+        let errors = validate_pipeline_against_manifest(
+            &pipeline,
+            &manifest,
+            &schemas,
+            &IndexMap::new(),
+            32,
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.message.contains("unknown config key")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_outlet_config_key_is_rejected() {
+        let manifest = manifest_with_output_device();
+        let mut pipeline = pipeline_with_outlets(vec![outlet("relay", "DigitalState", "relay1")]);
+        pipeline.outlets[0].config.insert(
+            "write_intervall_ms".into(),
+            serde_yaml::Value::Number(100.into()),
+        );
+        let mut schemas = IndexMap::new();
+        schemas.insert("gpio-output".into(), writer_schema("DigitalState"));
+        let errors = validate_pipeline_against_manifest(
+            &pipeline,
+            &manifest,
+            &schemas,
+            &IndexMap::new(),
+            32,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("outlet `relay`")
+                && e.message.contains("`write_intervall_ms`")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_device_hardware_key_is_rejected() {
+        let mut manifest = simple_manifest();
+        manifest.devices[0]
+            .hardware
+            .insert("i2c_adr".into(), serde_yaml::Value::Number(0x76.into()));
+        let pipeline = pipeline_with_source("bme280", &[]);
+        let mut schemas = IndexMap::new();
+        schemas.insert(
+            "bme280".into(),
+            schema_with(&[("i2c_addr", Scope::Hardware)]),
+        );
+        let errors = validate_pipeline_against_manifest(
+            &pipeline,
+            &manifest,
+            &schemas,
+            &IndexMap::new(),
+            32,
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("device `bme280`") && e.message.contains("`i2c_adr`")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn freq_khz_is_a_builtin_on_pwm_outputs_only() {
+        use crate::descriptor::DriverWrite;
+        let mut manifest = manifest_with_output_device();
+        manifest.devices[0]
+            .hardware
+            .insert("freq_khz".into(), serde_yaml::Value::Number(25.into()));
+        let pipeline = pipeline_with_outlets(vec![]);
+        let pwm = DriverSchema {
+            writes: Some(DriverWrite {
+                command_type: "PwmDuty".into(),
+                mode: OutputMode::Pwm,
+            }),
+            ..Default::default()
+        };
+        for (schema, rejected) in [(pwm, false), (writer_schema("DigitalState"), true)] {
+            let mut schemas = IndexMap::new();
+            schemas.insert("gpio-output".into(), schema);
+            let errors = validate_pipeline_against_manifest(
+                &pipeline,
+                &manifest,
+                &schemas,
+                &IndexMap::new(),
+                32,
+            );
+            assert_eq!(
+                errors.iter().any(|e| e.message.contains("`freq_khz`")),
+                rejected,
+                "got: {errors:?}"
+            );
+        }
     }
 
     #[test]

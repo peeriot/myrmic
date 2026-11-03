@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PipelineFile {
     pub pipeline: PipelineInfo,
     #[serde(default)]
@@ -15,12 +16,14 @@ pub struct PipelineFile {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PipelineInfo {
     pub id: String,
 }
 
 /// A sensor source that reads from a device declared in the board manifest.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Source {
     pub id: String,
     /// References a device `id` in the board manifest.
@@ -35,6 +38,7 @@ pub struct Source {
 /// mirror of a [`Tap`]. A cell (or, later, an in-layer step) writes commands to
 /// `name`; the driver backing `device` consumes them. Retained-only for v1.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Outlet {
     pub name: String,
     #[serde(rename = "type")]
@@ -57,6 +61,7 @@ pub struct Outlet {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Step {
     pub id: String,
     pub op: String,
@@ -66,6 +71,7 @@ pub struct Step {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tap {
     pub name: String,
     pub kind: TapKind,
@@ -90,4 +96,31 @@ pub enum TapStreamKind {
     Signal,
     #[default]
     Metric,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PipelineFile;
+
+    #[test]
+    fn an_unknown_tap_key_is_rejected_by_name() {
+        let err = serde_yaml::from_str::<PipelineFile>(
+            r"
+pipeline:
+  id: p
+taps:
+  - name: t
+    kind: retained
+    type: Temperature
+    source: src.temperature
+    stream_knd: metric
+",
+        )
+        .expect_err("a misspelled key must not parse");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("`stream_knd`") && msg.contains("taps[0]"),
+            "got: {msg}"
+        );
+    }
 }

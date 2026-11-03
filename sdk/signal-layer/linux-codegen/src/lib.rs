@@ -14,11 +14,9 @@ use pipeline_codegen::pipeline::PipelineFile;
 use include_dir::{Dir, include_dir};
 
 pub mod backend;
-mod linux_manifest;
 
 pub use backend::LinuxChipBackend;
 use backend::validate_linux_manifest;
-use linux_manifest::parse_linux_overlay;
 
 // ── Public validation API ──────────────────────────────────────────────────
 
@@ -74,15 +72,12 @@ pub(crate) fn generate_pipeline_module_from_roots(
     let driver_schemas = load_schemas_for_drivers(drivers_root, &manifest, &pipeline)?;
     let step_schemas = load_schemas_for_steps(steps_root, &pipeline)?;
 
-    // Parse the Linux overlay for backend-specific fields.
-    let overlay =
-        parse_linux_overlay(&manifest_yaml).with_context(|| "parsing Linux manifest overlay")?;
-    let backend = LinuxChipBackend::with_overlay(overlay);
+    let backend = LinuxChipBackend::new();
 
     // Collect validation errors.
     let mut errors = pipeline_codegen::manifest::validate_manifest(&manifest);
-    // Linux-specific manifest validation (SPI rejection, /dev/i2c-* paths).
-    errors.extend(validate_linux_manifest(&manifest, Some(&manifest_yaml)));
+    // Linux-specific manifest validation (device nodes, chip names).
+    errors.extend(validate_linux_manifest(&manifest));
     errors.extend(
         pipeline_codegen::validate::validate_pipeline_against_manifest(
             &pipeline,
