@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sorg_common::{HttpBridgeConfig, MqttBridgeConfig, RestartPolicy, RestartType};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -216,7 +216,7 @@ impl Instance {
 
 /// Internal representation of a resolved cell instance (built from an
 /// [`Instance`] that references a cell type, or reconstructed from a `.nest`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellInstance {
     pub id: String,
     #[serde(default, alias = "sri")]
