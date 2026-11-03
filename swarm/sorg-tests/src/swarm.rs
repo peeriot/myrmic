@@ -131,15 +131,26 @@ impl Drop for KillableProcess {
 /// that takes a few hundred milliseconds more, and longer on a loaded machine.
 /// Assertions about that node have to wait for it rather than sleep a fixed time.
 pub async fn set_up_killable_swarm(swarm_file: &str, config_file: &str) -> KillableProcess {
+    set_up_killable_swarm_with(swarm_file, config_file, "{}").await
+}
+
+/// [`set_up_killable_swarm`] with `overrides`, a jsonnet object merged over
+/// the config: a per-test db directory, say.
+pub async fn set_up_killable_swarm_with(
+    swarm_file: &str,
+    config_file: &str,
+    overrides: &str,
+) -> KillableProcess {
     // The subprocess can't inherit the in-process multicast override.
     // So just work around that by passing the config directly.
     let base = std::path::Path::new(config_file)
         .canonicalize()
         .expect("killable swarm config path must exist");
     let wrapper = format!(
-        "local base = import \"{}\";\nbase + {{ zenoh+: {{ scouting+: {{ multicast+: {{ address: \"{}\" }} }} }} }}\n",
+        "local base = import \"{}\";\nbase + {{ zenoh+: {{ scouting+: {{ multicast+: {{ address: \"{}\" }} }} }} }} + {}\n",
         base.display(),
         test_multicast_group(),
+        overrides,
     );
 
     let dir = tempfile::tempdir().expect("failed to create temp config dir");
@@ -153,9 +164,12 @@ pub async fn set_up_killable_swarm(swarm_file: &str, config_file: &str) -> Killa
 
 #[macro_export]
 macro_rules! killable_swarm_config {
-    ($file_name: expr) => {{
+    ($file_name: expr) => {
+        $crate::killable_swarm_config!($file_name, "{}")
+    };
+    ($file_name: expr, $overrides: expr) => {{
         let swarm_file = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/swarm");
         let config_file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/", $file_name);
-        sorg_tests::set_up_killable_swarm(swarm_file, config_file).await
+        $crate::set_up_killable_swarm_with(swarm_file, config_file, $overrides).await
     }};
 }
