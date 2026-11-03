@@ -21,6 +21,8 @@ use esp_radio::wifi::{
 };
 use static_cell::{ConstStaticCell, StaticCell};
 use zenoh_nano::buffers::ZSlice;
+
+use crate::join::{Backoff, JoinFailure, Link, ReasonClass, classify};
 use zenoh_nano::dispatch::SubscriberPool;
 use zenoh_nano::link::{LinkError, StreamingLinkReceive, StreamingLinkSend};
 use zenoh_nano::network::Network;
@@ -358,27 +360,22 @@ pub async fn zenoh_session<F, Fut>(
 }
 
 /// Establishes and keeps a WiFi connection. `liveness` is invoked once per
-/// liveness round, and `associated` reports whether the station is joined to
-/// its access point — this task owns the controller, so it is the only place
-/// that knows.
+/// liveness round, and `link` reports the station's link to its access point,
+/// with the verdict on why a join fails once there is one — this task owns the
+/// controller, so it is the only place that knows.
 pub async fn connection(
     mut controller: WifiController<'static>,
     credentials: WifiCredentials,
     liveness: fn(),
-    associated: fn(bool),
+    link: fn(Link),
 ) {
     log::info!("start connection task");
 
-    log::info!("Scan");
-    let scan_config = ScanConfig::default().with_max(10);
-    match controller.scan_async(&scan_config).await {
-        Ok(result) => {
-            for ap in result {
-                log::info!("{:?}", ap);
-            }
-        }
-        Err(e) => log::warn!("Wifi scan failed: {e:?}"),
-    }
+    let ssid = credentials.ssid.as_str();
+    let mut ssid_seen = scan_for(&mut controller, ssid).await;
+    let mut backoff = Backoff::new();
+    let mut auth_failures: u8 = 0;
+    let mut reported: Option<JoinFailure> = None;
 
     loop {
         // Liveness (observed): blocks on radio events for unbounded time.
@@ -387,7 +384,7 @@ pub async fn connection(
         if controller.is_connected() {
             // wait until we're no longer connected
             let info = controller.wait_for_disconnect_async().await.ok();
-            associated(false);
+            link(Link::Down(None));
             log::info!("Disconnected: {:?}", info);
             Timer::after(WIFI_RECONNECT_BACKOFF).await;
         }
@@ -396,23 +393,89 @@ pub async fn connection(
 
         match controller.connect_async().await {
             Ok(info) => {
-                associated(true);
+                link(Link::Joined);
+                backoff.reset();
+                auth_failures = 0;
+                reported = None;
                 log::info!("Wifi connected to {:?}", info);
             }
             Err(e) => {
-                associated(false);
-                if let ConnectionError::Failed(info) = e
-                    && matches!(info.reason, DisconnectReason::AuthenticationExpired)
-                {
-                    // This is a soft error. It is actually expected to happen on reboot
-                    log::warn!("Failed to connect to wifi: {e:?}");
-                } else {
-                    log::error!("Failed to connect to wifi: {e:?}");
+                // A scan lists at most ten access points, so keep looking
+                // until the network shows up rather than call it missing on
+                // one miss.
+                if !ssid_seen {
+                    ssid_seen = scan_for(&mut controller, ssid).await;
                 }
+                let class = reason_class(&e);
+                auth_failures = if class == ReasonClass::Authentication {
+                    auth_failures.saturating_add(1)
+                } else {
+                    0
+                };
+                match classify(class, ssid_seen, auth_failures) {
+                    Some(verdict) if reported != Some(verdict) => {
+                        report_join_failure(ssid, verdict, &e);
+                        reported = Some(verdict);
+                    }
+                    _ => log::debug!("Failed to connect to wifi '{ssid}': {e:?}"),
+                }
+                link(Link::Down(reported));
                 reset_station(&mut controller, &credentials);
-                Timer::after(WIFI_RECONNECT_BACKOFF).await;
+                Timer::after(Duration::from_secs(backoff.next_wait())).await;
             }
         }
+    }
+}
+
+/// Scans for access points, listing them at debug, and reports whether `ssid`
+/// is among them. A failed scan counts as seen, so it cannot turn an unrelated
+/// failure into "network not found".
+async fn scan_for(controller: &mut WifiController<'static>, ssid: &str) -> bool {
+    let scan_config = ScanConfig::default().with_max(10);
+    match controller.scan_async(&scan_config).await {
+        Ok(result) => {
+            let mut seen = false;
+            for ap in result {
+                log::debug!("{:?}", ap);
+                seen |= ap.ssid.as_str() == ssid;
+            }
+            seen
+        }
+        Err(e) => {
+            log::warn!("Wifi scan failed: {e:?}");
+            true
+        }
+    }
+}
+
+/// Which bucket the driver's reason for a failed join falls in.
+fn reason_class(error: &ConnectionError) -> ReasonClass {
+    match error {
+        ConnectionError::Failed(info) => match info.reason {
+            DisconnectReason::NoAccessPointFound
+            | DisconnectReason::NoAccessPointFoundWithCompatibleSecurity
+            | DisconnectReason::NoAccessPointFoundInAuthmodeThreshold
+            | DisconnectReason::NoAccessPointFoundInRssiThreshold
+            | DisconnectReason::BeaconTimeout => ReasonClass::NoAccessPoint,
+            DisconnectReason::AuthenticationExpired
+            | DisconnectReason::AuthenticationFailed
+            | DisconnectReason::FourWayHandshakeTimeout
+            | DisconnectReason::HandshakeTimeout
+            | DisconnectReason::MicFailure => ReasonClass::Authentication,
+            _ => ReasonClass::Other,
+        },
+        _ => ReasonClass::Other,
+    }
+}
+
+/// Names the verdict on a failed join; called once per change of it.
+fn report_join_failure(ssid: &str, verdict: JoinFailure, error: &ConnectionError) {
+    match verdict {
+        JoinFailure::NetworkNotFound => log::error!("network '{ssid}' not found: {error:?}"),
+        JoinFailure::PasswordRejected => {
+            log::error!("password rejected for '{ssid}': {error:?}");
+        }
+        JoinFailure::Other => log::error!("Failed to connect to wifi '{ssid}': {error:?}"),
     }
 }
 
