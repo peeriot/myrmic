@@ -4,6 +4,7 @@ use std::time::Duration;
 use rumqttc::{AsyncClient, EventLoop, QoS, Request, Subscribe};
 use sorg_common::{
     BodyTemplate, MqttBridgeDef, MqttBridgeRecord, MqttQos, WireMqttIngress, custom_err,
+    mqtt_topic_matches,
 };
 use tokio::sync::{Barrier, Notify};
 use tokio::task::JoinHandle;
@@ -243,56 +244,52 @@ async fn handle_event_loop(
             rumqttc::Incoming::Publish(publish) => publish,
             _ => continue,
         };
-        let Some(ingress) = ingress.iter().find(|i| i.topic == publish.topic) else {
-            continue;
-        };
-
-        let event_name = &ingress.id;
-        let payload = publish.payload;
-
-        // The cell event is a JSON object keyed by the ingress payload's placeholder
-        // name, mirroring the named egress payload the cell sends back.
-        let (field_name, value) = match &ingress.payload {
-            BodyTemplate::String(name) => {
-                let value = match String::from_utf8(payload.to_vec()) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        tracing::warn!("unable to parse text from payload: {}", err);
-                        continue;
+        // Every ingress whose filter matches gets its own event, as a broker treats
+        // overlapping subscriptions independently.
+        let mut matched = false;
+        for ingress in ingress
+            .iter()
+            .filter(|i| mqtt_topic_matches(&publish.topic, &i.topic))
+        {
+            matched = true;
+            match ingress_event(ingress, &publish.payload) {
+                Ok(event) => {
+                    if let Err(err) = sorg.publish_cell_event(&ingress.id, Some(event)).await {
+                        tracing::warn!("unable to publish event: {}", err);
                     }
-                };
-
-                (name, serde_json::Value::String(value))
+                }
+                Err(err) => tracing::warn!("{err}"),
             }
-            BodyTemplate::Json(name) => {
-                let value = match serde_json::from_slice::<serde_json::Value>(payload.as_ref()) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        tracing::warn!("unable to parse json from payload: {}", err);
-                        continue;
-                    }
-                };
-
-                (name, value)
-            }
-            BodyTemplate::Bytes(name) => (name, serde_json::Value::from(payload.to_vec())),
-        };
-
-        let mut obj = serde_json::Map::new();
-        obj.insert(field_name.clone(), value);
-
-        let payload = match serde_json::to_vec(&serde_json::Value::Object(obj)) {
-            Ok(payload) => payload,
-            Err(err) => {
-                tracing::warn!("unable to serialise ingress payload as json: {}", err);
-                continue;
-            }
-        };
-
-        if let Err(err) = sorg.publish_cell_event(event_name, Some(payload)).await {
-            tracing::warn!("unable to publish event: {}", err);
+        }
+        if !matched {
+            tracing::debug!(topic = %publish.topic, "publish matched no ingress");
         }
     }
+}
+
+/// The cell event for a publish that matched `ingress`: a JSON object keyed by the
+/// ingress payload's placeholder name, mirroring the named egress payload the cell sends
+/// back.
+fn ingress_event(ingress: &WireMqttIngress, payload: &[u8]) -> Result<Vec<u8>> {
+    let (field_name, value) = match &ingress.payload {
+        BodyTemplate::String(name) => {
+            let value = String::from_utf8(payload.to_vec())
+                .map_err(|err| custom_err!("unable to parse text from payload: {}", err))?;
+            (name, serde_json::Value::String(value))
+        }
+        BodyTemplate::Json(name) => {
+            let value = serde_json::from_slice::<serde_json::Value>(payload)
+                .map_err(|err| custom_err!("unable to parse json from payload: {}", err))?;
+            (name, value)
+        }
+        BodyTemplate::Bytes(name) => (name, serde_json::Value::from(payload.to_vec())),
+    };
+
+    let mut obj = serde_json::Map::new();
+    obj.insert(field_name.clone(), value);
+
+    Ok(serde_json::to_vec(&serde_json::Value::Object(obj))
+        .map_err(|err| custom_err!("unable to serialise ingress payload as json: {}", err))?)
 }
 
 fn mqtt_qos(qos: Option<MqttQos>) -> QoS {
@@ -436,6 +433,31 @@ mod tests {
             "two",
         )));
         assert_eq!(parked_egress(&event_loop), 2);
+    }
+
+    #[test]
+    fn ingress_event_is_keyed_by_the_payload_placeholder() {
+        let ingress = |payload| WireMqttIngress {
+            id: "evt".to_owned(),
+            topic: "t".to_owned(),
+            qos: None,
+            payload,
+        };
+        let text = ingress(BodyTemplate::String("reading".to_owned()));
+        let json = ingress(BodyTemplate::Json("cfg".to_owned()));
+        let bytes = ingress(BodyTemplate::Bytes("raw".to_owned()));
+
+        assert_eq!(
+            ingress_event(&text, b"21.5").unwrap(),
+            br#"{"reading":"21.5"}"#
+        );
+        assert_eq!(
+            ingress_event(&json, br#"{"a":1}"#).unwrap(),
+            br#"{"cfg":{"a":1}}"#
+        );
+        assert_eq!(ingress_event(&bytes, &[1, 2]).unwrap(), br#"{"raw":[1,2]}"#);
+        assert!(ingress_event(&text, &[0xff]).is_err());
+        assert!(ingress_event(&json, b"not json").is_err());
     }
 
     #[test]
