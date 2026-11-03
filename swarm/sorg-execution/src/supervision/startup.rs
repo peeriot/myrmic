@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use cell_protocol::{Gen, PlacementEntry, PlacementKind, RuntimeId, Sri};
 use sorg_common::{
-    CellLost, LostReason, emit_cell_lost, instance_registry, list_placements, remove_placement,
+    LostReason, instance_registry, list_placements, remove_placement, report_cell_death,
 };
 use tracing::{debug, warn};
 use zenoh::Session;
@@ -37,10 +37,10 @@ pub(crate) fn select_remnants(
         .collect()
 }
 
-/// Releases this exec's previous-incarnation remnants before it registers as
-/// available, so a redeploy of the same SRI cannot race the first verify-pass
-/// sweep and hit `DuplicateSri`. Best-effort: any row left behind here is
-/// retried by the event loop's periodic `startup_sweep`.
+/// Reports and releases this exec's previous-incarnation remnants before it
+/// registers as available, so a redeploy of the same SRI cannot race the
+/// first verify-pass sweep and hit `DuplicateSri`. Best-effort: any row left
+/// behind here is retried by the event loop's periodic `startup_sweep`.
 pub(crate) async fn sweep_previous_incarnation(session: &Session, my_exec: RuntimeId) {
     let cells = match list_placements(session).await {
         Ok(cells) => cells,
@@ -58,23 +58,23 @@ pub(crate) async fn sweep_previous_incarnation(session: &Session, my_exec: Runti
         "startup sweep: releasing cells of a previous incarnation"
     );
     for (sri, gen_id) in remnants {
-        // Notify the parent (its child died with the old process) before the
-        // rows go — once they are gone the note can no longer be re-derived, so
-        // a failed emit leaves the rows for the verify-pass sweep to retry.
+        // Report first: a failed report leaves the rows for the verify-pass
+        // sweep to retry, and once they are gone the death cannot be derived.
         let instance_gen = match instance_registry::get_instance(session, &sri).await {
             Ok(Some(instance)) => {
-                if !instance.lineage.detached
-                    && let Some(parent) = instance.lineage.parent
-                {
-                    let note = CellLost {
-                        cell: sri,
-                        local_name: instance.lineage.local_name.clone(),
-                        reason: LostReason::Crashed,
-                    };
-                    if let Err(err) = emit_cell_lost(session, &parent, note).await {
-                        warn!("startup sweep: cell_lost to '{parent}' failed: {err}");
-                        continue;
-                    }
+                let report = report_cell_death(
+                    session,
+                    sri,
+                    instance.gen_id,
+                    instance.lineage.parent,
+                    instance.lineage.detached,
+                    instance.lineage.local_name.clone(),
+                    LostReason::Crashed,
+                )
+                .await;
+                if let Err(err) = report {
+                    warn!("startup sweep: death report for '{sri}' failed: {err}");
+                    continue;
                 }
                 Some(instance.gen_id)
             }
@@ -95,5 +95,71 @@ pub(crate) async fn sweep_previous_incarnation(session: &Session, my_exec: Runti
         {
             debug!("startup sweep: removing instance row '{sri}': {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cell_protocol::{ExecRuntimeInfo, ExecutionCapabilities};
+
+    use super::*;
+
+    fn rt(n: u8) -> RuntimeId {
+        zenoh_protocol::core::ZenohIdProto::try_from(&[n; 8][..])
+            .unwrap()
+            .into()
+    }
+
+    fn sri(name: &str) -> Sri {
+        cell_protocol::sri_of_path(name).unwrap().into()
+    }
+
+    fn wasm_row(s: Sri, node: RuntimeId, gen_id: Gen) -> PlacementEntry {
+        PlacementEntry {
+            sri: s,
+            kind: PlacementKind::Wasm {
+                runtime: ExecRuntimeInfo::new(node, None, ExecutionCapabilities::default()),
+            },
+            app: None,
+            gen_id,
+        }
+    }
+
+    /// Lineage is not on the placement row, so roots and children select alike.
+    #[test]
+    fn selects_every_unhosted_row_naming_this_exec() {
+        let me = rt(1);
+        let root = sri("root");
+        let child = sri("child");
+        let cells = vec![
+            wasm_row(root, me, Gen::from_parts(3, 1)),
+            wasm_row(child, me, Gen::from_parts(3, 2)),
+        ];
+
+        assert_eq!(
+            select_remnants(&cells, me, &HashSet::new()),
+            vec![
+                (root, Gen::from_parts(3, 1)),
+                (child, Gen::from_parts(3, 2))
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_hosted_foreign_and_non_wasm_rows() {
+        let me = rt(1);
+        let hosted = sri("hosted");
+        let cells = vec![
+            wasm_row(hosted, me, Gen::from_parts(1, 1)),
+            wasm_row(sri("elsewhere"), rt(2), Gen::from_parts(1, 1)),
+            PlacementEntry {
+                sri: sri("native"),
+                kind: PlacementKind::Native { runtime: me },
+                app: None,
+                gen_id: Gen::from_parts(1, 1),
+            },
+        ];
+
+        assert!(select_remnants(&cells, me, &HashSet::from([hosted])).is_empty());
     }
 }

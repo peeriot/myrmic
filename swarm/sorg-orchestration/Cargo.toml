@@ -40,6 +40,7 @@ db-commons = { workspace = true, features = ["models", "topics"] }
 uhlc = { workspace = true }
 module-examples-common = { path = "../../tests/fixtures/module-examples-common" }
 wasm-storage = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

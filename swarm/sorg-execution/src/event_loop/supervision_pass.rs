@@ -169,7 +169,7 @@ impl Runtime {
     /// Sweeps placement rows naming this node from a previous incarnation.
     /// Node ids are stable across restarts and this exec starts empty, so a
     /// placement naming it that it is not hosting is a remnant whose body
-    /// died with the old process: the parent is notified (crashed) and the
+    /// died with the old process: the death is reported (crashed) and the
     /// rows are released. Retried every pass until it completes cleanly;
     /// returns whether it did. Actively hosted cells are skipped, so a
     /// deploy racing the sweep is never touched.

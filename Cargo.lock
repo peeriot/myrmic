@@ -10081,6 +10081,7 @@ dependencies = [
  "sorg-common",
  "sorg-execution",
  "sorg-tests",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "topo_sort",
