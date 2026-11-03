@@ -1200,6 +1200,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "esp-hal",
+ "esp-heap",
  "esp-watchdog",
  "log",
  "myrmic-common",
