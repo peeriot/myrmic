@@ -119,7 +119,7 @@ fn class_build_map_form_carries_target() {
 
 #[test]
 fn class_spec_and_its_aliases_resolve_to_a_bridge() {
-    for key in ["spec", "http", "mqtt", "cell"] {
+    for key in ["spec", "http", "mqtt"] {
         let yaml = format!("{{ id: st, {key}: ./bridges/st.yml }}");
         match class_def(&yaml).resolve().expect("resolves") {
             (id, ClassKind::Bridge(path)) => {
@@ -129,6 +129,13 @@ fn class_spec_and_its_aliases_resolve_to_a_bridge() {
             (_, ClassKind::Cell(_)) => panic!("expected a bridge for key `{key}`"),
         }
     }
+}
+
+#[test]
+fn class_rejects_cell_key_with_a_hint() {
+    let err = serde_yaml::from_str::<ClassDef>("{ id: sensor, cell: ./sensor }")
+        .expect_err("`cell:` is not a class key");
+    assert!(err.to_string().contains("build:"), "{err}");
 }
 
 #[test]
