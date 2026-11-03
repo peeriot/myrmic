@@ -326,6 +326,107 @@ async fn mqtt_bridge_reconnects_after_broker_outage() {
     assert_eq!(published, vec![b"during".to_vec(), b"after".to_vec()]);
 }
 
+/// Collects `count` events within 10 s, waits a moment for stragglers, and returns every
+/// event payload received, sorted, so the caller's equality check also catches extras.
+async fn received_events(event_queue: &mut EventQueue, count: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut events = Vec::new();
+    while events.len() < count {
+        assert!(
+            Instant::now() < deadline,
+            "expected {count} events within 10s, got {events:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        events.extend(assert_ok!(event_queue.try_receive_batch(64).await));
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    events.extend(assert_ok!(event_queue.try_receive_batch(64).await));
+
+    let mut events: Vec<String> = events
+        .into_iter()
+        .map(|event| String::from_utf8(event).expect("event payload should be utf8 json"))
+        .collect();
+    events.sort();
+    events
+}
+
+/// Ingress filters match with MQTT semantics: `+` matches one level and `#` the rest, an
+/// exact topic keeps working, and a publish that matches no filter reaches no event.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn mqtt_bridge_wildcard_ingress_matches_filters() {
+    const BRIDGE_SRI: &str = "wildcard_mqtt_bridge";
+    const PLUS_EVENT: &str = "wildcard_plus_ingress";
+    const HASH_EVENT: &str = "wildcard_hash_ingress";
+    const EXACT_EVENT: &str = "wildcard_exact_ingress";
+
+    // Arrange — one bridge with a `+`, a `#` and an exact ingress; the exact one is last,
+    // so once it delivers the broker has processed all three subscriptions
+    let swarm = swarm_config!("cells/cells.jsonnet");
+    let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    let sorg = sorg_client::Client::new(test_app.session().clone());
+    let (_broker_handle, _mqtt_client) = test_app.set_up_mqtt_broker().await;
+
+    let ingress = |id: &str, topic: &str| WireMqttIngress {
+        id: id.to_owned(),
+        topic: topic.to_owned(),
+        qos: None,
+        payload: BodyTemplate::String("payload".to_owned()),
+    };
+    let bridge = MqttBridge {
+        cell_name: BRIDGE_SRI.to_owned(),
+        broker: "mqtt://localhost:1883".to_owned(),
+        ingress: vec![
+            ingress(PLUS_EVENT, "plant/+/temp"),
+            ingress(HASH_EVENT, "site/#"),
+            ingress(EXACT_EVENT, "exact/topic"),
+        ],
+        egress: vec![],
+    };
+    assert_ok!(
+        sorg.deploy_mqtt_bridge(to_sri(BRIDGE_SRI), bridge, RequirementTags::default())
+            .await
+    );
+    let mut plus_events = test_app.subscribe_cell_event(PLUS_EVENT).await;
+    let mut hash_events = test_app.subscribe_cell_event(HASH_EVENT).await;
+    let mut exact_events = test_app.subscribe_cell_event(EXACT_EVENT).await;
+
+    // Assert I — the exact ingress delivers, which also proves the subscriptions are live
+    mqtt_ingress_round_trip(
+        &test_app,
+        &mut exact_events,
+        "exact/topic",
+        "exact",
+        Duration::from_secs(15),
+    )
+    .await;
+
+    // Act — one publish per probe topic; `plant/a/b/temp` matches no filter
+    for topic in [
+        "plant/a/temp",
+        "plant/b/temp",
+        "plant/a/b/temp",
+        "site",
+        "site/x/y",
+    ] {
+        test_app
+            .send_mqtt_msg(topic, topic.as_bytes().to_vec())
+            .await;
+    }
+
+    // Assert II — each wildcard ingress got exactly its matches
+    assert_eq!(
+        received_events(&mut plus_events, 2).await,
+        [
+            r#"{"payload":"plant/a/temp"}"#,
+            r#"{"payload":"plant/b/temp"}"#
+        ]
+    );
+    assert_eq!(
+        received_events(&mut hash_events, 2).await,
+        [r#"{"payload":"site"}"#, r#"{"payload":"site/x/y"}"#]
+    );
+}
+
 /// Deploying a second bridge under an sri already claimed by a live bridge is rejected as
 /// an explicit `DuplicateSri` deploy error — not a panic or a silent half-spawn — and the
 /// first bridge is left untouched.

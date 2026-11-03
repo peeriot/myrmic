@@ -138,8 +138,68 @@ impl PubTopic {
     }
 }
 
+/// Whether a published `topic` matches a subscription `filter` under MQTT semantics:
+/// `+` matches one level, `#` the rest (zero or more levels), and a filter that starts
+/// with a wildcard never matches a `$`-topic.
+#[must_use]
+pub fn topic_matches(topic: &str, filter: &str) -> bool {
+    let mut filter_levels = filter.split('/');
+    let mut topic_levels = topic.split('/');
+
+    if topic.starts_with('$') && matches!(filter_levels.clone().next(), Some("+" | "#")) {
+        return false;
+    }
+
+    loop {
+        match (filter_levels.next(), topic_levels.next()) {
+            (Some("#"), _) | (None, None) => return true,
+            (Some("+"), Some(_)) => {}
+            (Some(filter_level), Some(topic_level)) if filter_level == topic_level => {}
+            _ => return false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    mod topic_matches {
+        use crate::mqtt::topic_matches;
+
+        #[test]
+        fn exact_topic_matches_itself_only() {
+            assert!(topic_matches("plant/a/temp", "plant/a/temp"));
+            assert!(!topic_matches("plant/a/temp", "plant/a"));
+            assert!(!topic_matches("plant/a", "plant/a/temp"));
+        }
+
+        #[test]
+        fn plus_matches_exactly_one_level() {
+            assert!(topic_matches("plant/a/temp", "plant/+/temp"));
+            assert!(topic_matches("plant/b/temp", "plant/+/temp"));
+            assert!(!topic_matches("plant/a/b/temp", "plant/+/temp"));
+            assert!(!topic_matches("plant", "plant/+"));
+            assert!(topic_matches("plant//temp", "plant/+/temp"));
+        }
+
+        #[test]
+        fn hash_matches_the_rest_including_nothing() {
+            assert!(topic_matches("plant", "plant/#"));
+            assert!(topic_matches("plant/a", "plant/#"));
+            assert!(topic_matches("plant/a/b", "plant/#"));
+            assert!(!topic_matches("other/a", "plant/#"));
+            assert!(topic_matches("anything/at/all", "#"));
+        }
+
+        #[test]
+        fn dollar_topics_need_an_explicit_first_level() {
+            assert!(!topic_matches("$SYS/x", "#"));
+            assert!(!topic_matches("$SYS/x", "+/x"));
+            assert!(topic_matches("$SYS/x", "$SYS/+"));
+            assert!(topic_matches("$SYS/x", "$SYS/x"));
+            assert!(topic_matches("$SYS/a/b", "$SYS/#"));
+        }
+    }
+
     mod sub_topic {
         use crate::mqtt::SubTopic;
 
