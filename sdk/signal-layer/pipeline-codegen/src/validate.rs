@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use crate::descriptor::{DriverSchema, OutputMode, Scope};
+use crate::descriptor::{ConfigField, DriverSchema, OutputMode, Scope};
 use crate::manifest::BoardManifest;
 use crate::pipeline::{PipelineFile, TapKind};
 
@@ -125,6 +125,116 @@ fn yaml_kind(v: &serde_yaml::Value) -> &'static str {
         serde_yaml::Value::Sequence(_) => "sequence",
         serde_yaml::Value::Mapping(_) => "mapping",
         serde_yaml::Value::Tagged(_) => "tagged",
+    }
+}
+
+fn scalar(value: &serde_yaml::Value) -> String {
+    match value {
+        serde_yaml::Value::Number(n) => n.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// `value` against the field's inclusive bounds; all three already fit `rust_type`.
+fn check_range(
+    value: &serde_yaml::Value,
+    field: &ConfigField,
+    rust_type: &str,
+) -> Result<(), String> {
+    let float = matches!(rust_type, "f32" | "f64");
+    // i128 holds every i64 and u64, so signed bounds compare correctly too.
+    let int = |v: &serde_yaml::Value| {
+        v.as_i64()
+            .map(i128::from)
+            .or_else(|| v.as_u64().map(i128::from))
+    };
+    let less = |a: &serde_yaml::Value, b: &serde_yaml::Value| {
+        if float {
+            a.as_f64() < b.as_f64()
+        } else {
+            int(a) < int(b)
+        }
+    };
+    let (min, max) = (field.min.as_ref(), field.max.as_ref());
+    let outside =
+        min.is_some_and(|min| less(value, min)) || max.is_some_and(|max| less(max, value));
+    if !outside {
+        return Ok(());
+    }
+    let v = scalar(value);
+    Err(match (min, max) {
+        (Some(min), Some(max)) => {
+            format!(
+                "{v} is outside the allowed range {}..={}",
+                scalar(min),
+                scalar(max)
+            )
+        }
+        (Some(min), None) => format!("{v} is below the minimum {}", scalar(min)),
+        (None, Some(max)) => format!("{v} is above the maximum {}", scalar(max)),
+        (None, None) => unreachable!("a value is only outside a bound that exists"),
+    })
+}
+
+/// A field's own declaration: `default`, `min` and `max` must fit `rust_type`,
+/// bounds are for numeric fields only, and `default` lies within them.
+fn check_field_declaration(
+    field: &ConfigField,
+    rust_type: &str,
+    pointer_width: u32,
+) -> Result<(), String> {
+    validate_config_value(&field.default, rust_type, pointer_width)
+        .map_err(|e| format!("default: {e}"))?;
+    for (name, bound) in [("min", &field.min), ("max", &field.max)] {
+        let Some(bound) = bound else {
+            continue;
+        };
+        if rust_type == "bool" || !KNOWN_RUST_TYPES.contains(&rust_type) {
+            return Err(format!(
+                "`{name}` is only allowed on a numeric field, not `{rust_type}`"
+            ));
+        }
+        validate_config_value(bound, rust_type, pointer_width)
+            .map_err(|e| format!("{name}: {e}"))?;
+    }
+    check_range(&field.default, field, rust_type).map_err(|e| format!("default: {e}"))
+}
+
+/// One descriptor field: its declaration (`rust_type`, `default`, bounds) and,
+/// when the user set it, `value`. `owner` names the descriptor and `location`
+/// where the value was written.
+fn check_config_field(
+    owner: &str,
+    location: &str,
+    field_name: &str,
+    field: &ConfigField,
+    value: Option<&serde_yaml::Value>,
+    pointer_width: u32,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(rust_type) = field.rust_type.as_deref() else {
+        return;
+    };
+    // A non-primitive type is an enum and only needs to be a valid identifier.
+    if !KNOWN_RUST_TYPES.contains(&rust_type) && syn::parse_str::<syn::Ident>(rust_type).is_err() {
+        errors.push(ValidationError::new(format!(
+            "{owner}: field `{field_name}` declares invalid rust_type `{rust_type}` \
+             (not a primitive and not a valid identifier)"
+        )));
+        return;
+    }
+    if let Err(e) = check_field_declaration(field, rust_type, pointer_width) {
+        errors.push(ValidationError::new(format!(
+            "{owner}: field `{field_name}` {e}"
+        )));
+    }
+    if let Some(value) = value
+        && let Err(e) = validate_config_value(value, rust_type, pointer_width)
+            .and_then(|()| check_range(value, field, rust_type))
+    {
+        errors.push(ValidationError::new(format!(
+            "{location}: field `{field_name}`: {e}"
+        )));
     }
 }
 
@@ -342,64 +452,54 @@ pub fn validate_pipeline_against_manifest(
                 }
             }
 
-            // Validate rust_type declarations and check config values against them.
+            // Hardware fields come from the manifest, application fields from
+            // the pipeline config.
+            let owner = format!("driver `{}`", device.driver);
             for (field_name, field_def) in &schema.config_schema {
-                if let Some(rust_type) = &field_def.rust_type {
-                    let is_primitive = KNOWN_RUST_TYPES.contains(&rust_type.as_str());
-                    // Primitive check: unknown types are only rejected when they are
-                    // NOT a valid identifier, i.e. they can't be an enum type name at all.
-                    // Valid-ident non-primitives are treated as enum types.
-                    if !is_primitive {
-                        if syn::parse_str::<syn::Ident>(rust_type).is_err() {
-                            errors.push(ValidationError::new(format!(
-                                "driver `{}`: field `{field_name}` declares invalid \
-                                 rust_type `{rust_type}` (not a primitive and not a valid identifier)",
-                                device.driver
-                            )));
-                            continue;
-                        }
-                        // Validate the descriptor default for enum fields so a typo'd
-                        // default is caught here rather than producing invalid generated code.
-                        if let Err(e) =
-                            validate_config_value(&field_def.default, rust_type, pointer_width)
-                        {
-                            errors.push(ValidationError::new(format!(
-                                "driver `{}`: field `{field_name}` default: {e}",
-                                device.driver
-                            )));
-                        }
-                    }
-                    // Check user-provided values — hardware fields come from the
-                    // manifest, application fields from the pipeline config.
-                    let value_opt = match field_def.scope {
-                        Scope::Hardware => device.hardware.get(field_name.as_str()),
-                        Scope::Application => src.config.get(field_name.as_str()),
-                    };
-                    if let Some(value) = value_opt
-                        && let Err(e) = validate_config_value(value, rust_type, pointer_width)
-                    {
-                        let location = match field_def.scope {
-                            Scope::Hardware => format!("device `{}`", device.id),
-                            Scope::Application => format!("source `{}`", src.id),
-                        };
-                        errors.push(ValidationError::new(format!(
-                            "{location}: field `{field_name}`: {e}"
-                        )));
-                    }
-                }
+                let (location, value) = match field_def.scope {
+                    Scope::Hardware => (
+                        format!("device `{}`", device.id),
+                        device.hardware.get(field_name.as_str()),
+                    ),
+                    Scope::Application => (
+                        format!("source `{}`", src.id),
+                        src.config.get(field_name.as_str()),
+                    ),
+                };
+                check_config_field(
+                    &owner,
+                    &location,
+                    field_name,
+                    field_def,
+                    value,
+                    pointer_width,
+                    &mut errors,
+                );
             }
         }
     }
 
     for step in &pipeline.steps {
         if let Some(schema) = step_schemas.get(step.op.as_str()) {
+            let location = format!("step `{}` (op `{}`)", step.id, step.op);
             for key in step.config.keys() {
                 if !schema.config_schema.contains_key(key.as_str()) {
                     errors.push(ValidationError::new(format!(
-                        "step `{}` (op `{}`): unknown config key `{key}`",
-                        step.id, step.op
+                        "{location}: unknown config key `{key}`"
                     )));
                 }
+            }
+            let owner = format!("op `{}`", step.op);
+            for (field_name, field_def) in &schema.config_schema {
+                check_config_field(
+                    &owner,
+                    &location,
+                    field_name,
+                    field_def,
+                    step.config.get(field_name.as_str()),
+                    pointer_width,
+                    &mut errors,
+                );
             }
         }
     }
@@ -828,8 +928,7 @@ mod tests {
                     name.to_string(),
                     ConfigField {
                         scope: scope.clone(),
-                        rust_type: None,
-                        default: serde_yaml::Value::Null,
+                        ..Default::default()
                     },
                 )
             })
@@ -1246,6 +1345,169 @@ devices:
                 "got: {errors:?}"
             );
         }
+    }
+
+    /// The moving-average step as shipped: `window` is a `usize` within 1..=64.
+    fn moving_average_schema() -> DriverSchema {
+        let mut schema = step_schema("f32", "f32");
+        schema.config_schema.insert(
+            "window".into(),
+            ConfigField {
+                rust_type: Some("usize".into()),
+                default: serde_yaml::Value::Number(8.into()),
+                min: Some(serde_yaml::Value::Number(1.into())),
+                max: Some(serde_yaml::Value::Number(64.into())),
+                ..Default::default()
+            },
+        );
+        schema
+    }
+
+    fn validate_window(window: serde_yaml::Value, schema: DriverSchema) -> Vec<ValidationError> {
+        let manifest = simple_manifest();
+        let mut pipeline = pipeline_with_source("bme280", &[]);
+        pipeline.steps.push(Step {
+            id: "avg".into(),
+            op: "moving-average".into(),
+            input: "src.temperature".into(),
+            config: [("window".to_string(), window)].into_iter().collect(),
+        });
+        let mut step_schemas = IndexMap::new();
+        step_schemas.insert("moving-average".into(), schema);
+        validate_pipeline_against_manifest(
+            &pipeline,
+            &manifest,
+            &IndexMap::new(),
+            &step_schemas,
+            32,
+        )
+    }
+
+    #[test]
+    fn step_window_outside_its_range_is_rejected() {
+        for window in [0, 65] {
+            let errors = validate_window(
+                serde_yaml::Value::Number(window.into()),
+                moving_average_schema(),
+            );
+            assert!(
+                errors.iter().any(|e| e.message.contains("step `avg`")
+                    && e.message.contains("`window`")
+                    && e.message.contains("1..=64")),
+                "window {window}: got {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn step_window_inside_its_range_passes() {
+        let errors = validate_window(serde_yaml::Value::Number(4.into()), moving_average_schema());
+        assert!(
+            !errors.iter().any(|e| e.message.contains("`window`")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn step_window_of_the_wrong_type_is_rejected() {
+        let errors = validate_window(
+            serde_yaml::Value::String("four".into()),
+            moving_average_schema(),
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("step `avg`")
+                && e.message.contains("`window`")
+                && e.message.contains("expected integer")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn step_default_outside_its_own_range_is_rejected() {
+        let mut schema = moving_average_schema();
+        schema.config_schema["window"].default = serde_yaml::Value::Number(0.into());
+        let errors = validate_window(serde_yaml::Value::Number(4.into()), schema);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("op `moving-average`")
+                    && e.message.contains("`window`")
+                    && e.message.contains("default")
+                    && e.message.contains("1..=64")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn negative_integer_bounds_compare_by_sign() {
+        let n = |v: i64| serde_yaml::Value::Number(v.into());
+        let field = ConfigField {
+            min: Some(n(-10)),
+            max: Some(n(-1)),
+            ..Default::default()
+        };
+        for value in [n(-20), n(0), serde_yaml::Value::Number(u64::MAX.into())] {
+            assert!(check_range(&value, &field, "i64").is_err(), "{value:?}");
+        }
+        assert!(check_range(&n(-5), &field, "i64").is_ok());
+    }
+
+    #[test]
+    fn bounds_on_a_bool_field_are_a_descriptor_error() {
+        let mut schema = moving_average_schema();
+        schema.config_schema.insert(
+            "strict".into(),
+            ConfigField {
+                rust_type: Some("bool".into()),
+                default: serde_yaml::Value::Bool(false),
+                min: Some(serde_yaml::Value::Bool(false)),
+                ..Default::default()
+            },
+        );
+        let errors = validate_window(serde_yaml::Value::Number(4.into()), schema);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("op `moving-average`")
+                    && e.message.contains("`strict`")
+                    && e.message.contains("only allowed on a numeric field")),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn source_value_below_the_minimum_is_rejected() {
+        let manifest = simple_manifest();
+        let mut pipeline = pipeline_with_source("bme280", &[]);
+        pipeline.sources[0].config.insert(
+            "sample_interval_ms".into(),
+            serde_yaml::Value::Number(1.into()),
+        );
+        let mut schema = schema_with(&[("i2c_addr", Scope::Hardware)]);
+        schema.config_schema.insert(
+            "sample_interval_ms".into(),
+            ConfigField {
+                rust_type: Some("u64".into()),
+                default: serde_yaml::Value::Number(1000.into()),
+                min: Some(serde_yaml::Value::Number(10.into())),
+                ..Default::default()
+            },
+        );
+        let mut schemas = IndexMap::new();
+        schemas.insert("bme280".into(), schema);
+        let errors = validate_pipeline_against_manifest(
+            &pipeline,
+            &manifest,
+            &schemas,
+            &IndexMap::new(),
+            32,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("source `src`")
+                && e.message.contains("`sample_interval_ms`")
+                && e.message.contains("below the minimum 10")),
+            "got: {errors:?}"
+        );
     }
 
     #[test]
@@ -1778,6 +2040,7 @@ devices:
                 scope: Scope::Hardware,
                 rust_type: Some(rust_type.to_string()),
                 default,
+                ..Default::default()
             },
         );
         DriverSchema {
