@@ -34,8 +34,18 @@ pub struct ClassDef {
     #[serde(default)]
     pub build: Option<StringOr<Build>>,
     /// Path to a bridge specification file, relative to the app-specs file.
-    #[serde(default, alias = "http", alias = "mqtt", alias = "cell")]
+    #[serde(default, alias = "http", alias = "mqtt")]
     pub spec: Option<std::path::PathBuf>,
+    /// `cell:` is a plausible spelling for a cell class; refuse it with a hint
+    /// rather than serde's field list.
+    #[serde(default, deserialize_with = "reject_cell_key")]
+    cell: (),
+}
+
+fn reject_cell_key<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D::Error> {
+    Err(serde::de::Error::custom(
+        "`cell:` is not a class key; a cell class is built from a crate with `build:`",
+    ))
 }
 
 /// The resolved kind of a [`ClassDef`].
@@ -55,7 +65,12 @@ impl ClassDef {
     ///   app-specs folder (`path: "."`, automatic target)
     /// - both               → error
     pub fn resolve(self) -> anyhow::Result<(String, ClassKind)> {
-        let ClassDef { id, build, spec } = self;
+        let ClassDef {
+            id,
+            build,
+            spec,
+            cell: (),
+        } = self;
         match (build, spec) {
             (Some(_), Some(_)) => {
                 anyhow::bail!("class `{id}` sets both a build and a bridge spec; use one")
