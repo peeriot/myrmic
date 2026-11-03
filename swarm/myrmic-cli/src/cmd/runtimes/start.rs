@@ -24,14 +24,14 @@ pub struct Start {
     #[clap(short, long)]
     pub detached: bool,
 
-    /// Directory holding runtime PID files, or a full PID file path.
+    /// Directory holding runtime PID files, or an existing PID file.
     ///
-    /// If the given path is (or will be created as) a directory, the PID
-    /// file sits inside it as `<name>.pid`. If the path's parent is an
-    /// existing directory, the path itself is taken as the PID file.
+    /// An existing file is used as the PID file itself. Any other path is a
+    /// directory holding `<name>.pid`, created if its parent exists.
     ///
-    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when set (the per-user
-    /// runtime tmpfs under systemd), otherwise `<tempdir>/myrmic-<user>/`.
+    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when that directory exists (the
+    /// per-user runtime tmpfs under systemd), otherwise
+    /// `<tempdir>/myrmic-<user>/`.
     #[clap(long = "pid-path")]
     pub pid_path: Option<PathBuf>,
 
@@ -69,7 +69,21 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
     let name = name.as_deref().unwrap_or(super::DEFAULT_RUNTIME_NAME);
 
     super::validate_runtime_name(name)?;
-    let pid_path = pid_path.unwrap_or_else(|| default_pid_dir(super::DEFAULT_PID_DIR));
+    let pid_path = match pid_path {
+        Some(path) => path,
+        None => {
+            let path = default_pid_dir(super::DEFAULT_PID_DIR);
+            if let Some(xdg) = xdg_runtime_dir().filter(|dir| !dir.is_dir()) {
+                crate::info!(
+                    &ctx,
+                    "XDG_RUNTIME_DIR {} is not a directory; pid files go to {}",
+                    xdg.display(),
+                    path.display()
+                );
+            }
+            path
+        }
+    };
 
     crate::debug!(&ctx, "pid-path: {}", pid_path.display());
 
