@@ -8,12 +8,14 @@ use std::time::Duration;
 
 use cell_protocol::{Gen, PlacementEntry, PlacementKind};
 use claims::{assert_err, assert_none, assert_ok};
+use sorg_client::EventQueue;
 use sorg_common::{
     BodyTemplate, DeploymentError, FenceOutcome, HttpBridgeApi, MqttBridge, PlacementClaimOutcome,
     RequirementTags, WireHttpEndpoint, WireHttpRequestTemplate, WireHttpResponseVariant,
-    WireMqttIngress, claim_placement, commit_placement,
+    WireMqttEgress, WireMqttIngress, claim_placement, commit_placement,
 };
-use sorg_tests::{HttpMockHandle, swarm_config};
+use sorg_tests::{HttpMockHandle, MqttOutageProxy, TestApp, swarm_config};
+use tokio::time::Instant;
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
 
@@ -191,6 +193,137 @@ async fn mqtt_bridge_deploy_round_trip_undeploy() {
         .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_none!(assert_ok!(event_queue.try_receive().await));
+}
+
+/// Publishes `payload` on `topic` every 500 ms until the bridge turns it into a cell
+/// event. Retrying makes the first successful round trip the observable condition
+/// instead of a guessed sleep; events from earlier publishes are skipped, so a caller
+/// can prove a round trip before and again after an outage.
+async fn mqtt_ingress_round_trip(
+    test_app: &TestApp,
+    event_queue: &mut EventQueue,
+    topic: &str,
+    payload: &str,
+    timeout: Duration,
+) {
+    let expected = format!(r#"{{"payload":"{payload}"}}"#);
+    let deadline = Instant::now() + timeout;
+    loop {
+        test_app
+            .send_mqtt_msg(topic, payload.as_bytes().to_vec())
+            .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let events = assert_ok!(event_queue.try_receive_batch(64).await);
+        if events.iter().any(|event| event == expected.as_bytes()) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no `{payload}` ingress event within {timeout:?} while publishing to `{topic}`"
+        );
+    }
+}
+
+/// A broker outage must not kill the bridge. Once the broker is back, ingress on the
+/// re-subscribed topic reaches the cell again, and egress commands sent during and after
+/// the outage reach the broker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn mqtt_bridge_reconnects_after_broker_outage() {
+    const BRIDGE_SRI: &str = "outage_mqtt_bridge";
+    const INGRESS_TOPIC: &str = "test/outage/ingress";
+    const INGRESS_EVENT: &str = "outage_mqtt_ingress";
+    const EGRESS_TOPIC: &str = "test/outage/egress";
+    const EGRESS_COMMAND: &str = "outage_mqtt_egress";
+    const OUTAGE: Duration = Duration::from_secs(3);
+    // Covers the 1 s + 2 s + 4 s reconnect backoff and the 2 s mailbox poll, and keeps
+    // a failure inside nextest's 40 s budget so it reports the assertion, not a kill.
+    const RECOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+
+    // Arrange — the bridge reaches the broker through a proxy whose link can be cut
+    let swarm = swarm_config!("cells/cells.jsonnet");
+    let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    let sorg = sorg_client::Client::new(test_app.session().clone());
+    let (_broker_handle, mqtt_client) = test_app.set_up_mqtt_broker().await;
+    test_app
+        .subscribe_to_mqtt_topic(&mqtt_client, EGRESS_TOPIC)
+        .await;
+    let proxy = MqttOutageProxy::start().await;
+
+    let bridge = MqttBridge {
+        cell_name: BRIDGE_SRI.to_owned(),
+        broker: proxy.broker_url(),
+        ingress: vec![WireMqttIngress {
+            id: INGRESS_EVENT.to_owned(),
+            topic: INGRESS_TOPIC.to_owned(),
+            qos: None,
+            payload: BodyTemplate::String("payload".to_owned()),
+        }],
+        egress: vec![WireMqttEgress {
+            id: EGRESS_COMMAND.to_owned(),
+            topic: EGRESS_TOPIC.parse().unwrap(),
+            qos: None,
+            payload: BodyTemplate::String("payload".to_owned()),
+        }],
+    };
+    assert_ok!(
+        sorg.deploy_mqtt_bridge(to_sri(BRIDGE_SRI), bridge, RequirementTags::default())
+            .await
+    );
+    let mut event_queue = test_app.subscribe_cell_event(INGRESS_EVENT).await;
+
+    // Assert I — ingress works before the outage
+    mqtt_ingress_round_trip(
+        &test_app,
+        &mut event_queue,
+        INGRESS_TOPIC,
+        "before",
+        RECOVERY_TIMEOUT,
+    )
+    .await;
+
+    // Act — the broker goes away for a while; a command is sent while it is gone
+    proxy.cut();
+    tokio::time::sleep(OUTAGE / 2).await;
+    test_app
+        .command_send(
+            BRIDGE_SRI,
+            EGRESS_COMMAND,
+            Some(br#"{"payload":"during"}"#.to_vec()),
+        )
+        .await;
+    tokio::time::sleep(OUTAGE / 2).await;
+    proxy.restore();
+
+    // Assert II — ingress reaches the cell again on the re-subscribed topic
+    mqtt_ingress_round_trip(
+        &test_app,
+        &mut event_queue,
+        INGRESS_TOPIC,
+        "after",
+        RECOVERY_TIMEOUT,
+    )
+    .await;
+
+    // Assert III — the egress sent during the outage and one sent after it both reach
+    // the broker, in order
+    test_app
+        .command_send(
+            BRIDGE_SRI,
+            EGRESS_COMMAND,
+            Some(br#"{"payload":"after"}"#.to_vec()),
+        )
+        .await;
+    let deadline = Instant::now() + RECOVERY_TIMEOUT;
+    let mut published = Vec::new();
+    while published.len() < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "egress did not reach the broker within {RECOVERY_TIMEOUT:?}, got {published:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        published.extend(test_app.received_msgs_on_mqtt_topic(EGRESS_TOPIC).await);
+    }
+    assert_eq!(published, vec![b"during".to_vec(), b"after".to_vec()]);
 }
 
 /// Deploying a second bridge under an sri already claimed by a live bridge is rejected as
