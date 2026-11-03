@@ -13,7 +13,7 @@ use myrmic_common::cells::{Command, Event};
 use wasm_runtime::async_request::{DbClientRequest, DbClientResponse, Error};
 use zenoh_nano::scout::ZenohIdProto;
 
-use crate::mailbox::MailboxItem;
+use crate::mailbox::{self, MailboxItem};
 use crate::service::DEFAULT_TIMEOUT;
 
 /// The application of the cell function currently running, which every db
@@ -231,7 +231,8 @@ pub(crate) async fn handle(
         }
         DbClientRequest::SubscribeEvent(ev) => {
             log::info!("Subscribed to event {}", ev.as_ref());
-            subscribed_events.push((ev, Cursor::Skip(0)));
+            let cursor = mailbox::event_tail(client, &ev).await;
+            subscribed_events.push((ev, cursor));
 
             db_responses.send(DbClientResponse::SubscribeEvent).await;
         }

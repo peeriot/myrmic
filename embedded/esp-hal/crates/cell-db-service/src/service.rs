@@ -40,6 +40,10 @@ fn subscription_fallback_period(session_lease: Duration) -> Duration {
     Duration::from_secs(session_lease.as_secs() + 5)
 }
 const EVENTS_POLL_PERIOD: Duration = Duration::from_millis(250);
+/// Cadence while an event has more batches pending or the cell's channel is
+/// full: one select turn for deploys, commands and the cell's own db calls,
+/// then straight back to the backlog.
+const EVENTS_CATCH_UP_PERIOD: Duration = Duration::from_millis(100);
 /// Retry delay for a command deferred by a full cell message channel. No poke announces free space,
 /// so without it the command would wait out the full mailbox fallback period.
 const COMMAND_DEFERRED_RETRY: Duration = Duration::from_millis(100);
@@ -309,8 +313,13 @@ pub async fn service(
             }
             // Subscribed-event polling
             Either6::Fourth(()) => {
-                next_events_poll = Instant::now() + EVENTS_POLL_PERIOD;
-                forward_events(&client, &mut subscribed_events).await;
+                let backlog = forward_events(&client, &mut subscribed_events).await;
+                next_events_poll = Instant::now()
+                    + if backlog {
+                        EVENTS_CATCH_UP_PERIOD
+                    } else {
+                        EVENTS_POLL_PERIOD
+                    };
             }
             // Node maintenance: exec re-registration and lease renewal,
             // whichever is due (the timer fires at the earlier deadline).
@@ -528,12 +537,32 @@ async fn forward_next_command(
     true
 }
 
-/// Drains every subscribed event with new entries into the cell message channel.
-async fn forward_events(client: &Client, subscribed_events: &mut Vec<(Event, Cursor)>) {
-    let sender = CELL_MSG_CHANNEL.sender();
-    for cell_msg in mailbox::poll_for_events(client, subscribed_events).await {
-        sender.send(cell_msg).await;
+/// Hands each subscribed event's next batch to the cell without ever waiting on
+/// it — this runs on the task that serves the handler's own db calls, so
+/// blocking on the cell would deadlock it. A full channel leaves the cursor at
+/// the first undelivered entry, which is read again next turn. Returns whether
+/// a backlog remains: a full batch, or entries held back by a full channel.
+async fn forward_events(client: &Client, subscribed_events: &mut [(Event, Cursor)]) -> bool {
+    let mut backlog = false;
+    for (event, cursor) in subscribed_events {
+        let batch = mailbox::read_events(client, event, cursor).await;
+        backlog |= batch.len() == mailbox::EVENT_BATCH;
+        for (id, payload) in batch {
+            if let Some(cell_msg) = mailbox::decode_event(event, &id, &payload) {
+                // Leave the last slot free, as timer ticks do, so a busy event
+                // cannot starve the command hand-over.
+                if CELL_MSG_CHANNEL.free_capacity() <= 1
+                    || CELL_MSG_CHANNEL.try_send(cell_msg).is_err()
+                {
+                    log::debug!("[db-client] events deferred — cell message channel full");
+                    backlog = true;
+                    break;
+                }
+            }
+            *cursor = Cursor::After(id);
+        }
     }
+    backlog
 }
 
 /// Declares a DB subscription, logging and returning `None` on failure so the caller can degrade to
