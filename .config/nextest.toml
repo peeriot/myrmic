@@ -12,8 +12,8 @@ setup = 'build-cell-fixtures'
 
 # `serial-integration` is for tests that genuinely cannot share the host:
 # `swarm-telemetry` builds its swarm inline (bypassing the `sorg-tests` harness)
-# so it stays on the default zenoh multicast group, and `sorg-tests`' own mqtt
-# tests bind a fixed broker port. Every other swarm integration suite is
+# so it stays on the default zenoh multicast group, and the mqtt tests in
+# `sorg-tests` and `sorg-orchestration` bind a fixed broker port. Every other swarm integration suite is
 # network-isolated — `sorg-tests` gives
 # each test *process* a private multicast group (`set_up_swarm_with_config` /
 # `set_up_killable_swarm` / `test_session`), and `filestore-client` disables
@@ -34,6 +34,13 @@ slow-timeout = { period = "15s", terminate-after = 6 }
 filter = 'package(sorg-orchestration) & kind(test)'
 platform = 'cfg(unix)'
 slow-timeout = { period = "10s", terminate-after = 4 }
+
+# The mqtt bridge tests stand up the same fixed-port broker as sorg-tests
+# (`set_up_mqtt_broker`), and share its client ids — keep them serial too.
+[[profile.default.overrides]]
+filter = 'package(sorg-orchestration) & test(/mqtt_bridge/)'
+platform = 'cfg(unix)'
+test-group = 'serial-integration'
 
 # sorg-client's cells::timeout tests wait out a 12s cell init. The budget was
 # raised above the 40s the lighter sorg-client tests are fine with back when the

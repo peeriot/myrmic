@@ -32,6 +32,7 @@ pub use embedded::{DeployResponseMode, MockEmbeddedExec};
 pub use fs::load_into_db;
 pub use http_mock::HttpMockHandle;
 pub use log_tracker::{StateTracker, TaskStatus, set_up_log_tracker};
+pub use mqtt::MqttOutageProxy;
 pub use myrmic_tags::Platform;
 pub use swarm::{
     KillableProcess, ScopedProcess, scope_test_multicast, set_up_killable_swarm,
