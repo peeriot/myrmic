@@ -200,7 +200,7 @@ myrmic --version
 | `~/.local/share/myrmic/` | runtime identities in `runtimes/<name>.yaml`, and one directory per runtime holding its database (`<id>/db`) and its rotating logs (`<id>/logs/runtime.<date>.log`, rotated daily, 7 kept) |
 | `$XDG_RUNTIME_DIR/myrmic/` | the PID file of each running runtime |
 
-Those are the persistent locations at their defaults. A runtime can be given a database directory and a log directory of its own, and `myrmic runtimes start --tmp` keeps the database in memory instead. `$XDG_DATA_HOME` overrides the data directory when it is set. When `$XDG_RUNTIME_DIR` is not set - which is common for a process started by systemd - PID files go to `$TMPDIR/myrmic-<user>/`, which is `/tmp/myrmic-<user>/` unless `$TMPDIR` says otherwise. `<user>` is `$USER`, or `$LOGNAME` if that is unset - and if neither is set, the directory is just `myrmic`.
+Those are the persistent locations at their defaults. A runtime can be given a database directory and a log directory of its own, and `myrmic runtimes start --tmp` keeps the database in memory instead. `$XDG_DATA_HOME` overrides the data directory when it is set. When `$XDG_RUNTIME_DIR` is not set - which is common for a process started by systemd - or names a directory that does not exist - which WSL2 and containers do - PID files go to `$TMPDIR/myrmic-<user>/`, which is `/tmp/myrmic-<user>/` unless `$TMPDIR` says otherwise. `<user>` is `$USER`, or `$LOGNAME` if that is unset - and if neither is set, the directory is just `myrmic`.
 
 Builds and deploys also unpack scratch directories under `$TMPDIR` (`myrmic-nest-<uuid>/`, `myrmic-spawn-<uuid>/`), and a runtime using the signal layer opens a socket at `/run/peeriot/signal-layer.sock` or `$XDG_RUNTIME_DIR/peeriot-signal-layer.sock`.
 
