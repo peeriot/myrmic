@@ -112,7 +112,7 @@ pub trait ExtractFromResponse: Sized {
 
 /// Sends a requests and efficiently block until a response is obtained
 ///
-/// To be used by a thread executor
+/// To be called from the blocking WAMR runtime thread, never from an async task
 pub fn send_request_and_wait<R: TypedRequest>(req: R) -> R::Response {
     R::extract_response(send_request(req.into_request()))
 }
@@ -173,7 +173,8 @@ impl Request {
 
 /// Handles asynchronous requests
 ///
-/// To be used by an interrupt executor
+/// Runs on the same embassy executor as [`crate::cell_pump`] and the other WASM tasks, so none of
+/// them may block that executor (e.g. inside an RTOS call) without stalling every host call.
 pub async fn request_handler(
     pins: Pins,
     db_requests: Sender<'static, CriticalSectionRawMutex, DbClientRequest, 1>,
@@ -216,7 +217,7 @@ pub async fn request_handler(
         // Reset so that we can use the signal for the next operation
         ASYNC_REQUEST.reset();
 
-        // Unblock the low priority executor
+        // Unblock the WAMR thread waiting in `send_request`
         let boxed = Box::new(resp);
         let ptr: *mut Response = Box::into_raw(boxed);
         // safety: We made sure that the queue size was initialized with size_of::<*mut Response>

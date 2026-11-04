@@ -16,7 +16,6 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of;
 
 use cell_protocol::Sri;
-use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
 use embassy_sync::signal::Signal;
@@ -117,6 +116,12 @@ type ModuleItem = (
     Option<Vec<u8>>,
 );
 
+/// Raised by the WAMR thread each time it takes a message off the RTOS queue, so a pump facing a
+/// full queue can await room instead of blocking the executor inside the RTOS call. Also raised
+/// by [`crate::terminate_module`], so a parked pump drops its message before the next cell's
+/// init clears the termination flag.
+pub(crate) static CELL_QUEUE_FREED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
 /// Gathers the system's data and provides back-pressure via embassy channels to the RTOS queue.
 pub async fn cell_pump(cell_message_queue: &'static QueueHandle, liveness: fn()) {
     log::info!("Starting Cell task");
@@ -130,8 +135,10 @@ pub async fn cell_pump(cell_message_queue: &'static QueueHandle, liveness: fn())
         let ptr = Box::into_raw(boxed);
         // safety: Made sure already the type is correct in `WamrContext`
         unsafe {
-            // Use deadline, so that we can avoid deadlocking the embassy executor if the Cell is
-            // waiting on us
+            // Never block in the RTOS call: this task shares the executor with the request
+            // handler that serves the cell's host calls, so a blocking wait here stalls every
+            // handoff while the queue is full. Try, and if full, await the WAMR thread taking a
+            // message or a termination request; the 100 ms timeout is only a safety net.
             loop {
                 // The cell is tearing down; forwarding now would misdeliver this message
                 // to whatever cell deploys next, so drop it instead of pushing.
@@ -139,10 +146,14 @@ pub async fn cell_pump(cell_message_queue: &'static QueueHandle, liveness: fn())
                     drop(Box::from_raw(ptr));
                     break;
                 }
-                if cell_message_queue.send_to_back(addr_of!(ptr).cast(), Some(1_000)) {
+                if cell_message_queue.send_to_back(addr_of!(ptr).cast(), Some(0)) {
                     break;
                 }
-                yield_now().await;
+                let _ = embassy_time::with_timeout(
+                    embassy_time::Duration::from_millis(100),
+                    CELL_QUEUE_FREED.wait(),
+                )
+                .await;
             }
         }
     }
@@ -291,6 +302,7 @@ impl WamrContext {
                     .cell_message_queue
                     .receive(ptr_out.as_mut_ptr().cast(), Some(500_000));
                 if did_receive {
+                    CELL_QUEUE_FREED.signal(());
                     break;
                 } else if is_terminated() {
                     return CellMessage::Destroy;
