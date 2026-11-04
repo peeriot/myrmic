@@ -2,14 +2,13 @@
 //! host over SSH, or inside a docker container.
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 
 pub use backend::MyrmicBackend;
-pub use backend::docker::DockerBinary;
-pub use backend::local::LocalBinary;
-pub use backend::ssh::SshBinary;
+pub use backend::docker::Docker;
+pub use backend::local::Local;
+pub use backend::ssh::Ssh;
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
 use myrmic_build::PlatformFamily;
@@ -18,7 +17,7 @@ use sorg_common::RestartType;
 use crate::{
     CommandOutput,
     clients::sorg::SorgHandle,
-    docker::container::ConnectedContainer,
+    docker::container::ManagedContainer,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
 };
 
@@ -55,7 +54,7 @@ pub enum Error {
 }
 
 /// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
-/// [`MyrmicBackend`]: a binary on the host, on a remote host over SSH, or inside a container.
+/// [`MyrmicBackend`]: on the host, on a remote host over SSH, or inside a container.
 ///
 /// Every operation returns a [`Result`]; a test `.unwrap()`s or `.expect(..)`s what it assumes to
 /// succeed. A command that cannot be started at all (binary, `ssh` or `docker` missing, host or
@@ -63,54 +62,14 @@ pub enum Error {
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
-    /// set by [`Myrmic::local_isolated`]; shared by the clones, so its directories live as long
-    /// as any runtime or cell handle that may still need them for cleanup
-    isolation: Option<Arc<Isolation>>,
+    /// the myrmic binary, as the backend's commands find it on the target
+    binary: String,
 }
 
-/// A private myrmic setup on the host (see [`Myrmic::local_isolated`]).
-struct Isolation {
-    /// holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs), `run/`
-    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read) and the runtime
-    /// configs; shared with the shims [`Myrmic::cut_off`] creates
-    dir: Arc<tempfile::TempDir>,
-    /// the multicast group (`<address>:<port>`) its runtimes scout on, and the CLI and
-    /// [`Myrmic::connect_session`] discover them by
-    multicast_group: String,
-    /// the runtime config in `dir` that sets `multicast_group`
-    config: PathBuf,
-}
-
-impl Isolation {
-    /// An isolation in `dir` on a multicast group no other isolation uses, with the runtime
-    /// config for it.
-    fn new(dir: Arc<tempfile::TempDir>) -> Self {
-        let multicast_group = isolated_multicast_group();
-        // JSON is YAML, which `runtimes start` parses
-        let config_content = serde_json::json!({
-            "zenoh": { "scouting": { "multicast": { "address": multicast_group } } },
-        });
-        let config = dir.path().join(format!(
-            "runtime-{}.yaml",
-            multicast_group.replace(':', "_")
-        ));
-        std::fs::write(&config, config_content.to_string())
-            .expect("failed to write the isolated runtime's config");
-        Self {
-            dir,
-            multicast_group,
-            config,
-        }
-    }
-}
-
-impl Myrmic<LocalBinary> {
+impl Myrmic<Local> {
     /// create a shim around a locally built myrmic binary (see [`crate::resolve_binary!`])
     pub fn local() -> Self {
-        Self {
-            backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
-            isolation: None,
-        }
+        Self::local_on(Local::default())
     }
 
     /// Like [`Self::local`], but nothing outside this shim and its clones sees its runtime, and
@@ -118,102 +77,61 @@ impl Myrmic<LocalBinary> {
     ///
     /// The shim gets its own state directories and its own multicast group, on which its
     /// runtimes scout and every CLI call (through `DEFAULT_MYRMIC_MULTICAST_GROUP`) and
-    /// [`Self::connect_session`] discover them, the same way as on the default group.
+    /// sessions from [`Local::zenoh_config`] discover them, the same way as on the default group.
     /// [`RuntimeBuilder::config`] is not available, the shim generates the config itself.
     pub fn local_isolated() -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("myrmic-isolated.")
-            .tempdir()
-            .expect("failed to create a temporary directory for an isolated myrmic");
-        for subdir in ["data", "run"] {
-            std::fs::create_dir(dir.path().join(subdir))
-                .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
-        }
-        Self {
-            backend: LocalBinary::new(crate::resolve_binary!("myrmic")),
-            isolation: Some(Arc::new(Isolation::new(Arc::new(dir)))),
-        }
+        Self::local_on(Local::isolated())
+    }
+
+    /// Like [`Self::local`], but every CLI call (through `DEFAULT_MYRMIC_CONNECT`) and sessions
+    /// from [`Local::zenoh_config`] reach the swarm through `endpoint` (e.g. `tcp/192.0.2.10:7447`,
+    /// a router's) instead of by multicast scouting. The swarm runs elsewhere: the shim starts no
+    /// runtime.
+    pub fn local_connected(endpoint: impl Into<String>) -> Self {
+        Self::local_on(Local::connected(endpoint.into()))
     }
 
     /// A shim on this [`Self::local_isolated`] shim's state directories but on a multicast group
     /// of its own. A runtime it starts has the identity and database it has on this shim, but
     /// reaches none of this shim's runtimes, nor those of another cut-off shim.
     pub fn cut_off(&self) -> Self {
-        let isolation = self
-            .isolation
-            .as_ref()
-            .expect("only an isolated shim has state directories to share");
         Self {
-            backend: self.backend.clone(),
-            isolation: Some(Arc::new(Isolation::new(isolation.dir.clone()))),
+            backend: self.backend.cut_off(),
+            binary: self.binary.clone(),
         }
     }
 
-    /// Open a zenoh session connected to the same swarm mesh as the myrmic CLI: in peer mode,
-    /// found by multicast scouting, on [`Self::local_isolated`]'s own group if it is one.
-    ///
-    /// It does not use the shim: the receiver only restricts it to the local backend, whose
-    /// runtimes are on this host and so reachable by multicast scouting. A remote mesh needs a
-    /// route in instead, e.g. rack's SSH tunnel to a pinned listen port.
-    ///
-    /// Use the returned session to create [`crate::clients::db::DbHandle`],
-    /// [`crate::clients::sorg::SorgHandle`], etc.
-    pub async fn connect_session(&self) -> zenoh::Session {
-        let mut config = zenoh::Config::default();
-        config
-            .set_mode(Some(zenoh::config::WhatAmI::Peer))
-            .expect("setting zenoh mode cannot fail");
-        if let Some(isolation) = &self.isolation {
-            config
-                .insert_json5(
-                    "scouting/multicast/address",
-                    &serde_json::json!(isolation.multicast_group).to_string(),
-                )
-                .expect("the isolated multicast group is a valid zenoh multicast address");
+    /// the locally built myrmic binary on `backend`
+    fn local_on(backend: Local) -> Self {
+        let binary = crate::resolve_binary!("myrmic");
+        Self {
+            backend,
+            binary: binary
+                .to_str()
+                .unwrap_or_else(|| panic!("myrmic binary path {} is not UTF-8", binary.display()))
+                .to_owned(),
         }
-        zenoh::open(config)
-            .await
-            .expect("failed to open zenoh session")
     }
 }
 
-/// A multicast group no other [`Myrmic::local_isolated`] shim uses: the address from this
-/// process's pid (administratively scoped 239.0.0.0/8; its low 24 bits cover every Linux pid),
-/// the port from a per-process counter.
-fn isolated_multicast_group() -> String {
-    static NEXT_PORT: AtomicU16 = AtomicU16::new(7446);
-    let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
-    assert!(
-        port >= 7446,
-        "ran out of ports for isolated multicast groups"
-    );
-    let pid = std::process::id();
-    format!(
-        "239.{}.{}.{}:{port}",
-        (pid >> 16) & 0xFF,
-        (pid >> 8) & 0xFF,
-        pid & 0xFF
-    )
-}
-
-impl<'c> Myrmic<DockerBinary<'c>> {
+impl Myrmic<Docker> {
     /// create a shim that runs the myrmic CLI inside `container`, which has `myrmic` on its
-    /// `PATH`; see [`DockerBinary`] for why it is borrowed
-    pub fn attach(container: &'c ConnectedContainer) -> Self {
+    /// `PATH`; the container is removed once the last shim or guard using it drops
+    pub fn attach(container: Arc<ManagedContainer>) -> Self {
         Self {
-            backend: DockerBinary::attach(container),
-            isolation: None,
+            backend: Docker::attach(container),
+            binary: "myrmic".to_owned(),
         }
     }
 }
 
-impl Myrmic<SshBinary> {
+impl Myrmic<Ssh> {
     /// create a shim that runs the myrmic CLI on `host` over SSH, resolving `myrmic` on the
     /// remote user's `PATH`
     pub fn ssh(host: impl Into<String>) -> Self {
         Self {
-            backend: SshBinary::new(host),
-            isolation: None,
+            backend: Ssh::new(host),
+            binary: "myrmic".to_owned(),
         }
     }
 
@@ -221,8 +139,8 @@ impl Myrmic<SshBinary> {
     /// (e.g. a path a benchmark harness `scp`'d it to)
     pub fn ssh_at(host: impl Into<String>, binary: impl Into<String>) -> Self {
         Self {
-            backend: SshBinary::at(host, binary),
-            isolation: None,
+            backend: Ssh::new(host),
+            binary: binary.into(),
         }
     }
 }
@@ -231,6 +149,11 @@ impl<B> Myrmic<B>
 where
     B: MyrmicBackend,
 {
+    /// where this shim's commands run
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
     /// describe a `myrmic runtimes start` with `tags`; finish with [`RuntimeBuilder::start`]
     pub fn runtime<'a>(&'a self, tags: &'a [&'a str]) -> RuntimeBuilder<'a, B> {
         RuntimeBuilder {
@@ -342,7 +265,7 @@ where
 
     /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
-        let output = self.run_program(self.backend.binary(), args).await;
+        let output = self.run_program(&self.binary, args).await;
         if output.success {
             Ok(output)
         } else {
@@ -355,7 +278,7 @@ where
     /// Run `program args` on the target and capture its output. Panics when it cannot be
     /// started, or its wrapper failed: broken test infrastructure, not a result.
     async fn run_program(&self, program: &str, args: &[&str]) -> CommandOutput {
-        let command = self.command(program, args);
+        let command = self.backend.command(program, args);
         let invocation = format!("{command:?}");
         let output = tokio::process::Command::from(command)
             .output()
@@ -367,34 +290,18 @@ where
 
     /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
-        self.run_program_blocking(self.backend.binary(), args)
+        self.run_program_blocking(&self.binary, args)
     }
 
     /// Blocking run of `program args` on the target for `Drop`, returning the raw output. A
     /// command that cannot be started, or whose wrapper failed, is the error instead of a panic:
     /// a panic during unwinding aborts the process and hides the original one.
     fn run_program_blocking(&self, program: &str, args: &[&str]) -> std::io::Result<CommandOutput> {
-        let mut command = self.command(program, args);
+        let mut command = self.backend.command(program, args);
         let invocation = format!("{command:?}");
         let output = command.output()?;
         self.captured(&invocation, output)
             .map_err(std::io::Error::other)
-    }
-
-    /// `program args` as a host command from the backend, inside the isolation, if any: its
-    /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, and its multicast group as
-    /// `DEFAULT_MYRMIC_MULTICAST_GROUP`, which the CLI takes like `--multicast-group`. Every
-    /// program the shim starts goes through here, so the CLI inherits the isolation also when
-    /// it is exec'd by `sh`.
-    fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
-        let mut command = self.backend.command(program, args);
-        if let Some(isolation) = &self.isolation {
-            command
-                .env("XDG_DATA_HOME", isolation.dir.path().join("data"))
-                .env("XDG_RUNTIME_DIR", isolation.dir.path().join("run"))
-                .env("DEFAULT_MYRMIC_MULTICAST_GROUP", &isolation.multicast_group);
-        }
-        command
     }
 
     /// `output`, with the invocation and exit code folded into a failed command's stderr (the
@@ -553,6 +460,20 @@ where
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
     pub async fn start(self) -> Result<Runtime<B>, Error> {
+        // `runtimes start` reads its config before it daemonizes, so the file may go once the
+        // start returns
+        let backend_config = match self.myrmic.backend.runtime_config() {
+            Some(content) => {
+                assert!(
+                    self.config.is_none(),
+                    "the backend sets the runtime config itself"
+                );
+                let dir = TargetTempDir::create(self.myrmic, "myrmic-runtime-config").await;
+                let path = dir.write("runtime.yaml", &content).await;
+                Some((dir, path))
+            }
+            None => None,
+        };
         let mut args = vec!["runtimes", "start", "-d", "--name", &self.name];
         if !self.persistent {
             args.push("--tmp");
@@ -560,18 +481,11 @@ where
         for tag in self.tags {
             args.extend(["--tag", tag]);
         }
-        let isolated_config = self.myrmic.isolation.as_ref().map(|isolation| {
-            assert!(
-                self.config.is_none(),
-                "an isolated shim generates the runtime config itself"
-            );
-            &isolation.config
-        });
         if let Some(config) = &self.config {
             args.push(config);
         }
-        if let Some(config) = isolated_config {
-            args.push(path_arg(config));
+        if let Some((_, path)) = &backend_config {
+            args.push(path_arg(path));
         }
         let output = self.myrmic.run(&args).await?;
         let Some(zid) = started_runtime_zid(&output.stderr, &self.name) else {
@@ -775,6 +689,42 @@ where
         self.myrmic
             .run(&["runtimes", "delete", "--signal", "kill", &self.name])
             .await?;
+        Ok(())
+    }
+
+    /// Freeze the runtime's process (`SIGSTOP`), as a stalled machine would: it keeps its state
+    /// and connections but does nothing, timers and lease renewals included, until
+    /// [`Self::resume`].
+    pub async fn pause(&self) -> Result<(), Error> {
+        self.signal("-STOP").await
+    }
+
+    /// let the process [`Self::pause`] froze run again (`SIGCONT`)
+    pub async fn resume(&self) -> Result<(), Error> {
+        self.signal("-CONT").await
+    }
+
+    /// Send `signal` to the runtime's process on the target. Its pid comes from `myrmic runtimes
+    /// list`, so this works on every backend.
+    async fn signal(&self, signal: &str) -> Result<(), Error> {
+        let output = self.myrmic.run(&["runtimes", "list", &self.name]).await?;
+        // `<name>\trunning\tpid=<pid>`
+        let pid = output
+            .stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{}\trunning\tpid=", self.name)))
+            .unwrap_or_else(|| {
+                panic!(
+                    "`runtimes list` shows no running `{}`: {}",
+                    self.name, output.stdout
+                )
+            });
+        let killed = self.myrmic.run_program("kill", &[signal, pid]).await;
+        assert!(
+            killed.success,
+            "failed to send {signal} to `{}`: {}",
+            self.name, killed.stderr
+        );
         Ok(())
     }
 }

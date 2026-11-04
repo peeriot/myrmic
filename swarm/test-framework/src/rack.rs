@@ -14,7 +14,7 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, Runtime, SshBinary, already_gone};
+use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, Runtime, Ssh, already_gone};
 use crate::swarm::SwarmProcess;
 
 /// One remote host's role in the deployment: which myrmic runtime to start there, and under
@@ -151,7 +151,7 @@ pub async fn provision(
     // Concurrent, not sequential — same rationale as `upload_binary`: each host is an
     // independent SSH round trip (config upload + runtime start), so provisioning N hosts one
     // at a time pays N times the round-trip latency for no benefit.
-    let runtimes: Vec<Runtime<SshBinary>> =
+    let runtimes: Vec<Runtime<Ssh>> =
         futures::future::join_all(hosts.iter().map(|host| async move {
             let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
             let tag_refs: Vec<&str> = host.tags.iter().map(String::as_str).collect();
@@ -596,7 +596,7 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
     futures::future::join_all(hosts.iter().map(|host| async move {
         let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
-        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic/mod.rs`) already
+        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"
         // message — isn't a failure, it's this backstop confirming there was nothing left to do.

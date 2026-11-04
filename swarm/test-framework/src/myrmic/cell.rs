@@ -69,6 +69,28 @@ where
             path: PathBuf::from(output.stdout.trim()),
         }
     }
+
+    /// Write `content` to the file `name` in this directory and return its path. A failure is
+    /// broken test infrastructure and panics.
+    pub(crate) async fn write(&self, name: &str, content: &str) -> PathBuf {
+        let path = self.path.join(name);
+        let path_str = path
+            .to_str()
+            .expect("the directory came from `mktemp` output, which is UTF-8");
+        let output = self
+            .myrmic
+            .run_program(
+                "sh",
+                &["-c", "printf '%s' \"$1\" > \"$2\"", "sh", content, path_str],
+            )
+            .await;
+        assert!(
+            output.success,
+            "failed to write `{path_str}` on the target: {}",
+            output.stderr
+        );
+        path
+    }
 }
 
 impl<B> Drop for TargetTempDir<B>

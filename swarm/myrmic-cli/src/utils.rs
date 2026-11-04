@@ -111,8 +111,9 @@ impl Ctx {
             .set_mode(Some(zenoh::config::WhatAmI::Peer))
             .expect("setting mode cannot fail here");
 
-        if !self.connect.is_empty() {
-            let endpoints = serde_json::to_string(&self.connect)
+        let (connect, multicast_group) = self.discovery()?;
+        if !connect.is_empty() {
+            let endpoints = serde_json::to_string(&connect)
                 .expect("serializing CLI connect endpoints cannot fail");
             zenoh_config
                 .insert_json5("connect/endpoints", &endpoints)
@@ -124,10 +125,6 @@ impl Ctx {
                 .insert_json5("open/return_conditions/connect_scouted", "true")
                 .expect("setting explicit connect return condition cannot fail");
         }
-        let multicast_group = match self.multicast_group {
-            Some(group) => Some(group),
-            None => multicast_group_from_env()?,
-        };
         if let Some(group) = multicast_group {
             zenoh_config
                 .insert_json5("scouting/multicast/address", &format!("\"{group}\""))
@@ -152,6 +149,33 @@ impl Ctx {
         wait_for_nodes(self, &session).await?;
 
         Ok(session)
+    }
+}
+
+impl Ctx {
+    /// The endpoints to connect to and the multicast group to scout on: the flags, or without
+    /// either, their defaults from the environment. Connecting and scouting on a group exclude
+    /// each other, in the environment as in the flags.
+    fn discovery(&self) -> anyhow::Result<(Vec<String>, Option<std::net::SocketAddr>)> {
+        if !self.connect.is_empty() || self.multicast_group.is_some() {
+            Ok((self.connect.clone(), self.multicast_group))
+        } else {
+            match (connect_from_env()?, multicast_group_from_env()?) {
+                (Some(_), Some(_)) => anyhow::bail!(
+                    "DEFAULT_MYRMIC_CONNECT and DEFAULT_MYRMIC_MULTICAST_GROUP exclude each other"
+                ),
+                (connect, group) => Ok((connect.into_iter().collect(), group)),
+            }
+        }
+    }
+}
+
+/// The endpoint in `DEFAULT_MYRMIC_CONNECT`, if set: the default for `--connect`.
+fn connect_from_env() -> anyhow::Result<Option<String>> {
+    match std::env::var("DEFAULT_MYRMIC_CONNECT") {
+        Ok(endpoint) => Ok(Some(endpoint)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(err) => Err(err).context("invalid DEFAULT_MYRMIC_CONNECT"),
     }
 }
 

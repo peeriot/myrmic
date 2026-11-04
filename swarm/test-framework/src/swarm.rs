@@ -29,7 +29,7 @@ impl SwarmImage {
         let swarm_binary = swarm_binary.into();
         let mut files = vec![(swarm_binary.as_path(), "swarm")];
         files.extend_from_slice(extra_files);
-        let _image = Image::build(
+        Image::build(
             docker,
             tag,
             swarm_dockerfile.into().iter().as_path(),

@@ -10,9 +10,6 @@ pub mod ssh;
 /// A backend only builds host commands. [`super::Myrmic`] runs them and holds all knowledge of
 /// the CLI's commands and output, so the backends cannot drift apart.
 pub trait MyrmicBackend: Clone {
-    /// the myrmic binary, as [`Self::command`] finds it on the target
-    fn binary(&self) -> &str;
-
     /// `program args` as a command on the host that runs them on the target: the program itself,
     /// or the `ssh`/`docker exec` invocation around it
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command;
@@ -21,4 +18,9 @@ pub trait MyrmicBackend: Clone {
     /// `docker exec` could not reach the daemon, the program is missing on the target) rather
     /// than to the program: broken test infrastructure, not a result.
     fn wrapper_exit_codes(&self) -> &'static [i32];
+
+    /// The runtime config (YAML) every runtime started here needs, e.g. for how it finds the
+    /// others in this environment; `None` when the default config does. A runtime started here
+    /// takes no other config.
+    fn runtime_config(&self) -> Option<String>;
 }
