@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 CHECKS=(
     "Licenses:$SCRIPT_DIR/licenses"
+    "Lockfiles:$SCRIPT_DIR/lockfiles"
     "WASM Host Interface:$SCRIPT_DIR/wasm-host-interface"
     "Coverage Self-Test:$SCRIPT_DIR/../check/coverage-self-test"
 )
