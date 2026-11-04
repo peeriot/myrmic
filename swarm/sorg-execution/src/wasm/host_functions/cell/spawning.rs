@@ -228,10 +228,10 @@ async fn gate_existing_instance(
                     }
                 }
             }
-            // Aborting on erase failure keeps the corpse row from silently
+            // Aborting on a failed removal keeps the corpse row from silently
             // suppressing the fresh cell's #[init].
             if let Some(gen_id) = existing_gen {
-                match instance_registry::erase_instance(session, &child, gen_id).await {
+                match instance_registry::remove_instance(session, &child, gen_id).await {
                     Ok(FenceOutcome::Applied | FenceOutcome::Absent) => {}
                     Ok(FenceOutcome::Superseded { current }) => {
                         error!("spawn: instance '{child}' moved to generation {current} mid-gate");
@@ -239,7 +239,7 @@ async fn gate_existing_instance(
                         return Err(SPAWN_ERR_DEPLOY_FAILED);
                     }
                     Err(err) => {
-                        error!("spawn: failed to erase stale instance '{child}': {err}");
+                        error!("spawn: failed to remove stale instance '{child}': {err}");
                         notify_spawn_failed(session, parent, child, local_name, detached).await;
                         return Err(SPAWN_ERR_DEPLOY_FAILED);
                     }
@@ -329,9 +329,9 @@ pub(crate) async fn terminate_cell(
         return TERMINATE_ERR_UNDEPLOY_FAILED;
     }
 
-    // Undeploy usually erases the row itself; an absent row is that, not a failure.
-    if let Err(err) = instance_registry::erase_instance(&session, &sri, target.gen_id).await {
-        error!("terminate: failed to erase instance '{sri}': {err}");
+    // Undeploy usually removes the row itself; an absent row is that, not a failure.
+    if let Err(err) = instance_registry::remove_instance(&session, &sri, target.gen_id).await {
+        error!("terminate: failed to remove instance '{sri}': {err}");
         return TERMINATE_ERR_ERASE_FAILED;
     }
 
@@ -381,8 +381,8 @@ async fn reap_cells(session: &zenoh::Session, cells: Vec<(Sri, Gen)>) {
         if let Err(err) = undeploy_cell(session, sri, DEPLOY_TIMEOUT).await {
             tracing::debug!("reap: undeploy '{sri}' pending fencing: {err}");
         }
-        if let Err(err) = instance_registry::erase_instance(session, &sri, gen_id).await {
-            tracing::debug!("reap: erase '{sri}': {err}");
+        if let Err(err) = instance_registry::remove_instance(session, &sri, gen_id).await {
+            tracing::debug!("reap: remove '{sri}': {err}");
         }
     }
 }

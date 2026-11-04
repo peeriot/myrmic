@@ -1,13 +1,12 @@
-use std::future::Future;
-
-use super::SwarmBackend;
-use crate::myrmic::{LocalBinary, Myrmic};
+use super::{CutOff, SwarmBackend};
+use crate::myrmic::{self, Myrmic};
+use crate::swarm2::SwarmSpec;
 
 /// [`SwarmBackend`] that runs every runtime on the host, through one
 /// [`Myrmic::local_isolated`] shim: its runtimes find each other on the shim's multicast group,
 /// and nothing outside the swarm sees them.
 pub struct Local {
-    myrmic: Myrmic<LocalBinary>,
+    myrmic: Myrmic<myrmic::Local>,
 }
 
 impl Local {
@@ -25,15 +24,30 @@ impl Default for Local {
     }
 }
 
-impl SwarmBackend for Local {
-    type Cli = LocalBinary;
+impl<S: SwarmSpec> SwarmBackend<S> for Local {
+    type Cli = myrmic::Local;
+    type Client = myrmic::Local;
 
     /// the one shim, whichever runtime it is
-    fn shim(&self, _runtime: &str) -> &Myrmic<LocalBinary> {
-        &self.myrmic
+    fn shim(&self, _runtime: S) -> Myrmic<myrmic::Local> {
+        self.myrmic.clone()
     }
 
-    fn connect_session(&self) -> impl Future<Output = zenoh::Session> + Send {
-        self.myrmic.connect_session()
+    /// the one shim: it already runs next to the test
+    fn client(&self) -> Myrmic<myrmic::Local> {
+        self.myrmic.clone()
+    }
+
+    async fn connect_session(&self) -> zenoh::Session {
+        zenoh::open(self.myrmic.backend().zenoh_config())
+            .await
+            .expect("failed to open zenoh session")
+    }
+}
+
+impl<S: SwarmSpec> CutOff<S> for Local {
+    /// a fresh [`Myrmic::cut_off`] of the one shim, whichever runtime it is
+    fn cut_off_shim(&self, _runtime: S) -> Myrmic<myrmic::Local> {
+        self.myrmic.cut_off()
     }
 }

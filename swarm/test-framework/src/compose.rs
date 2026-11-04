@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
-use crate::docker::{DockerDaemon, container::ConnectedContainer, init_docker};
+use crate::docker::{DockerDaemon, container::ConnectedContainer};
 
 /// helper to spin up a docker compose project
 ///
@@ -21,7 +21,7 @@ impl ComposeProject {
     /// a [`ComposeProject`] is initialized by running `docker compose up`
     pub async fn up(compose_file: impl Into<PathBuf>, project_name: &str) -> Self {
         let project = Self {
-            docker: init_docker(),
+            docker: DockerDaemon::connect(),
             compose_file: compose_file.into(),
             project_name: project_name.into(),
             armed: true,

@@ -11,11 +11,12 @@ impl Client {
         Ok(instance_registry::list_instances(self.session()).await?)
     }
 
-    /// Erases a cell instance's row, provided it still belongs to the
-    /// incarnation `gen_id`. Refused while that incarnation is deployed; an
-    /// absent row is an outcome, not an error.
-    pub async fn erase_instance(&self, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
-        Ok(instance_registry::erase_instance(self.session(), sri, gen_id).await?)
+    /// Removes the instance row of generation `gen_id`; a newer generation is
+    /// never touched, and the outcome says whether `gen_id` was the newest.
+    /// Refused while that incarnation is deployed; an absent row is an outcome,
+    /// not an error.
+    pub async fn remove_instance(&self, sri: &Sri, gen_id: Gen) -> Result<FenceOutcome> {
+        Ok(instance_registry::remove_instance(self.session(), sri, gen_id).await?)
     }
 
     /// Returns the stored info for a single instance.

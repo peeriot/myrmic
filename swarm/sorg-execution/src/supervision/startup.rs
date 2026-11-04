@@ -88,12 +88,12 @@ pub(crate) async fn sweep_previous_incarnation(session: &Session, my_exec: Runti
             warn!("startup sweep: releasing cell row '{sri}' failed: {err}");
             continue;
         }
-        // Tolerant erase: undeploy or a concurrent pass may have already
+        // Tolerant removal: undeploy or a concurrent pass may have already
         // removed the instance row, and an absent row means the work is done.
         if let Some(instance_gen) = instance_gen
-            && let Err(err) = instance_registry::erase_instance(session, &sri, instance_gen).await
+            && let Err(err) = instance_registry::remove_instance(session, &sri, instance_gen).await
         {
-            debug!("startup sweep: erasing instance row '{sri}': {err}");
+            debug!("startup sweep: removing instance row '{sri}': {err}");
         }
     }
 }

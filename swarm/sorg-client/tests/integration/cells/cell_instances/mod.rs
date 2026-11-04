@@ -1,6 +1,6 @@
-mod erase;
 mod inspect;
 mod list;
+mod remove;
 
 use cell_protocol::{BlobHash, Gen, Sri};
 use claims::assert_ok;

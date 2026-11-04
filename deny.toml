@@ -83,13 +83,6 @@ ignore = [
     # https://github.com/oxigraph/oxigraph/issues/1793
     { id = "RUSTSEC-2026-0194", reason = "Requires update of spareval and object_store." },
     { id = "RUSTSEC-2026-0195", reason = "Requires update of spareval and object_store." },
-    # Both pulled in transitively via typst/typst-pdf/krilla/usvg/fontdb, used only by the
-    # warehouse benchmark's PDF report rendering (benchmarks/report). No safe upgrade is
-    # available for either — typst itself would need to migrate to harfrust/skrifa upstream.
-    # https://rustsec.org/advisories/RUSTSEC-2026-0206
-    # https://rustsec.org/advisories/RUSTSEC-2026-0192
-    { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; transitive dep of typst, no safe upgrade available." },
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; transitive dep of typst, no safe upgrade available." },
     # crypto-bigint 0.5 has secret-dependent timing in arithmetic meant to be constant-time; the
     # fix is only in 0.7.6, which needs p256 0.14. openidconnect 4.0.1 and embedded-tls 0.19, the
     # latest releases, both still require p256 0.13. In shipped builds p256 only verifies OIDC ID

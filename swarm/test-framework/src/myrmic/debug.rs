@@ -49,9 +49,9 @@ impl DebugListener {
     /// On a remote target it is the only handle that reaches the CLI: stopping the local `ssh` or
     /// `docker exec` would leave it running.
     pub(super) async fn spawn<B: MyrmicBackend>(myrmic: &Myrmic<B>, args: &[&str]) -> Self {
-        let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", myrmic.backend.binary()];
+        let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", &myrmic.binary];
         sh_args.extend_from_slice(args);
-        let mut command = myrmic.command("sh", &sh_args);
+        let mut command = myrmic.backend.command("sh", &sh_args);
         command.stdin(Stdio::null()).stdout(Stdio::piped());
         let invocation = format!("{command:?}");
 
@@ -71,7 +71,9 @@ impl DebugListener {
         let pid: u32 = pid
             .parse()
             .unwrap_or_else(|err| panic!("{invocation} reported `{pid}` as its PID: {err}"));
-        let interrupt = myrmic.command("sh", &["-c", "kill -INT \"$1\"", "sh", &pid.to_string()]);
+        let interrupt = myrmic
+            .backend
+            .command("sh", &["-c", "kill -INT \"$1\"", "sh", &pid.to_string()]);
 
         Self {
             lines,
@@ -115,6 +117,17 @@ impl DebugListener {
     /// only partly read when the deadline passed is kept for the next call.
     pub async fn next_entry_timeout(&mut self, timeout: Duration) -> Option<DebugEntry> {
         tokio::time::timeout(timeout, self.next_entry()).await.ok()
+    }
+
+    /// The entries the CLI has printed so far, as far as they can be read without waiting. Entries
+    /// the CLI still holds back (it batches them, see `myrmic telemetry debug`) are not among them;
+    /// a line that was only partly printed is kept for the next call.
+    pub async fn buffered_entries(&mut self) -> Vec<DebugEntry> {
+        let mut entries = vec![];
+        while let Some(entry) = self.next_entry_timeout(Duration::ZERO).await {
+            entries.push(entry);
+        }
+        entries
     }
 }
 

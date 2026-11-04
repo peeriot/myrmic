@@ -69,6 +69,28 @@ where
             path: PathBuf::from(output.stdout.trim()),
         }
     }
+
+    /// Write `content` to the file `name` in this directory and return its path. A failure is
+    /// broken test infrastructure and panics.
+    pub(crate) async fn write(&self, name: &str, content: &str) -> PathBuf {
+        let path = self.path.join(name);
+        let path_str = path
+            .to_str()
+            .expect("the directory came from `mktemp` output, which is UTF-8");
+        let output = self
+            .myrmic
+            .run_program(
+                "sh",
+                &["-c", "printf '%s' \"$1\" > \"$2\"", "sh", content, path_str],
+            )
+            .await;
+        assert!(
+            output.success,
+            "failed to write `{path_str}` on the target: {}",
+            output.stderr
+        );
+        path
+    }
 }
 
 impl<B> Drop for TargetTempDir<B>
@@ -130,6 +152,19 @@ where
     /// run: myrmic send `sri` `command` [`payload` --raw] (see [`Myrmic::send`])
     pub async fn send(&self, command: &str, payload: Option<&[u8]>) -> Result<(), Error> {
         self.myrmic.send(&self.sri, command, payload).await
+    }
+
+    /// run: myrmic replicate `sri` --tag `tag`...; every runtime carrying any one of `tags` then
+    /// holds a replica of the cell's data
+    pub async fn replicate<const N: usize>(&self, tags: [&str; N]) -> Result<(), Error> {
+        // without tags, the command only shows the cell's entry
+        const { assert!(N > 0, "replicate needs at least one tag") };
+        let mut args = vec!["replicate", self.sri.as_str()];
+        for tag in tags {
+            args.extend(["--tag", tag]);
+        }
+        self.myrmic.run(&args).await?;
+        Ok(())
     }
 
     /// run: myrmic delete --cell `sri`; returns once the SRI is no longer in `myrmic cells status`
