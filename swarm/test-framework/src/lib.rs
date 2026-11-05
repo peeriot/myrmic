@@ -19,6 +19,7 @@ pub mod producers;
 pub mod rack;
 pub mod scenario;
 pub mod sidecar;
+pub mod ssh_utils;
 pub mod swarm;
 pub mod swarm2;
 pub mod telemetry_files;
@@ -53,72 +54,6 @@ macro_rules! asset {
     ($path:literal) => {
         concat!(env!("CARGO_MANIFEST_DIR"), "/assets/", $path)
     };
-}
-
-/// Optional SSH identity file (`ssh -i`/`scp -i`) applied to every SSH/SCP connection the
-/// test-framework opens (the myrmic-over-SSH backend, rack provisioning) — set `SSH_IDENTITY_FILE`
-/// when the target hosts require a non-default key. Read fresh on every call (not cached) so
-/// tests that set the env var mid-run see the change take effect.
-#[must_use]
-pub fn ssh_identity_file() -> Option<String> {
-    std::env::var("SSH_IDENTITY_FILE")
-        .ok()
-        .filter(|value| !value.is_empty())
-}
-
-/// Optional `known_hosts` file (`ssh -o UserKnownHostsFile=`/`scp -o UserKnownHostsFile=`)
-/// applied to every SSH/SCP connection the test-framework opens — set `SSH_KNOWN_HOSTS_FILE` to
-/// pin the exact file host-key trust was written to (e.g. by a preceding `ssh-keyscan` step),
-/// rather than relying on `ssh`'s own default (`~/.ssh/known_hosts`, resolved from `$HOME` and
-/// whatever `ssh_config` the environment ships), which isn't guaranteed to be the file a CI setup
-/// step actually populated. Read fresh on every call (not cached), matching
-/// [`ssh_identity_file`].
-#[must_use]
-pub fn ssh_known_hosts_file() -> Option<String> {
-    std::env::var("SSH_KNOWN_HOSTS_FILE")
-        .ok()
-        .filter(|value| !value.is_empty())
-}
-
-/// `ssh` with the options every SSH connection the test-framework opens shares:
-/// [`ssh_identity_file`] and [`ssh_known_hosts_file`], where set.
-fn ssh_command() -> std::process::Command {
-    let mut command = std::process::Command::new("ssh");
-    if let Some(identity_file) = ssh_identity_file() {
-        command.arg("-i").arg(identity_file);
-    }
-    if let Some(known_hosts_file) = ssh_known_hosts_file() {
-        command
-            .arg("-o")
-            .arg(format!("UserKnownHostsFile={known_hosts_file}"));
-    }
-    command
-}
-
-/// The remote invocation of `program args` as a single, fully quoted shell
-/// word sequence.
-///
-/// `ssh` joins the command arguments it is handed with spaces and gives the
-/// result to a shell on the far side, which splits and expands it all over
-/// again — so passing them as separate argv entries quotes nothing. An app
-/// spec under a path with a space arrives as two arguments, and a `;`,
-/// backtick or `$(…)` in a tag or a command payload runs as a command on
-/// the rack node. [`myrmic::Local`] is unaffected because it
-/// execs directly; SSH is the only path with a shell in it.
-fn remote_command(program: &str, args: &[&str]) -> String {
-    std::iter::once(program)
-        .chain(args.iter().copied())
-        .map(shell_quote)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// One argument as a single shell word the remote shell cannot split or expand.
-///
-/// Single quotes suppress every expansion; the one character they cannot carry
-/// is a single quote itself, which is closed, backslash-escaped and reopened.
-fn shell_quote(arg: &str) -> String {
-    format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
 /// Captured output of a finished command (on the host, over SSH or inside a container).
@@ -169,38 +104,10 @@ impl SriAttribute for Span {
 
 #[cfg(test)]
 mod tests {
-    use super::remote_command;
-
     #[test]
     fn asset_macro_builds_caller_relative_path() {
         let path = crate::asset!("configs/foo.jsonnet");
         assert!(path.ends_with("/assets/configs/foo.jsonnet"));
         assert!(path.starts_with(env!("CARGO_MANIFEST_DIR")));
-    }
-
-    #[test]
-    fn a_path_with_a_space_stays_one_argument() {
-        assert_eq!(
-            remote_command("myrmic", &["deploy", "/home/user/my benchmarks/app.yml"]),
-            "'myrmic' 'deploy' '/home/user/my benchmarks/app.yml'",
-        );
-    }
-
-    #[test]
-    fn shell_metacharacters_do_not_reach_the_remote_shell() {
-        // Unquoted, the remote shell would run `id` and `rm -rf /` as commands
-        // of their own on the rack node.
-        assert_eq!(
-            remote_command("myrmic", &["send", "cell/one", "go; rm -rf / $(id)"]),
-            "'myrmic' 'send' 'cell/one' 'go; rm -rf / $(id)'",
-        );
-    }
-
-    #[test]
-    fn a_single_quote_is_closed_escaped_and_reopened() {
-        assert_eq!(
-            remote_command("myrmic", &["send", "it's"]),
-            r"'myrmic' 'send' 'it'\''s'",
-        );
     }
 }

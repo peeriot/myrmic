@@ -6,21 +6,16 @@ use enum_map::{Enum, EnumMap};
 use super::{ROUTER_PORT, router_session};
 use crate::{
     myrmic::{self, Myrmic},
+    ssh_utils::RemoteBinary,
     swarm2::{SwarmBackend, SwarmSpec},
 };
 
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    login: String,
-    remote_bin_path: String,
-}
-
 pub trait ConnectionTable: Ord + Enum {
-    fn get_conn_info(&self) -> ConnectionInfo;
+    fn get_conn_info(&self) -> RemoteBinary;
 }
 
 pub struct Ssh<S: Enum> {
-    remotes: EnumMap<S, ConnectionInfo>,
+    remotes: EnumMap<S, RemoteBinary>,
     /// `ssh -tt` running `zenoh-router` on the entry host, killed on drop
     router: Child,
     /// `ssh -N -L` from [`Self::tunnel_endpoint`] to the router on the entry host, killed on drop
@@ -35,15 +30,17 @@ impl<S: Enum> Ssh<S> {
     /// Starts `zenoh-router` (at `client_entry`'s binary path) on `client_entry` and opens an SSH
     /// tunnel from a free local port to its port. Returns once both `ssh` processes are spawned,
     /// not once they are connected.
-    pub fn new(remotes: EnumMap<S, ConnectionInfo>, client_entry: &ConnectionInfo) -> Self {
+    pub fn new(remotes: EnumMap<S, RemoteBinary>, client_entry: &RemoteBinary) -> Self {
         // `-tt` gives the router a terminal on the remote side: when this `ssh` dies, however it
         // dies, the terminal hangs up and the router gets SIGHUP, so no router outlives the test.
         // stdin is a pipe that stays open as long as `router` lives: an EOF on it could end the
         // remote terminal session early.
-        let router = crate::ssh_command()
+        let router = crate::ssh_utils::command_with_ssh_config("ssh")
             .args(["-tt", "-o", "BatchMode=yes"])
             .arg(&client_entry.login)
-            .arg(crate::remote_command(&client_entry.remote_bin_path, &[]))
+            .arg(crate::ssh_utils::quoted_command_line(&[
+                &client_entry.remote_bin_path
+            ]))
             .stdin(Stdio::piped())
             .spawn()
             .unwrap_or_else(|e| {
@@ -60,7 +57,7 @@ impl<S: Enum> Ssh<S> {
             .local_addr()
             .expect("a bound listener has an address")
             .port();
-        let tunnel = crate::ssh_command()
+        let tunnel = crate::ssh_utils::command_with_ssh_config("ssh")
             .args([
                 "-N",
                 "-o",
@@ -108,14 +105,14 @@ impl<S: Enum> Drop for Ssh<S> {
 // needs; the compiler cannot see through `S::Array` to the array it is.
 impl<S: SwarmSpec> SwarmBackend<S> for Ssh<S>
 where
-    S::Array<ConnectionInfo>: Sync,
+    S::Array<RemoteBinary>: Sync,
 {
     type Cli = myrmic::backend::Ssh;
 
     type Client = myrmic::backend::Local;
 
     fn shim(&self, runtime: S) -> crate::myrmic::Myrmic<Self::Cli> {
-        let ConnectionInfo {
+        let RemoteBinary {
             login,
             remote_bin_path,
         } = &self.remotes[runtime];

@@ -230,10 +230,10 @@ async fn wait_for_runtime_exit(host: &str, myrmic_path: &str) {
     loop {
         let mut command = tokio::process::Command::new("ssh");
         command.arg("-o").arg("BatchMode=yes");
-        if let Some(identity_file) = crate::ssh_identity_file() {
+        if let Some(identity_file) = crate::ssh_utils::ssh_identity_file() {
             command.arg("-i").arg(identity_file);
         }
-        if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+        if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
             command
                 .arg("-o")
                 .arg(format!("UserKnownHostsFile={known_hosts_file}"));
@@ -363,10 +363,10 @@ fn open_ssh_tunnel(hosts: &[HostSpec], zenoh_connect: &str) -> tokio::process::C
         .arg("BatchMode=yes")
         .arg("-L")
         .arg(format!("{local_port}:127.0.0.1:{remote_port}"));
-    if let Some(identity_file) = crate::ssh_identity_file() {
+    if let Some(identity_file) = crate::ssh_utils::ssh_identity_file() {
         command.arg("-i").arg(identity_file);
     }
-    if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
         command
             .arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
@@ -623,12 +623,12 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
 }
 
 async fn run_ssh(host: &str, args: &[&str]) {
-    let identity_file = crate::ssh_identity_file();
+    let identity_file = crate::ssh_utils::ssh_identity_file();
     let mut command = tokio::process::Command::new("ssh");
     if let Some(identity_file) = &identity_file {
         command.arg("-i").arg(identity_file);
     }
-    if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
         command
             .arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
@@ -670,11 +670,11 @@ async fn run_scp_impl(local: &Path, host: &str, remote_path: &str, preserve_mode
     if preserve_mode {
         cmd.arg("-p");
     }
-    let identity_file = crate::ssh_identity_file();
+    let identity_file = crate::ssh_utils::ssh_identity_file();
     if let Some(identity_file) = &identity_file {
         cmd.arg("-i").arg(identity_file);
     }
-    if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
         cmd.arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
     }

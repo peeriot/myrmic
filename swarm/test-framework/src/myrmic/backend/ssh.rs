@@ -28,10 +28,12 @@ impl Ssh {
 impl MyrmicBackend for Ssh {
     /// `ssh [-i identity] [-o UserKnownHostsFile=..] <host> <quoted remote command>`
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
-        let mut command = crate::ssh_command();
+        let mut command = crate::ssh_utils::command_with_ssh_config("ssh");
         command
             .arg(&self.host)
-            .arg(crate::remote_command(program, args));
+            .arg(crate::ssh_utils::quoted_command_line(
+                &[&[program], args].concat(),
+            ));
         command
     }
 
