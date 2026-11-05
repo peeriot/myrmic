@@ -28,16 +28,10 @@ impl Ssh {
 impl MyrmicBackend for Ssh {
     /// `ssh [-i identity] [-o UserKnownHostsFile=..] <host> <quoted remote command>`
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
-        let mut command = std::process::Command::new("ssh");
-        if let Some(identity_file) = crate::ssh_identity_file() {
-            command.arg("-i").arg(identity_file);
-        }
-        if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
-            command
-                .arg("-o")
-                .arg(format!("UserKnownHostsFile={known_hosts_file}"));
-        }
-        command.arg(&self.host).arg(remote_command(program, args));
+        let mut command = crate::ssh_command();
+        command
+            .arg(&self.host)
+            .arg(crate::remote_command(program, args));
         command
     }
 
@@ -49,62 +43,5 @@ impl MyrmicBackend for Ssh {
 
     fn runtime_config(&self) -> Option<String> {
         None
-    }
-}
-
-/// The remote invocation of `program args` as a single, fully quoted shell
-/// word sequence.
-///
-/// `ssh` joins the command arguments it is handed with spaces and gives the
-/// result to a shell on the far side, which splits and expands it all over
-/// again — so passing them as separate argv entries quotes nothing. An app
-/// spec under a path with a space arrives as two arguments, and a `;`,
-/// backtick or `$(…)` in a tag or a command payload runs as a command on
-/// the rack node. [`super::local::Local`] is unaffected because it
-/// execs directly; this is the only path with a shell in it.
-fn remote_command(program: &str, args: &[&str]) -> String {
-    std::iter::once(program)
-        .chain(args.iter().copied())
-        .map(shell_quote)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// One argument as a single shell word the remote shell cannot split or expand.
-///
-/// Single quotes suppress every expansion; the one character they cannot carry
-/// is a single quote itself, which is closed, backslash-escaped and reopened.
-fn shell_quote(arg: &str) -> String {
-    format!("'{}'", arg.replace('\'', r"'\''"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::remote_command;
-
-    #[test]
-    fn a_path_with_a_space_stays_one_argument() {
-        assert_eq!(
-            remote_command("myrmic", &["deploy", "/home/user/my benchmarks/app.yml"]),
-            "'myrmic' 'deploy' '/home/user/my benchmarks/app.yml'",
-        );
-    }
-
-    #[test]
-    fn shell_metacharacters_do_not_reach_the_remote_shell() {
-        // Unquoted, the remote shell would run `id` and `rm -rf /` as commands
-        // of their own on the rack node.
-        assert_eq!(
-            remote_command("myrmic", &["send", "cell/one", "go; rm -rf / $(id)"]),
-            "'myrmic' 'send' 'cell/one' 'go; rm -rf / $(id)'",
-        );
-    }
-
-    #[test]
-    fn a_single_quote_is_closed_escaped_and_reopened() {
-        assert_eq!(
-            remote_command("myrmic", &["send", "it's"]),
-            r"'myrmic' 'send' 'it'\''s'",
-        );
     }
 }
