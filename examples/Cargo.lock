@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-io 0.6.1",
  "heapless",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-sdk"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "critical-section",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-sdk-macros"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-signal-layer-types"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "serde",
 ]
