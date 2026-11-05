@@ -2,8 +2,10 @@
 //! [`crate::swarm2::backend::ssh::Ssh`]), and the SSH helpers every SSH connection the
 //! test-framework opens shares.
 
+mod lock;
 mod upload;
 
+pub use lock::{HostLocks, lock};
 pub use upload::upload;
 
 /// A binary on a remote host: how to reach the host, and where the binary lies there.
@@ -13,6 +15,19 @@ pub struct RemoteBinary {
     pub login: String,
     /// path of the binary the host runs (`myrmic`, or `zenoh-router` on the entry host)
     pub remote_bin_path: String,
+}
+
+/// A remote host a test can run a swarm's runtimes or its entry router on: an entry of a table
+/// of the hosts available, e.g. a rack.
+#[derive(Debug, Clone)]
+pub struct Host {
+    /// identifies the machine for locking, e.g. `rack-node-9`: one name per machine, however its
+    /// `login` is spelled
+    pub name: String,
+    /// SSH destination, e.g. `user@host.example`: anything `ssh` and `scp` accept
+    pub login: String,
+    /// the directory the host's binaries lie in
+    pub bin_dir: String,
 }
 
 /// Optional SSH identity file (`ssh -i`/`scp -i`) applied to every SSH/SCP connection the

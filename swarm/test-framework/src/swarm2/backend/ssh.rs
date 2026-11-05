@@ -10,10 +10,6 @@ use crate::{
     swarm2::{SwarmBackend, SwarmSpec},
 };
 
-pub trait ConnectionTable: Ord + Enum {
-    fn get_conn_info(&self) -> RemoteBinary;
-}
-
 pub struct Ssh<S: Enum> {
     remotes: EnumMap<S, RemoteBinary>,
     /// `ssh -tt` running `zenoh-router` on the entry host, killed on drop
