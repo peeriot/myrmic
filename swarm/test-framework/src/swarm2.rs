@@ -16,6 +16,7 @@ use zenoh::config::ZenohId;
 
 pub use backend::docker::Docker;
 pub use backend::local::Local;
+pub use backend::ssh::Ssh;
 pub use backend::{Block, CutOff, FillDisk, Isolate, Readdress, SwarmBackend};
 
 use crate::myrmic::{self, Error};
