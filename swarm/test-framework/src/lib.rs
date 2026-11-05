@@ -80,6 +80,47 @@ pub fn ssh_known_hosts_file() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// `ssh` with the options every SSH connection the test-framework opens shares:
+/// [`ssh_identity_file`] and [`ssh_known_hosts_file`], where set.
+fn ssh_command() -> std::process::Command {
+    let mut command = std::process::Command::new("ssh");
+    if let Some(identity_file) = ssh_identity_file() {
+        command.arg("-i").arg(identity_file);
+    }
+    if let Some(known_hosts_file) = ssh_known_hosts_file() {
+        command
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile={known_hosts_file}"));
+    }
+    command
+}
+
+/// The remote invocation of `program args` as a single, fully quoted shell
+/// word sequence.
+///
+/// `ssh` joins the command arguments it is handed with spaces and gives the
+/// result to a shell on the far side, which splits and expands it all over
+/// again — so passing them as separate argv entries quotes nothing. An app
+/// spec under a path with a space arrives as two arguments, and a `;`,
+/// backtick or `$(…)` in a tag or a command payload runs as a command on
+/// the rack node. [`myrmic::Local`] is unaffected because it
+/// execs directly; SSH is the only path with a shell in it.
+fn remote_command(program: &str, args: &[&str]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().copied())
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One argument as a single shell word the remote shell cannot split or expand.
+///
+/// Single quotes suppress every expansion; the one character they cannot carry
+/// is a single quote itself, which is closed, backslash-escaped and reopened.
+fn shell_quote(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
 /// Captured output of a finished command (on the host, over SSH or inside a container).
 #[derive(Debug, Clone)]
 pub struct CommandOutput {
@@ -128,10 +169,38 @@ impl SriAttribute for Span {
 
 #[cfg(test)]
 mod tests {
+    use super::remote_command;
+
     #[test]
     fn asset_macro_builds_caller_relative_path() {
         let path = crate::asset!("configs/foo.jsonnet");
         assert!(path.ends_with("/assets/configs/foo.jsonnet"));
         assert!(path.starts_with(env!("CARGO_MANIFEST_DIR")));
+    }
+
+    #[test]
+    fn a_path_with_a_space_stays_one_argument() {
+        assert_eq!(
+            remote_command("myrmic", &["deploy", "/home/user/my benchmarks/app.yml"]),
+            "'myrmic' 'deploy' '/home/user/my benchmarks/app.yml'",
+        );
+    }
+
+    #[test]
+    fn shell_metacharacters_do_not_reach_the_remote_shell() {
+        // Unquoted, the remote shell would run `id` and `rm -rf /` as commands
+        // of their own on the rack node.
+        assert_eq!(
+            remote_command("myrmic", &["send", "cell/one", "go; rm -rf / $(id)"]),
+            "'myrmic' 'send' 'cell/one' 'go; rm -rf / $(id)'",
+        );
+    }
+
+    #[test]
+    fn a_single_quote_is_closed_escaped_and_reopened() {
+        assert_eq!(
+            remote_command("myrmic", &["send", "it's"]),
+            r"'myrmic' 'send' 'it'\''s'",
+        );
     }
 }
