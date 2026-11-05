@@ -58,6 +58,7 @@ oxiri = { workspace = true }
 oxrdf = { workspace = true, features = [] }
 spareval = { workspace = true, features = ["sep-0002", "calendar-ext", "sparql-12"] }
 spargebra = { workspace = true, features = [] }
+stacker = { workspace = true }
 
 siphasher = { workspace = true }
 rustc-hash = { workspace = true }

@@ -1,6 +1,6 @@
 use db_client::v1::models::sem_select;
 use myrmic_common::db::{SelectRequest, SelectResponse, UpdateRequest};
-use myrmic_common::types::error::SUCCESS;
+use myrmic_common::types::error::{EINVAL, SUCCESS};
 use wasmtime::Caller;
 
 use crate::wasm::{
@@ -10,6 +10,18 @@ use crate::wasm::{
         decode, encode, tri,
     },
 };
+
+/// Longest SPARQL text a cell may submit. The db bounds how deeply a query
+/// nests on its own; this bounds the work a single call can ask for.
+const MAX_QUERY_LEN: usize = 64 * 1024;
+
+fn query_len(query: &str) -> Result<(), i32> {
+    if query.len() > MAX_QUERY_LEN {
+        return Err(EINVAL);
+    }
+
+    Ok(())
+}
 
 pub(crate) async fn sem_update(
     mut caller: Caller<'_, CellState>,
@@ -27,6 +39,7 @@ pub(crate) async fn sem_update(
         "sem-update request"
     ));
 
+    tri!(query_len(&query));
     let scope = tri!(transform_scope(&mut caller, scope));
 
     defer(
@@ -54,6 +67,7 @@ pub(crate) async fn sem_select(
         limit,
     } = tri!(decode(&mut caller, req_ptr, req_len, "sem-select request"));
 
+    tri!(query_len(&query));
     let scope = tri!(transform_scope(&mut caller, scope));
 
     let resp = tri!(
@@ -90,5 +104,16 @@ fn transform_response(response: DbSelectResponse) -> WasmSelectResponse {
     WasmSelectResponse {
         solutions: response.solutions,
         variables: response.variables,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EINVAL, MAX_QUERY_LEN, query_len};
+
+    #[test]
+    fn query_length_is_capped() {
+        assert_eq!(query_len(&"a".repeat(MAX_QUERY_LEN)), Ok(()));
+        assert_eq!(query_len(&"a".repeat(MAX_QUERY_LEN + 1)), Err(EINVAL));
     }
 }
