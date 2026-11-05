@@ -31,17 +31,27 @@ use swarm_telemetry::db::opentelemetry_proto::tonic::{
 };
 pub use wait::wait_until;
 
-/// Resolve a binary by name using the workspace target directory of the calling
-/// crate, with optional override via `{NAME_UPPER}_BINARY` env var.
+/// Resolve a binary by name, built for the host or for a target triple, in the target directory
+/// of the workspace test-framework is built in (see [`binary::resolve`]).
 ///
 /// Resolution order:
-/// 1. `{NAME_UPPER}_BINARY` env var (e.g. `SWARM_BINARY`, `MYRMIC_BINARY`)
-/// 2. `<workspace>/target/release/<name>` if it exists
-/// 3. `<workspace>/target/debug/<name>` if it exists
+/// 1. the `{NAME_UPPER}_BINARY` env var (e.g. `SWARM_BINARY`, `MYRMIC_BINARY`), or
+///    `{NAME_UPPER}_{TRIPLE_UPPER}_BINARY` for a triple
+/// 2. `<workspace>/target/<profile>/<name>` for a pinned profile, otherwise the most recently
+///    built `<name>` of any profile (`<workspace>/target/<triple>/…` for a triple)
+///
+/// `triple` and `profile` are optional, in that order:
+/// - `resolve_binary!("myrmic")`: the host's newest build
+/// - `resolve_binary!("myrmic", profile = "release")`: the host's release build
+/// - `resolve_binary!("myrmic", triple = "aarch64-unknown-linux-gnu", profile = "dist")`
 #[macro_export]
 macro_rules! resolve_binary {
-    ($name:literal) => {
-        $crate::binary::resolve(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target"), $name)
+    ($name:expr $(, triple = $triple:expr)? $(, profile = $profile:expr)?) => {
+        $crate::binary::resolve(
+            $name,
+            None::<&str> $(.or(Some($triple)))?,
+            None::<&str> $(.or(Some($profile)))?,
+        )
     };
 }
 
