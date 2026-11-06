@@ -93,6 +93,15 @@ pub trait FillDisk<S: SwarmSpec>: SwarmBackend<S> {
     fn free_disk(&self, runtime: S) -> impl Future<Output = ()> + Send;
 }
 
+/// A [`SwarmBackend`] that can move a running runtime's wall clock away from the others', as when a
+/// host's clock is stepped (see [`super::RuntimeMut::skew_clock`]). Its monotonic clock stays as
+/// it is, like with a real step.
+pub trait SkewClock<S: SwarmSpec>: SwarmBackend<S> {
+    /// Set the wall clock of the runtime `runtime` to `ahead_secs` seconds ahead of the others'
+    /// (behind them if negative; 0 puts it back in step). Returns once the runtime reads it.
+    fn skew_clock(&self, runtime: S, ahead_secs: i64) -> impl Future<Output = ()> + Send;
+}
+
 /// A [`SwarmBackend`] that can cut single links while everything else stays connected, e.g. to
 /// leave two runtimes reaching each other only through a third (see [`super::Swarm::block`]).
 pub trait Block<S: SwarmSpec>: SwarmBackend<S> {
