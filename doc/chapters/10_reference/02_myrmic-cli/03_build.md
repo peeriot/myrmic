@@ -17,7 +17,7 @@ Build a cell crate, a workspace of cells, or an application suite from source.
 - A cell crate `Cargo.toml` - same as above, specified explicitly.
 - A workspace directory - compiles all member crates to `.wasm` binaries in the workspace's `target` directory.
 - A workspace `Cargo.toml` - same as above, specified explicitly.
-- A `.yml` / `.yaml` application specification file - builds every cell class defined in the specification and bundles the compiled binaries and application metadata into a `.nest` bundle placed in the working directory.
+- A `.yml` / `.yaml` application specification file - builds every cell class defined in the specification and bundles it into a `.nest` bundle placed in the working directory. The bundle carries the wasm and any AOT artifact of every class, every instance with its name, `tags`, `init` arguments and `restart` policy, and the bridge configurations, so deploying the bundle gives the same result as deploying the specification from source.
 - A firmware crate directory - a crate whose `[package.metadata.myrmic]` sets `firmware = "esp32"` compiles to an ESP firmware image (ELF plus a generated partition table). `--platform` is ignored (the crate's cargo features pick the chip; `myrmic flash` refuses an image built for a different chip than the board's); `--name` sets the runtime name baked into the image. A crate scaffolded with `myrmic signal-layer new --firmware` also generates its Signal Layer pipeline at build time.
 
 If `PATH` is not provided, the current directory is used.

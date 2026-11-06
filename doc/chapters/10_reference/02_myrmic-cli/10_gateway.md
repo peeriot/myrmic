@@ -97,6 +97,14 @@ Serve behind HTTPS: session cookies are marked `Secure`, so browsers only send t
 
 How long a session may sit idle before it expires, written as a human duration (`30s`, `2m`, `1h`). Defaults to two minutes, and is never shorter than two seconds.
 
+`--connect ENDPOINT`
+
+Join the swarm through this runtime endpoint instead of multicast discovery, for example from a container network where multicast does not reach the runtimes. May be repeated for fallback endpoints. Without this flag or `--multicast-group`, `DEFAULT_MYRMIC_CONNECT` sets one endpoint. A global flag, so it goes before `gateway`.
+
+`--multicast-group ADDRESS:PORT`
+
+Discover runtimes on this multicast group instead of the default `224.0.0.224:7446`. Without this flag or `--connect`, `DEFAULT_MYRMIC_MULTICAST_GROUP` sets the group. A global flag, so it goes before `gateway`. See [Operating a swarm](../../05_guides/09_operating-a-swarm.md) for both flags.
+
 `-v` / `--verbose`
 
 Verbose mode, shows more detail about what the command is doing. Useful for debugging. Can be set to `-vv` for even more detail.
@@ -123,4 +131,10 @@ myrmic gateway --port 9090
 
 ```bash
 myrmic gateway --routing ./routing.json --over-https --session-inactivity 15m
+```
+
+4. Join a swarm that is only reachable by endpoint:
+
+```bash
+myrmic --connect tcp/10.0.0.5:7447 gateway --port 8080
 ```

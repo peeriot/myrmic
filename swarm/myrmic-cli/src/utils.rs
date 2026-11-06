@@ -104,6 +104,35 @@ pub fn validate_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Points `zenoh` at the swarm the way every command does: `connect` endpoints
+/// (multicast scouting off) or a multicast group, both as [`Ctx::discovery`]
+/// finds them.
+pub fn apply_swarm_locator(
+    zenoh: &mut zenoh::Config,
+    connect: &[String],
+    multicast_group: Option<std::net::SocketAddr>,
+) -> anyhow::Result<()> {
+    if !connect.is_empty() {
+        let endpoints =
+            serde_json::to_string(connect).expect("serializing CLI connect endpoints cannot fail");
+        zenoh
+            .insert_json5("connect/endpoints", &endpoints)
+            .map_err(|err| anyhow::anyhow!("invalid --connect endpoint: {err}"))?;
+        zenoh
+            .insert_json5("scouting/multicast/enabled", "false")
+            .expect("disabling multicast scouting cannot fail");
+        zenoh
+            .insert_json5("open/return_conditions/connect_scouted", "true")
+            .expect("setting explicit connect return condition cannot fail");
+    }
+    if let Some(group) = multicast_group {
+        zenoh
+            .insert_json5("scouting/multicast/address", &format!("\"{group}\""))
+            .map_err(|err| anyhow::anyhow!("invalid multicast group {group}: {err}"))?;
+    }
+    Ok(())
+}
+
 impl Ctx {
     pub async fn session(&self) -> anyhow::Result<zenoh::Session> {
         let mut zenoh_config = zenoh::Config::default();
@@ -112,24 +141,7 @@ impl Ctx {
             .expect("setting mode cannot fail here");
 
         let (connect, multicast_group) = self.discovery()?;
-        if !connect.is_empty() {
-            let endpoints = serde_json::to_string(&connect)
-                .expect("serializing CLI connect endpoints cannot fail");
-            zenoh_config
-                .insert_json5("connect/endpoints", &endpoints)
-                .map_err(|err| anyhow::anyhow!("invalid --connect endpoint: {err}"))?;
-            zenoh_config
-                .insert_json5("scouting/multicast/enabled", "false")
-                .expect("disabling multicast scouting cannot fail");
-            zenoh_config
-                .insert_json5("open/return_conditions/connect_scouted", "true")
-                .expect("setting explicit connect return condition cannot fail");
-        }
-        if let Some(group) = multicast_group {
-            zenoh_config
-                .insert_json5("scouting/multicast/address", &format!("\"{group}\""))
-                .map_err(|err| anyhow::anyhow!("invalid multicast group {group}: {err}"))?;
-        }
+        apply_swarm_locator(&mut zenoh_config, &connect, multicast_group)?;
 
         let session = zenoh::open(zenoh_config)
             .await
@@ -156,7 +168,7 @@ impl Ctx {
     /// The endpoints to connect to and the multicast group to scout on: the flags, or without
     /// either, their defaults from the environment. Connecting and scouting on a group exclude
     /// each other, in the environment as in the flags.
-    fn discovery(&self) -> anyhow::Result<(Vec<String>, Option<std::net::SocketAddr>)> {
+    pub fn discovery(&self) -> anyhow::Result<(Vec<String>, Option<std::net::SocketAddr>)> {
         if !self.connect.is_empty() || self.multicast_group.is_some() {
             Ok((self.connect.clone(), self.multicast_group))
         } else {
@@ -410,5 +422,75 @@ mod tests {
     fn ping_window_honours_its_floor() {
         // a tiny --timeout still leaves room for a local round-trip
         assert_eq!(ping_window(Duration::from_millis(50)), MIN_PING_WINDOW);
+    }
+
+    fn locator_json(config: &zenoh::Config, key: &str) -> serde_json::Value {
+        serde_json::from_str(&config.get_json(key).expect("known key")).expect("valid json")
+    }
+
+    #[test]
+    fn connect_endpoints_replace_multicast_scouting() {
+        let mut config = zenoh::Config::default();
+        apply_swarm_locator(
+            &mut config,
+            &[
+                "tcp/10.0.0.5:7447".to_owned(),
+                "tcp/10.0.0.6:7447".to_owned(),
+            ],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            locator_json(&config, "connect/endpoints"),
+            serde_json::json!(["tcp/10.0.0.5:7447", "tcp/10.0.0.6:7447"])
+        );
+        assert_eq!(
+            locator_json(&config, "scouting/multicast/enabled"),
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            locator_json(&config, "open/return_conditions/connect_scouted"),
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn no_locator_leaves_scouting_at_its_defaults() {
+        let mut config = zenoh::Config::default();
+        apply_swarm_locator(&mut config, &[], None).unwrap();
+        let defaults = zenoh::Config::default();
+        for key in [
+            "connect/endpoints",
+            "scouting/multicast/enabled",
+            "scouting/multicast/address",
+        ] {
+            assert_eq!(
+                locator_json(&config, key),
+                locator_json(&defaults, key),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn multicast_group_sets_the_scouting_address() {
+        let mut config = zenoh::Config::default();
+        let group = "239.1.2.3:7446".parse().unwrap();
+        apply_swarm_locator(&mut config, &[], Some(group)).unwrap();
+        assert_eq!(
+            locator_json(&config, "scouting/multicast/address"),
+            serde_json::json!("239.1.2.3:7446")
+        );
+        assert_eq!(
+            locator_json(&config, "scouting/multicast/enabled"),
+            locator_json(&zenoh::Config::default(), "scouting/multicast/enabled")
+        );
+    }
+
+    #[test]
+    fn a_malformed_endpoint_names_the_flag() {
+        let mut config = zenoh::Config::default();
+        let err = apply_swarm_locator(&mut config, &["nonsense".to_owned()], None).unwrap_err();
+        assert!(err.to_string().contains("--connect"), "{err}");
     }
 }

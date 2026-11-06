@@ -17,21 +17,21 @@ use zenoh::config::ZenohId;
 
 use crate::args::Ctx;
 use crate::pid::*;
-use crate::utils::build_filter;
+use crate::utils::{apply_swarm_locator, build_filter};
 
 #[derive(clap::Parser)]
 pub struct Start {
     #[clap(short, long)]
     pub detached: bool,
 
-    /// Directory holding runtime PID files, or a full PID file path.
+    /// Directory holding runtime PID files, or an existing PID file.
     ///
-    /// If the given path is (or will be created as) a directory, the PID
-    /// file sits inside it as `<name>.pid`. If the path's parent is an
-    /// existing directory, the path itself is taken as the PID file.
+    /// An existing file is used as the PID file itself. Any other path is a
+    /// directory holding `<name>.pid`, created if its parent exists.
     ///
-    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when set (the per-user
-    /// runtime tmpfs under systemd), otherwise `<tempdir>/myrmic-<user>/`.
+    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when that directory exists (the
+    /// per-user runtime tmpfs under systemd), otherwise
+    /// `<tempdir>/myrmic-<user>/`.
     #[clap(long = "pid-path")]
     pub pid_path: Option<PathBuf>,
 
@@ -45,6 +45,11 @@ pub struct Start {
     /// Tags are merged with any tags defined in the configuration file.
     #[clap(long = "tag", short = 't')]
     pub tags: Vec<String>,
+
+    /// Endpoint to listen on, e.g. `tcp/0.0.0.0:7447`. Repeatable; merged with
+    /// `zenoh.listen.endpoints` from the configuration file.
+    #[clap(long, value_name = "ENDPOINT")]
+    pub listen: Vec<String>,
 
     /// Use an ephemeral in-memory database, discarded when the runtime stops.
     ///
@@ -62,6 +67,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         pid_path,
         name,
         tags,
+        listen,
         tmp,
         path,
     } = cmd;
@@ -69,7 +75,21 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
     let name = name.as_deref().unwrap_or(super::DEFAULT_RUNTIME_NAME);
 
     super::validate_runtime_name(name)?;
-    let pid_path = pid_path.unwrap_or_else(|| default_pid_dir(super::DEFAULT_PID_DIR));
+    let pid_path = match pid_path {
+        Some(path) => path,
+        None => {
+            let path = default_pid_dir(super::DEFAULT_PID_DIR);
+            if let Some(xdg) = xdg_runtime_dir().filter(|dir| !dir.is_dir()) {
+                crate::info!(
+                    &ctx,
+                    "XDG_RUNTIME_DIR {} is not a directory; pid files go to {}",
+                    xdg.display(),
+                    path.display()
+                );
+            }
+            path
+        }
+    };
 
     crate::debug!(&ctx, "pid-path: {}", pid_path.display());
 
@@ -93,20 +113,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         pid.path.display()
     );
 
-    let mut config = if let Some(path) = path {
-        let input = std::fs::read_to_string(&path)
-            .with_context(|| format!("unable to read configuration file: {}", path.display()))?;
-
-        serde_yaml::from_str::<swarm::SwarmConfig>(&input).map_err(|err| {
-            anyhow::anyhow!(
-                "unable to parse configuration file [{}]: {}",
-                path.display(),
-                err
-            )
-        })?
-    } else {
-        SwarmConfig::default()
-    };
+    let mut config = read_config(path)?;
 
     // Set some myrmic defaults.
     config.plugins.orchestration = Some(config.plugins.orchestration.unwrap_or_default());
@@ -119,6 +126,11 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
         .zenoh
         .set_id(Some(zid))
         .map_err(|err| anyhow::anyhow!("failed to set runtime id: {err:?}"))?;
+
+    // Only the group: a runtime merges its endpoints into the file's instead of
+    // switching scouting off.
+    apply_swarm_locator(&mut config.zenoh, &[], ctx.multicast_group)?;
+    apply_endpoints(&mut config.zenoh, &ctx.connect, &listen)?;
 
     {
         let mut db = config.plugins.db.take().unwrap_or_default();
@@ -485,6 +497,85 @@ fn check_tag(tag: &str) -> anyhow::Result<()> {
     check_user_tag(tag).map_err(|err| anyhow::anyhow!("invalid tag '{tag}': {err}"))
 }
 
+/// The runtime configuration in the file at `path`, or the default without one.
+fn read_config(path: Option<PathBuf>) -> anyhow::Result<SwarmConfig> {
+    let Some(path) = path else {
+        return Ok(SwarmConfig::default());
+    };
+    let input = std::fs::read_to_string(&path)
+        .with_context(|| format!("unable to read configuration file: {}", path.display()))?;
+    serde_yaml::from_str::<SwarmConfig>(&input).map_err(|err| {
+        anyhow::anyhow!(
+            "unable to parse configuration file [{}]: {}",
+            path.display(),
+            err
+        )
+    })
+}
+
+/// Merges the `--connect` and `--listen` endpoints into the zenoh config the
+/// way `--tag` merges tags: appended to the file's, a repeat is a no-op.
+fn apply_endpoints(
+    zenoh: &mut zenoh::Config,
+    connect: &[String],
+    listen: &[String],
+) -> anyhow::Result<()> {
+    merge_endpoints(zenoh, "connect/endpoints", "--connect", connect)?;
+    merge_endpoints(zenoh, "listen/endpoints", "--listen", listen)
+}
+
+/// Appends `values` to the endpoint list at `key`. A file may give the list
+/// per mode; the flags then go to the list of this runtime's mode.
+fn merge_endpoints(
+    zenoh: &mut zenoh::Config,
+    key: &str,
+    flag: &str,
+    values: &[String],
+) -> anyhow::Result<()> {
+    if values.is_empty() {
+        return Ok(());
+    }
+    for value in values {
+        zenoh::config::EndPoint::try_from(value.clone())
+            .map_err(|err| anyhow::anyhow!("invalid {flag} endpoint {value:?}: {err}"))?;
+    }
+
+    let mode = zenoh
+        .get_json("mode")
+        .map_err(|err| anyhow::anyhow!("unable to read the zenoh mode: {err}"))?;
+    let mode: Option<String> =
+        serde_json::from_str(&mode).context("unable to parse the zenoh mode")?;
+    let mode = mode.unwrap_or_else(|| "peer".to_owned());
+
+    let current = zenoh
+        .get_json(key)
+        .map_err(|err| anyhow::anyhow!("unable to read zenoh {key}: {err}"))?;
+    let mut current: serde_json::Value =
+        serde_json::from_str(&current).with_context(|| format!("unable to parse zenoh {key}"))?;
+    if current.is_null() {
+        current = serde_json::Value::Array(vec![]);
+    }
+    let list = match &mut current {
+        serde_json::Value::Array(list) => list,
+        serde_json::Value::Object(modes) => modes
+            .entry(mode)
+            .or_insert_with(|| serde_json::Value::Array(vec![]))
+            .as_array_mut()
+            .with_context(|| format!("zenoh {key} holds no list for this runtime's mode"))?,
+        other => anyhow::bail!("unexpected zenoh {key} in the configuration: {other}"),
+    };
+    for value in values {
+        let value = serde_json::Value::String(value.clone());
+        if !list.contains(&value) {
+            list.push(value);
+        }
+    }
+
+    zenoh
+        .insert_json5(key, &current.to_string())
+        .map_err(|err| anyhow::anyhow!("invalid {flag} endpoint: {err}"))
+}
+
 /// The stable zenoh id for a named runtime: reuses the recorded one, else
 /// mints a fresh id and records it for every later start under this name.
 fn stable_zid(ctx: &Ctx, name: &str) -> anyhow::Result<ZenohId> {
@@ -610,5 +701,80 @@ mod tests {
         let err = node_tags(configured(&[]), strings(&["@a0b1c2"]), vec![], zid())
             .expect_err("db tags are checked");
         assert!(err.to_string().contains("invalid tag '@a0b1c2'"), "{err}");
+    }
+
+    fn endpoints(config: &zenoh::Config, key: &str) -> serde_json::Value {
+        serde_json::from_str(&config.get_json(key).expect("known key")).expect("valid json")
+    }
+
+    #[test]
+    fn a_connect_flag_fills_an_empty_config() {
+        let mut config = zenoh::Config::default();
+        apply_endpoints(&mut config, &strings(&["tcp/a:7447"]), &[]).expect("merges");
+        assert_eq!(
+            endpoints(&config, "connect/endpoints"),
+            serde_json::json!(["tcp/a:7447"])
+        );
+    }
+
+    #[test]
+    fn a_connect_flag_is_appended_after_the_file_endpoints() {
+        let mut config = zenoh::Config::default();
+        config
+            .insert_json5("connect/endpoints", r#"["tcp/b:7447"]"#)
+            .expect("seed");
+        apply_endpoints(&mut config, &strings(&["tcp/a:7447"]), &[]).expect("merges");
+        assert_eq!(
+            endpoints(&config, "connect/endpoints"),
+            serde_json::json!(["tcp/b:7447", "tcp/a:7447"])
+        );
+    }
+
+    #[test]
+    fn a_connect_flag_repeating_the_file_is_a_no_op() {
+        let mut config = zenoh::Config::default();
+        config
+            .insert_json5("connect/endpoints", r#"["tcp/a:7447"]"#)
+            .expect("seed");
+        apply_endpoints(&mut config, &strings(&["tcp/a:7447"]), &[]).expect("merges");
+        assert_eq!(
+            endpoints(&config, "connect/endpoints"),
+            serde_json::json!(["tcp/a:7447"])
+        );
+    }
+
+    #[test]
+    fn a_mode_dependent_file_gets_the_flag_under_the_runtime_mode() {
+        let mut config = zenoh::Config::default();
+        config
+            .insert_json5("connect/endpoints", r#"{ router: ["tcp/r:7447"] }"#)
+            .expect("seed");
+        apply_endpoints(&mut config, &strings(&["tcp/a:7447"]), &[]).expect("merges");
+        assert_eq!(
+            endpoints(&config, "connect/endpoints"),
+            serde_json::json!({ "router": ["tcp/r:7447"], "peer": ["tcp/a:7447"] })
+        );
+    }
+
+    #[test]
+    fn a_listen_flag_joins_the_default_listeners_of_the_runtime_mode() {
+        let mut config = zenoh::Config::default();
+        let before = endpoints(&config, "listen/endpoints");
+        apply_endpoints(&mut config, &[], &strings(&["tcp/0.0.0.0:7447"])).expect("merges");
+        let after = endpoints(&config, "listen/endpoints");
+        // zenoh's default listen list is per mode; the flag joins the peer list.
+        let mut expected = before["peer"].as_array().expect("peer defaults").clone();
+        expected.push(serde_json::json!("tcp/0.0.0.0:7447"));
+        assert_eq!(after["peer"], serde_json::Value::Array(expected));
+        assert_eq!(after["router"], before["router"]);
+    }
+
+    #[test]
+    fn an_invalid_endpoint_names_its_flag() {
+        let mut config = zenoh::Config::default();
+        let err = apply_endpoints(&mut config, &strings(&["nonsense"]), &[]).expect_err("rejected");
+        assert!(err.to_string().contains("--connect"), "{err}");
+        let err = apply_endpoints(&mut config, &[], &strings(&["nonsense"])).expect_err("rejected");
+        assert!(err.to_string().contains("--listen"), "{err}");
     }
 }

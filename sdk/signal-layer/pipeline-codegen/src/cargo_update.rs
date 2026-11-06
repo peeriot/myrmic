@@ -399,6 +399,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 mode: 0,
+                dev_path: None,
             },
         );
         let devices = drivers
@@ -409,6 +410,8 @@ mod tests {
                 bus: "i2c0".to_owned(),
                 pins: IndexMap::new(),
                 hardware: IndexMap::new(),
+                gpio_chip: None,
+                pwm_chip: None,
             })
             .collect();
         BoardManifest {

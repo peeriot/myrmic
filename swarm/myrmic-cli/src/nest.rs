@@ -6,9 +6,18 @@ use crate::models::CellInstance;
 use sorg_common::{HttpBridgeConfig, MqttBridgeConfig};
 
 use anyhow::Context as _;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+/// A class entry of `classes.json`: its artifacts, named by the content hash
+/// each blob is stored under in the archive.
+#[derive(Serialize, Deserialize)]
+struct NestClass {
+    wasm: Option<String>,
+    riscv32imac: Option<String>,
+}
 
 pub fn write(ctx: &Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result<()> {
     let path = path.as_ref();
@@ -18,67 +27,56 @@ pub fn write(ctx: &Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result
     // Bake the app name so a deployed nest carries its own grouping name.
     entries.push(archive::Entry::virt("./app-name", info.name));
 
-    let mut class_map = HashMap::<String, String>::new();
-
-    if !info.classes.is_empty() {
-        for (id, class) in info.classes {
-            let CellClass {
-                name: _,
-                wasm_path: a_wasm_path,
-                riscv32imac: a_esp32_c6,
-            } = class;
-
-            macro_rules! store_blob {
-                ($path:expr) => {{
-                    if let Some(path) = $path {
-                        let bytes = std::fs::read(&path).with_context(|| {
-                            format!("unable to read artifact: {}", path.display())
-                        })?;
-                        let hash = format!("{:x}", sha2::Sha256::digest(&bytes));
-
-                        entries.push(archive::Entry::from_path(hash.clone(), path));
-                        Some(hash)
-                    } else {
-                        None
-                    }
-                }};
-            }
-
-            // the decision on which wasm blob to use should lie with the sorg layer.
-            // because we don't have a way to inform the sorg which one to pick, we're just ignoring the esp stuff for now.
-            // _but_ we're still supporting the original linux blob path, because that's supported by sorg.
-            let hash = store_blob!(a_wasm_path);
-            let _hash = store_blob!(a_esp32_c6);
-
-            if let Some(hash) = hash {
-                class_map.insert(id, hash);
-            }
+    // A blob is stored once per content hash, so classes built from the same
+    // wasm share an archive entry without sharing a class entry.
+    let mut stored = HashSet::new();
+    let mut store_blob = |path: Option<PathBuf>| -> anyhow::Result<Option<String>> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("unable to read artifact: {}", path.display()))?;
+        let hash = format!("{:x}", sha2::Sha256::digest(&bytes));
+        if stored.insert(hash.clone()) {
+            entries.push(archive::Entry::from_path(hash.clone(), path));
         }
+        Ok(Some(hash))
+    };
 
-        {
-            let content = serde_json::to_string_pretty(&class_map)
-                .context("unable to serialise class map")?;
+    let mut classes = BTreeMap::new();
+    for (id, class) in info.classes {
+        let CellClass {
+            name: _,
+            wasm_path,
+            riscv32imac,
+        } = class;
+        let entry = NestClass {
+            wasm: store_blob(wasm_path)?,
+            riscv32imac: store_blob(riscv32imac)?,
+        };
+        classes.insert(id, entry);
+    }
 
-            entries.push(archive::Entry::virt("./class-map.json", content));
+    for instance in &info.instances {
+        if !classes.contains_key(&instance.id) {
+            anyhow::bail!(
+                "instance '{}' references class '{}', which the app does not define",
+                instance.srn.as_deref().unwrap_or(&instance.id),
+                instance.id
+            );
         }
     }
 
+    if !classes.is_empty() {
+        let content =
+            serde_json::to_string_pretty(&classes).context("unable to serialise classes")?;
+        entries.push(archive::Entry::virt("./classes.json", content));
+    }
+
     if !info.instances.is_empty() {
-        let mut instance_map = HashMap::<String, String>::new();
-
-        for instance in info.instances {
-            let Some(hash) = class_map.get(&instance.id) else {
-                anyhow::bail!("unable to locate class with {}", instance.id);
-            };
-
-            let srn = instance.srn.unwrap_or(instance.id);
-            instance_map.insert(srn, hash.clone());
-        }
-
-        let content = serde_json::to_string_pretty(&instance_map)
-            .context("unable to serialise instance map")?;
-
-        entries.push(archive::Entry::virt("./instance-map.json", content));
+        let content = serde_json::to_string_pretty(&info.instances)
+            .context("unable to serialise instances")?;
+        entries.push(archive::Entry::virt("./instances.json", content));
     }
 
     if !info.mqtt_bridges.is_empty() {
@@ -106,10 +104,7 @@ pub fn write(ctx: &Ctx, path: impl AsRef<Path>, info: AppInfo) -> anyhow::Result
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
-    use std::io::Read;
-
     let path = path.as_ref();
     let file = std::fs::File::open(path)
         .with_context(|| format!("unable to open nest file: {}", path.display()))?;
@@ -120,8 +115,8 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
     std::fs::create_dir_all(&extract_dir)
         .with_context(|| format!("unable to create temp dir: {}", extract_dir.display()))?;
 
-    let mut class_map: HashMap<String, String> = HashMap::new();
-    let mut instance_map: HashMap<String, String> = HashMap::new();
+    let mut classes: BTreeMap<String, NestClass> = BTreeMap::new();
+    let mut instances: Vec<CellInstance> = vec![];
     let mut mqtt: Option<MqttBridgeConfig> = None;
     let mut http: Option<HttpBridgeConfig> = None;
     let mut app_name: Option<String> = None;
@@ -137,33 +132,31 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
         let name = name.trim_start_matches("./").to_string();
 
         match name.as_str() {
-            "app-name" => {
-                let mut buf = String::new();
-                entry.read_to_string(&mut buf)?;
-                app_name = Some(buf.trim().to_string());
+            "app-name" => app_name = Some(read_text(&mut entry)?.trim().to_string()),
+            "classes.json" => {
+                classes = serde_json::from_str(&read_text(&mut entry)?)
+                    .context("unable to parse classes.json")?;
             }
-            "class-map.json" => {
-                let mut buf = String::new();
-                entry.read_to_string(&mut buf)?;
-                class_map = serde_json::from_str(&buf).context("unable to parse class-map.json")?;
+            "instances.json" => {
+                instances = serde_json::from_str(&read_text(&mut entry)?)
+                    .context("unable to parse instances.json")?;
             }
-            "instance-map.json" => {
-                let mut buf = String::new();
-                entry.read_to_string(&mut buf)?;
-                instance_map =
-                    serde_json::from_str(&buf).context("unable to parse instance-map.json")?;
-            }
+            "class-map.json" | "instance-map.json" => anyhow::bail!(
+                "nest {} was built by an older myrmic and carries no instance settings; \
+                 rebuild it with `myrmic build`",
+                path.display()
+            ),
             "mqtt-bridges.json" => {
-                let mut buf = String::new();
-                entry.read_to_string(&mut buf)?;
-                mqtt =
-                    Some(serde_json::from_str(&buf).context("unable to parse mqtt-bridges.json")?);
+                mqtt = Some(
+                    serde_json::from_str(&read_text(&mut entry)?)
+                        .context("unable to parse mqtt-bridges.json")?,
+                );
             }
             "http-bridges.json" => {
-                let mut buf = String::new();
-                entry.read_to_string(&mut buf)?;
-                http =
-                    Some(serde_json::from_str(&buf).context("unable to parse http-bridges.json")?);
+                http = Some(
+                    serde_json::from_str(&read_text(&mut entry)?)
+                        .context("unable to parse http-bridges.json")?,
+                );
             }
             hash => {
                 let out = extract_dir.join(hash);
@@ -176,48 +169,26 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
         }
     }
 
-    // class_map gives us id -> hash; reconstruct one CellClass per id.
-    let mut classes = HashMap::with_capacity(class_map.len());
-    for (id, hash) in &class_map {
-        let wasm_path = hash_paths.get(hash).cloned();
-        if wasm_path.is_none() {
-            crate::warn!(
-                ctx,
-                "nest references hash {} for class {} but no matching blob in archive",
-                hash,
-                id
+    let classes: HashMap<_, _> = classes
+        .into_iter()
+        .map(|(id, entry)| {
+            let class = CellClass {
+                name: id.clone(),
+                wasm_path: blob_path(ctx, &hash_paths, &id, "wasm", entry.wasm),
+                riscv32imac: blob_path(ctx, &hash_paths, &id, "riscv32imac", entry.riscv32imac),
+            };
+            (id, class)
+        })
+        .collect();
+
+    for instance in &instances {
+        if !classes.contains_key(&instance.id) {
+            anyhow::bail!(
+                "instance '{}' references class '{}', which the nest does not contain",
+                instance.srn.as_deref().unwrap_or(&instance.id),
+                instance.id
             );
         }
-        classes.insert(
-            id.clone(),
-            CellClass {
-                name: id.clone(),
-                wasm_path,
-                riscv32imac: None,
-            },
-        );
-    }
-
-    // Each instance_map entry was written as (sri, hash); reverse hash -> class id.
-    let hash_to_class: HashMap<&String, &String> =
-        class_map.iter().map(|(id, hash)| (hash, id)).collect();
-
-    let mut instances = Vec::with_capacity(instance_map.len());
-    for (sri, hash) in instance_map {
-        let class_id = hash_to_class
-            .get(&hash)
-            .map(|id| (*id).clone())
-            .with_context(|| format!("no class entry references hash {}", hash))?;
-        instances.push(CellInstance {
-            id: class_id,
-            srn: Some(sri),
-            tags: vec![],
-            // The nest instance-map is a flat sri->hash mapping; like `tags`,
-            // per-instance init arguments and restart policy are not carried
-            // through a nest.
-            arguments: None,
-            restart: None,
-        });
     }
 
     // Legacy nests (built before names were baked) fall back to the nest
@@ -239,3 +210,35 @@ pub fn read(ctx: &Ctx, path: impl AsRef<Path>) -> anyhow::Result<AppInfo> {
         http_bridges: http.map(|c| c.api).unwrap_or_default(),
     })
 }
+
+fn read_text(entry: &mut impl std::io::Read) -> std::io::Result<String> {
+    let mut buf = String::new();
+    entry.read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+/// Where the archive put the blob `hash` of `class`'s `artifact`; `None`, with
+/// a warning, when the nest names a blob the archive does not hold.
+fn blob_path(
+    ctx: &Ctx,
+    hash_paths: &HashMap<String, PathBuf>,
+    class: &str,
+    artifact: &str,
+    hash: Option<String>,
+) -> Option<PathBuf> {
+    let hash = hash?;
+    let path = hash_paths.get(&hash).cloned();
+    if path.is_none() {
+        crate::warn!(
+            ctx,
+            "nest references {} blob {} for class {} but the archive holds no such entry",
+            artifact,
+            hash,
+            class
+        );
+    }
+    path
+}
+
+#[cfg(test)]
+mod tests;

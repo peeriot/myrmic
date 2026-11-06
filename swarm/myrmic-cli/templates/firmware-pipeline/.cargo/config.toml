@@ -1,2 +1,15 @@
 [build]
 target = "riscv32imac-unknown-none-elf"
+
+# Frame pointers for esp-hal's backtraces; rust-lld for the bare-metal target.
+# esp-hal's linker script comes from build.rs (`esp_firmware_build::configure`).
+# `myrmic build` passes the same flags through the target-triple key, which
+# would replace a `[target.riscv32imac-unknown-none-elf]` section; cargo joins
+# the `cfg` key with it, so flags added here survive `myrmic build`.
+[target.'cfg(target_arch = "riscv32")']
+rustflags = ["-C", "force-frame-pointers", "-C", "linker=rust-lld"]
+
+# `myrmic build` and your shell environment take precedence over these.
+[env]
+ESP_LOG = "info"
+ESP_HAL_CONFIG_ENSURE_MAIN_STACK_MINIMUM = "4096"

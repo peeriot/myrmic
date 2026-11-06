@@ -12,17 +12,17 @@ const DUMMY_CELL_SRI: &str = "dummy_cell";
 // Liveness cell: `cell-counter-logic` (already on the new SDK). Its fire-and-forget
 // `increment` command bumps an `i32` stored at `counter/count` in the cell's own KV space —
 // the observable effect we assert on now that commands don't return a value.
-const COUNTER_LOGIC: &str = "../../tests/fixtures/cell-counter-logic";
-const COUNTER_CLASS: &str = "counter";
-const COUNTER_SRI: &str = "counter_cell";
+pub(super) const COUNTER_LOGIC: &str = "../../tests/fixtures/cell-counter-logic";
+pub(super) const COUNTER_CLASS: &str = "counter";
+pub(super) const COUNTER_SRI: &str = "counter_cell";
 // The cell's `Kv::new("counter/")` prefix already ends in `/`, and `Kv::full_key` inserts
 // another separator — so the actual stored key is `counter//count` (double slash). We read
 // the exact key the guest writes.
-const COUNT_KEY: &str = "counter//count";
+pub(super) const COUNT_KEY: &str = "counter//count";
 
 /// Encodes an `increment` payload. The handler takes a bare `i32`, which the SDK
 /// carries on the wire as a JSON number.
-fn incr_payload(by: i32) -> Vec<u8> {
+pub(super) fn incr_payload(by: i32) -> Vec<u8> {
     serde_json::to_vec(&by).expect("encode increment payload")
 }
 

@@ -32,6 +32,18 @@ Sets the runtime instance name. Defaults to `default`.
 
 Adds a capability tag to this runtime instance. Can be specified multiple times to add multiple tags. Merged with any tags in the configuration file.
 
+`--connect ENDPOINT`
+
+A peer endpoint this runtime connects to, e.g. `tcp/10.0.0.5:7447`. Can be specified multiple times. Merged with `zenoh.connect.endpoints` from the configuration file; multicast discovery stays as the file configures it. A global flag, so it goes before `runtimes start`; unlike for the other commands, `DEFAULT_MYRMIC_CONNECT` does not apply to a runtime.
+
+`--listen ENDPOINT`
+
+An endpoint this runtime listens on, e.g. `tcp/0.0.0.0:7447`. Can be specified multiple times. Merged with `zenoh.listen.endpoints` from the configuration file.
+
+`--multicast-group ADDRESS:PORT`
+
+The multicast group this runtime scouts on, overriding `zenoh.scouting.multicast.address` from the configuration file. A global flag, so it goes before `runtimes start`; unlike for the other commands, `DEFAULT_MYRMIC_MULTICAST_GROUP` does not apply to a runtime.
+
 `--detached` / `-d`
 
 Start the runtime as a background daemon. The command returns once the runtime is ready, so a deploy right after it can place cells on it. If the runtime exits before it is ready, the command fails and names the directory with its logs.
@@ -77,4 +89,10 @@ myrmic runtimes start ./my-runtime.yml
 
 ```bash
 myrmic runtimes start --tmp
+```
+
+5. Start a runtime in a container that reaches its swarm through one peer:
+
+```bash
+myrmic --connect tcp/10.0.0.5:7447 runtimes start --tag gate-nfc
 ```
