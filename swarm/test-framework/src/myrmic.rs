@@ -6,9 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use backend::MyrmicBackend;
-pub use backend::docker::Docker;
-pub use backend::local::Local;
-pub use backend::ssh::Ssh;
+pub use backend::{Docker, Local, Ssh};
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
 use myrmic_build::PlatformFamily;

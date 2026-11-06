@@ -16,7 +16,8 @@ use zenoh::config::ZenohId;
 
 pub use backend::docker::Docker;
 pub use backend::local::Local;
-pub use backend::{Block, CutOff, FillDisk, Isolate, Readdress, SwarmBackend};
+pub use backend::ssh::Ssh;
+pub use backend::{Block, CutOff, FillDisk, Isolate, Readdress, SkewClock, SwarmBackend};
 
 use crate::myrmic::{self, Error};
 
@@ -230,6 +231,27 @@ where
         Ok(sorg_common::instance_registry::get_instance(&self.session, &sri).await?)
     }
 
+    /// Why the swarm is not connected right now, or `None` if it is: exactly the running runtimes
+    /// answer the test's status query, each linked to all the others. One query, no waiting, so a
+    /// test can check that the swarm stays connected.
+    pub async fn connection_mismatch(&self) -> Option<String> {
+        let statuses = self
+            .introspection
+            .swarm_status()
+            .await
+            .expect("failed to query the swarm's status");
+        check::mismatch(&statuses, &self.running_zids())
+    }
+
+    /// the zids of the runtimes that are running
+    fn running_zids(&self) -> BTreeSet<ZenohId> {
+        self.runtimes
+            .values()
+            .filter(|runtime| runtime.is_running())
+            .map(Runtime::zid)
+            .collect()
+    }
+
     /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
     pub fn session(&self) -> &zenoh::Session {
         &self.session
@@ -286,13 +308,7 @@ where
                 self.backend.heal(id).await;
             }
         }
-        let expected = self
-            .runtimes
-            .values()
-            .filter(|runtime| runtime.is_running())
-            .map(Runtime::zid)
-            .collect();
-        wait_until_connected(&self.introspection, &expected).await
+        wait_until_connected(&self.introspection, &self.running_zids()).await
     }
 }
 
@@ -513,6 +529,21 @@ where
     /// Free the disk filled by [`Self::fill_disk`] again.
     pub async fn free_disk(&mut self) {
         self.backend.free_disk(self.id).await;
+    }
+}
+
+impl<B, S> RuntimeMut<'_, B, S>
+where
+    B: SkewClock<S>,
+    S: SwarmSpec,
+{
+    /// Set the running runtime's wall clock to `ahead_secs` seconds ahead of the others' (behind
+    /// them if negative; 0 puts it back in step), as a clock step on its host would (see
+    /// [`SkewClock::skew_clock`]). It keeps running.
+    pub async fn skew_clock(&mut self, ahead_secs: i64) {
+        let id = self.id;
+        assert!(self.runtime.is_running(), "{id:?} is not running");
+        self.backend.skew_clock(id, ahead_secs).await;
     }
 }
 

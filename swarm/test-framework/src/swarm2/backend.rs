@@ -7,6 +7,31 @@ use crate::myrmic::{Myrmic, MyrmicBackend};
 
 pub mod docker;
 pub mod local;
+pub mod ssh;
+
+/// The port `zenoh-router` listens on: zenoh's default for routers.
+const ROUTER_PORT: u16 = 7447;
+
+/// A client session on the router at `endpoint`. A client, unlike a peer, connects to nothing but
+/// its endpoint, so the session reaches the swarm only through the router.
+async fn router_session(endpoint: &str) -> zenoh::Session {
+    let mut config = zenoh::Config::default();
+    config
+        .set_mode(Some(zenoh::config::WhatAmI::Client))
+        .expect("setting zenoh mode cannot fail");
+    config
+        .insert_json5(
+            "connect/endpoints",
+            &serde_json::json!([endpoint]).to_string(),
+        )
+        .unwrap_or_else(|err| panic!("invalid endpoint `{endpoint}`: {err}"));
+    config
+        .insert_json5("scouting/multicast/enabled", "false")
+        .expect("disabling multicast scouting cannot fail");
+    zenoh::open(config)
+        .await
+        .unwrap_or_else(|err| panic!("failed to connect to the router at `{endpoint}`: {err}"))
+}
 
 /// Where the runtimes of a [`super::Swarm`] of `S` run and how a test joins them.
 ///
@@ -66,6 +91,15 @@ pub trait FillDisk<S: SwarmSpec>: SwarmBackend<S> {
 
     /// lift [`Self::fill_disk`] of the runtime `runtime`
     fn free_disk(&self, runtime: S) -> impl Future<Output = ()> + Send;
+}
+
+/// A [`SwarmBackend`] that can move a running runtime's wall clock away from the others', as when a
+/// host's clock is stepped (see [`super::RuntimeMut::skew_clock`]). Its monotonic clock stays as
+/// it is, like with a real step.
+pub trait SkewClock<S: SwarmSpec>: SwarmBackend<S> {
+    /// Set the wall clock of the runtime `runtime` to `ahead_secs` seconds ahead of the others'
+    /// (behind them if negative; 0 puts it back in step). Returns once the runtime reads it.
+    fn skew_clock(&self, runtime: S, ahead_secs: i64) -> impl Future<Output = ()> + Send;
 }
 
 /// A [`SwarmBackend`] that can cut single links while everything else stays connected, e.g. to

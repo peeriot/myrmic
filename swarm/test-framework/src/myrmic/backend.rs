@@ -1,9 +1,13 @@
 //! Where the myrmic CLI runs: on the host, on a remote host over SSH, or inside a docker
 //! container.
 
-pub mod docker;
-pub mod local;
-pub mod ssh;
+mod docker;
+mod local;
+mod ssh;
+
+pub use docker::Docker;
+pub use local::Local;
+pub use ssh::Ssh;
 
 /// Where and how the myrmic CLI is executed.
 ///

@@ -1,15 +1,19 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use enum_map::EnumMap;
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 
+use super::{ROUTER_PORT, router_session};
 use crate::{
     docker::{DockerDaemon, container::ManagedContainer, image::Image, network::ManagedNetwork},
     myrmic::{self, Myrmic},
     resolve_binary,
-    swarm2::{Block, FillDisk, Isolate, Readdress, SwarmBackend, SwarmSpec, join_enum_map},
+    swarm2::{
+        Block, FillDisk, Isolate, Readdress, SkewClock, SwarmBackend, SwarmSpec, join_enum_map,
+    },
 };
 
 /// [`SwarmBackend`] that runs every runtime in a docker container of its own, on a network of its
@@ -36,9 +40,6 @@ const DOCKERFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docker/Dockerfile
 
 /// The environment variable naming the container the test runs in, if it runs in one.
 pub const TEST_CONTAINER: &str = "MYRMIC_TEST_CONTAINER";
-
-/// The port `zenoh-router` listens on: zenoh's default for routers.
-const ROUTER_PORT: u16 = 7447;
 
 /// Where a runtime keeps its data in its container: the CLI's data directory as root
 /// (`$HOME/.local/share/myrmic`), with the runtime's database and logs.
@@ -208,22 +209,7 @@ where
 
     /// a client session on the router
     async fn connect_session(&self) -> zenoh::Session {
-        let mut config = zenoh::Config::default();
-        config
-            .set_mode(Some(zenoh::config::WhatAmI::Client))
-            .expect("setting zenoh mode cannot fail");
-        config
-            .insert_json5(
-                "connect/endpoints",
-                &serde_json::json!([router_endpoint(&self.router_ip)]).to_string(),
-            )
-            .expect("the router's address is a valid zenoh endpoint");
-        config
-            .insert_json5("scouting/multicast/enabled", "false")
-            .expect("disabling multicast scouting cannot fail");
-        zenoh::open(config)
-            .await
-            .expect("failed to connect to the swarm's router")
+        router_session(&router_endpoint(&self.router_ip)).await
     }
 }
 
@@ -317,6 +303,35 @@ async fn drop_traffic(container: &ManagedContainer, ip: &str) {
         "failed to drop the traffic to and from {ip}: {}",
         output.stderr
     );
+}
+
+/// The file holding a container's clock offset in seconds, which libfaketime reads (see the
+/// Dockerfile).
+const FAKETIME_FILE: &str = "/etc/faketime";
+
+/// How long a runtime may take to read a new [`FAKETIME_FILE`]: libfaketime reads it again at most
+/// a second (its `FAKETIME_CACHE_DURATION`) after it last did, and once more for the processes
+/// that read their clock just before the change.
+const FAKETIME_PICKUP: Duration = Duration::from_secs(2);
+
+impl<S: SwarmSpec> SkewClock<S> for Docker<S>
+where
+    S::Array<Arc<ManagedContainer>>: Sync,
+{
+    async fn skew_clock(&self, runtime: S, ahead_secs: i64) {
+        // `$1`: the offset, `$2`: the file
+        let write = r#"printf '%s\n' "$1" > "$2""#;
+        let offset = format!("{ahead_secs:+}");
+        let output = self.container_map[runtime]
+            .exec(&["sh", "-c", write, "sh", &offset, FAKETIME_FILE])
+            .await;
+        assert!(
+            output.success,
+            "failed to skew the clock of {runtime:?}: {}",
+            output.stderr
+        );
+        tokio::time::sleep(FAKETIME_PICKUP).await;
+    }
 }
 
 /// The last octet of the address [`Readdress::readdress`] moves a runtime to: far above the
