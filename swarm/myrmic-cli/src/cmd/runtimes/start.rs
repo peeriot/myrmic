@@ -73,7 +73,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
 
     crate::debug!(&ctx, "pid-path: {}", pid_path.display());
 
-    let pid = Pid::from_args(&pid_path, name)?;
+    let pid = Pid::from_args(&pid_path, name);
     pid.ensure_parent()?;
 
     // Don't clobber a running runtime with the same name.

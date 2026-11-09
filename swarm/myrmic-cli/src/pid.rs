@@ -29,32 +29,18 @@ pub enum SignalOutcome {
 }
 
 impl Pid {
-    /// Build from CLI args. Validates the name and applies the
-    /// directory-vs-file resolution rule:
-    ///
-    /// - If `--pid-path` is an existing directory, the file is
-    ///   `<path>/<name>.pid`.
-    /// - Else if the path's parent is an existing directory, the path itself
-    ///   is taken as the PID file (user passed a full file path).
-    /// - Else the path is treated as a directory to be created, with
-    ///   `<name>.pid` inside.
-    pub fn from_args(path: &Path, name: &str) -> anyhow::Result<Self> {
-        fn is_directory(path: &Path) -> bool {
-            path.is_dir()
-                || path
-                    .parent()
-                    .is_some_and(|p| p.is_dir() || p.as_os_str().is_empty())
-        }
-
+    /// Build from CLI args: if `--pid-path` is an existing file, that is the
+    /// PID file; anything else is a directory, holding `<name>.pid`, which
+    /// [`Self::ensure_parent`] creates where it's missing, its parents
+    /// included (e.g. a runtime directory a reboot emptied).
+    pub fn from_args(path: &Path, name: &str) -> Self {
         let path = if path.is_file() {
             path.to_path_buf()
-        } else if is_directory(path) {
-            path.join(format!("{name}.pid"))
         } else {
-            anyhow::bail!("unable to determine pid path: {}", path.display());
+            path.join(format!("{name}.pid"))
         };
 
-        Ok(Self { path })
+        Self { path }
     }
 
     /// Build from an existing PID file
