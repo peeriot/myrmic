@@ -62,24 +62,41 @@ jobs:
           TARGET: ${{ github.repository_owner }}/${{ vars.CI_REPO }}
           # Post against the sha the pull request shows, not the merge result.
           HEAD_SHA: ${{ steps.command.outputs.head_sha || github.event.pull_request.head.sha || github.sha }}
+          # What happened to the pull request, e.g. `opened`, `synchronize` or `labeled`,
+          # and for `labeled` the label added.
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           PRIVATE: ${{ github.event.repository.private }}
           DRAFT: ${{ steps.command.outputs.draft || github.event.pull_request.draft }}
-          HIL: ${{ contains(github.event.pull_request.labels.*.name, 'hil') || contains(github.event.issue.labels.*.name, 'hil') }}
+          # A comment's event knows the pull request as an issue.
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
           REVIEW: ${{ github.event.review.state }}
           # How the reviewer or commenter relates to the repository, e.g. MEMBER or NONE.
           REVIEWER: ${{ github.event.review.author_association || github.event.comment.author_association }}
+        # The pull request's fields go under `pr` and `review`: a dispatch payload takes at
+        # most 10 top-level properties.
+        # `-f` sends strings as they are, `-F` turns numbers and booleans into JSON ones.
         run: |
           set -euo pipefail
+          # One field per label; `labels[]` without a value is the empty list.
+          label_fields=()
+          while IFS= read -r name; do
+            label_fields+=(-f "client_payload[pr][labels][]=$name")
+          done < <(jq -nr --argjson pr "$PR_LABELS" --argjson issue "$ISSUE_LABELS" '($pr // []) + ($issue // []) | .[]')
+          if [ "${#label_fields[@]}" -eq 0 ]; then label_fields=(-F "client_payload[pr][labels][]"); fi
           gh api -X POST "/repos/${TARGET}/dispatches" \
             -f event_type=ci \
-            -F "client_payload[repo]=${GITHUB_REPOSITORY}" \
-            -F "client_payload[event]=${GITHUB_EVENT_NAME}" \
-            -F "client_payload[ref]=${GITHUB_REF}" \
-            -F "client_payload[head_sha]=${HEAD_SHA}" \
-            -F "client_payload[pr]=${PR:-}" \
+            -f "client_payload[repo]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[event]=${GITHUB_EVENT_NAME}" \
+            -f "client_payload[action]=${ACTION}" \
+            -f "client_payload[ref]=${GITHUB_REF}" \
+            -f "client_payload[head_sha]=${HEAD_SHA}" \
             -F "client_payload[private]=${PRIVATE:-false}" \
-            -F "client_payload[draft]=${DRAFT:-false}" \
-            -F "client_payload[hil]=${HIL:-false}" \
-            -F "client_payload[review]=${REVIEW:-}" \
-            -F "client_payload[reviewer]=${REVIEWER:-}"
+            -F "client_payload[pr][number]=${PR:-}" \
+            -F "client_payload[pr][draft]=${DRAFT:-false}" \
+            "${label_fields[@]}" \
+            -f "client_payload[pr][label]=${LABEL}" \
+            -f "client_payload[review][state]=${REVIEW}" \
+            -f "client_payload[review][reviewer]=${REVIEWER}"
