@@ -5,13 +5,22 @@ use enum_map::{Enum, EnumMap};
 
 use super::{ROUTER_PORT, router_session};
 use crate::{
-    myrmic::{self, Myrmic},
+    myrmic::{self, Myrmic, backend::isolated_multicast_group},
     ssh_utils::RemoteBinary,
     swarm2::{SwarmBackend, SwarmSpec},
 };
 
+/// [`SwarmBackend`] that runs every runtime on a remote host over SSH, next to a zenoh router on
+/// an entry host the test reaches through an SSH tunnel.
+///
+/// The swarm is isolated like [`super::local::Local`]'s: each runtime has state directories of
+/// its own on its host, removed with the swarm, and the runtimes and the router scout on a
+/// multicast group of the swarm's own. So a runtime sees nothing of earlier or other swarms on
+/// the same hosts, its name and data included, and keeps its data across restarts within the
+/// swarm.
 pub struct Ssh<S: Enum> {
-    remotes: EnumMap<S, RemoteBinary>,
+    /// the CLI on each runtime's host, in the runtime's isolation
+    shims: EnumMap<S, Myrmic<myrmic::backend::Ssh>>,
     /// `ssh -tt` running `zenoh-router` on the entry host, killed on drop
     router: Child,
     /// `ssh -N -L` from [`Self::tunnel_endpoint`] to the router on the entry host, killed on drop
@@ -23,10 +32,18 @@ pub struct Ssh<S: Enum> {
 }
 
 impl<S: Enum> Ssh<S> {
-    /// Starts `zenoh-router` (at `client_entry`'s binary path) on `client_entry` and opens an SSH
-    /// tunnel from a free local port to its port. Returns once both `ssh` processes are spawned,
-    /// not once they are connected.
+    /// Creates each runtime's isolation on its host, starts `zenoh-router` (at `client_entry`'s
+    /// binary path) on `client_entry` and opens an SSH tunnel from a free local port to its port.
+    /// Returns once both `ssh` processes are spawned, not once they are connected.
     pub fn new(remotes: EnumMap<S, RemoteBinary>, client_entry: &RemoteBinary) -> Self {
+        let multicast_group = isolated_multicast_group();
+        let shims = remotes.map(|_, remote| {
+            Myrmic::ssh_isolated(
+                remote.login,
+                remote.remote_bin_path,
+                multicast_group.clone(),
+            )
+        });
         // `-tt` gives the router a terminal on the remote side: when this `ssh` dies, however it
         // dies, the terminal hangs up and the router gets SIGHUP, so no router outlives the test.
         // stdin is a pipe that stays open as long as `router` lives: an EOF on it could end the
@@ -35,7 +52,8 @@ impl<S: Enum> Ssh<S> {
             .args(["-tt", "-o", "BatchMode=yes"])
             .arg(&client_entry.login)
             .arg(crate::ssh_utils::quoted_command_line(&[
-                &client_entry.remote_bin_path
+                &client_entry.remote_bin_path,
+                &multicast_group,
             ]))
             .stdin(Stdio::piped())
             .spawn()
@@ -74,7 +92,7 @@ impl<S: Enum> Ssh<S> {
             });
         let tunnel_endpoint = format!("tcp/127.0.0.1:{tunnel_port}");
         Self {
-            remotes,
+            shims,
             router,
             tunnel,
             client: Myrmic::local_connected(tunnel_endpoint.clone()),
@@ -101,18 +119,15 @@ impl<S: Enum> Drop for Ssh<S> {
 // needs; the compiler cannot see through `S::Array` to the array it is.
 impl<S: SwarmSpec> SwarmBackend<S> for Ssh<S>
 where
-    S::Array<RemoteBinary>: Sync,
+    S::Array<Myrmic<myrmic::backend::Ssh>>: Sync,
 {
     type Cli = myrmic::backend::Ssh;
 
     type Client = myrmic::backend::Local;
 
+    /// the runtime's isolated CLI, the same one across restarts
     fn shim(&self, runtime: S) -> crate::myrmic::Myrmic<Self::Cli> {
-        let RemoteBinary {
-            login,
-            remote_bin_path,
-        } = &self.remotes[runtime];
-        Myrmic::ssh_at(login, remote_bin_path)
+        self.shims[runtime].clone()
     }
 
     fn client(&self) -> crate::myrmic::Myrmic<Self::Client> {

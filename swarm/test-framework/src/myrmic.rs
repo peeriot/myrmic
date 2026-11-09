@@ -141,6 +141,20 @@ impl Myrmic<Ssh> {
             binary: binary.into(),
         }
     }
+
+    /// Like [`Self::ssh_at`], but isolated like [`Self::local_isolated`]: on state directories
+    /// of its own on `host`, removed once the last clone of this shim is dropped, and on
+    /// `multicast_group`, which the runtimes of one swarm share.
+    pub(crate) fn ssh_isolated(
+        host: impl Into<String>,
+        binary: impl Into<String>,
+        multicast_group: String,
+    ) -> Self {
+        Self {
+            backend: Ssh::isolated(host, multicast_group),
+            binary: binary.into(),
+        }
+    }
 }
 
 impl<B> Myrmic<B>
