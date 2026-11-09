@@ -214,8 +214,9 @@ Required test cases:
 3. `reinit_recovers_after_first_bring_up` — mock **two** full bring-up sequences
    back-to-back, call `init()` twice on the same instance (the recovery path), then
    `sample()` and assert it still works. Proves `init` is re-runnable.
-4. Any sensor-specific error paths visible in the status register (e.g.
-   `not_ready`, `sensor_error`) — one test per variant, model after ccs811.
+4. Any sensor-specific error paths visible in the status register (e.g. a
+   data-ready timeout, a sensor error flag) — one test per variant, model
+   after ccs811.
 5. If optional pins:
    - `init_with_pins_none_falls_back_to_polling` — `new_with_pins` with `Pins { pin: None }`
      must select polling mode at `init` and check the status register at sample time.
