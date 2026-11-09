@@ -417,6 +417,15 @@ where
         self.take_running().delete().await
     }
 
+    /// Mark the runtime as no longer running without touching it: its process ended outside the
+    /// test's control, e.g. with its host's power. [`Self::restart`] starts it again.
+    ///
+    /// Call it once the runtime's host is reachable again: dropping the runtime's handle deletes
+    /// it there, which finds nothing left to delete.
+    pub fn mark_lost(&mut self) {
+        drop(self.take_running());
+    }
+
     /// Start the killed or deleted runtime again under its name, so under the same zid. Returns
     /// once the swarm, with this runtime, is connected again.
     pub async fn restart(&mut self) -> Result<(), Error> {

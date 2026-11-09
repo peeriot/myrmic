@@ -1,12 +1,14 @@
 //! Preparing remote hosts for a swarm that runs on them over SSH (see
-//! [`crate::swarm2::backend::ssh::Ssh`]), and the SSH helpers every SSH connection the
-//! test-framework opens shares.
+//! [`crate::swarm2::backend::ssh::Ssh`]), waiting for one to be back after a reboot, and the SSH
+//! helpers every SSH connection the test-framework opens shares.
 
 mod lock;
 mod upload;
+mod wait;
 
 pub use lock::{HostLocks, lock};
 pub use upload::upload;
+pub use wait::{wait_until_clock_synchronized, wait_until_reachable};
 
 /// A binary on a remote host: how to reach the host, and where the binary lies there.
 #[derive(Debug, Clone)]

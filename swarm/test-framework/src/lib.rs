@@ -18,6 +18,7 @@ pub mod myrmic;
 pub mod producers;
 pub mod rack;
 pub mod scenario;
+pub mod shelly;
 pub mod sidecar;
 pub mod ssh_utils;
 pub mod swarm;

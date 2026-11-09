@@ -6,8 +6,9 @@ use sha2::{Digest, Sha256};
 use super::RemoteBinary;
 
 /// Copies the local binary `local` to every host in `to`, at the host's
-/// [`RemoteBinary::remote_bin_path`], to all hosts at once. A host that already has a file with
-/// the same content there is skipped. Panics, naming the host, if any host fails.
+/// [`RemoteBinary::remote_bin_path`], to all hosts at once, and has it on the host's disk before
+/// returning, so a test that cuts a host's power doesn't lose it. A host that already has a file
+/// with the same content there is skipped. Panics, naming the host, if any host fails.
 pub fn upload(local: &Path, to: &[&RemoteBinary]) {
     let hash = sha256_of(local);
     // `mkdir` first, so a missing directory doesn't fail the `scp` below
@@ -53,6 +54,29 @@ pub fn upload(local: &Path, to: &[&RemoteBinary]) {
             output.status.success(),
             "uploading {} to {}:{} failed: {}",
             local.display(),
+            host.login,
+            host.remote_bin_path,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    // the file and, for a new one, its name in the directory
+    for (host, output) in spawn_all(&outdated, |host| {
+        let mut command = super::command_with_ssh_config("ssh");
+        command
+            .args(["-o", "BatchMode=yes"])
+            .arg(&host.login)
+            .arg(super::quoted_command_line(&[
+                "sh",
+                "-c",
+                r#"sync -- "$1" "$(dirname "$1")""#,
+                "sh",
+                &host.remote_bin_path,
+            ]));
+        command
+    }) {
+        assert!(
+            output.status.success(),
+            "syncing {}:{} failed: {}",
             host.login,
             host.remote_bin_path,
             String::from_utf8_lossy(&output.stderr)
