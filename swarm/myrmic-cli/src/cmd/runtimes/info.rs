@@ -30,7 +30,7 @@ pub fn handle(_ctx: Ctx, cmd: Info) -> anyhow::Result<()> {
     let logs_dir = runtime_dir.join(super::LOGS_DIR);
 
     let pid_path = pid_path.unwrap_or_else(|| default_pid_dir(super::DEFAULT_PID_DIR));
-    let status = match Pid::from_args(&pid_path, &name)?.status() {
+    let status = match Pid::from_args(&pid_path, &name).status() {
         PidStatus::Running(pid) => format!("running (pid {pid})"),
         PidStatus::Stale(_) | PidStatus::Absent => String::from("stopped"),
     };

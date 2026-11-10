@@ -1,7 +1,6 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 
-use super::MyrmicBackend;
+use super::{MyrmicBackend, isolated_multicast_group, isolated_runtime_config};
 
 /// [`MyrmicBackend`] that runs programs on the host, isolated or connected to an endpoint or
 /// neither (see [`crate::myrmic::Myrmic::local_isolated`] and
@@ -147,37 +146,12 @@ impl MyrmicBackend for Local {
     fn runtime_config(&self) -> Option<String> {
         match &self.discovery {
             Discovery::Host => None,
-            // JSON is YAML, which `runtimes start` parses
-            Discovery::Isolated(isolation) => Some(
-                serde_json::json!({
-                    "zenoh": {
-                        "scouting": { "multicast": { "address": isolation.multicast_group } },
-                    },
-                })
-                .to_string(),
-            ),
+            Discovery::Isolated(isolation) => {
+                Some(isolated_runtime_config(&isolation.multicast_group))
+            }
             Discovery::Connected(_) => {
                 panic!("a shim connected to a swarm elsewhere starts no runtime")
             }
         }
     }
-}
-
-/// A multicast group no other isolation uses: the address from this process's pid
-/// (administratively scoped 239.0.0.0/8; its low 24 bits cover every Linux pid), the port from a
-/// per-process counter.
-fn isolated_multicast_group() -> String {
-    static NEXT_PORT: AtomicU16 = AtomicU16::new(7446);
-    let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
-    assert!(
-        port >= 7446,
-        "ran out of ports for isolated multicast groups"
-    );
-    let pid = std::process::id();
-    format!(
-        "239.{}.{}.{}:{port}",
-        (pid >> 16) & 0xFF,
-        (pid >> 8) & 0xFF,
-        pid & 0xFF
-    )
 }

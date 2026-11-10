@@ -427,7 +427,15 @@ impl<M: Send + Sync + 'static> Store<M> {
         let (ks, tx) = {
             let backend = self.backend.read().expect("backend lock poisoned");
             let backend = backend.as_ref().ok_or(Unavailable)?;
-            (backend.ks.clone(), backend.db.write_tx()?)
+            // Every commit is synced to disk, data and metadata, before it returns, so a commit
+            // that succeeded survives a power loss. A temporary database syncs too: it gains
+            // nothing from it, but it performs like a persistent one, so tests measure the real
+            // cost of a commit.
+            let tx = backend
+                .db
+                .write_tx()?
+                .durability(Some(fjall::PersistMode::SyncAll));
+            (backend.ks.clone(), tx)
         };
 
         let tx = Transaction::start(ks, tx, ts, opts);

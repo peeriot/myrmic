@@ -18,7 +18,9 @@ pub mod myrmic;
 pub mod producers;
 pub mod rack;
 pub mod scenario;
+pub mod shelly;
 pub mod sidecar;
+pub mod ssh_utils;
 pub mod swarm;
 pub mod swarm2;
 pub mod telemetry_files;
@@ -30,17 +32,27 @@ use swarm_telemetry::db::opentelemetry_proto::tonic::{
 };
 pub use wait::wait_until;
 
-/// Resolve a binary by name using the workspace target directory of the calling
-/// crate, with optional override via `{NAME_UPPER}_BINARY` env var.
+/// Resolve a binary by name, built for the host or for a target triple, in the target directory
+/// of the workspace test-framework is built in (see [`binary::resolve`]).
 ///
 /// Resolution order:
-/// 1. `{NAME_UPPER}_BINARY` env var (e.g. `SWARM_BINARY`, `MYRMIC_BINARY`)
-/// 2. `<workspace>/target/release/<name>` if it exists
-/// 3. `<workspace>/target/debug/<name>` if it exists
+/// 1. the `{NAME_UPPER}_BINARY` env var (e.g. `SWARM_BINARY`, `MYRMIC_BINARY`), or
+///    `{NAME_UPPER}_{TRIPLE_UPPER}_BINARY` for a triple
+/// 2. `<workspace>/target/<profile>/<name>` for a pinned profile, otherwise the most recently
+///    built `<name>` of any profile (`<workspace>/target/<triple>/…` for a triple)
+///
+/// `triple` and `profile` are optional, in that order:
+/// - `resolve_binary!("myrmic")`: the host's newest build
+/// - `resolve_binary!("myrmic", profile = "release")`: the host's release build
+/// - `resolve_binary!("myrmic", triple = "aarch64-unknown-linux-gnu", profile = "dist")`
 #[macro_export]
 macro_rules! resolve_binary {
-    ($name:literal) => {
-        $crate::binary::resolve(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target"), $name)
+    ($name:expr $(, triple = $triple:expr)? $(, profile = $profile:expr)?) => {
+        $crate::binary::resolve(
+            $name,
+            None::<&str> $(.or(Some($triple)))?,
+            None::<&str> $(.or(Some($profile)))?,
+        )
     };
 }
 
@@ -53,31 +65,6 @@ macro_rules! asset {
     ($path:literal) => {
         concat!(env!("CARGO_MANIFEST_DIR"), "/assets/", $path)
     };
-}
-
-/// Optional SSH identity file (`ssh -i`/`scp -i`) applied to every SSH/SCP connection the
-/// test-framework opens (the myrmic-over-SSH backend, rack provisioning) — set `SSH_IDENTITY_FILE`
-/// when the target hosts require a non-default key. Read fresh on every call (not cached) so
-/// tests that set the env var mid-run see the change take effect.
-#[must_use]
-pub fn ssh_identity_file() -> Option<String> {
-    std::env::var("SSH_IDENTITY_FILE")
-        .ok()
-        .filter(|value| !value.is_empty())
-}
-
-/// Optional `known_hosts` file (`ssh -o UserKnownHostsFile=`/`scp -o UserKnownHostsFile=`)
-/// applied to every SSH/SCP connection the test-framework opens — set `SSH_KNOWN_HOSTS_FILE` to
-/// pin the exact file host-key trust was written to (e.g. by a preceding `ssh-keyscan` step),
-/// rather than relying on `ssh`'s own default (`~/.ssh/known_hosts`, resolved from `$HOME` and
-/// whatever `ssh_config` the environment ships), which isn't guaranteed to be the file a CI setup
-/// step actually populated. Read fresh on every call (not cached), matching
-/// [`ssh_identity_file`].
-#[must_use]
-pub fn ssh_known_hosts_file() -> Option<String> {
-    std::env::var("SSH_KNOWN_HOSTS_FILE")
-        .ok()
-        .filter(|value| !value.is_empty())
 }
 
 /// Captured output of a finished command (on the host, over SSH or inside a container).

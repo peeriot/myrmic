@@ -6,9 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use backend::MyrmicBackend;
-pub use backend::docker::Docker;
-pub use backend::local::Local;
-pub use backend::ssh::Ssh;
+pub use backend::{Docker, Local, Ssh};
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
 use myrmic_build::PlatformFamily;
@@ -140,6 +138,20 @@ impl Myrmic<Ssh> {
     pub fn ssh_at(host: impl Into<String>, binary: impl Into<String>) -> Self {
         Self {
             backend: Ssh::new(host),
+            binary: binary.into(),
+        }
+    }
+
+    /// Like [`Self::ssh_at`], but isolated like [`Self::local_isolated`]: on state directories
+    /// of its own on `host`, removed once the last clone of this shim is dropped, and on
+    /// `multicast_group`, which the runtimes of one swarm share.
+    pub(crate) fn ssh_isolated(
+        host: impl Into<String>,
+        binary: impl Into<String>,
+        multicast_group: String,
+    ) -> Self {
+        Self {
+            backend: Ssh::isolated(host, multicast_group),
             binary: binary.into(),
         }
     }

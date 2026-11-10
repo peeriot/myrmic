@@ -73,7 +73,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
 
     crate::debug!(&ctx, "pid-path: {}", pid_path.display());
 
-    let pid = Pid::from_args(&pid_path, name)?;
+    let pid = Pid::from_args(&pid_path, name);
     pid.ensure_parent()?;
 
     // Don't clobber a running runtime with the same name.
@@ -508,12 +508,24 @@ fn stable_zid(ctx: &Ctx, name: &str) -> anyhow::Result<ZenohId> {
     let identity = super::RuntimeIdentity {
         id: zid.to_string(),
     };
-    let path = super::identity_dir()?.join(format!("{name}.yaml"));
-    std::fs::create_dir_all(path.parent().expect("identity path has a parent"))?;
-    std::fs::write(&path, serde_yaml::to_string(&identity)?)
+    let dir = super::identity_dir()?;
+    let path = dir.join(format!("{name}.yaml"));
+    std::fs::create_dir_all(&dir)?;
+    record_identity(&dir, &path, &serde_yaml::to_string(&identity)?)
         .with_context(|| format!("failed to record identity {}", path.display()))?;
     crate::info!(ctx, "Starting runtime {name:?}({zid})",);
     Ok(zid)
+}
+
+/// Write `contents` to the new file `path` in `dir`, and have both on disk before returning. The
+/// runtime's data lies under the id the file records, so a file that a power loss shortly after
+/// the start leaves empty or loses would cut the runtime off its data.
+fn record_identity(dir: &Path, path: &Path, contents: &str) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    // the file's name is the directory's data
+    std::fs::File::open(dir)?.sync_all()
 }
 
 /// The per-runtime db directory when the user configured none: keyed by the
