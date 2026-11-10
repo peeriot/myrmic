@@ -224,6 +224,11 @@ where
         self.sorg.get_placement(&sri).await
     }
 
+    /// Every placement row, one per placed cell. Fails like [`Self::placement`].
+    pub async fn placements(&self) -> Result<Vec<PlacementEntry>, sorg_client::Error> {
+        self.sorg.list_placements().await
+    }
+
     /// The instance row of the cell `sri`, or `None` while it has none. Fails like
     /// [`Self::placement`], for the instance table.
     pub async fn instance(&self, sri: &str) -> Result<Option<CellInstance>, sorg_client::Error> {
@@ -255,6 +260,11 @@ where
     /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
     pub fn session(&self) -> &zenoh::Session {
         &self.session
+    }
+
+    /// a sorg client on [`Self::session`], e.g. to deploy several cells in one request
+    pub fn sorg(&self) -> &sorg_client::Client {
+        &self.sorg
     }
 
     /// The CLI for the commands that act on the whole swarm, e.g. [`myrmic::Myrmic::cell`] to
