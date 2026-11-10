@@ -74,10 +74,6 @@ struct Backend {
     db: fjall::OptimisticTxDatabase,
     /// The actual LSM tree that we use to store the data.
     ks: fjall::OptimisticTxKeyspace,
-    /// How far a commit gets before it returns. A database that outlives its process syncs every
-    /// commit to disk, so a commit that succeeded survives a power loss too; a temporary one is
-    /// gone with its process anyway, and only hands its commits to the operating system.
-    durability: Option<fjall::PersistMode>,
 }
 
 impl Backend {
@@ -91,8 +87,7 @@ impl Backend {
             .keyspace("base", Default::default)
             .context("unable to create keyspace")?;
 
-        let durability = (!temporary).then_some(fjall::PersistMode::SyncData);
-        Ok(Self { db, ks, durability })
+        Ok(Self { db, ks })
     }
 }
 
@@ -432,7 +427,14 @@ impl<M: Send + Sync + 'static> Store<M> {
         let (ks, tx) = {
             let backend = self.backend.read().expect("backend lock poisoned");
             let backend = backend.as_ref().ok_or(Unavailable)?;
-            let tx = backend.db.write_tx()?.durability(backend.durability);
+            // Every commit is synced to disk, data and metadata, before it returns, so a commit
+            // that succeeded survives a power loss. A temporary database syncs too: it gains
+            // nothing from it, but it performs like a persistent one, so tests measure the real
+            // cost of a commit.
+            let tx = backend
+                .db
+                .write_tx()?
+                .durability(Some(fjall::PersistMode::SyncAll));
             (backend.ks.clone(), tx)
         };
 
