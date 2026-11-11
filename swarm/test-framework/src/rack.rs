@@ -14,7 +14,8 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, Runtime, Ssh, already_gone};
+use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, RunningRt, Ssh, already_gone};
+use crate::runtime::Stopped;
 use crate::swarm::SwarmProcess;
 
 /// One remote host's role in the deployment: which myrmic runtime to start there, and under
@@ -129,8 +130,8 @@ pub enum RackTelemetry<'a> {
 /// `telemetry` picks where every runtime's telemetry lands — the shared db, or
 /// per-host files — see [`RackTelemetry`].
 ///
-/// The returned [`SwarmProcess`] owns every started [`Runtime`] and the tunnel — dropping it stops
-/// each runtime (best-effort; see [`Runtime`]'s `Drop` impl) and kills the tunnel process, the
+/// The returned [`SwarmProcess`] owns every started [`RunningRt`] and the tunnel — dropping it stops
+/// each runtime (best-effort; see [`RunningRt`]'s `Drop` impl) and kills the tunnel process, the
 /// same way a locally-spawned swarm process is killed on drop. Callers whose run might be
 /// interrupted before the [`SwarmProcess`] is dropped cleanly (e.g. a crashed harness) should
 /// follow up with [`cleanup`].
@@ -151,7 +152,7 @@ pub async fn provision(
     // Concurrent, not sequential — same rationale as `upload_binary`: each host is an
     // independent SSH round trip (config upload + runtime start), so provisioning N hosts one
     // at a time pays N times the round-trip latency for no benefit.
-    let runtimes: Vec<Runtime<Ssh>> =
+    let runtimes: Vec<RunningRt<Ssh>> =
         futures::future::join_all(hosts.iter().map(|host| async move {
             let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
             let tag_refs: Vec<&str> = host.tags.iter().map(String::as_str).collect();

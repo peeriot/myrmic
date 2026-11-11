@@ -1,11 +1,37 @@
 #![allow(clippy::map_unwrap_or)]
 #![allow(clippy::unwrap_used)]
 
-//! The test-framework provides helpers and abstractions to easily write end to end tests of three
-//! categories:
-//! - e2e testing CLI tools
-//! - running tests against a running swarm
-//! - running tests with network shaping
+//! Helpers and abstractions for end-to-end tests of myrmic: starting real runtimes, alone or as a
+//! swarm, operating them the way a user does (through the `myrmic` CLI), and injecting the faults
+//! a deployed swarm meets (network splits, full disks, clock steps, crashes, power loss).
+//!
+//! # Where to start
+//!
+//! - **One runtime:** [`myrmic`]. A [`myrmic::Myrmic`] is the CLI on some machine (the host, a
+//!   container, a remote host over SSH); it deploys cells, sends commands and reads status, and
+//!   [`myrmic::Myrmic::runtime`] describes a runtime it can start.
+//! - **A runtime's lifecycle:** [`runtime`]. Start, stop, kill and pause, with the stopped and
+//!   the running state as separate types, so a call in the wrong state does not compile. The
+//!   same handles serve single-runtime tests and swarms.
+//! - **Several runtimes:** [`swarm2`]. A [`swarm2::Swarm`] starts the runtimes a
+//!   [`swarm2::SwarmSpec`] names on a backend (the host, docker containers, remote hosts over
+//!   SSH), waits until they are connected, and offers the faults its backend can produce as
+//!   capability traits ([`swarm2::backend`]).
+//! - **Talking to a swarm's services directly:** [`clients`] (db, sorg), for what the CLI does
+//!   not cover.
+//! - **Waiting for something to become true:** [`wait`] ([`assert_eventually!`],
+//!   [`wait_until`]).
+//! - **Finding the binaries under test:** [`resolve_binary!`] and [`binary`].
+//!
+//! Infrastructure the above builds on, rarely used directly: [`docker`] (containers and
+//! networks), [`ssh_utils`] (remote hosts), [`shelly`] (smart plugs that cut a host's power).
+//!
+//! # Older modules
+//!
+//! [`swarm`], [`scenario`], [`cell`], [`compose`], [`sidecar`] and [`rack`] are the previous way
+//! of spawning swarms; [`swarm2`] replaces them and takes over the name `swarm` once they are
+//! gone. [`latency`], [`metrics`], [`producers`] and [`telemetry_files`] serve the benchmarks and
+//! move into a crate of their own. New tests use neither.
 
 pub mod binary;
 pub mod cell;
@@ -17,6 +43,7 @@ pub mod metrics;
 pub mod myrmic;
 pub mod producers;
 pub mod rack;
+pub mod runtime;
 pub mod scenario;
 pub mod shelly;
 pub mod sidecar;

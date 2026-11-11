@@ -52,6 +52,9 @@ async fn add_dummy_class(swarm: &Swarm<Local, GpuCpu>) -> BlobHash {
         .unwrap()
 }
 
+// Every test holds the swarm's runtime handles in `_runtimes` until it ends: dropping them
+// deletes the runtimes.
+
 /// two runtimes, one tagged gpu, one tagged cpu
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Enum)]
 enum GpuCpu {
@@ -95,7 +98,7 @@ impl SwarmSpec for GpuGpuSensor {
 // Case 1: cell requires [gpu]; R1 has gpu, R2 has cpu → lands on R1.
 #[tokio::test(flavor = "multi_thread")]
 async fn single_tag_match() {
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
 
     let cell = swarm
         .client()
@@ -119,7 +122,7 @@ async fn single_tag_match() {
 // Case 2: cell requires [gpu, sensor]; only R1 has both → lands on R1.
 #[tokio::test(flavor = "multi_thread")]
 async fn multi_tag_and_match() {
-    let swarm: Swarm<_, GpuGpuSensor> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuGpuSensor>::start(Local::new()).await.unwrap();
 
     let cell = swarm
         .client()
@@ -139,7 +142,7 @@ async fn multi_tag_and_match() {
 // Case 3: cell with no tags deploys onto whatever runtime exists.
 #[tokio::test(flavor = "multi_thread")]
 async fn untagged_placeable_anywhere() {
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
 
     let cell = swarm
         .client()
@@ -157,7 +160,7 @@ async fn untagged_placeable_anywhere() {
 // Case 4: two untagged cells, two runtimes → they spread one-per-node.
 #[tokio::test(flavor = "multi_thread")]
 async fn untagged_cells_spread_across_nodes() {
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let class = add_dummy_class(&swarm).await;
 
     // one request: the planner has to spread within a batch
@@ -175,7 +178,7 @@ async fn untagged_cells_spread_across_nodes() {
 // Case 5: cell X requires [gpu] (forces R1), cell Y untagged → Y spreads to the empty R2.
 #[tokio::test(flavor = "multi_thread")]
 async fn untagged_spreads_off_tagged_node() {
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let class = add_dummy_class(&swarm).await;
 
     let request = deploy_request(vec![
@@ -200,7 +203,7 @@ async fn untagged_spreads_off_tagged_node() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unplaceable_tag_absent() {
     // Arrange — two runtimes (gpu + cpu), neither has fpga
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let class = add_dummy_class(&swarm).await;
     let sorg = swarm.sorg();
 
@@ -240,7 +243,7 @@ async fn unplaceable_tag_absent() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unplaceable_and_not_satisfiable() {
     // Arrange — two runtimes with one tag each
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let class = add_dummy_class(&swarm).await;
     let sorg = swarm.sorg();
 
@@ -281,7 +284,7 @@ async fn unplaceable_and_not_satisfiable() {
 #[tokio::test(flavor = "multi_thread")]
 async fn bridge_cell_with_tag() {
     // Arrange — two runtimes with distinct tags
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let sorg = swarm.sorg();
 
     let bridge_sri = to_sri("tagged_bridge");
@@ -318,7 +321,7 @@ async fn bridge_cell_with_tag() {
 // Case 9: standalone deploy with tag [gpu]; R1 has gpu → lands on R1.
 #[tokio::test(flavor = "multi_thread")]
 async fn standalone_single_tag_match() {
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let class = add_dummy_class(&swarm).await;
 
     swarm
@@ -338,7 +341,7 @@ async fn standalone_single_tag_match() {
 #[tokio::test(flavor = "multi_thread")]
 async fn standalone_unplaceable() {
     // Arrange — two runtimes (gpu + cpu), neither has fpga
-    let swarm: Swarm<_, GpuCpu> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, GpuCpu>::start(Local::new()).await.unwrap();
     let class = add_dummy_class(&swarm).await;
     let sorg = swarm.sorg();
 

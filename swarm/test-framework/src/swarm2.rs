@@ -1,10 +1,55 @@
 //! A swarm of myrmic runtimes for tests: started from the runtimes a [`SwarmSpec`] names,
-//! checked to be connected, and controlled per runtime.
+//! checked to be connected, and operated as a whole.
+//!
+//! # Using it
+//!
+//! ```ignore
+//! use test_framework::runtime::{Kill, Running, Stopped};
+//! use test_framework::swarm2::{IntoRuntimeMap, Local, Swarm};
+//!
+//! let (swarm, [a, b, c]) = Swarm::<_, Node>::start(Local::new()).await?;
+//! let b = b.kill().await?; // stopped
+//! let b = b.start().await?; // running again; returns once the swarm is connected again
+//! ```
+//!
+//! - [`Swarm::start`] starts every runtime and hands the test one running handle per runtime, in
+//!   the order of the spec's variants, so an array pattern names them. [`Swarm::new`] hands out
+//!   stopped handles instead, for tests that start runtimes one after another
+//!   ([`crate::start_runtimes!`] starts several side by side).
+//! - The handles ([`StoppedRt`], [`RunningRt`]) move through their states like any
+//!   [`crate::runtime`] handle. Starting one returns once the swarm, with it, is connected again.
+//! - A test that picks runtimes by an id it computes (e.g. the host of a cell, from
+//!   [`Swarm::host_of`]) turns the array into a map ([`IntoRuntimeMap`]): an `EnumMap` to borrow
+//!   a handle by id, a `HashMap` to take one out for a transition that consumes it.
+//! - Faults that act on a runtime's host ([`Swarm::isolate`], [`Swarm::skew_clock`], ...) take the
+//!   runtime's id and need no handle: the host is there whether the runtime runs or not.
+//! - [`Swarm::client`] is the CLI that operates the swarm as a whole (deploys, sends, status), and
+//!   [`Swarm::session`] / [`Swarm::sorg`] reach its services directly.
+//!
+//! # Design notes
+//!
+//! The swarm does not own its runtimes: the test does, so that a runtime's state is its handle's
+//! type. The swarm keeps one entry per runtime ([`RuntimeEntry`]) with what does not change with
+//! the state (name, zid) and whether the test has the runtime running. That flag is the test's
+//! intent, set by a start and cleared when the running handle goes away; the connectivity check
+//! compares it with the runtimes that actually answer, which is what catches a runtime that died
+//! without the test stopping it. How the handles keep that flag is in the handles' module
+//! (`rt`, re-exported here).
 //!
 //! The name is temporary: this replaces [`crate::swarm`] and takes over its name once that is
 //! gone.
 
-use std::{collections::BTreeSet, fmt::Debug, future::Future, time::Duration};
+use std::{
+    collections::BTreeSet,
+    fmt::Debug,
+    future::Future,
+    marker::PhantomData,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use db_client::v1::models::{Scope, Subject};
@@ -15,11 +60,16 @@ pub use backend::{
     Block, CutOff, FillDisk, Isolate, Readdress, SkewClock, SwarmBackend, docker::Docker,
     local::Local, ssh::Ssh,
 };
+pub use rt::{IntoRuntimeMap, RunningRt, StoppedRt, SwarmRt, start_together};
 
-use crate::myrmic::{self, Error};
+use crate::{
+    myrmic::{self, Error},
+    runtime::Stopped,
+};
 
 pub mod backend;
 mod check;
+mod rt;
 
 /// The makeup of a swarm: the implementing type names its runtimes, one value per runtime, and
 /// says how each one is started.
@@ -43,8 +93,8 @@ mod check;
 /// ```
 ///
 /// A value's `Debug` output is its runtime's name, so distinct values must print distinctly. It
-/// is `Send` because the backends' `Send` futures hold it across their awaits.
-pub trait SwarmSpec: Enum + Copy + Eq + Debug + Send {
+/// is `Send + Sync` because the handles' `Send` futures hold it across their awaits.
+pub trait SwarmSpec: Enum + Copy + Eq + Debug + Send + Sync {
     /// the tags the runtime is started with
     fn tags(self) -> Vec<String>;
 
@@ -52,51 +102,58 @@ pub trait SwarmSpec: Enum + Copy + Eq + Debug + Send {
     fn persistent(self) -> bool;
 }
 
-/// A running swarm: the runtimes of `S` on a [`SwarmBackend`].
-///
-/// Dropping it deletes the runtimes that are still running (see [`myrmic::Runtime`]).
-pub struct Swarm<B, S>
-where
-    B: SwarmBackend<S>,
-    S: SwarmSpec,
-{
-    // Declared before `backend`, so the runtimes are deleted while the backend's shims are still
-    // there.
-    runtimes: EnumMap<S, Runtime<B::Cli>>,
-    introspection: introspection_client::v1::Client,
+/// What a failed transition of a swarm runtime on `B` reports: the backend's runtime error, which
+/// also has to carry the connectivity check's [`Error::Timeout`].
+pub type RtError<B, S> = <<B as SwarmBackend<S>>::Runtime as Stopped>::Error;
+
+/// A swarm: the runtimes of `S` on a [`SwarmBackend`], and what the test operates it with. See
+/// [the module docs](self).
+pub struct Swarm<B, S> {
+    shared: Arc<Shared<B, S>>,
     sorg: sorg_client::Client,
     session: zenoh::Session,
+}
+
+/// What a swarm shares with its runtimes' handles.
+struct Shared<B, S> {
     backend: B,
+    /// One per runtime, at its [`Enum::into_usize`] index. A slice rather than an [`EnumMap`]:
+    /// whether an `EnumMap` is `Sync` depends on `S::Array`, which the compiler cannot see through
+    /// in generic code, and the handles' futures need this to be `Sync`.
+    entries: Box<[RuntimeEntry]>,
+    introspection: introspection_client::v1::Client,
+    spec: PhantomData<S>,
 }
 
-/// One runtime of a [`Swarm`], see [`Swarm::runtime`].
-pub struct Runtime<B>
-where
-    B: myrmic::MyrmicBackend,
-{
+/// What a [`Swarm`] knows about one of its runtimes, whatever state it is in (see
+/// [`Swarm::get_entry`]).
+pub struct RuntimeEntry {
     name: String,
-    zid: ZenohId,
-    /// `None` while the runtime is killed or deleted
-    running: Option<myrmic::Runtime<B>>,
+    /// set at the runtime's first start, the same on every later one
+    zid: OnceLock<ZenohId>,
+    /// whether the test has the runtime running: set by a start, cleared when the running handle
+    /// goes away
+    running: AtomicBool,
 }
 
-impl<B> Runtime<B>
-where
-    B: myrmic::MyrmicBackend,
-{
+impl RuntimeEntry {
     /// the runtime's name, its id's `Debug` output
-    pub fn name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         &self.name
     }
 
-    /// the zenoh id the runtime runs under, the same across restarts
-    pub fn zid(&self) -> ZenohId {
-        self.zid
+    /// The zenoh id the runtime runs under, the same across restarts. Panics for a runtime that
+    /// was never started: it has no zid yet.
+    pub fn get_zid(&self) -> ZenohId {
+        *self
+            .zid
+            .get()
+            .unwrap_or_else(|| panic!("`{}` was never started, so it has no zid", self.name))
     }
 
-    /// whether the runtime is running, i.e. not killed or deleted
+    /// whether the test has the runtime running, i.e. holds its running handle
     pub fn is_running(&self) -> bool {
-        self.running.is_some()
+        self.running.load(Ordering::SeqCst)
     }
 }
 
@@ -105,69 +162,88 @@ where
     B: SwarmBackend<S>,
     S: SwarmSpec,
 {
-    /// Start every runtime of `S` on `backend`.
+    /// The swarm of `S` on `backend` with no runtime started: one stopped handle per runtime, in
+    /// the order of the spec's variants. For tests that start runtimes one after another; the
+    /// others use [`Self::start`].
+    pub async fn new(backend: B) -> (Self, S::Array<StoppedRt<B, S>>) {
+        let swarm = Self::create(backend).await;
+        let stopped = EnumMap::<S, _>::from_fn(|id| StoppedRt {
+            id,
+            shared: swarm.shared.clone(),
+        })
+        .into_array();
+        (swarm, stopped)
+    }
+
+    /// The swarm with every runtime of `S` started on `backend`: one running handle per runtime,
+    /// in the order of the spec's variants.
     ///
     /// Returns once the swarm is connected: each runtime answers the test's status query and is
     /// linked to all the other runtimes, and no other runtime answers.
-    pub async fn start(backend: B) -> Result<Self, Error> {
+    pub async fn start(backend: B) -> Result<(Self, S::Array<RunningRt<B, S>>), RtError<B, S>> {
+        let swarm = Self::create(backend).await;
+        let stopped = (0..S::Array::<()>::LENGTH).map(|i| StoppedRt {
+            id: S::from_usize(i),
+            shared: swarm.shared.clone(),
+        });
+        // in the order of `stopped`, i.e. of the variants, which `from_fn` visits in turn
+        let mut running = rt::start_together(stopped).await?.into_iter();
+        let running = EnumMap::<S, _>::from_fn(|_| {
+            running
+                .next()
+                .expect("one running handle per started runtime")
+        });
+        Ok((swarm, running.into_array()))
+    }
+
+    /// the swarm, with every runtime stopped
+    async fn create(backend: B) -> Self {
+        let names: Vec<String> = (0..S::Array::<()>::LENGTH)
+            .map(|i| format!("{:?}", S::from_usize(i)))
+            .collect();
         // Checked before anything starts: two runtimes under one name would race in the CLI.
-        let names = EnumMap::<S, String>::from_fn(|id| format!("{id:?}"));
-        let distinct_names: BTreeSet<&str> = names.values().map(String::as_str).collect();
+        let distinct_names: BTreeSet<&str> = names.iter().map(String::as_str).collect();
         assert_eq!(
             distinct_names.len(),
             names.len(),
             "two runtimes print the same name: {names:?}"
         );
-
-        let started =
-            join_enum_map(|id: S| start_runtime(backend.shim(id), names[id].clone(), id)).await;
-        let runtimes = started.try_map(|_, runtime| {
-            let runtime = runtime?;
-            Ok::<_, Error>(Runtime {
-                name: runtime.name().to_owned(),
-                zid: runtime.zid(),
-                running: Some(runtime),
+        let entries = names
+            .into_iter()
+            .map(|name| RuntimeEntry {
+                name,
+                zid: OnceLock::new(),
+                running: AtomicBool::new(false),
             })
-        })?;
-
+            .collect();
         let session = backend.connect_session().await;
-        let swarm = Self {
-            runtimes,
-            introspection: introspection_client::v1::Client::new(session.clone()).await,
+        Self {
+            shared: Arc::new(Shared {
+                backend,
+                entries,
+                introspection: introspection_client::v1::Client::new(session.clone()).await,
+                spec: PhantomData,
+            }),
             sorg: sorg_client::Client::new(session.clone()),
             session,
-            backend,
-        };
-        let expected = swarm.runtimes.values().map(Runtime::zid).collect();
-        wait_until_connected(&swarm.introspection, &expected).await?;
-        Ok(swarm)
-    }
-
-    /// the runtime `id`
-    pub fn runtime(&self, id: S) -> &Runtime<B::Cli> {
-        &self.runtimes[id]
-    }
-
-    /// every runtime with its id, in no particular order
-    pub fn runtimes(&self) -> impl Iterator<Item = (S, &Runtime<B::Cli>)> {
-        self.runtimes.iter()
-    }
-
-    /// the runtime `id`, to kill, restart or delete it
-    pub fn runtime_mut(&mut self, id: S) -> RuntimeMut<'_, B, S> {
-        let others = self
-            .runtimes
-            .iter()
-            .filter(|(other, runtime)| *other != id && runtime.is_running())
-            .map(|(_, runtime)| runtime.zid)
-            .collect();
-        RuntimeMut {
-            id,
-            runtime: &mut self.runtimes[id],
-            backend: &self.backend,
-            introspection: &self.introspection,
-            others,
         }
+    }
+
+    /// what the swarm knows about the runtime `id`
+    pub fn get_entry(&self, id: S) -> &RuntimeEntry {
+        self.shared.entry(id)
+    }
+
+    /// every runtime's entry with its id, in the order of the spec's variants
+    pub fn get_entries(&self) -> impl Iterator<Item = (S, &RuntimeEntry)> {
+        self.shared.entries()
+    }
+
+    /// Wait until exactly the runtimes the test has running answer the status query, each linked
+    /// to all the others. Starting a runtime already does this; a test calls it after something
+    /// else that disconnects and reconnects runtimes.
+    pub async fn wait_until_connected(&self) -> Result<(), Error> {
+        self.shared.wait_until_connected().await
     }
 
     /// The runtime the cell `sri` is placed on, or `None` while it has no placement or its
@@ -182,9 +258,9 @@ where
             .and_then(|placement| placement.kind.host());
         Ok(host.map(|host| {
             let (id, _) = self
-                .runtimes
-                .iter()
-                .find(|(_, runtime)| RuntimeId::from(runtime.zid) == host)
+                .shared
+                .started_entries()
+                .find(|(_, zid)| RuntimeId::from(*zid) == host)
                 .unwrap_or_else(|| panic!("{sri} is placed on {host}, which is not in the swarm"));
             id
         }))
@@ -204,9 +280,9 @@ where
             panic!("scope {scope:?} has {} holders, not one", holders.len());
         };
         let (id, _) = self
-            .runtimes
-            .iter()
-            .find(|(_, runtime)| runtime.zid.to_le_bytes() == holder.id)
+            .shared
+            .started_entries()
+            .find(|(_, zid)| zid.to_le_bytes() == holder.id)
             .unwrap_or_else(|| panic!("scope {scope:?} is held by a runtime not in the swarm"));
         id
     }
@@ -238,20 +314,12 @@ where
     /// test can check that the swarm stays connected.
     pub async fn connection_mismatch(&self) -> Option<String> {
         let statuses = self
+            .shared
             .introspection
             .swarm_status()
             .await
             .expect("failed to query the swarm's status");
-        check::mismatch(&statuses, &self.running_zids())
-    }
-
-    /// the zids of the runtimes that are running
-    fn running_zids(&self) -> BTreeSet<ZenohId> {
-        self.runtimes
-            .values()
-            .filter(|runtime| runtime.is_running())
-            .map(Runtime::zid)
-            .collect()
+        check::mismatch(&statuses, &self.shared.running_zids())
     }
 
     /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
@@ -267,7 +335,47 @@ where
     /// The CLI for the commands that act on the whole swarm, e.g. [`myrmic::Myrmic::cell`] to
     /// deploy a cell (see [`SwarmBackend::client`]).
     pub fn client(&self) -> myrmic::Myrmic<B::Client> {
-        self.backend.client()
+        self.shared.backend.client()
+    }
+}
+
+impl<B, S> Shared<B, S>
+where
+    S: Enum,
+{
+    fn entry(&self, id: S) -> &RuntimeEntry {
+        &self.entries[id.into_usize()]
+    }
+}
+
+impl<B, S> Shared<B, S>
+where
+    B: SwarmBackend<S>,
+    S: SwarmSpec,
+{
+    fn entries(&self) -> impl Iterator<Item = (S, &RuntimeEntry)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| (S::from_usize(i), entry))
+    }
+
+    /// the runtimes that were started at least once, with their zids
+    fn started_entries(&self) -> impl Iterator<Item = (S, ZenohId)> {
+        self.entries()
+            .filter_map(|(id, entry)| entry.zid.get().map(|zid| (id, *zid)))
+    }
+
+    /// the zids of the runtimes the test has running
+    fn running_zids(&self) -> BTreeSet<ZenohId> {
+        self.entries()
+            .filter(|(_, entry)| entry.is_running())
+            .map(|(_, entry)| entry.get_zid())
+            .collect()
+    }
+
+    async fn wait_until_connected(&self) -> Result<(), Error> {
+        wait_until_connected(&self.introspection, &self.running_zids()).await
     }
 }
 
@@ -279,13 +387,13 @@ where
     /// Cut the link between the runtimes `a` and `b` (see [`Block::block`]). Both stay connected
     /// to everything else, and may still reach each other through it.
     pub async fn block(&self, a: S, b: S) {
-        self.backend.block(a, b).await;
+        self.shared.backend.block(a, b).await;
     }
 
-    /// Cut the link between the runtime `runtime` and the test's router (see
+    /// Cut the link between the runtime `id` and the test's router (see
     /// [`Block::block_router`]).
-    pub async fn block_router(&self, runtime: S) {
-        self.backend.block_router(runtime).await;
+    pub async fn block_router(&self, id: S) {
+        self.shared.backend.block_router(id).await;
     }
 }
 
@@ -294,12 +402,24 @@ where
     B: Isolate<S>,
     S: SwarmSpec,
 {
-    /// Cut every running runtime off the network at once (see [`RuntimeMut::isolate`]): each
-    /// keeps running, alone.
-    pub async fn isolate_all(&mut self) {
-        for (id, runtime) in self.runtimes.iter() {
-            if runtime.is_running() {
-                self.backend.isolate(id).await;
+    /// Cut the runtime `id`'s host off the network (see [`Isolate::isolate`]). A running runtime
+    /// keeps running, and the rest of the swarm only notices its silence.
+    pub async fn isolate(&self, id: S) {
+        self.shared.backend.isolate(id).await;
+    }
+
+    /// Connect the runtime `id`'s host again. Returns once the swarm is connected again.
+    pub async fn heal(&self, id: S) -> Result<(), Error> {
+        self.shared.backend.heal(id).await;
+        self.wait_until_connected().await
+    }
+
+    /// Cut every running runtime off the network at once (see [`Self::isolate`]): each keeps
+    /// running, alone.
+    pub async fn isolate_all(&self) {
+        for (id, entry) in self.shared.entries() {
+            if entry.is_running() {
+                self.shared.backend.isolate(id).await;
             }
         }
     }
@@ -307,15 +427,58 @@ where
     /// Connect every running runtime again, each of which must be isolated (see
     /// [`Self::isolate_all`]). Returns once the swarm is connected again.
     ///
-    /// For runtimes isolated together: [`RuntimeMut::heal`] of one of them waits for it to reach
-    /// the others, which can't happen while they are still isolated.
-    pub async fn heal_all(&mut self) -> Result<(), Error> {
-        for (id, runtime) in self.runtimes.iter() {
-            if runtime.is_running() {
-                self.backend.heal(id).await;
+    /// For runtimes isolated together: [`Self::heal`] of one of them waits for it to reach the
+    /// others, which can't happen while they are still isolated.
+    pub async fn heal_all(&self) -> Result<(), Error> {
+        for (id, entry) in self.shared.entries() {
+            if entry.is_running() {
+                self.shared.backend.heal(id).await;
             }
         }
-        wait_until_connected(&self.introspection, &self.running_zids()).await
+        self.wait_until_connected().await
+    }
+}
+
+impl<B, S> Swarm<B, S>
+where
+    B: Readdress<S>,
+    S: SwarmSpec,
+{
+    /// Move the runtime `id`'s host to another address (see [`Readdress::readdress`]). Returns at
+    /// once: finding back into the swarm is the runtime's own business.
+    pub async fn readdress(&self, id: S) {
+        self.shared.backend.readdress(id).await;
+    }
+}
+
+impl<B, S> Swarm<B, S>
+where
+    B: FillDisk<S>,
+    S: SwarmSpec,
+{
+    /// Fill the disk the runtime `id` keeps its data on up to `room` free bytes (see
+    /// [`FillDisk::fill_disk`]). A running runtime keeps running, and its writes start failing
+    /// once the room is used up.
+    pub async fn fill_disk(&self, id: S, room: u64) {
+        self.shared.backend.fill_disk(id, room).await;
+    }
+
+    /// Free the disk filled by [`Self::fill_disk`] again.
+    pub async fn free_disk(&self, id: S) {
+        self.shared.backend.free_disk(id).await;
+    }
+}
+
+impl<B, S> Swarm<B, S>
+where
+    B: SkewClock<S>,
+    S: SwarmSpec,
+{
+    /// Set the runtime `id`'s wall clock to `ahead_secs` seconds ahead of the others' (behind them
+    /// if negative; 0 puts it back in step), as a clock step on its host would (see
+    /// [`SkewClock::skew_clock`]). A running runtime keeps running.
+    pub async fn skew_clock(&self, id: S, ahead_secs: i64) {
+        self.shared.backend.skew_clock(id, ahead_secs).await;
     }
 }
 
@@ -369,211 +532,4 @@ where
             .take()
             .expect("one output per variant")
     })
-}
-
-/// `myrmic runtimes start` of the runtime `id`, named `name`.
-async fn start_runtime<B, S>(
-    myrmic: myrmic::Myrmic<B>,
-    name: String,
-    id: S,
-) -> Result<myrmic::Runtime<B>, Error>
-where
-    B: myrmic::MyrmicBackend,
-    S: SwarmSpec,
-{
-    let tags = id.tags();
-    let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
-    myrmic
-        .runtime(&tags)
-        .name(&name)
-        .persistent(id.persistent())
-        .start()
-        .await
-}
-
-/// One runtime of a [`Swarm`] with its lifecycle, see [`Swarm::runtime_mut`].
-///
-/// It borrows the swarm: a restart waits for the swarm to be connected again, so it needs the
-/// other runtimes to stay as they are.
-pub struct RuntimeMut<'a, B, S>
-where
-    B: SwarmBackend<S>,
-    S: SwarmSpec,
-{
-    id: S,
-    runtime: &'a mut Runtime<B::Cli>,
-    backend: &'a B,
-    introspection: &'a introspection_client::v1::Client,
-    /// the zids of the swarm's other running runtimes
-    others: BTreeSet<ZenohId>,
-}
-
-impl<B, S> RuntimeMut<'_, B, S>
-where
-    B: SwarmBackend<S>,
-    S: SwarmSpec,
-{
-    /// End the runtime abruptly (see [`myrmic::Runtime::kill`]). Returns once its process is
-    /// gone; it does not wait for the rest of the swarm to notice.
-    pub async fn kill(&mut self) -> Result<(), Error> {
-        self.take_running().kill().await
-    }
-
-    /// Shut the runtime down gracefully (see [`myrmic::Runtime::delete`]).
-    pub async fn delete(&mut self) -> Result<(), Error> {
-        self.take_running().delete().await
-    }
-
-    /// Mark the runtime as no longer running without touching it: its process ended outside the
-    /// test's control, e.g. with its host's power. [`Self::restart`] starts it again.
-    ///
-    /// Call it once the runtime's host is reachable again: dropping the runtime's handle deletes
-    /// it there, which finds nothing left to delete.
-    pub fn mark_lost(&mut self) {
-        drop(self.take_running());
-    }
-
-    /// Start the killed or deleted runtime again under its name, so under the same zid. Returns
-    /// once the swarm, with this runtime, is connected again.
-    pub async fn restart(&mut self) -> Result<(), Error> {
-        let shim = self.backend.shim(self.id);
-        self.start_on(shim).await?;
-        let mut expected = self.others.clone();
-        expected.insert(self.runtime.zid);
-        wait_until_connected(self.introspection, &expected).await
-    }
-
-    /// Start the killed or deleted runtime under its name on `shim`.
-    async fn start_on(&mut self, shim: myrmic::Myrmic<B::Cli>) -> Result<(), Error> {
-        let id = self.id;
-        assert!(!self.runtime.is_running(), "{id:?} is still running");
-        let started = start_runtime(shim, self.runtime.name.clone(), id).await?;
-        assert_eq!(
-            started.zid(),
-            self.runtime.zid,
-            "{id:?} came back under a different zid"
-        );
-        self.runtime.running = Some(started);
-        Ok(())
-    }
-
-    /// Freeze the running runtime (see [`myrmic::Runtime::pause`]). It keeps running, but the
-    /// rest of the swarm hears nothing from it until [`Self::resume`].
-    pub async fn pause(&mut self) -> Result<(), Error> {
-        self.running().pause().await
-    }
-
-    /// Let the paused runtime run again. Returns once the swarm, with this runtime, is connected
-    /// again.
-    pub async fn resume(&mut self) -> Result<(), Error> {
-        self.running().resume().await?;
-        let mut expected = self.others.clone();
-        expected.insert(self.runtime.zid);
-        wait_until_connected(self.introspection, &expected).await
-    }
-
-    /// the running runtime
-    fn running(&self) -> &myrmic::Runtime<B::Cli> {
-        let id = self.id;
-        self.runtime
-            .running
-            .as_ref()
-            .unwrap_or_else(|| panic!("{id:?} is not running"))
-    }
-
-    /// the running runtime, now marked as no longer running
-    fn take_running(&mut self) -> myrmic::Runtime<B::Cli> {
-        let id = self.id;
-        self.runtime
-            .running
-            .take()
-            .unwrap_or_else(|| panic!("{id:?} is not running"))
-    }
-}
-
-impl<B, S> RuntimeMut<'_, B, S>
-where
-    B: Isolate<S>,
-    S: SwarmSpec,
-{
-    /// Cut the running runtime off the network (see [`Isolate::isolate`]). It keeps running, and
-    /// the rest of the swarm only notices its silence.
-    pub async fn isolate(&mut self) {
-        let id = self.id;
-        assert!(self.runtime.is_running(), "{id:?} is not running");
-        self.backend.isolate(id).await;
-    }
-
-    /// Connect the isolated runtime again. Returns once the swarm, with this runtime, is
-    /// connected again.
-    pub async fn heal(&mut self) -> Result<(), Error> {
-        self.backend.heal(self.id).await;
-        let mut expected = self.others.clone();
-        expected.insert(self.runtime.zid);
-        wait_until_connected(self.introspection, &expected).await
-    }
-}
-
-impl<B, S> RuntimeMut<'_, B, S>
-where
-    B: Readdress<S>,
-    S: SwarmSpec,
-{
-    /// Move the running runtime to another address (see [`Readdress::readdress`]). Returns at
-    /// once: finding back into the swarm is the runtime's own business.
-    pub async fn readdress(&mut self) {
-        let id = self.id;
-        assert!(self.runtime.is_running(), "{id:?} is not running");
-        self.backend.readdress(id).await;
-    }
-}
-
-impl<B, S> RuntimeMut<'_, B, S>
-where
-    B: FillDisk<S>,
-    S: SwarmSpec,
-{
-    /// Fill the disk the running runtime keeps its data on up to `room` free bytes (see
-    /// [`FillDisk::fill_disk`]). It keeps running, and its writes start failing once the room is
-    /// used up.
-    pub async fn fill_disk(&mut self, room: u64) {
-        let id = self.id;
-        assert!(self.runtime.is_running(), "{id:?} is not running");
-        self.backend.fill_disk(id, room).await;
-    }
-
-    /// Free the disk filled by [`Self::fill_disk`] again.
-    pub async fn free_disk(&mut self) {
-        self.backend.free_disk(self.id).await;
-    }
-}
-
-impl<B, S> RuntimeMut<'_, B, S>
-where
-    B: SkewClock<S>,
-    S: SwarmSpec,
-{
-    /// Set the running runtime's wall clock to `ahead_secs` seconds ahead of the others' (behind
-    /// them if negative; 0 puts it back in step), as a clock step on its host would (see
-    /// [`SkewClock::skew_clock`]). It keeps running.
-    pub async fn skew_clock(&mut self, ahead_secs: i64) {
-        let id = self.id;
-        assert!(self.runtime.is_running(), "{id:?} is not running");
-        self.backend.skew_clock(id, ahead_secs).await;
-    }
-}
-
-impl<B, S> RuntimeMut<'_, B, S>
-where
-    B: CutOff<S>,
-    S: SwarmSpec,
-{
-    /// Start the killed or deleted runtime again under its name, so with its zid and database,
-    /// but cut off from the rest of the swarm (see [`CutOff`]). Returns once it is ready; no
-    /// connectivity check, it reaches no other runtime. [`Self::delete`] or [`Self::kill`] it
-    /// before a [`Self::restart`] brings it back into the swarm.
-    pub async fn start_cut_off(&mut self) -> Result<(), Error> {
-        let shim = self.backend.cut_off_shim(self.id);
-        self.start_on(shim).await
-    }
 }

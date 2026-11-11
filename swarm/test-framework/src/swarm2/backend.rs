@@ -3,7 +3,10 @@
 use std::future::Future;
 
 use super::SwarmSpec;
-use crate::myrmic::{Myrmic, MyrmicBackend};
+use crate::{
+    myrmic::{self, Myrmic, MyrmicBackend},
+    runtime,
+};
 
 pub mod docker;
 pub mod local;
@@ -11,6 +14,19 @@ pub mod ssh;
 
 /// The port `zenoh-router` listens on: zenoh's default for routers.
 const ROUTER_PORT: u16 = 7447;
+
+/// The CLI runtime `runtime` of a swarm, started through `shim` (see [`SwarmBackend::runtime`]).
+fn cli_runtime<B, S>(shim: &Myrmic<B>, id: S) -> myrmic::StoppedRt<B>
+where
+    B: MyrmicBackend,
+    S: SwarmSpec,
+{
+    let tags = id.tags();
+    let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+    shim.runtime(&tags)
+        .name(&format!("{id:?}"))
+        .persistent(id.persistent())
+}
 
 /// A client session on the router at `endpoint`. A client, unlike a peer, connects to nothing but
 /// its endpoint, so the session reaches the swarm only through the router.
@@ -35,17 +51,23 @@ async fn router_session(endpoint: &str) -> zenoh::Session {
 
 /// Where the runtimes of a [`super::Swarm`] of `S` run and how a test joins them.
 ///
-/// Everything else (starting the runtimes, the connectivity check, the handles) is the same on
-/// every backend and lives in [`super::Swarm`].
-pub trait SwarmBackend<S: SwarmSpec> {
-    /// where the CLI of [`Self::shim`] runs
-    type Cli: MyrmicBackend;
+/// Everything else (the connectivity check, tracking which runtimes run) is the same on every
+/// backend and lives in [`super::Swarm`].
+///
+/// It is `Send + Sync` because the swarm's runtime handles share it and hold it across awaits.
+pub trait SwarmBackend<S: SwarmSpec>: Send + Sync {
+    /// A runtime of this backend, not running (see [`crate::runtime`]). Its errors take the
+    /// swarm's connectivity check timing out ([`myrmic::Error::Timeout`]), which starting a swarm
+    /// runtime waits for.
+    type Runtime: runtime::Stopped<Error: From<myrmic::Error>>;
 
     /// where the CLI of [`Self::client`] runs
     type Client: MyrmicBackend;
 
-    /// the shim the runtime `runtime` runs on
-    fn shim(&self, runtime: S) -> Myrmic<Self::Cli>;
+    /// The runtime `id`, not started: named after the value's `Debug` output, with the tags
+    /// and persistence [`SwarmSpec`] gives it. Every call describes the same runtime, so starting
+    /// any of them brings back the same one.
+    fn runtime(&self, id: S) -> Self::Runtime;
 
     /// the CLI the test acts on the whole swarm through: it joins the swarm like
     /// [`Self::connect_session`] and runs no runtime itself
@@ -56,50 +78,50 @@ pub trait SwarmBackend<S: SwarmSpec> {
 }
 
 /// A [`SwarmBackend`] that can start a runtime cut off from the rest of its swarm (see
-/// [`super::RuntimeMut::start_cut_off`]).
+/// [`super::StoppedRt::start_cut_off`]).
 pub trait CutOff<S: SwarmSpec>: SwarmBackend<S> {
-    /// A shim on which the runtime `runtime` starts with its identity and database, but reaches
-    /// no other runtime of the swarm, cut off or not.
-    fn cut_off_shim(&self, runtime: S) -> Myrmic<Self::Cli>;
+    /// The runtime `id`, not started, which starts with its identity and database but
+    /// reaches no other runtime of the swarm, cut off or not.
+    fn cut_off_runtime(&self, id: S) -> Self::Runtime;
 }
 
 /// A [`SwarmBackend`] that can isolate a running runtime: cut it off the network and connect it
-/// again, while it keeps running (see [`super::RuntimeMut::isolate`]).
+/// again, while it keeps running (see [`super::Swarm::isolate`]).
 pub trait Isolate<S: SwarmSpec>: SwarmBackend<S> {
-    /// Drop all traffic between the runtime `runtime` and everything else: the other runtimes
+    /// Drop all traffic between the runtime `id` and everything else: the other runtimes
     /// and the test. Dropped, not rejected, so to the others it falls silent.
-    fn isolate(&self, runtime: S) -> impl Future<Output = ()> + Send;
+    fn isolate(&self, id: S) -> impl Future<Output = ()> + Send;
 
-    /// lift [`Self::isolate`] of the runtime `runtime`
-    fn heal(&self, runtime: S) -> impl Future<Output = ()> + Send;
+    /// lift [`Self::isolate`] of the runtime `id`
+    fn heal(&self, id: S) -> impl Future<Output = ()> + Send;
 }
 
 /// A [`SwarmBackend`] that can move a running runtime to another address on its network, as when a
 /// host's address changes, without telling the runtime or the swarm (see
-/// [`super::RuntimeMut::readdress`]).
+/// [`super::Swarm::readdress`]).
 pub trait Readdress<S: SwarmSpec>: SwarmBackend<S> {
-    /// Move the runtime `runtime` to another address. It keeps running.
-    fn readdress(&self, runtime: S) -> impl Future<Output = ()> + Send;
+    /// Move the runtime `id` to another address. It keeps running.
+    fn readdress(&self, id: S) -> impl Future<Output = ()> + Send;
 }
 
 /// A [`SwarmBackend`] that can fill the disk a running runtime keeps its data on, as when a host's
-/// disk runs full (see [`super::RuntimeMut::fill_disk`]).
+/// disk runs full (see [`super::Swarm::fill_disk`]).
 pub trait FillDisk<S: SwarmSpec>: SwarmBackend<S> {
-    /// Fill the disk the runtime `runtime` keeps its data on (its database, its logs) up to
+    /// Fill the disk the runtime `id` keeps its data on (its database, its logs) up to
     /// `room` free bytes. It keeps running.
-    fn fill_disk(&self, runtime: S, room: u64) -> impl Future<Output = ()> + Send;
+    fn fill_disk(&self, id: S, room: u64) -> impl Future<Output = ()> + Send;
 
-    /// lift [`Self::fill_disk`] of the runtime `runtime`
-    fn free_disk(&self, runtime: S) -> impl Future<Output = ()> + Send;
+    /// lift [`Self::fill_disk`] of the runtime `id`
+    fn free_disk(&self, id: S) -> impl Future<Output = ()> + Send;
 }
 
 /// A [`SwarmBackend`] that can move a running runtime's wall clock away from the others', as when a
-/// host's clock is stepped (see [`super::RuntimeMut::skew_clock`]). Its monotonic clock stays as
+/// host's clock is stepped (see [`super::Swarm::skew_clock`]). Its monotonic clock stays as
 /// it is, like with a real step.
 pub trait SkewClock<S: SwarmSpec>: SwarmBackend<S> {
-    /// Set the wall clock of the runtime `runtime` to `ahead_secs` seconds ahead of the others'
+    /// Set the wall clock of the runtime `id` to `ahead_secs` seconds ahead of the others'
     /// (behind them if negative; 0 puts it back in step). Returns once the runtime reads it.
-    fn skew_clock(&self, runtime: S, ahead_secs: i64) -> impl Future<Output = ()> + Send;
+    fn skew_clock(&self, id: S, ahead_secs: i64) -> impl Future<Output = ()> + Send;
 }
 
 /// A [`SwarmBackend`] that can cut single links while everything else stays connected, e.g. to
@@ -108,7 +130,7 @@ pub trait Block<S: SwarmSpec>: SwarmBackend<S> {
     /// Drop all traffic between the runtimes `a` and `b`.
     fn block(&self, a: S, b: S) -> impl Future<Output = ()> + Send;
 
-    /// Drop all traffic between the runtime `runtime` and the router the test reaches the swarm
+    /// Drop all traffic between the runtime `id` and the router the test reaches the swarm
     /// through, so the test reaches it only through other runtimes.
-    fn block_router(&self, runtime: S) -> impl Future<Output = ()> + Send;
+    fn block_router(&self, id: S) -> impl Future<Output = ()> + Send;
 }

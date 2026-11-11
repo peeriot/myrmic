@@ -1,5 +1,31 @@
 //! Shim around the myrmic CLI (runtimes, deploys, telemetry) running on the host, on a remote
 //! host over SSH, or inside a docker container.
+//!
+//! The CLI does two different jobs for a test, and this module has a type for each:
+//!
+//! - [`Myrmic`] operates a swarm: it deploys cells and apps, sends commands, reads status and
+//!   telemetry. It is the same whether or not it ever starts a runtime itself; a shim that only
+//!   operates a swarm running elsewhere is common (e.g. [`Myrmic::local_connected`]).
+//! - [`StoppedRt`] and [`RunningRt`] are one runtime started with `myrmic runtimes start`, in
+//!   its two states (see [`crate::runtime`] for how a test moves it between them). They come from
+//!   [`Myrmic::runtime`], whose options (name, tags, `persistent`, config) the stopped state
+//!   carries, so starting it again starts the same runtime.
+//!
+//! Both happen to go through the CLI, which is why a runtime handle holds a clone of the
+//! [`Myrmic`] that created it: starting and stopping are `runtimes start` and `runtimes delete`
+//! on the same shim, so on the same machine and in the same isolation.
+//!
+//! # Design notes
+//!
+//! The two jobs used to be one type: a shim started a runtime and the same shim was asked to
+//! kill or restart it. They are separate because a runtime a test controls need not be a CLI
+//! runtime (e.g. a node running inside the test process), while every swarm a test operates is
+//! operated through the CLI. The runtime side is
+//! therefore expressed as the [`crate::runtime`] traits, which [`StoppedRt`] and
+//! [`RunningRt`] implement, and [`Myrmic`] stays the operator.
+//!
+//! [`MyrmicBackend`] requires `Send + Sync` because the runtime handles' transitions return `Send`
+//! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
 use std::{future::Future, path::Path, sync::Arc};
 
@@ -14,6 +40,7 @@ use crate::{
     clients::sorg::SorgHandle,
     docker::container::ManagedContainer,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
+    runtime,
 };
 
 pub mod backend;
@@ -73,7 +100,7 @@ impl Myrmic<Local> {
     /// The shim gets its own state directories and its own multicast group, on which its
     /// runtimes scout and every CLI call (through `DEFAULT_MYRMIC_MULTICAST_GROUP`) and
     /// sessions from [`Local::zenoh_config`] discover them, the same way as on the default group.
-    /// [`RuntimeBuilder::config`] is not available, the shim generates the config itself.
+    /// [`StoppedRt::config`] is not available, the shim generates the config itself.
     pub fn local_isolated() -> Self {
         Self::local_on(Local::isolated())
     }
@@ -163,11 +190,12 @@ where
         &self.backend
     }
 
-    /// describe a `myrmic runtimes start` with `tags`; finish with [`RuntimeBuilder::start`]
-    pub fn runtime<'a>(&'a self, tags: &'a [&'a str]) -> RuntimeBuilder<'a, B> {
-        RuntimeBuilder {
-            myrmic: self,
-            tags,
+    /// a runtime with `tags` on this shim, not started yet; start it with
+    /// [`runtime::Stopped::start`]
+    pub fn runtime(&self, tags: &[&str]) -> StoppedRt<B> {
+        StoppedRt {
+            myrmic: self.clone(),
+            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
             config: None,
@@ -426,13 +454,16 @@ fn started_runtime_zid(stderr: &str, name: &str) -> Option<zenoh::config::ZenohI
     })
 }
 
-/// Options for one `myrmic runtimes start`, created by [`Myrmic::runtime`].
+/// A runtime of `myrmic runtimes start` that is not running, created by [`Myrmic::runtime`] or
+/// returned when a [`RunningRt`] stops. It holds what `runtimes start` is run with, so starting it
+/// again brings back the same runtime: same name, so same zid.
 ///
-/// Options are per start, not per [`Myrmic`]: one shim may start the same runtime temporary
-/// first and persistent later.
-pub struct RuntimeBuilder<'a, B> {
-    myrmic: &'a Myrmic<B>,
-    tags: &'a [&'a str],
+/// Options are per runtime, not per [`Myrmic`]: one shim may start one runtime temporary and
+/// another persistent.
+#[derive(Clone)]
+pub struct StoppedRt<B> {
+    myrmic: Myrmic<B>,
+    tags: Vec<String>,
     name: String,
     persistent: bool,
     config: Option<String>,
@@ -440,7 +471,7 @@ pub struct RuntimeBuilder<'a, B> {
     listen: Vec<String>,
 }
 
-impl<B> RuntimeBuilder<'_, B>
+impl<B> StoppedRt<B>
 where
     B: MyrmicBackend,
 {
@@ -480,13 +511,22 @@ where
         self.config = Some(path.to_owned());
         self
     }
+}
+
+impl<B> runtime::Stopped for StoppedRt<B>
+where
+    B: MyrmicBackend,
+{
+    type Error = Error;
+
+    type Running = RunningRt<B>;
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] [--connect
     /// `endpoint`...] [--listen `endpoint`...] [`config`]
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
-    pub async fn start(self) -> Result<Runtime<B>, Error> {
+    async fn start(self) -> Result<RunningRt<B>, Error> {
         // `runtimes start` reads its config before it daemonizes, so the file may go once the
         // start returns
         let backend_config = match self.myrmic.backend.runtime_config() {
@@ -495,7 +535,7 @@ where
                     self.config.is_none(),
                     "the backend sets the runtime config itself"
                 );
-                let dir = TargetTempDir::create(self.myrmic, "myrmic-runtime-config").await;
+                let dir = TargetTempDir::create(&self.myrmic, "myrmic-runtime-config").await;
                 let path = dir.write("runtime.yaml", &content).await;
                 Some((dir, path))
             }
@@ -505,7 +545,7 @@ where
         if !self.persistent {
             args.push("--tmp");
         }
-        for tag in self.tags {
+        for tag in &self.tags {
             args.extend(["--tag", tag]);
         }
         for endpoint in &self.connect {
@@ -522,19 +562,14 @@ where
         }
         let output = self.myrmic.run(&args).await?;
         let Some(zid) = started_runtime_zid(&output.stderr, &self.name) else {
-            // The daemon runs, but there is no Runtime yet whose drop would delete it.
+            // The daemon runs, but there is no RunningRt yet whose drop would delete it.
             let deleted = self.myrmic.delete_runtime(&self.name).await;
             panic!(
                 "`myrmic runtimes start` reported no zid for `{}` (deleting it: {deleted:?})\n{}",
                 self.name, output.stderr
             );
         };
-        Ok(Runtime {
-            myrmic: self.myrmic.clone(),
-            name: self.name,
-            zid,
-            tags: self.tags.iter().map(|tag| (*tag).to_owned()).collect(),
-        })
+        Ok(RunningRt { stopped: self, zid })
     }
 }
 
@@ -673,113 +708,144 @@ where
     }
 }
 
-/// a runtime is the outcome of `myrmic runtimes start`
+/// A running runtime, the outcome of `myrmic runtimes start` (see [`StoppedRt`]).
 ///
-/// Dropping a `Runtime` deletes it best-effort (panic-safe cleanup), also after an explicit
-/// [`Runtime::delete`]: a runtime that is already gone counts as deleted. Call
-/// [`Runtime::delete`] when the test asserts on the post-delete state.
-pub struct Runtime<B>
+/// Dropping a `RunningRt` deletes it best-effort (panic-safe cleanup), also after an explicit
+/// [`runtime::Running::delete`]: a runtime that is already gone counts as deleted. Delete it
+/// explicitly when the test asserts on the post-delete state.
+pub struct RunningRt<B>
 where
     B: MyrmicBackend,
 {
-    myrmic: Myrmic<B>,
-    name: String,
+    /// what it was started from, handed back when it stops
+    stopped: StoppedRt<B>,
     zid: zenoh::config::ZenohId,
-    tags: Vec<String>,
 }
 
-impl<B> Runtime<B>
+impl<B> RunningRt<B>
 where
     B: MyrmicBackend,
 {
     /// Open a [`SorgHandle`] that waits for an exec runtime matching this
     /// runtime's tags and scopes all deploys to those same tags.
     pub async fn connect(&self, session: zenoh::Session) -> SorgHandle {
-        let tag_refs: Vec<&str> = self.tags.iter().map(String::as_str).collect();
+        let tag_refs: Vec<&str> = self.stopped.tags.iter().map(String::as_str).collect();
         SorgHandle::connect_with_tags(session, &tag_refs).await
     }
 
     /// the runtime name passed to `myrmic runtimes start --name`
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// the zenoh id the runtime runs under; kept across restarts under the same name
-    pub fn zid(&self) -> zenoh::config::ZenohId {
-        self.zid
-    }
-
-    /// run: myrmic runtimes delete; returns once the runtime has exited
-    pub async fn delete(self) -> Result<(), Error> {
-        self.myrmic.delete_runtime(&self.name).await
-    }
-
-    /// run: myrmic runtimes delete --signal kill; returns once the runtime has exited
-    ///
-    /// The runtime ends abruptly, as on a crash or power loss: it neither says goodbye to the
-    /// swarm nor cleans up.
-    pub async fn kill(self) -> Result<(), Error> {
-        self.myrmic
-            .run(&["runtimes", "delete", "--signal", "kill", &self.name])
-            .await?;
-        Ok(())
-    }
-
-    /// Freeze the runtime's process (`SIGSTOP`), as a stalled machine would: it keeps its state
-    /// and connections but does nothing, timers and lease renewals included, until
-    /// [`Self::resume`].
-    pub async fn pause(&self) -> Result<(), Error> {
-        self.signal("-STOP").await
-    }
-
-    /// let the process [`Self::pause`] froze run again (`SIGCONT`)
-    pub async fn resume(&self) -> Result<(), Error> {
-        self.signal("-CONT").await
+    pub fn get_name(&self) -> &str {
+        &self.stopped.name
     }
 
     /// Send `signal` to the runtime's process on the target. Its pid comes from `myrmic runtimes
     /// list`, so this works on every backend.
     async fn signal(&self, signal: &str) -> Result<(), Error> {
-        let output = self.myrmic.run(&["runtimes", "list", &self.name]).await?;
+        let name = self.get_name();
+        let myrmic = &self.stopped.myrmic;
+        let output = myrmic.run(&["runtimes", "list", name]).await?;
         // `<name>\trunning\tpid=<pid>`
         let pid = output
             .stdout
             .lines()
-            .find_map(|line| line.strip_prefix(&format!("{}\trunning\tpid=", self.name)))
+            .find_map(|line| line.strip_prefix(&format!("{name}\trunning\tpid=")))
             .unwrap_or_else(|| {
                 panic!(
-                    "`runtimes list` shows no running `{}`: {}",
-                    self.name, output.stdout
+                    "`runtimes list` shows no running `{name}`: {}",
+                    output.stdout
                 )
             });
-        let killed = self.myrmic.run_program("kill", &[signal, pid]).await;
+        let killed = myrmic.run_program("kill", &[signal, pid]).await;
         assert!(
             killed.success,
-            "failed to send {signal} to `{}`: {}",
-            self.name, killed.stderr
+            "failed to send {signal} to `{name}`: {}",
+            killed.stderr
         );
         Ok(())
     }
 }
 
-impl<B> Drop for Runtime<B>
+impl<B> runtime::Running for RunningRt<B>
+where
+    B: MyrmicBackend,
+{
+    type Error = Error;
+
+    type Stopped = StoppedRt<B>;
+
+    /// the zenoh id the runtime runs under; kept across restarts under the same name
+    fn get_zid(&self) -> zenoh::config::ZenohId {
+        self.zid
+    }
+
+    /// run: myrmic runtimes delete; returns once the runtime has exited
+    async fn delete(self) -> Result<StoppedRt<B>, Error> {
+        self.stopped.myrmic.delete_runtime(self.get_name()).await?;
+        Ok(self.stopped.clone())
+    }
+}
+
+impl<B> runtime::Kill for RunningRt<B>
+where
+    B: MyrmicBackend,
+{
+    /// run: myrmic runtimes delete --signal kill; returns once the runtime has exited
+    async fn kill(self) -> Result<StoppedRt<B>, Error> {
+        self.stopped
+            .myrmic
+            .run(&["runtimes", "delete", "--signal", "kill", self.get_name()])
+            .await?;
+        Ok(self.stopped.clone())
+    }
+}
+
+impl<B> runtime::Lose for RunningRt<B>
+where
+    B: MyrmicBackend,
+{
+    /// Dropping the running handle still runs `myrmic runtimes delete` on the target, which finds
+    /// nothing left to delete; call it once the target is reachable again.
+    fn mark_lost(self) -> StoppedRt<B> {
+        self.stopped.clone()
+    }
+}
+
+impl<B> runtime::Pause for RunningRt<B>
+where
+    B: MyrmicBackend,
+{
+    /// `SIGSTOP` to the runtime's process
+    async fn pause(&self) -> Result<(), Error> {
+        self.signal("-STOP").await
+    }
+
+    /// `SIGCONT` to the runtime's process
+    async fn resume(&self) -> Result<(), Error> {
+        self.signal("-CONT").await
+    }
+}
+
+impl<B> Drop for RunningRt<B>
 where
     B: MyrmicBackend,
 {
     fn drop(&mut self) {
+        let name = self.get_name();
         match self
+            .stopped
             .myrmic
-            .run_blocking(&["runtimes", "delete", &self.name])
+            .run_blocking(&["runtimes", "delete", name])
         {
             Ok(output) if output.success || already_gone(&output.stderr, &RUNTIME_GONE) => {}
             Ok(output) => eprintln!(
-                "Runtime drop-guard: failed to delete runtime `{}`: {}",
-                self.name, output.stderr
+                "Runtime drop-guard: failed to delete runtime `{name}`: {}",
+                output.stderr
             ),
-            Err(err) => eprintln!(
-                "Runtime drop-guard: failed to run the delete of runtime `{}`: {err}",
-                self.name
-            ),
+            Err(err) => {
+                eprintln!(
+                    "Runtime drop-guard: failed to run the delete of runtime `{name}`: {err}"
+                );
+            }
         }
     }
 }

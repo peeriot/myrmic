@@ -15,7 +15,7 @@ pub use ssh::Ssh;
 ///
 /// A backend only builds host commands. [`super::Myrmic`] runs them and holds all knowledge of
 /// the CLI's commands and output, so the backends cannot drift apart.
-pub trait MyrmicBackend: Clone {
+pub trait MyrmicBackend: Clone + Send + Sync {
     /// `program args` as a command on the host that runs them on the target: the program itself,
     /// or the `ssh`/`docker exec` invocation around it
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command;

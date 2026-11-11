@@ -1,4 +1,4 @@
-use super::{CutOff, SwarmBackend};
+use super::{CutOff, SwarmBackend, cli_runtime};
 use crate::{
     myrmic::{self, Myrmic},
     swarm2::SwarmSpec,
@@ -27,12 +27,12 @@ impl Default for Local {
 }
 
 impl<S: SwarmSpec> SwarmBackend<S> for Local {
-    type Cli = myrmic::Local;
+    type Runtime = myrmic::StoppedRt<myrmic::Local>;
     type Client = myrmic::Local;
 
-    /// the one shim, whichever runtime it is
-    fn shim(&self, _runtime: S) -> Myrmic<myrmic::Local> {
-        self.myrmic.clone()
+    /// on the one shim, whichever runtime it is
+    fn runtime(&self, id: S) -> myrmic::StoppedRt<myrmic::Local> {
+        cli_runtime(&self.myrmic, id)
     }
 
     /// the one shim: it already runs next to the test
@@ -48,8 +48,8 @@ impl<S: SwarmSpec> SwarmBackend<S> for Local {
 }
 
 impl<S: SwarmSpec> CutOff<S> for Local {
-    /// a fresh [`Myrmic::cut_off`] of the one shim, whichever runtime it is
-    fn cut_off_shim(&self, _runtime: S) -> Myrmic<myrmic::Local> {
-        self.myrmic.cut_off()
+    /// on a fresh [`Myrmic::cut_off`] of the one shim, whichever runtime it is
+    fn cut_off_runtime(&self, id: S) -> myrmic::StoppedRt<myrmic::Local> {
+        cli_runtime(&self.myrmic.cut_off(), id)
     }
 }

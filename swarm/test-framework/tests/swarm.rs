@@ -5,6 +5,7 @@ use cell_protocol::replication::runtime_tag;
 use enum_map::Enum;
 use test_framework::{
     myrmic::{self, Error, Myrmic, cell::CellSpec},
+    runtime::{Kill, Running, Stopped},
     swarm2::{Local, Swarm, SwarmSpec},
 };
 use zenoh::config::ZenohId;
@@ -30,11 +31,11 @@ impl SwarmSpec for Node {
 /// The swarm is really connected: the orchestrator places a cell on each of its runtimes.
 #[tokio::test(flavor = "multi_thread")]
 async fn cells_are_placed_on_every_runtime() {
-    let swarm: Swarm<_, Node> = Swarm::start(Local::new()).await.unwrap();
+    let (swarm, _runtimes) = Swarm::<_, Node>::start(Local::new()).await.unwrap();
     let cell = new_cell(&swarm.client()).await;
 
-    for (node, runtime) in swarm.runtimes() {
-        let zid = runtime.zid();
+    for (node, entry) in swarm.get_entries() {
+        let zid = entry.get_zid();
         let placed_on = deploy_pinned(&swarm.client(), &cell, zid).await;
         assert_eq!(placed_on, zid.to_string(), "the cell pinned to {node:?}");
     }
@@ -44,12 +45,15 @@ async fn cells_are_placed_on_every_runtime() {
 /// its own runtimes answer, and neither can place a cell on the other's runtime.
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_swarms_are_isolated() {
-    let (one, other) = tokio::join!(Swarm::start(Local::new()), Swarm::start(Local::new()));
-    let one: Swarm<_, Node> = one.unwrap();
-    let other: Swarm<_, Node> = other.unwrap();
+    let (one, other) = tokio::join!(
+        Swarm::<_, Node>::start(Local::new()),
+        Swarm::<_, Node>::start(Local::new())
+    );
+    let (one, _one_runtimes) = one.unwrap();
+    let (other, _other_runtimes) = other.unwrap();
     let cell = new_cell(&one.client()).await;
 
-    let foreign = runtime_tag(other.runtime(Node::A).zid().into());
+    let foreign = runtime_tag(other.get_entry(Node::A).get_zid().into());
     let deployed = one
         .client()
         .cell(cell.as_path())
@@ -73,13 +77,13 @@ async fn parallel_swarms_are_isolated() {
 /// A killed runtime comes back under the same zid, and cells can be placed on it again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_killed_runtime_restarts_under_the_same_zid() {
-    let mut swarm: Swarm<_, Node> = Swarm::start(Local::new()).await.unwrap();
-    let zid = swarm.runtime(Node::B).zid();
+    let (swarm, [_a, b, _c]) = Swarm::<_, Node>::start(Local::new()).await.unwrap();
+    let zid = b.get_zid();
 
-    swarm.runtime_mut(Node::B).kill().await.unwrap();
-    assert!(!swarm.runtime(Node::B).is_running());
-    swarm.runtime_mut(Node::B).restart().await.unwrap();
-    assert_eq!(swarm.runtime(Node::B).zid(), zid);
+    let b = b.kill().await.unwrap();
+    assert!(!swarm.get_entry(Node::B).is_running());
+    let b = b.start().await.unwrap();
+    assert_eq!(b.get_zid(), zid);
 
     let cell = new_cell(&swarm.client()).await;
     let placed_on = deploy_pinned(&swarm.client(), &cell, zid).await;

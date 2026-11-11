@@ -5,7 +5,7 @@ use std::{
 
 use enum_map::{Enum, EnumMap};
 
-use super::{ROUTER_PORT, router_session};
+use super::{ROUTER_PORT, cli_runtime, router_session};
 use crate::{
     myrmic::{self, Myrmic, backend::isolated_multicast_group},
     ssh_utils::RemoteBinary,
@@ -117,19 +117,19 @@ impl<S: Enum> Drop for Ssh<S> {
     }
 }
 
-// The bound makes `Ssh<S>` `Sync`, which the `Send` future of `connect_session` borrowing it
-// needs; the compiler cannot see through `S::Array` to the array it is.
+// The bound makes `Ssh<S>` `Send + Sync`, which `SwarmBackend` requires; the compiler
+// cannot see through `S::Array` to the array it is.
 impl<S: SwarmSpec> SwarmBackend<S> for Ssh<S>
 where
-    S::Array<Myrmic<myrmic::backend::Ssh>>: Sync,
+    S::Array<Myrmic<myrmic::backend::Ssh>>: Send + Sync,
 {
-    type Cli = myrmic::backend::Ssh;
+    type Runtime = myrmic::StoppedRt<myrmic::backend::Ssh>;
 
     type Client = myrmic::backend::Local;
 
-    /// the runtime's isolated CLI, the same one across restarts
-    fn shim(&self, runtime: S) -> crate::myrmic::Myrmic<Self::Cli> {
-        self.shims[runtime].clone()
+    /// on the runtime's isolated CLI, the same one across restarts
+    fn runtime(&self, id: S) -> myrmic::StoppedRt<myrmic::backend::Ssh> {
+        cli_runtime(&self.shims[id], id)
     }
 
     fn client(&self) -> crate::myrmic::Myrmic<Self::Client> {

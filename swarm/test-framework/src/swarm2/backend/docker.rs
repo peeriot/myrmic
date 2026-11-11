@@ -4,7 +4,7 @@ use enum_map::EnumMap;
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 
-use super::{ROUTER_PORT, router_session};
+use super::{ROUTER_PORT, cli_runtime, router_session};
 use crate::{
     docker::{DockerDaemon, container::ManagedContainer, image::Image, network::ManagedNetwork},
     myrmic::{self, Myrmic},
@@ -187,18 +187,19 @@ fn uuid_name() -> String {
     format!("myrmic-swarm-{}", uuid::Uuid::new_v4().simple())
 }
 
-// The bound makes `Docker<S>` `Sync`, which the `Send` future of `connect_session` borrowing it
-// needs; the compiler cannot see through `S::Array` to the array it is.
+// The bound makes `Docker<S>` `Send + Sync`, which `SwarmBackend` requires; the compiler
+// cannot see through `S::Array` to the array it is.
 impl<S: SwarmSpec> SwarmBackend<S> for Docker<S>
 where
-    S::Array<Arc<ManagedContainer>>: Sync,
+    S::Array<Arc<ManagedContainer>>: Send + Sync,
 {
-    type Cli = myrmic::Docker;
+    type Runtime = myrmic::StoppedRt<myrmic::Docker>;
 
     type Client = myrmic::Local;
 
-    fn shim(&self, runtime: S) -> Myrmic<myrmic::Docker> {
-        Myrmic::attach(self.container_map[runtime].clone())
+    /// in the runtime's container, the same one across restarts
+    fn runtime(&self, id: S) -> myrmic::StoppedRt<myrmic::Docker> {
+        cli_runtime(&Myrmic::attach(self.container_map[id].clone()), id)
     }
 
     fn client(&self) -> Myrmic<myrmic::Local> {
@@ -213,54 +214,48 @@ where
 
 impl<S: SwarmSpec> Isolate<S> for Docker<S>
 where
-    S::Array<Arc<ManagedContainer>>: Sync,
+    S::Array<Arc<ManagedContainer>>: Send + Sync,
 {
-    async fn isolate(&self, runtime: S) {
-        let output = self.container_map[runtime]
-            .exec(&["nft", ISOLATE_RULES])
-            .await;
+    async fn isolate(&self, id: S) {
+        let output = self.container_map[id].exec(&["nft", ISOLATE_RULES]).await;
         assert!(
             output.success,
-            "failed to isolate {runtime:?}: {}",
+            "failed to isolate {id:?}: {}",
             output.stderr
         );
     }
 
-    async fn heal(&self, runtime: S) {
-        let output = self.container_map[runtime]
+    async fn heal(&self, id: S) {
+        let output = self.container_map[id]
             .exec(&["nft", "delete table inet isolate"])
             .await;
-        assert!(
-            output.success,
-            "failed to heal {runtime:?}: {}",
-            output.stderr
-        );
+        assert!(output.success, "failed to heal {id:?}: {}", output.stderr);
     }
 }
 
 impl<S: SwarmSpec> FillDisk<S> for Docker<S>
 where
-    S::Array<Arc<ManagedContainer>>: Sync,
+    S::Array<Arc<ManagedContainer>>: Send + Sync,
 {
-    async fn fill_disk(&self, runtime: S, room: u64) {
+    async fn fill_disk(&self, id: S, room: u64) {
         // `$1`: the data directory, `$2`: the filler, `$3`: the room
         let fill = r#"fallocate -l $(( $(df --output=avail -B1 "$1" | tail -n 1) - $3 )) "$2""#;
         let room = room.to_string();
-        let output = self.container_map[runtime]
+        let output = self.container_map[id]
             .exec(&["sh", "-c", fill, "sh", DATA_DIR, &filler(), &room])
             .await;
         assert!(
             output.success,
-            "failed to fill the disk of {runtime:?}: {}",
+            "failed to fill the disk of {id:?}: {}",
             output.stderr
         );
     }
 
-    async fn free_disk(&self, runtime: S) {
-        let output = self.container_map[runtime].exec(&["rm", &filler()]).await;
+    async fn free_disk(&self, id: S) {
+        let output = self.container_map[id].exec(&["rm", &filler()]).await;
         assert!(
             output.success,
-            "failed to free the disk of {runtime:?}: {}",
+            "failed to free the disk of {id:?}: {}",
             output.stderr
         );
     }
@@ -268,7 +263,7 @@ where
 
 impl<S: SwarmSpec> Block<S> for Docker<S>
 where
-    S::Array<Arc<ManagedContainer>>: Sync,
+    S::Array<Arc<ManagedContainer>>: Send + Sync,
 {
     async fn block(&self, a: S, b: S) {
         let a_ip = self.container_map[a]
@@ -281,10 +276,10 @@ where
         drop_traffic(&self.container_map[b], &a_ip).await;
     }
 
-    async fn block_router(&self, runtime: S) {
+    async fn block_router(&self, id: S) {
         // in the runtime's container only: the router's has no `NET_ADMIN`, and dropping both
         // directions on one end cuts the link
-        drop_traffic(&self.container_map[runtime], &self.router_ip).await;
+        drop_traffic(&self.container_map[id], &self.router_ip).await;
     }
 }
 
@@ -314,18 +309,18 @@ const FAKETIME_PICKUP: Duration = Duration::from_secs(2);
 
 impl<S: SwarmSpec> SkewClock<S> for Docker<S>
 where
-    S::Array<Arc<ManagedContainer>>: Sync,
+    S::Array<Arc<ManagedContainer>>: Send + Sync,
 {
-    async fn skew_clock(&self, runtime: S, ahead_secs: i64) {
+    async fn skew_clock(&self, id: S, ahead_secs: i64) {
         // `$1`: the offset, `$2`: the file
         let write = r#"printf '%s\n' "$1" > "$2""#;
         let offset = format!("{ahead_secs:+}");
-        let output = self.container_map[runtime]
+        let output = self.container_map[id]
             .exec(&["sh", "-c", write, "sh", &offset, FAKETIME_FILE])
             .await;
         assert!(
             output.success,
-            "failed to skew the clock of {runtime:?}: {}",
+            "failed to skew the clock of {id:?}: {}",
             output.stderr
         );
         tokio::time::sleep(FAKETIME_PICKUP).await;
@@ -338,13 +333,13 @@ const READDRESSED_HOST: u8 = 200;
 
 impl<S: SwarmSpec> Readdress<S> for Docker<S>
 where
-    S::Array<Arc<ManagedContainer>>: Sync,
+    S::Array<Arc<ManagedContainer>>: Send + Sync,
 {
     /// Within the network's subnet, to the address with the last octet `READDRESSED_HOST`.
     /// Docker isn't told: its inspect API, and with it the address [`Block`] and [`Isolate`] use,
     /// keeps the old one.
-    async fn readdress(&self, runtime: S) {
-        let container = &self.container_map[runtime];
+    async fn readdress(&self, id: S) {
+        let container = &self.container_map[id];
         let old = container.container_ip(self.network.name()).await;
         let prefix = self.network.ipv4_prefix_len().await;
         assert!(
@@ -357,7 +352,7 @@ where
         assert_ne!(
             host,
             READDRESSED_HOST.to_string(),
-            "`{runtime:?}` has the new address already"
+            "`{id:?}` has the new address already"
         );
         let new = format!("{network_part}.{READDRESSED_HOST}");
         // Dropping the old address also drops the on-link route the default route needs, so that
@@ -374,7 +369,7 @@ where
         let output = container.exec(&["sh", "-c", &script]).await;
         assert!(
             output.success,
-            "failed to move {runtime:?} from {old} to {new}: {}",
+            "failed to move {id:?} from {old} to {new}: {}",
             output.stderr
         );
     }
