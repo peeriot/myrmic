@@ -5747,6 +5747,7 @@ dependencies = [
  "introspection-common",
  "serde_json",
  "sorg-tests",
+ "test-framework",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

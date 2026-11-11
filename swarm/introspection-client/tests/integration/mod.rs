@@ -74,9 +74,9 @@ async fn wait_for_swarm_status(client: &Client, count: usize) -> Vec<NodeStatus>
 
 /// Waits until `id` shows up in `client.current_nodes()`.
 ///
-/// A node started through `killable_swarm_config!` needs a few hundred
-/// milliseconds after the macro returns before it is up and the network has seen
-/// it - longer on a loaded machine.
+/// A runtime is ready when its start returns, but the observing node only lists
+/// it once its introspection plugin has seen it join - a moment later, longer on
+/// a loaded machine.
 async fn wait_for_current_node(client: &Client, id: ZenohId) {
     wait_for(
         &format!("node {id} in current_nodes()"),

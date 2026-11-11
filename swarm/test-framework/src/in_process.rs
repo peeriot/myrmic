@@ -175,6 +175,12 @@ pub struct RunningRt {
 }
 
 impl RunningRt {
+    /// The node's own zenoh session, for what only works on a node's session, e.g. an
+    /// introspection client's `on_join`, which needs the node's introspection plugin.
+    pub fn get_session(&self) -> &zenoh::Session {
+        self.node.session()
+    }
+
     /// a zenoh config for a peer session on the node's multicast group, to talk to the node
     pub fn get_zenoh_config(&self) -> zenoh::Config {
         peer_config(&self.stopped.multicast_group)
