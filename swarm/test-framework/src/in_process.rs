@@ -56,7 +56,7 @@
 //! plugin tasks have ended: their handles are private to the node library. With an in-memory
 //! database nothing depends on them having ended.
 
-use zenoh::config::ZenohId;
+use zenoh::config::{WhatAmI, ZenohId};
 
 use crate::{myrmic::backend::isolated_multicast_group, runtime};
 
@@ -69,6 +69,8 @@ pub struct StoppedRt {
     orchestration: bool,
     db: bool,
     execution: bool,
+    /// a peer, unless [`Self::router`] made it a router
+    mode: WhatAmI,
 }
 
 impl StoppedRt {
@@ -82,6 +84,7 @@ impl StoppedRt {
             orchestration: false,
             db: false,
             execution: false,
+            mode: WhatAmI::Peer,
         }
     }
 
@@ -96,6 +99,18 @@ impl StoppedRt {
     pub fn multicast_group(mut self, group: &str) -> Self {
         group.clone_into(&mut self.multicast_group);
         self
+    }
+
+    /// Run in zenoh's router mode instead of as a peer, listening on a random port (zenoh's
+    /// default for routers is the fixed 7447, which parallel tests would share).
+    pub fn router(mut self) -> Self {
+        self.mode = WhatAmI::Router;
+        self
+    }
+
+    /// the multicast group (`<address>:<port>`) the node scouts on, e.g. to put other nodes on it
+    pub fn get_multicast_group(&self) -> &str {
+        &self.multicast_group
     }
 
     /// run the orchestration plugin
@@ -129,6 +144,16 @@ impl StoppedRt {
         config.plugins.orchestration = self.orchestration.then(Default::default);
         config.plugins.db = self.db.then(Default::default);
         config.plugins.execution = self.execution.then(Default::default);
+        config
+            .zenoh
+            .set_mode(Some(self.mode))
+            .expect("setting zenoh mode cannot fail");
+        if self.mode == WhatAmI::Router {
+            config
+                .zenoh
+                .insert_json5("listen/endpoints", r#"["tcp/[::]:0"]"#)
+                .expect("a listen endpoint list is valid");
+        }
         config
     }
 }

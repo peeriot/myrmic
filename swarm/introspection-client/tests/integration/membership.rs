@@ -8,11 +8,13 @@ use test_framework::{
     in_process,
     myrmic::{self, Myrmic},
     runtime::{Kill, Running, Stopped},
+    wait::DEFAULT_TIMEOUT,
+    wait_for,
 };
 use tokio::sync::Mutex;
 use zenoh::config::ZenohId;
 
-use crate::integration::{assert_plugin_configured, wait_for, wait_for_current_node};
+use crate::integration::{assert_plugin_configured, wait_for_current_node};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn membership_callbacks_are_called() {
@@ -50,7 +52,7 @@ async fn membership_callbacks_are_called() {
     let joiner_zid = joiner.get_zid();
 
     // Assert I - verify that we now have the joining node in our state
-    let status = wait_for("the joining node to reach on_join", || {
+    let status = wait_for(DEFAULT_TIMEOUT, "the joining node to reach on_join", || {
         let known_nodes = known_nodes.clone();
         async move { known_nodes.lock().await.get(&joiner_zid).cloned() }
     })
@@ -63,17 +65,21 @@ async fn membership_callbacks_are_called() {
     joiner.kill().await.unwrap();
 
     // Assert II - verify that we no longer have the node in our state
-    wait_for("the leaving node to reach on_leave", || {
-        let known_nodes = known_nodes.clone();
-        async move {
-            known_nodes
-                .lock()
-                .await
-                .get(&joiner_zid)
-                .is_none()
-                .then_some(())
-        }
-    })
+    wait_for(
+        DEFAULT_TIMEOUT,
+        "the leaving node to reach on_leave",
+        || {
+            let known_nodes = known_nodes.clone();
+            async move {
+                known_nodes
+                    .lock()
+                    .await
+                    .get(&joiner_zid)
+                    .is_none()
+                    .then_some(())
+            }
+        },
+    )
     .await;
 }
 
@@ -142,7 +148,7 @@ async fn current_nodes_and_on_join_combined() {
     let new_zid = new_node.get_zid();
 
     // Assert II - on_join fired for the new node
-    wait_for("the third node to reach on_join", || {
+    wait_for(DEFAULT_TIMEOUT, "the third node to reach on_join", || {
         let joined_nodes = joined_nodes.clone();
         async move {
             joined_nodes

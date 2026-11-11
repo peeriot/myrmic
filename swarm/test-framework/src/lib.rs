@@ -21,8 +21,8 @@
 //!   capability traits ([`swarm2::backend`]).
 //! - **Talking to a swarm's services directly:** [`clients`] (db, sorg), for what the CLI does
 //!   not cover.
-//! - **Waiting for something to become true:** [`wait`] ([`assert_eventually!`],
-//!   [`wait_until`]).
+//! - **Waiting for something to become true:** [`wait`] ([`wait_for`] when the test needs a
+//!   value from the state it waits for, [`assert_eventually!`], [`wait_until`]).
 //! - **Finding the binaries under test:** [`resolve_binary!`] and [`binary`].
 //!
 //! Infrastructure the above builds on, rarely used directly: [`docker`] (containers and
@@ -60,7 +60,7 @@ use cell_protocol::Sri;
 use swarm_telemetry::db::opentelemetry_proto::tonic::{
     common::v1::any_value::Value, trace::v1::Span,
 };
-pub use wait::wait_until;
+pub use wait::{wait_for, wait_until};
 
 /// Resolve a binary by name, built for the host or for a target triple, in the target directory
 /// of the workspace test-framework is built in (see [`binary::resolve`]).
