@@ -1,6 +1,8 @@
 //! Where a swarm's runtimes run.
 
-use std::future::Future;
+use std::{future::Future, marker::PhantomData};
+
+use enum_map::EnumMap;
 
 use super::SwarmSpec;
 use crate::{
@@ -15,17 +17,35 @@ pub mod ssh;
 /// The port `zenoh-router` listens on: zenoh's default for routers.
 const ROUTER_PORT: u16 = 7447;
 
-/// The CLI runtime `runtime` of a swarm, started through `shim` (see [`SwarmBackend::runtime`]).
-fn cli_runtime<B, S>(shim: &Myrmic<B>, id: S) -> myrmic::StoppedRt<B>
-where
-    B: MyrmicBackend,
-    S: SwarmSpec,
-{
-    let tags = id.tags();
-    let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
-    shim.runtime(&tags)
-        .name(&format!("{id:?}"))
-        .persistent(id.persistent())
+/// What the test decides about each CLI runtime of a swarm: the tags it starts with, and whether
+/// it keeps its database across restarts (no `--tmp`). Shared by the backends that start their
+/// runtimes through the CLI.
+///
+/// Stored by the runtimes' [`enum_map::Enum::into_usize`] index rather than as `EnumMap`s: whether an
+/// `EnumMap` is `Send + Sync` depends on `S::Array`, which the compiler cannot see through in
+/// generic code, and [`SwarmBackend`] requires both.
+struct CliOptions<S> {
+    tags: Box<[&'static [&'static str]]>,
+    persistent: Box<[bool]>,
+    spec: PhantomData<S>,
+}
+
+impl<S: SwarmSpec> CliOptions<S> {
+    fn new(tags: EnumMap<S, &'static [&'static str]>, persistent: EnumMap<S, bool>) -> Self {
+        Self {
+            tags: tags.into_values().collect(),
+            persistent: persistent.into_values().collect(),
+            spec: PhantomData,
+        }
+    }
+
+    /// The CLI runtime `id`, started through `shim` (see [`SwarmBackend::runtime`]): named after
+    /// the id's `Debug` output, with its tags and persistence.
+    fn runtime<B: MyrmicBackend>(&self, shim: &Myrmic<B>, id: S) -> myrmic::StoppedRt<B> {
+        shim.runtime(self.tags[id.into_usize()])
+            .name(&format!("{id:?}"))
+            .persistent(self.persistent[id.into_usize()])
+    }
 }
 
 /// A client session on the router at `endpoint`. A client, unlike a peer, connects to nothing but
@@ -64,9 +84,8 @@ pub trait SwarmBackend<S: SwarmSpec>: Send + Sync {
     /// where the CLI of [`Self::client`] runs
     type Client: MyrmicBackend;
 
-    /// The runtime `id`, not started: named after the value's `Debug` output, with the tags
-    /// and persistence [`SwarmSpec`] gives it. Every call describes the same runtime, so starting
-    /// any of them brings back the same one.
+    /// The runtime `id`, not started. Every call describes the same runtime, so starting any of
+    /// them brings back the same one.
     fn runtime(&self, id: S) -> Self::Runtime;
 
     /// the CLI the test acts on the whole swarm through: it joins the swarm like

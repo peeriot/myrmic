@@ -4,7 +4,7 @@ use enum_map::EnumMap;
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 
-use super::{ROUTER_PORT, cli_runtime, router_session};
+use super::{CliOptions, ROUTER_PORT, router_session};
 use crate::{
     docker::{DockerDaemon, container::ManagedContainer, image::Image, network::ManagedNetwork},
     myrmic::{self, Myrmic},
@@ -31,6 +31,7 @@ pub struct Docker<S: SwarmSpec> {
     network: Arc<ManagedNetwork>,
     /// the CLI on the test's host, connected to the router
     client: Myrmic<myrmic::Local>,
+    options: CliOptions<S>,
 }
 
 /// The image's Dockerfile; its binaries come from the workspace build.
@@ -67,8 +68,14 @@ const ISOLATE_RULES: &str = "add table inet isolate; \
     add rule inet isolate output oif lo accept";
 
 impl<S: SwarmSpec> Docker<S> {
-    /// Create the swarm's network, a container per runtime and the router's container.
-    pub async fn init(dockerd: &DockerDaemon) -> Self {
+    /// Create the swarm's network, a container per runtime and the router's container. The
+    /// runtime `id` starts with the tags `tags[id]` and keeps its database across restarts if
+    /// `persistent[id]`.
+    pub async fn init(
+        dockerd: &DockerDaemon,
+        tags: EnumMap<S, &'static [&'static str]>,
+        persistent: EnumMap<S, bool>,
+    ) -> Self {
         let image = ensure_image(dockerd).await;
         let test_container = match std::env::var(TEST_CONTAINER) {
             Ok(id) => Some(id),
@@ -110,6 +117,7 @@ impl<S: SwarmSpec> Docker<S> {
             client: Myrmic::local_connected(router_endpoint(&router_ip)),
             router_ip,
             network,
+            options: CliOptions::new(tags, persistent),
         }
     }
 }
@@ -199,7 +207,8 @@ where
 
     /// in the runtime's container, the same one across restarts
     fn runtime(&self, id: S) -> myrmic::StoppedRt<myrmic::Docker> {
-        cli_runtime(&Myrmic::attach(self.container_map[id].clone()), id)
+        self.options
+            .runtime(&Myrmic::attach(self.container_map[id].clone()), id)
     }
 
     fn client(&self) -> Myrmic<myrmic::Local> {

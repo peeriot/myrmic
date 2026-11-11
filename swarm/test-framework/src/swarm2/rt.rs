@@ -274,7 +274,7 @@ pub trait IntoRuntimeMap {
     /// `rts.remove(&host).expect("host is running").kill()`
     fn into_map(self) -> HashMap<Self::Id, Self::Rt>
     where
-        Self::Id: Hash;
+        Self::Id: Hash + Eq;
 }
 
 impl<R, const N: usize> IntoRuntimeMap for [R; N]
@@ -304,7 +304,7 @@ where
 
     fn into_map(self) -> HashMap<R::Id, R>
     where
-        R::Id: Hash,
+        R::Id: Hash + Eq,
     {
         self.into_iter().map(|rt| (rt.get_id(), rt)).collect()
     }

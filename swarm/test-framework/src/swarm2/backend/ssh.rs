@@ -5,7 +5,7 @@ use std::{
 
 use enum_map::{Enum, EnumMap};
 
-use super::{ROUTER_PORT, cli_runtime, router_session};
+use super::{CliOptions, ROUTER_PORT, router_session};
 use crate::{
     myrmic::{self, Myrmic, backend::isolated_multicast_group},
     ssh_utils::RemoteBinary,
@@ -31,13 +31,22 @@ pub struct Ssh<S: Enum> {
     tunnel_endpoint: String,
     /// the CLI on the test's host, connected to the router through the tunnel
     client: Myrmic<myrmic::Local>,
+    options: CliOptions<S>,
 }
 
-impl<S: Enum> Ssh<S> {
+impl<S: SwarmSpec> Ssh<S> {
     /// Creates each runtime's isolation on its host, starts `zenoh-router` (at `client_entry`'s
     /// binary path) on `client_entry` and opens an SSH tunnel from a free local port to its port.
     /// Returns once both `ssh` processes are spawned, not once they are connected.
-    pub fn new(remotes: EnumMap<S, RemoteBinary>, client_entry: &RemoteBinary) -> Self {
+    ///
+    /// The runtime `id` starts with the tags `tags[id]` and keeps its database across restarts
+    /// if `persistent[id]`.
+    pub fn new(
+        remotes: EnumMap<S, RemoteBinary>,
+        client_entry: &RemoteBinary,
+        tags: EnumMap<S, &'static [&'static str]>,
+        persistent: EnumMap<S, bool>,
+    ) -> Self {
         let multicast_group = isolated_multicast_group();
         let shims = remotes.map(|_, remote| {
             Myrmic::ssh_isolated(
@@ -99,6 +108,7 @@ impl<S: Enum> Ssh<S> {
             tunnel,
             client: Myrmic::local_connected(tunnel_endpoint.clone()),
             tunnel_endpoint,
+            options: CliOptions::new(tags, persistent),
         }
     }
 }
@@ -129,7 +139,7 @@ where
 
     /// on the runtime's isolated CLI, the same one across restarts
     fn runtime(&self, id: S) -> myrmic::StoppedRt<myrmic::backend::Ssh> {
-        cli_runtime(&self.shims[id], id)
+        self.options.runtime(&self.shims[id], id)
     }
 
     fn client(&self) -> crate::myrmic::Myrmic<Self::Client> {

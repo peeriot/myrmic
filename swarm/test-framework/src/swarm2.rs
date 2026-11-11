@@ -4,14 +4,35 @@
 //! # Using it
 //!
 //! ```ignore
-//! use test_framework::runtime::{Kill, Running, Stopped};
-//! use test_framework::swarm2::{IntoRuntimeMap, Local, Swarm};
+//! use enum_map::EnumMap;
+//! use test_framework::{
+//!     runtime::{Kill, Stopped},
+//!     swarm2::{Local, Swarm},
+//! };
 //!
-//! let (swarm, [a, b, c]) = Swarm::<_, Node>::start(Local::new()).await?;
+//! #[derive(Clone, Copy, Debug, enum_map::Enum)]
+//! enum Node { A, B, C }
+//!
+//! /// what the tests of this file start their runtimes with
+//! fn local() -> Local<Node> {
+//!     // a closure with a return type: its `match` arms may be slices of different lengths
+//!     let tags = |id| -> &[&str] {
+//!         match id {
+//!             Node::A => &["gpu"],
+//!             Node::B | Node::C => &[],
+//!         }
+//!     };
+//!     Local::new(EnumMap::from_fn(tags), EnumMap::from_fn(|_| false))
+//! }
+//!
+//! let (swarm, [a, b, c]) = Swarm::start(local()).await?;
 //! let b = b.kill().await?; // stopped
 //! let b = b.start().await?; // running again; returns once the swarm is connected again
 //! ```
 //!
+//! - The spec is an enum naming the runtimes ([`SwarmSpec`]); how each starts (tags, persistence,
+//!   plugins) is what the backend's constructor takes, by id. A file whose tests share a spec
+//!   defines a function returning its backend, as above.
 //! - [`Swarm::start`] starts every runtime and hands the test one running handle per runtime, in
 //!   the order of the spec's variants, so an array pattern names them. [`Swarm::new`] hands out
 //!   stopped handles instead, for tests that start runtimes one after another
@@ -71,36 +92,21 @@ pub mod backend;
 mod check;
 mod rt;
 
-/// The makeup of a swarm: the implementing type names its runtimes, one value per runtime, and
-/// says how each one is started.
-///
-/// A test names its runtimes with an enum, one variant per runtime; deriving [`Enum`] makes its
-/// variants the swarm's runtimes, each once:
+/// The runtimes of a swarm: an enum whose variants name them, one variant per runtime. Every
+/// enum that derives what it needs is one; there is nothing to implement:
 ///
 /// ```ignore
-/// #[derive(Clone, Copy, PartialEq, Eq, Debug, enum_map::Enum)]
+/// #[derive(Clone, Copy, Debug, enum_map::Enum)]
 /// enum Node { Leader, Follower }
-///
-/// impl SwarmSpec for Node {
-///     fn tags(self) -> Vec<String> {
-///         match self {
-///             Node::Leader => vec!["leader".to_owned()],
-///             Node::Follower => vec![],
-///         }
-///     }
-///     fn persistent(self) -> bool { false }
-/// }
 /// ```
 ///
 /// A value's `Debug` output is its runtime's name, so distinct values must print distinctly. It
-/// is `Send + Sync` because the handles' `Send` futures hold it across their awaits.
-pub trait SwarmSpec: Enum + Copy + Eq + Debug + Send + Sync {
-    /// the tags the runtime is started with
-    fn tags(self) -> Vec<String>;
+/// is `Send + Sync` because the handles' `Send` futures hold it across their awaits. How each
+/// runtime starts is the backend's business: its constructor takes what it needs per runtime, by
+/// id (e.g. [`Local::new`]).
+pub trait SwarmSpec: Enum + Copy + Debug + Send + Sync {}
 
-    /// whether the runtime keeps its database across restarts (no `--tmp`)
-    fn persistent(self) -> bool;
-}
+impl<T: Enum + Copy + Debug + Send + Sync> SwarmSpec for T {}
 
 /// What a failed transition of a swarm runtime on `B` reports: the backend's runtime error, which
 /// also has to carry the connectivity check's [`Error::Timeout`].
