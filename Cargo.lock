@@ -10067,6 +10067,7 @@ dependencies = [
 name = "sorg-orchestration"
 version = "0.7.1"
 dependencies = [
+ "anyhow",
  "cell-protocol",
  "claims",
  "db-commons",
