@@ -1,5 +1,7 @@
-use std::net::TcpListener;
-use std::process::{Child, Stdio};
+use std::{
+    net::TcpListener,
+    process::{Child, Stdio},
+};
 
 use enum_map::{Enum, EnumMap};
 

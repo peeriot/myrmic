@@ -1,6 +1,4 @@
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{path::Path, sync::Arc, time::Duration};
 
 use enum_map::EnumMap;
 use sha2::{Digest, Sha256};

@@ -1,5 +1,7 @@
-use std::path::Path;
-use std::process::{Child, Command, Output, Stdio};
+use std::{
+    path::Path,
+    process::{Child, Command, Output, Stdio},
+};
 
 use sha2::{Digest, Sha256};
 

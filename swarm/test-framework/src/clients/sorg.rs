@@ -1,5 +1,7 @@
-use std::collections::HashSet;
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime},
+};
 
 use cell_protocol::{BlobHash, RuntimeId, Sri};
 use db_client::v1::{Client as DbClient, models::Scope};

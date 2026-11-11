@@ -45,8 +45,10 @@ macro_rules! assert_eventually {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::time::Duration;
+    use std::{
+        sync::atomic::{AtomicU32, Ordering},
+        time::Duration,
+    };
 
     use super::wait_until;
 

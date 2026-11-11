@@ -1,12 +1,9 @@
 //! Shim around the myrmic CLI (runtimes, deploys, telemetry) running on the host, on a remote
 //! host over SSH, or inside a docker container.
 
-use std::future::Future;
-use std::path::Path;
-use std::sync::Arc;
+use std::{future::Future, path::Path, sync::Arc};
 
-pub use backend::MyrmicBackend;
-pub use backend::{Docker, Local, Ssh};
+pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
 pub use debug::{DebugEntry, DebugListener, DebugLog};
 use myrmic_build::PlatformFamily;

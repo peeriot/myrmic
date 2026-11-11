@@ -1,13 +1,16 @@
 //! Streaming `myrmic telemetry debug --json` on any [`MyrmicBackend`].
 
-use std::process::Stdio;
-use std::time::Duration;
+use std::{process::Stdio, time::Duration};
 
 use serde::Deserialize as _;
-use swarm_telemetry::db::opentelemetry_proto::tonic::logs::v1::LogRecord;
-use swarm_telemetry::debug::{DebugCommand, DebugEvent};
-use tokio::io::{AsyncBufReadExt, BufReader, Lines};
-use tokio::process::ChildStdout;
+use swarm_telemetry::{
+    db::opentelemetry_proto::tonic::logs::v1::LogRecord,
+    debug::{DebugCommand, DebugEvent},
+};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader, Lines},
+    process::ChildStdout,
+};
 
 use super::{Myrmic, MyrmicBackend};
 

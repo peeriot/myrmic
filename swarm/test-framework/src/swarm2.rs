@@ -4,20 +4,17 @@
 //! The name is temporary: this replaces [`crate::swarm`] and takes over its name once that is
 //! gone.
 
-use std::collections::BTreeSet;
-use std::fmt::Debug;
-use std::future::Future;
-use std::time::Duration;
+use std::{collections::BTreeSet, fmt::Debug, future::Future, time::Duration};
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use db_client::v1::models::{Scope, Subject};
 use enum_map::{Array, Enum, EnumMap};
 use zenoh::config::ZenohId;
 
-pub use backend::docker::Docker;
-pub use backend::local::Local;
-pub use backend::ssh::Ssh;
-pub use backend::{Block, CutOff, FillDisk, Isolate, Readdress, SkewClock, SwarmBackend};
+pub use backend::{
+    Block, CutOff, FillDisk, Isolate, Readdress, SkewClock, SwarmBackend, docker::Docker,
+    local::Local, ssh::Ssh,
+};
 
 use crate::myrmic::{self, Error};
 

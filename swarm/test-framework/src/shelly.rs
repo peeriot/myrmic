@@ -4,8 +4,10 @@
 //! A plug answers over HTTPS with a certificate that isn't checked, and wants HTTP digest
 //! authentication as the user `admin`. `curl` does both, so the requests go through it.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
 
 /// How long a plug may take to answer.
 const REQUEST_TIMEOUT_SECS: &str = "10";

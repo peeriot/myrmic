@@ -3,8 +3,10 @@
 
 use cell_protocol::replication::runtime_tag;
 use enum_map::Enum;
-use test_framework::myrmic::{self, Error, Myrmic, cell::CellSpec};
-use test_framework::swarm2::{Local, Swarm, SwarmSpec};
+use test_framework::{
+    myrmic::{self, Error, Myrmic, cell::CellSpec},
+    swarm2::{Local, Swarm, SwarmSpec},
+};
 use zenoh::config::ZenohId;
 
 /// three runtimes without tags

@@ -1,6 +1,4 @@
-use std::ops::Deref;
-use std::path::Path;
-use std::sync::Arc;
+use std::{ops::Deref, path::Path, sync::Arc};
 
 use bollard::{
     Docker,
@@ -13,8 +11,10 @@ use bollard::{
 };
 use futures::StreamExt;
 
-use crate::CommandOutput;
-use crate::docker::{DockerDaemon, image::Image, network::ManagedNetwork, run_cleanup};
+use crate::{
+    CommandOutput,
+    docker::{DockerDaemon, image::Image, network::ManagedNetwork, run_cleanup},
+};
 
 #[derive(Clone)]
 /// a thin wrapper for interacting with a running docker container (address, networks, exec)

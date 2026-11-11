@@ -1,6 +1,8 @@
-use std::collections::BTreeSet;
-use std::sync::{Condvar, Mutex};
-use std::time::Duration;
+use std::{
+    collections::BTreeSet,
+    sync::{Condvar, Mutex},
+    time::Duration,
+};
 
 use super::Host;
 
@@ -55,8 +57,7 @@ impl Drop for HostLocks {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
-    use std::time::Duration;
+    use std::{sync::mpsc, time::Duration};
 
     use super::{Host, lock};
 

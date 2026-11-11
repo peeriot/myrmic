@@ -1,5 +1,7 @@
-use std::process::Output;
-use std::time::{Duration, Instant};
+use std::{
+    process::Output,
+    time::{Duration, Instant},
+};
 
 /// How long one attempt may take to connect: a host that is still booting doesn't answer at all.
 const CONNECT_TIMEOUT_SECS: &str = "5";

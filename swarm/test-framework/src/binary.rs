@@ -115,8 +115,10 @@ fn newest_build(target: &Path, name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::time::{Duration, SystemTime};
+    use std::{
+        fs::File,
+        time::{Duration, SystemTime},
+    };
 
     use super::resolve_in;
 

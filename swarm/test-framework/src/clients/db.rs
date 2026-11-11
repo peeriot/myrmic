@@ -9,13 +9,13 @@ use db_client::{
     Session,
     v1::{Client, models::Subject},
 };
-use swarm_telemetry::db::opentelemetry_proto::tonic::metrics::v1::Metric;
-use swarm_telemetry::db::opentelemetry_proto::tonic::{logs::v1::LogRecord, trace::v1::Span};
+use swarm_telemetry::db::opentelemetry_proto::tonic::{
+    logs::v1::LogRecord, metrics::v1::Metric, trace::v1::Span,
+};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use crate::SriAttribute;
-use crate::metrics::CellInteractionMetricsSnapshot;
+use crate::{SriAttribute, metrics::CellInteractionMetricsSnapshot};
 
 /// A ground-truth command-backlog snapshot for one cell — see [`DbHandle::cell_db_state`].
 pub struct CellDbState {
