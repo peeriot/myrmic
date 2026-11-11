@@ -10862,6 +10862,7 @@ dependencies = [
 name = "test-framework"
 version = "0.7.1"
 dependencies = [
+ "anyhow",
  "axum 0.8.9",
  "bollard",
  "bytes",
@@ -10893,6 +10894,7 @@ dependencies = [
  "test-control-common",
  "thiserror 2.0.21",
  "tokio",
+ "tracing-subscriber",
  "tryhard",
  "uuid",
  "zenoh",

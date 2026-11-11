@@ -59,9 +59,9 @@
 //! The core traits hold only what every kind of runtime can do: start, delete, and tell its zid.
 //! Anything a kind may not be able to do is a capability trait instead, the same way the swarm
 //! backends' faults are (see [`crate::swarm2::backend`]). For example, a runtime whose node runs
-//! inside the test process could not be ended abruptly (closing its zenoh session always says
-//! goodbye) or frozen (there is no process of its own to stop), so it would implement neither
-//! [`Kill`] nor [`Pause`].
+//! inside the test process ([`crate::in_process`]) cannot be ended abruptly (closing its zenoh
+//! session always says goodbye) or frozen (there is no process of its own to stop), so it
+//! implements neither [`Kill`] nor [`Pause`].
 //!
 //! A stopped value holds everything starting needs, so a running value has to hold it as well, to
 //! hand it back when it stops. For the CLI, the stopped type is the set of `runtimes start`
@@ -72,7 +72,8 @@
 //! swarm's handles share its state with the swarm (see [`crate::swarm2`]).
 //!
 //! Each kind reports failures in its own error type ([`Stopped::Error`], shared by both states of
-//! a kind): a CLI runtime fails with what the CLI said ([`crate::myrmic::Error`]).
+//! a kind): a CLI runtime fails with what the CLI said ([`crate::myrmic::Error`]), an in-process
+//! node with what its startup reported.
 
 use std::future::Future;
 

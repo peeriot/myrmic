@@ -13,6 +13,8 @@
 //! - **A runtime's lifecycle:** [`runtime`]. Start, stop, kill and pause, with the stopped and
 //!   the running state as separate types, so a call in the wrong state does not compile. The
 //!   same handles serve single-runtime tests and swarms.
+//! - **A node inside the test process:** [`in_process`], for what a CLI runtime cannot give: a
+//!   node with only some plugins, a zid the test chooses, its log events in the test process.
 //! - **Several runtimes:** [`swarm2`]. A [`swarm2::Swarm`] starts the runtimes a
 //!   [`swarm2::SwarmSpec`] names on a backend (the host, docker containers, remote hosts over
 //!   SSH), waits until they are connected, and offers the faults its backend can produce as
@@ -38,6 +40,7 @@ pub mod cell;
 pub mod clients;
 pub mod compose;
 pub mod docker;
+pub mod in_process;
 pub mod latency;
 pub mod metrics;
 pub mod myrmic;
