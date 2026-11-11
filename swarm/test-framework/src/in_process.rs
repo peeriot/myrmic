@@ -28,7 +28,8 @@
 //! - Each [`StoppedRt::new`] scouts on a multicast group of its own, so a node started by hand
 //!   sees nothing else and nothing sees it. Nodes that should see each other get one group
 //!   through [`StoppedRt::multicast_group`]; [`RunningRt::get_zenoh_config`] gives a session on
-//!   the node's group.
+//!   the node's group. Several nodes as a swarm, with the swarm's connectivity check and CLI,
+//!   are [`crate::swarm2::InProcess`]'s job.
 //! - Its database is in memory: every start begins empty. A test that needs data to survive a
 //!   restart wants a [`crate::myrmic`] runtime with `persistent`.
 //! - It implements neither [`runtime::Kill`] nor [`runtime::Pause`]: closing its zenoh session
@@ -60,7 +61,8 @@ use zenoh::config::ZenohId;
 use crate::{myrmic::backend::isolated_multicast_group, runtime};
 
 /// An in-process node that is not running: never started yet, or deleted. A builder for the node;
-/// see [the module docs](self).
+/// see [the module docs](self). A clone describes the same node, under the same zid.
+#[derive(Clone)]
 pub struct StoppedRt {
     zid: ZenohId,
     multicast_group: String,

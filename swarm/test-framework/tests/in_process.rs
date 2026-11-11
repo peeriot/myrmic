@@ -1,13 +1,23 @@
-//! Tests of [`test_framework::in_process`].
+//! Tests of [`test_framework::in_process`] and its swarm backend.
 
 use std::time::Duration;
 
+use enum_map::{Enum, EnumMap};
 use test_framework::{
     assert_eventually,
     in_process::StoppedRt,
     runtime::{Running, Stopped},
+    swarm2::{InProcess, Swarm},
 };
 use zenoh::config::ZenohId;
+
+/// three nodes
+#[derive(Clone, Copy, Debug, Enum)]
+enum Node {
+    A,
+    B,
+    C,
+}
 
 /// How long a node may take to appear to, or leave, a peer on its group.
 const SEEN: Duration = Duration::from_secs(10);
@@ -51,4 +61,14 @@ async fn a_restarted_node_keeps_its_zid() {
 /// whether `session` has the node `zid` among its peers
 async fn sees(session: &zenoh::Session, zid: ZenohId) -> bool {
     session.info().peers_zid().await.any(|peer| peer == zid)
+}
+
+/// In-process nodes form a swarm: its start checks that exactly they answer the status query, each
+/// linked to the others.
+#[tokio::test(flavor = "multi_thread")]
+async fn in_process_nodes_form_a_swarm() {
+    let nodes = EnumMap::from_fn(|_| StoppedRt::new().orchestration().db().execution());
+    let (_swarm, _runtimes) = Swarm::<_, Node>::start(InProcess::new(nodes))
+        .await
+        .unwrap();
 }

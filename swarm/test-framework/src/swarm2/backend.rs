@@ -11,6 +11,7 @@ use crate::{
 };
 
 pub mod docker;
+pub mod in_process;
 pub mod local;
 pub mod ssh;
 

@@ -17,7 +17,7 @@
 //!   node with only some plugins, a zid the test chooses, its log events in the test process.
 //! - **Several runtimes:** [`swarm2`]. A [`swarm2::Swarm`] starts the runtimes a
 //!   [`swarm2::SwarmSpec`] names on a backend (the host, docker containers, remote hosts over
-//!   SSH), waits until they are connected, and offers the faults its backend can produce as
+//!   SSH, nodes inside the test process), waits until they are connected, and offers the faults its backend can produce as
 //!   capability traits ([`swarm2::backend`]).
 //! - **Talking to a swarm's services directly:** [`clients`] (db, sorg), for what the CLI does
 //!   not cover.

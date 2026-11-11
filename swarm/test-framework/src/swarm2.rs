@@ -79,7 +79,7 @@ use zenoh::config::ZenohId;
 
 pub use backend::{
     Block, CutOff, FillDisk, Isolate, Readdress, SkewClock, SwarmBackend, docker::Docker,
-    local::Local, ssh::Ssh,
+    in_process::InProcess, local::Local, ssh::Ssh,
 };
 pub use rt::{IntoRuntimeMap, RunningRt, StoppedRt, SwarmRt, start_together};
 

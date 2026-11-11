@@ -74,6 +74,16 @@ impl Local {
         }
     }
 
+    /// The multicast group (`<address>:<port>`) this isolated backend's runtimes scout on, e.g. to
+    /// put other nodes on it. Panics for a backend that is not isolated: it has no group of its
+    /// own.
+    pub fn get_multicast_group(&self) -> &str {
+        let Discovery::Isolated(isolation) = &self.discovery else {
+            panic!("only an isolated backend has a multicast group of its own");
+        };
+        &isolation.multicast_group
+    }
+
     /// A zenoh peer config that finds the swarm the way the CLI does, e.g. for a session to
     /// create [`crate::clients::db::DbHandle`] or [`crate::clients::sorg::SorgHandle`] with.
     ///
