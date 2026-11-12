@@ -1,10 +1,10 @@
-use enum_map::{Enum, EnumMap};
 use sorg_tests::set_up_log_tracker;
 use test_framework::{
-    in_process::StoppedRt,
+    in_process,
+    overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
-    swarm2::{InProcess, Swarm},
+    swarm3::{self, Swarm},
 };
 use zenoh::config::ZenohId;
 
@@ -12,31 +12,27 @@ const ID_ONE: &str = "37c72f467bc9c77f41b73fe16f054741";
 const ID_TWO: &str = "2cc8a35064c529faaa1924134d13e2ad";
 const ID_THREE: &str = "1619e204bc90ec6fa7870dac7842dac5";
 
-/// three nodes; by `ZenohId`'s order, which picks the leader among the orchestrators,
-/// `A < B < C`
-#[derive(Clone, Copy, Debug, Enum)]
-enum Node {
-    A,
-    B,
-    C,
-}
-
-/// an in-process swarm of three orchestrators
-fn orchestrators() -> InProcess<Node> {
-    InProcess::new(EnumMap::from_fn(|id| match id {
-        Node::A => StoppedRt::new().orchestration().zid(zid(ID_ONE)),
-        Node::B => StoppedRt::new().orchestration().db().zid(zid(ID_TWO)),
-        Node::C => StoppedRt::new().orchestration().zid(zid(ID_THREE)),
-    }))
-}
-
-/// an in-process swarm like [`orchestrators`], but `A` runs only the execution plugin
-fn exec_and_orchestrators() -> InProcess<Node> {
-    InProcess::new(EnumMap::from_fn(|id| match id {
-        Node::A => StoppedRt::new().execution().zid(zid(ID_ONE)),
-        Node::B => StoppedRt::new().orchestration().db().zid(zid(ID_TWO)),
-        Node::C => StoppedRt::new().orchestration().zid(zid(ID_THREE)),
-    }))
+/// A swarm of three in-process nodes `a`, `b`, `c`, none started: `b` an orchestrator with the
+/// db, `c` an orchestrator, and `a` whatever `a_plugins` adds. By `ZenohId`'s order, which picks
+/// the leader among the orchestrators, `a < b < c`.
+async fn three_nodes(
+    a_plugins: fn(in_process::StoppedRt) -> in_process::StoppedRt,
+) -> (Swarm, [swarm3::StoppedRt<in_process::StoppedRt>; 3]) {
+    let group = Overlay::new().new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let a = swarm.add(a_plugins(in_process::StoppedRt::new(&group)).zid(zid(ID_ONE)));
+    let b = swarm.add(
+        in_process::StoppedRt::new(&group)
+            .orchestration()
+            .db()
+            .zid(zid(ID_TWO)),
+    );
+    let c = swarm.add(
+        in_process::StoppedRt::new(&group)
+            .orchestration()
+            .zid(zid(ID_THREE)),
+    );
+    (swarm, [a, b, c])
 }
 
 /// one of the test's zids
@@ -48,14 +44,14 @@ fn zid(id: &str) -> ZenohId {
 async fn correct_leadership_handoff() -> anyhow::Result<()> {
     // Arrange - set up log tracker and start the orch with middle prio
     let tracker = set_up_log_tracker();
-    let (_swarm, [a, b, c]) = Swarm::new(orchestrators()).await;
+    let (swarm, [a, b, c]) = three_nodes(in_process::StoppedRt::orchestration).await;
     let _b = b.start().await?;
 
     // Assert I - when nobody is around, we are the leader
     assert!(tracker.is_leader(ID_TWO).await);
 
     // Act I - spin up two other orchs, one of them with a higher prio
-    start_runtimes!(a, c);
+    start_runtimes!(swarm; a, c);
 
     // Assert II - we should not be leader any more
     assert!(tracker.is_not_leader(ID_TWO).await);
@@ -90,14 +86,14 @@ async fn correct_leadership_handoff() -> anyhow::Result<()> {
 async fn non_orch_nodes_ignored_for_leader_selection() -> anyhow::Result<()> {
     // Arrange - set up log tracker and start the orch with middle prio
     let tracker = set_up_log_tracker();
-    let (_swarm, [a, b, c]) = Swarm::new(exec_and_orchestrators()).await;
+    let (swarm, [a, b, c]) = three_nodes(in_process::StoppedRt::execution).await;
     let _b = b.start().await?;
 
     // Assert I - when nobody is around, we are the leader
     assert!(tracker.is_leader(ID_TWO).await);
 
     // Act I - spin up two other nodes (the exec has a "higher" ID)
-    start_runtimes!(a, c);
+    start_runtimes!(swarm; a, c);
 
     // Assert II - we should still be leader
     assert!(tracker.is_leader(ID_TWO).await);

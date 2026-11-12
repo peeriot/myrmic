@@ -5,11 +5,12 @@
 //!
 //! - [`Myrmic`] operates a swarm: it deploys cells and apps, sends commands, reads status and
 //!   telemetry. It is the same whether or not it ever starts a runtime itself; a shim that only
-//!   operates a swarm running elsewhere is common (e.g. [`Myrmic::local_connected`]).
+//!   operates a swarm is common (e.g. [`crate::swarm3::Swarm::get_client`]).
 //! - [`StoppedRt`] and [`RunningRt`] are one runtime started with `myrmic runtimes start`, in
 //!   its two states (see [`crate::runtime`] for how a test moves it between them). They come from
-//!   [`Myrmic::runtime`], whose options (name, tags, `persistent`, config) the stopped state
-//!   carries, so starting it again starts the same runtime.
+//!   [`Myrmic::runtime`], whose options (name, tags, `persistent`) the stopped state carries, so
+//!   starting it again starts the same runtime. Which other runtimes it links to is not an option
+//!   of its own: it is a member of an [`crate::overlay::Overlay`], which tells it at start.
 //!
 //! Both happen to go through the CLI, which is why a runtime handle holds a clone of the
 //! [`Myrmic`] that created it: starting and stopping are `runtimes start` and `runtimes delete`
@@ -27,7 +28,7 @@
 //! [`MyrmicBackend`] requires `Send + Sync` because the runtime handles' transitions return `Send`
 //! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
-use std::{future::Future, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
@@ -40,7 +41,9 @@ use crate::{
     clients::sorg::SorgHandle,
     docker::container::ManagedContainer,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
+    overlay::{MemberId, MulticastGroup, Overlay},
     runtime,
+    wait::{DEFAULT_TIMEOUT, Timeout, wait_for},
 };
 
 pub mod backend;
@@ -71,8 +74,8 @@ pub enum Error {
     #[error("{stderr}")]
     Cli { stderr: String },
     /// the CLI succeeded, but the state it leads to did not show up in time
-    #[error("timed out waiting for {waited_for}")]
-    Timeout { waited_for: String },
+    #[error(transparent)]
+    Timeout(#[from] Timeout),
 }
 
 /// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
@@ -81,50 +84,33 @@ pub enum Error {
 /// Every operation returns a [`Result`]; a test `.unwrap()`s or `.expect(..)`s what it assumes to
 /// succeed. A command that cannot be started at all (binary, `ssh` or `docker` missing, host or
 /// daemon unreachable) is broken test infrastructure, not a result, and panics.
+///
+/// A shim is on one multicast group of an [`crate::overlay::Overlay`]: every CLI call finds the
+/// runtimes there (`--multicast-group`), and every runtime it starts scouts there, so the two
+/// can't drift apart. Runtimes of one machine on two groups come from two shims.
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
     /// the myrmic binary, as the backend's commands find it on the target
     binary: String,
+    group: MulticastGroup,
 }
 
 impl Myrmic<Local> {
-    /// create a shim around a locally built myrmic binary (see [`crate::resolve_binary!`])
-    pub fn local() -> Self {
-        Self::local_on(Local::default())
+    /// create a shim around a locally built myrmic binary (see [`crate::resolve_binary!`]), on
+    /// `group`
+    pub fn local(group: &MulticastGroup) -> Self {
+        Self::local_on(Local::default(), group)
     }
 
-    /// Like [`Self::local`], but nothing outside this shim and its clones sees its runtime, and
-    /// it sees no other runtime, so tests using it can run in parallel.
-    ///
-    /// The shim gets its own state directories and its own multicast group, on which its
-    /// runtimes scout and every CLI call (through `DEFAULT_MYRMIC_MULTICAST_GROUP`) and
-    /// sessions from [`Local::zenoh_config`] discover them, the same way as on the default group.
-    /// [`StoppedRt::config`] is not available, the shim generates the config itself.
-    pub fn local_isolated() -> Self {
-        Self::local_on(Local::isolated())
+    /// Like [`Self::local`], but on state directories of its own (runtime identities, databases,
+    /// pid files), so tests using it can run in parallel.
+    pub fn local_isolated(group: &MulticastGroup) -> Self {
+        Self::local_on(Local::isolated(), group)
     }
 
-    /// Like [`Self::local`], but every CLI call (through `DEFAULT_MYRMIC_CONNECT`) and sessions
-    /// from [`Local::zenoh_config`] reach the swarm through `endpoint` (e.g. `tcp/192.0.2.10:7447`,
-    /// a router's) instead of by multicast scouting. The swarm runs elsewhere: the shim starts no
-    /// runtime.
-    pub fn local_connected(endpoint: impl Into<String>) -> Self {
-        Self::local_on(Local::connected(endpoint.into()))
-    }
-
-    /// A shim on this [`Self::local_isolated`] shim's state directories but on a multicast group
-    /// of its own. A runtime it starts has the identity and database it has on this shim, but
-    /// reaches none of this shim's runtimes, nor those of another cut-off shim.
-    pub fn cut_off(&self) -> Self {
-        Self {
-            backend: self.backend.cut_off(),
-            binary: self.binary.clone(),
-        }
-    }
-
-    /// the locally built myrmic binary on `backend`
-    fn local_on(backend: Local) -> Self {
+    /// the locally built myrmic binary on `backend`, on `group`
+    fn local_on(backend: Local, group: &MulticastGroup) -> Self {
         let binary = crate::resolve_binary!("myrmic");
         Self {
             backend,
@@ -132,51 +118,41 @@ impl Myrmic<Local> {
                 .to_str()
                 .unwrap_or_else(|| panic!("myrmic binary path {} is not UTF-8", binary.display()))
                 .to_owned(),
+            group: group.clone(),
         }
     }
 }
 
 impl Myrmic<Docker> {
     /// create a shim that runs the myrmic CLI inside `container`, which has `myrmic` on its
-    /// `PATH`; the container is removed once the last shim or guard using it drops
-    pub fn attach(container: Arc<ManagedContainer>) -> Self {
+    /// `PATH`, on `group`; the container is removed once the last shim or guard using it drops
+    pub fn attach(container: Arc<ManagedContainer>, group: &MulticastGroup) -> Self {
         Self {
             backend: Docker::attach(container),
             binary: "myrmic".to_owned(),
+            group: group.clone(),
         }
     }
 }
 
 impl Myrmic<Ssh> {
     /// create a shim that runs the myrmic CLI on `host` over SSH, resolving `myrmic` on the
-    /// remote user's `PATH`
-    pub fn ssh(host: impl Into<String>) -> Self {
-        Self {
-            backend: Ssh::new(host),
-            binary: "myrmic".to_owned(),
-        }
+    /// remote user's `PATH`, on `group`
+    pub fn ssh(host: impl Into<String>, group: &MulticastGroup) -> Self {
+        Self::ssh_at(host, "myrmic", group)
     }
 
     /// like [`Self::ssh`], but the remote myrmic binary lives at `binary` rather than on `PATH`
     /// (e.g. a path a benchmark harness `scp`'d it to)
-    pub fn ssh_at(host: impl Into<String>, binary: impl Into<String>) -> Self {
+    pub fn ssh_at(
+        host: impl Into<String>,
+        binary: impl Into<String>,
+        group: &MulticastGroup,
+    ) -> Self {
         Self {
             backend: Ssh::new(host),
             binary: binary.into(),
-        }
-    }
-
-    /// Like [`Self::ssh_at`], but isolated like [`Self::local_isolated`]: on state directories
-    /// of its own on `host`, removed once the last clone of this shim is dropped, and on
-    /// `multicast_group`, which the runtimes of one swarm share.
-    pub(crate) fn ssh_isolated(
-        host: impl Into<String>,
-        binary: impl Into<String>,
-        multicast_group: String,
-    ) -> Self {
-        Self {
-            backend: Ssh::isolated(host, multicast_group),
-            binary: binary.into(),
+            group: group.clone(),
         }
     }
 }
@@ -190,17 +166,16 @@ where
         &self.backend
     }
 
-    /// a runtime with `tags` on this shim, not started yet; start it with
-    /// [`runtime::Stopped::start`]
-    pub fn runtime(&self, tags: &[&str]) -> StoppedRt<B> {
+    /// A runtime on this shim, not started yet, as a new member of the shim's overlay that scouts
+    /// on the shim's group; start it with [`runtime::Stopped::start`].
+    pub fn runtime(&self) -> StoppedRt<B> {
         StoppedRt {
             myrmic: self.clone(),
-            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+            overlay: self.group.get_overlay().clone(),
+            member_id: self.group.add_member(),
+            tags: vec![],
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
-            config: None,
-            connect: vec![],
-            listen: vec![],
         }
     }
 
@@ -304,7 +279,10 @@ where
 
     /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
-        let output = self.run_program(&self.binary, args).await;
+        let group = self.group.get_address();
+        let output = self
+            .run_program(&self.binary, &on_group(&group, args))
+            .await;
         if output.success {
             Ok(output)
         } else {
@@ -329,7 +307,8 @@ where
 
     /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
-        self.run_program_blocking(&self.binary, args)
+        let group = self.group.get_address();
+        self.run_program_blocking(&self.binary, &on_group(&group, args))
     }
 
     /// Blocking run of `program args` on the target for `Drop`, returning the raw output. A
@@ -371,30 +350,23 @@ where
         } else {
             format!("SRI `{sri}` to leave `cells status`")
         };
-        wait_for(waited_for, || async {
-            Ok(self.is_sri_deployed(sri).await? == deployed)
+        // a failing `cells status` ends the wait with its error
+        wait_for(DEFAULT_TIMEOUT, &waited_for, || async {
+            match self.is_sri_deployed(sri).await {
+                Ok(is_deployed) => (is_deployed == deployed).then_some(Ok(())),
+                Err(err) => Some(Err(err)),
+            }
         })
-        .await
+        .await?
     }
 }
 
-/// Poll `condition` until it holds, for at most [`crate::wait::DEFAULT_TIMEOUT`]. A failing poll
-/// ends the wait with its error.
-async fn wait_for<F, Fut>(waited_for: String, mut condition: F) -> Result<(), Error>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<bool, Error>>,
-{
-    let polled = tokio::time::timeout(crate::wait::DEFAULT_TIMEOUT, async {
-        loop {
-            if condition().await? {
-                return Ok(());
-            }
-            tokio::time::sleep(crate::wait::DEFAULT_POLL_INTERVAL).await;
-        }
-    })
-    .await;
-    polled.unwrap_or(Err(Error::Timeout { waited_for }))
+/// `args` of a `myrmic` call, behind `--multicast-group group`: the shim's group, on which the CLI
+/// finds the runtimes
+fn on_group<'a>(group: &'a str, args: &[&'a str]) -> Vec<&'a str> {
+    let mut on_group = vec!["--multicast-group", group];
+    on_group.extend(args);
+    on_group
 }
 
 /// `path` as a CLI argument; arguments are strings so the ssh backend can quote them
@@ -463,18 +435,24 @@ fn started_runtime_zid(stderr: &str, name: &str) -> Option<zenoh::config::ZenohI
 #[derive(Clone)]
 pub struct StoppedRt<B> {
     myrmic: Myrmic<B>,
+    /// the overlay the runtime is a member of, which tells it its zenoh links at start
+    overlay: Overlay,
+    member_id: MemberId,
     tags: Vec<String>,
     name: String,
     persistent: bool,
-    config: Option<String>,
-    connect: Vec<String>,
-    listen: Vec<String>,
 }
 
 impl<B> StoppedRt<B>
 where
     B: MyrmicBackend,
 {
+    /// `--tag` for each of `tags`; defaults to none
+    pub fn tags(mut self, tags: &[&str]) -> Self {
+        self.tags = tags.iter().map(|tag| (*tag).to_owned()).collect();
+        self
+    }
+
     /// `--name`; defaults to a random UUID. Set a fixed name for a runtime that is started again
     /// under the same identity (restarts, rack hosts).
     pub fn name(mut self, name: &str) -> Self {
@@ -491,26 +469,6 @@ where
         self.persistent = persistent;
         self
     }
-
-    /// `--connect`: a peer endpoint the runtime connects to, merged with its config file's;
-    /// repeatable
-    pub fn connect(mut self, endpoint: &str) -> Self {
-        self.connect.push(endpoint.to_owned());
-        self
-    }
-
-    /// `--listen`: an endpoint the runtime listens on, merged with its config file's; repeatable
-    pub fn listen(mut self, endpoint: &str) -> Self {
-        self.listen.push(endpoint.to_owned());
-        self
-    }
-
-    /// a config file for `myrmic runtimes start <path>`, already present on the target (e.g. to
-    /// pin the zenoh listen port, or to set `db.directory`)
-    pub fn config(mut self, path: &str) -> Self {
-        self.config = Some(path.to_owned());
-        self
-    }
 }
 
 impl<B> runtime::Stopped for StoppedRt<B>
@@ -521,26 +479,24 @@ where
 
     type Running = RunningRt<B>;
 
-    /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] [--connect
-    /// `endpoint`...] [--listen `endpoint`...] [`config`]
+    /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
+    /// `config` sets what the overlay tells the runtime: the group it scouts on
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
     async fn start(self) -> Result<RunningRt<B>, Error> {
+        let group = self.overlay.get_group_of(self.member_id);
+        // JSON is YAML, which `runtimes start` parses
+        let config = serde_json::json!({
+            "zenoh": {
+                "scouting": { "multicast": { "address": group.get_address() } },
+            },
+        })
+        .to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the
         // start returns
-        let backend_config = match self.myrmic.backend.runtime_config() {
-            Some(content) => {
-                assert!(
-                    self.config.is_none(),
-                    "the backend sets the runtime config itself"
-                );
-                let dir = TargetTempDir::create(&self.myrmic, "myrmic-runtime-config").await;
-                let path = dir.write("runtime.yaml", &content).await;
-                Some((dir, path))
-            }
-            None => None,
-        };
+        let config_dir = TargetTempDir::create(&self.myrmic, "myrmic-runtime-config").await;
+        let config_path = config_dir.write("runtime.yaml", &config).await;
         let mut args = vec!["runtimes", "start", "-d", "--name", &self.name];
         if !self.persistent {
             args.push("--tmp");
@@ -548,18 +504,7 @@ where
         for tag in &self.tags {
             args.extend(["--tag", tag]);
         }
-        for endpoint in &self.connect {
-            args.extend(["--connect", endpoint]);
-        }
-        for endpoint in &self.listen {
-            args.extend(["--listen", endpoint]);
-        }
-        if let Some(config) = &self.config {
-            args.push(config);
-        }
-        if let Some((_, path)) = &backend_config {
-            args.push(path_arg(path));
-        }
+        args.push(path_arg(&config_path));
         let output = self.myrmic.run(&args).await?;
         let Some(zid) = started_runtime_zid(&output.stderr, &self.name) else {
             // The daemon runs, but there is no RunningRt yet whose drop would delete it.
@@ -570,6 +515,10 @@ where
             );
         };
         Ok(RunningRt { stopped: self, zid })
+    }
+
+    fn get_member_id(&self) -> MemberId {
+        self.member_id
     }
 }
 

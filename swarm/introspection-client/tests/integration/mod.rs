@@ -1,6 +1,9 @@
 use introspection_client::v1::{Client, PluginInformation};
 use introspection_common::v1::NodeStatus;
-use test_framework::{wait::DEFAULT_TIMEOUT, wait_for};
+use test_framework::{
+    wait::{DEFAULT_TIMEOUT, Timeout},
+    wait_for,
+};
 use zenoh::config::ZenohId;
 
 mod membership;
@@ -20,7 +23,7 @@ fn assert_plugin_configured(plugins: &[PluginInformation], name: &str) {
 /// A session that was just opened has not necessarily discovered every node yet,
 /// and the query only reaches the nodes it already knows about, so the first
 /// answer can come back short. The caller still asserts the exact count it wants.
-async fn wait_for_swarm_status(client: &Client, count: usize) -> Vec<NodeStatus> {
+async fn wait_for_swarm_status(client: &Client, count: usize) -> Result<Vec<NodeStatus>, Timeout> {
     wait_for(
         DEFAULT_TIMEOUT,
         &format!("{count} nodes in swarm_status()"),
@@ -40,7 +43,7 @@ async fn wait_for_swarm_status(client: &Client, count: usize) -> Vec<NodeStatus>
 /// A runtime is ready when its start returns, but the observing node only lists
 /// it once its introspection plugin has seen it join - a moment later, longer on
 /// a loaded machine.
-async fn wait_for_current_node(client: &Client, id: ZenohId) {
+async fn wait_for_current_node(client: &Client, id: ZenohId) -> Result<(), Timeout> {
     wait_for(
         DEFAULT_TIMEOUT,
         &format!("node {id} in current_nodes()"),
@@ -52,5 +55,5 @@ async fn wait_for_current_node(client: &Client, id: ZenohId) {
             nodes.iter().any(|node| node.id == id).then_some(())
         },
     )
-    .await;
+    .await
 }

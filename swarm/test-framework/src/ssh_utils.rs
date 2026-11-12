@@ -1,6 +1,6 @@
-//! Preparing remote hosts for a swarm that runs on them over SSH (see
-//! [`crate::swarm2::backend::ssh::Ssh`]), waiting for one to be back after a reboot, and the SSH
-//! helpers every SSH connection the test-framework opens shares.
+//! Preparing remote hosts for runtimes that run on them over SSH (see
+//! [`crate::myrmic::Ssh`]), waiting for one to be back after a reboot, and the SSH helpers every
+//! SSH connection the test-framework opens shares.
 
 mod lock;
 mod upload;

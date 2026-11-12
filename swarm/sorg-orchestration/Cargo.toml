@@ -36,7 +36,6 @@ sorg-client = { path = "../sorg-client" }
 filestore-client = { path = "../filestore-client" }
 sorg-tests = { path = "../sorg-tests" }
 test-framework = { workspace = true }
-enum-map = { workspace = true }
 anyhow = { workspace = true }
 db-commons = { workspace = true, features = ["models", "topics"] }
 uhlc = { workspace = true }

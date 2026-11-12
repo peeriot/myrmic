@@ -10,26 +10,29 @@
 //! # Using it
 //!
 //! ```ignore
-//! use test_framework::in_process::StoppedRt;
-//! use test_framework::runtime::{Running, Stopped};
+//! use test_framework::{
+//!     in_process::StoppedRt,
+//!     overlay::Overlay,
+//!     runtime::{Running, Stopped},
+//! };
 //!
-//! let rt = StoppedRt::new().orchestration().db().start().await?; // running
-//! let session = zenoh::open(rt.get_zenoh_config()).await?; // a peer on the node's group
+//! let group = Overlay::new().new_multicast_group();
+//! let rt = StoppedRt::new(&group).orchestration().db().start().await?; // running
+//! let session = zenoh::open(group.get_zenoh_config()).await.unwrap(); // a peer on its group
 //! let rt = rt.delete().await?; // stopped: the node has left the network
 //! let rt = rt.start().await?; // running again, under the same zid
 //! ```
 //!
-//! - [`StoppedRt`] is a builder: it describes the whole node (plugins, zid, multicast group), and
-//!   [`runtime::Stopped::start`] assembles the node's config from it.
+//! - [`StoppedRt`] is a builder: it describes the whole node (plugins, zid, mode), and
+//!   [`runtime::Stopped::start`] assembles the node's config from it, with the group its overlay
+//!   gives it.
 //! - A new [`StoppedRt`] runs no plugin; each plugin method adds one with its default config.
 //! - Its zid is random but fixed at [`StoppedRt::new`], so starting it again brings back the same
 //!   node. [`StoppedRt::zid`] sets a chosen one, for tests where the zid itself matters (an
 //!   orchestrator's zid is its leadership priority).
-//! - Each [`StoppedRt::new`] scouts on a multicast group of its own, so a node started by hand
-//!   sees nothing else and nothing sees it. Nodes that should see each other get one group
-//!   through [`StoppedRt::multicast_group`]; [`RunningRt::get_zenoh_config`] gives a session on
-//!   the node's group. Several nodes as a swarm, with the swarm's connectivity check and CLI,
-//!   are [`crate::swarm2::InProcess`]'s job.
+//! - [`StoppedRt::new`] makes the node a member of a group's [`crate::overlay::Overlay`]: it
+//!   scouts on that group, and sees exactly the other runtimes on it. Several runtimes as a swarm,
+//!   with the swarm's connectivity check and CLI, are [`crate::swarm3`]'s job.
 //! - Its database is in memory: every start begins empty. A test that needs data to survive a
 //!   restart wants a [`crate::myrmic`] runtime with `persistent`.
 //! - It has neither `kill` nor `pause` (unlike [`crate::myrmic::RunningRt`]): closing its zenoh
@@ -58,14 +61,18 @@
 
 use zenoh::config::{WhatAmI, ZenohId};
 
-use crate::{myrmic::backend::isolated_multicast_group, runtime};
+use crate::{
+    overlay::{MemberId, MulticastGroup, Overlay},
+    runtime,
+};
 
 /// An in-process node that is not running: never started yet, or deleted. A builder for the node;
-/// see [the module docs](self). A clone describes the same node, under the same zid.
-#[derive(Clone)]
+/// see [the module docs](self).
 pub struct StoppedRt {
     zid: ZenohId,
-    multicast_group: String,
+    /// the overlay the node is a member of, which tells it its group at start
+    overlay: Overlay,
+    member_id: MemberId,
     orchestration: bool,
     db: bool,
     execution: bool,
@@ -74,13 +81,14 @@ pub struct StoppedRt {
 }
 
 impl StoppedRt {
-    /// A node without plugins, under a random zid it keeps across starts, on a multicast group of
-    /// its own.
-    pub fn new() -> Self {
+    /// A node without plugins, under a random zid it keeps across starts, as a new member of
+    /// `group`'s overlay that scouts on `group`.
+    pub fn new(group: &MulticastGroup) -> Self {
         Self {
             // `ZenohId`'s default is a random id
             zid: ZenohId::default(),
-            multicast_group: isolated_multicast_group(),
+            overlay: group.get_overlay().clone(),
+            member_id: group.add_member(),
             orchestration: false,
             db: false,
             execution: false,
@@ -94,23 +102,11 @@ impl StoppedRt {
         self
     }
 
-    /// The multicast group (`<address>:<port>`) the node scouts on; defaults to one of its own.
-    /// Nodes that should see each other get the same group.
-    pub fn multicast_group(mut self, group: &str) -> Self {
-        group.clone_into(&mut self.multicast_group);
-        self
-    }
-
     /// Run in zenoh's router mode instead of as a peer, listening on a random port (zenoh's
     /// default for routers is the fixed 7447, which parallel tests would share).
     pub fn router(mut self) -> Self {
         self.mode = WhatAmI::Router;
         self
-    }
-
-    /// the multicast group (`<address>:<port>`) the node scouts on, e.g. to put other nodes on it
-    pub fn get_multicast_group(&self) -> &str {
-        &self.multicast_group
     }
 
     /// run the orchestration plugin
@@ -134,7 +130,7 @@ impl StoppedRt {
     /// the node library's config for this node
     fn swarm_config(&self) -> swarm::SwarmConfig {
         let mut config = swarm::SwarmConfig {
-            zenoh: peer_config(&self.multicast_group),
+            zenoh: self.overlay.get_group_of(self.member_id).get_zenoh_config(),
             ..Default::default()
         };
         config
@@ -155,12 +151,6 @@ impl StoppedRt {
                 .expect("a listen endpoint list is valid");
         }
         config
-    }
-}
-
-impl Default for StoppedRt {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -189,6 +179,10 @@ impl runtime::Stopped for StoppedRt {
             node,
         })
     }
+
+    fn get_member_id(&self) -> MemberId {
+        self.member_id
+    }
 }
 
 /// A running in-process node; see [the module docs](self). Dropping it takes the node off the
@@ -204,11 +198,6 @@ impl RunningRt {
     /// introspection client's `on_join`, which needs the node's introspection plugin.
     pub fn get_session(&self) -> &zenoh::Session {
         self.node.session()
-    }
-
-    /// a zenoh config for a peer session on the node's multicast group, to talk to the node
-    pub fn get_zenoh_config(&self) -> zenoh::Config {
-        peer_config(&self.stopped.multicast_group)
     }
 }
 
@@ -231,16 +220,4 @@ impl runtime::Running for RunningRt {
         drop(node);
         Ok(stopped)
     }
-}
-
-/// a zenoh peer config that scouts on `multicast_group`
-fn peer_config(multicast_group: &str) -> zenoh::Config {
-    let mut config = zenoh::Config::default();
-    config
-        .insert_json5(
-            "scouting/multicast/address",
-            &serde_json::json!(multicast_group).to_string(),
-        )
-        .expect("a multicast group is a valid scouting address");
-    config
 }

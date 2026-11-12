@@ -3,35 +3,37 @@
 
 //! Helpers and abstractions for end-to-end tests of myrmic: starting real runtimes, alone or as a
 //! swarm, operating them the way a user does (through the `myrmic` CLI), and injecting the faults
-//! a deployed swarm meets (network splits, full disks, clock steps, crashes, power loss).
+//! a deployed swarm meets (crashes, freezes, power loss).
 //!
 //! # Where to start
 //!
 //! - **One runtime:** [`myrmic`]. A [`myrmic::Myrmic`] is the CLI on some machine (the host, a
 //!   container, a remote host over SSH); it deploys cells, sends commands and reads status, and
 //!   [`myrmic::Myrmic::runtime`] describes a runtime it can start.
+//! - **Who links to whom:** [`overlay`]. Every runtime is a member of an
+//!   [`overlay::Overlay`], created on one of its multicast groups, and links to the others on
+//!   that group.
 //! - **A runtime's lifecycle:** [`runtime`]. Start, stop, kill and pause, with the stopped and
 //!   the running state as separate types, so a call in the wrong state does not compile. The
 //!   same handles serve single-runtime tests and swarms.
 //! - **A node inside the test process:** [`in_process`], for what a CLI runtime cannot give: a
 //!   node with only some plugins, a zid the test chooses, its log events in the test process.
-//! - **Several runtimes:** [`swarm2`]. A [`swarm2::Swarm`] starts the runtimes a
-//!   [`swarm2::SwarmSpec`] names on a backend (the host, docker containers, remote hosts over
-//!   SSH, nodes inside the test process), waits until they are connected, and offers the faults its backend can produce as
-//!   capability traits ([`swarm2::backend`]).
+//! - **Several runtimes:** [`swarm3`]. A [`swarm3::Swarm`] holds the runtimes a test added to it,
+//!   of any kind, and each start of one waits until they are linked as their overlay says.
 //! - **Talking to a swarm's services directly:** [`clients`] (db, sorg), for what the CLI does
 //!   not cover.
 //! - **Waiting for something to become true:** [`wait`] ([`wait_for`] when the test needs a
 //!   value from the state it waits for, [`assert_eventually!`], [`wait_until`]).
 //! - **Finding the binaries under test:** [`resolve_binary!`] and [`binary`].
 //!
-//! Infrastructure the above builds on, rarely used directly: [`docker`] (containers and
-//! networks), [`ssh_utils`] (remote hosts), [`shelly`] (smart plugs that cut a host's power).
+//! Infrastructure, rarely used directly: [`docker`] (containers and networks, behind
+//! [`myrmic::Docker`]), [`ssh_utils`] (remote hosts, behind [`myrmic::Ssh`]), [`shelly`] (smart
+//! plugs that cut a host's power).
 //!
 //! # Older modules
 //!
 //! [`swarm`], [`scenario`], [`cell`], [`compose`], [`sidecar`] and [`rack`] are the previous way
-//! of spawning swarms; [`swarm2`] replaces them and takes over the name `swarm` once they are
+//! of spawning swarms; [`swarm3`] replaces them and takes over the name `swarm` once they are
 //! gone. [`latency`], [`metrics`], [`producers`] and [`telemetry_files`] serve the benchmarks and
 //! move into a crate of their own. New tests use neither.
 
@@ -44,6 +46,7 @@ pub mod in_process;
 pub mod latency;
 pub mod metrics;
 pub mod myrmic;
+pub mod overlay;
 pub mod producers;
 pub mod rack;
 pub mod runtime;
@@ -52,7 +55,7 @@ pub mod shelly;
 pub mod sidecar;
 pub mod ssh_utils;
 pub mod swarm;
-pub mod swarm2;
+pub mod swarm3;
 pub mod telemetry_files;
 pub mod wait;
 
@@ -61,6 +64,10 @@ use swarm_telemetry::db::opentelemetry_proto::tonic::{
     common::v1::any_value::Value, trace::v1::Span,
 };
 pub use wait::{wait_for, wait_until};
+
+/// for [`start_runtimes!`], which expands to `futures::join!` in the caller's crate
+#[doc(hidden)]
+pub use futures as __futures;
 
 /// Resolve a binary by name, built for the host or for a target triple, in the target directory
 /// of the workspace test-framework is built in (see [`binary::resolve`]).

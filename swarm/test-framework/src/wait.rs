@@ -5,13 +5,24 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default interval between condition polls.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// What [`wait_for`] fails with: the state it waited for didn't show up in time.
+#[derive(Debug, thiserror::Error)]
+#[error("timed out after {timeout:?} waiting for {what}")]
+pub struct Timeout {
+    /// what was waited for, e.g. "SRI `x` to show up in `cells status`"
+    pub what: String,
+    /// how long it waited
+    pub timeout: Duration,
+}
+
 /// Poll `check` every [`DEFAULT_POLL_INTERVAL`] until it yields a value, and return that value.
-/// Panics, naming `what` was waited for, once `timeout` is up.
+/// Fails with [`Timeout`], naming `what` was waited for, once `timeout` is up.
 ///
 /// For a state that has to settle before a test can read it, e.g. a node showing up in a list:
 /// the check returns `Some` with what the test needs from that state, `None` while it is not
-/// there yet.
-pub async fn wait_for<T, F, Fut>(timeout: Duration, what: &str, mut check: F) -> T
+/// there yet. A check that can fail ends the wait with its error by yielding it as the value
+/// (`Some(Err(err))`), so the caller gets `Result<Result<_, E>, Timeout>`.
+pub async fn wait_for<T, F, Fut>(timeout: Duration, what: &str, mut check: F) -> Result<T, Timeout>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Option<T>>,
@@ -25,7 +36,10 @@ where
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("timed out after {timeout:?} waiting for {what}"))
+    .map_err(|_| Timeout {
+        what: what.to_owned(),
+        timeout,
+    })
 }
 
 /// Poll `condition` every `poll_interval` until it returns `true` or `timeout` elapses.
@@ -76,14 +90,15 @@ mod tests {
     use super::{wait_for, wait_until};
 
     #[tokio::test]
-    async fn wait_for_returns_the_value_once_there_is_one() {
+    async fn wait_for_returns_the_value_once_there_is_one() -> anyhow::Result<()> {
         let calls = AtomicU32::new(0);
         let found = wait_for(Duration::from_secs(5), "the third call", || async {
             let call = calls.fetch_add(1, Ordering::SeqCst);
             (call >= 2).then_some(call)
         })
-        .await;
+        .await?;
         assert_eq!(found, 2);
+        Ok(())
     }
 
     #[tokio::test]

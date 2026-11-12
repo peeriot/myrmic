@@ -15,7 +15,7 @@ use std::io::Write as _;
 use std::path::Path;
 
 use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, RunningRt, Ssh, already_gone};
-use crate::runtime::Stopped;
+use crate::overlay::Overlay;
 use crate::swarm::SwarmProcess;
 
 /// One remote host's role in the deployment: which myrmic runtime to start there, and under
@@ -154,9 +154,6 @@ pub async fn provision(
     // at a time pays N times the round-trip latency for no benefit.
     let runtimes: Vec<RunningRt<Ssh>> =
         futures::future::join_all(hosts.iter().map(|host| async move {
-            let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
-            let tag_refs: Vec<&str> = host.tags.iter().map(String::as_str).collect();
-
             // Serialize the pass boundary: the previous pass's Drop guard
             // issues `myrmic runtimes delete` without waiting for the remote
             // process to exit, and a runtime restarted under the same name
@@ -177,22 +174,13 @@ pub async fn provision(
 
             let remote_config = host_config_path(myrmic_path, &host.runtime_name);
             upload_host_config(&host.host, host.listen_port, &remote_config, telemetry).await;
-            // A fixed name (so a re-run with the same topology needs no new names), but still
-            // temporary: `runtimes start --name` reuses a stable name's on-disk db across runs,
-            // so a second run would collide on the previous run's registered cells
-            // (`DuplicateSri`). The default `--tmp` keeps the db in memory instead.
-            myrmic
-                .runtime(&tag_refs)
-                .name(&host.runtime_name)
-                .config(&remote_config)
-                .start()
-                .await
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "failed to start runtime `{}` on {}: {err}",
-                        host.runtime_name, host.host
-                    )
-                })
+            // The runtime takes its zenoh settings from an overlay now, which can't yet express
+            // the pinned listen port of `remote_config`, nor its telemetry settings.
+            todo!(
+                "start the runtime `{}` on {} with `{remote_config}`",
+                host.runtime_name,
+                host.host
+            )
         }))
         .await;
 
@@ -595,8 +583,12 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     // Concurrent, not sequential — same rationale as `provision`: each host's teardown (a
     // `runtimes delete` plus two `rm -f`s) is an independent SSH round trip, so
     // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
+    // `runtimes delete` finds a runtime by its pid file on the host, not on the network, so the
+    // shims' group is never used: any group will do.
+    let group = Overlay::new().new_multicast_group();
+    let group = &group;
     futures::future::join_all(hosts.iter().map(|host| async move {
-        let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
+        let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path, group);
         // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"

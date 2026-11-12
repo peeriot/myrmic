@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use cell_protocol::{
     BlobHash, CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, NodeLease, PlacementKind,
     RuntimeId,
 };
 use claims::{assert_err, assert_ok};
-use enum_map::{Enum, EnumMap};
 use sorg_common::{
     CellConfig, CellDeployment, DeployRequest, DeploymentError, HttpBridgeApi, RejectionReason,
     RequirementTags, exec_registry, node_lease,
@@ -13,7 +13,13 @@ use sorg_common::{
 use sorg_tests::{
     Platform, prebuilt_cell_wasm, register_fixture_class, scope_test_multicast, swarm_config,
 };
-use test_framework::swarm2::{Local, Swarm};
+use test_framework::{
+    myrmic::{self, Error},
+    overlay::Overlay,
+    runtime::Running,
+    start_runtimes,
+    swarm3::{RunningRt, Swarm},
+};
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
 
@@ -25,7 +31,7 @@ const TAG_CPU: &str = "cpu";
 const TAG_SENSOR: &str = "sensor";
 const TAG_FPGA: &str = "fpga";
 
-/// the cell crate whose prebuilt wasm the swarm2 tests deploy
+/// the cell crate whose prebuilt wasm the tests deploy
 const DUMMY_CELL: &str = "../../tests/fixtures/dummy_cell";
 
 fn wasm_cell(sri: &str, class: BlobHash) -> CellDeployment {
@@ -43,165 +49,159 @@ fn deploy_request(cells: Vec<CellDeployment>) -> DeployRequest {
 
 /// Register the prebuilt `DUMMY_CELL` wasm as a class in `swarm`, for the tests that deploy
 /// through the sorg client.
-async fn add_dummy_class(swarm: &Swarm<Local<GpuCpu>, GpuCpu>) -> BlobHash {
-    let wasm = std::fs::read(prebuilt_cell_wasm(DUMMY_CELL)).unwrap();
-    swarm
-        .sorg()
+async fn add_dummy_class(swarm: &Swarm) -> anyhow::Result<BlobHash> {
+    let wasm = std::fs::read(prebuilt_cell_wasm(DUMMY_CELL))?;
+    Ok(swarm
+        .get_sorg()
         .add_class("tagged_cell.wasm", wasm, vec![])
-        .await
-        .unwrap()
+        .await?)
 }
 
-// Every test holds the swarm's runtime handles in `_runtimes` until it ends: dropping them
-// deletes the runtimes.
+// Every test holds the swarm's runtime handles until it ends: dropping them deletes the
+// runtimes.
+
+/// a running CLI runtime of a swarm
+type CliRt = RunningRt<myrmic::RunningRt<myrmic::Local>>;
+
+/// A swarm of two CLI runtimes on one group, tagged `first` and `second`, started; their handles
+/// in that order.
+async fn two_runtimes(first: &[&str], second: &[&str]) -> Result<(Swarm, [CliRt; 2]), Error> {
+    let group = Overlay::new().new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let first = swarm.add(swarm.get_client().runtime().tags(first));
+    let second = swarm.add(swarm.get_client().runtime().tags(second));
+    start_runtimes!(swarm; first, second);
+    Ok((swarm, [first, second]))
+}
 
 /// two runtimes, one tagged gpu, one tagged cpu
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Enum)]
-enum GpuCpu {
-    Gpu,
-    Cpu,
-}
-
-/// a local swarm of [`GpuCpu`]
-fn gpu_cpu() -> Local<GpuCpu> {
-    let tags = |id| -> &[&str] {
-        match id {
-            GpuCpu::Gpu => &[TAG_GPU],
-            GpuCpu::Cpu => &[TAG_CPU],
-        }
-    };
-    Local::new(EnumMap::from_fn(tags), EnumMap::from_fn(|_| false))
+async fn gpu_cpu() -> Result<(Swarm, [CliRt; 2]), Error> {
+    two_runtimes(&[TAG_GPU], &[TAG_CPU]).await
 }
 
 /// two runtimes, one tagged gpu, one tagged gpu and sensor
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Enum)]
-enum GpuGpuSensor {
-    Gpu,
-    GpuSensor,
-}
-
-/// a local swarm of [`GpuGpuSensor`]
-fn gpu_gpu_sensor() -> Local<GpuGpuSensor> {
-    let tags = |id| -> &[&str] {
-        match id {
-            GpuGpuSensor::Gpu => &[TAG_GPU],
-            GpuGpuSensor::GpuSensor => &[TAG_GPU, TAG_SENSOR],
-        }
-    };
-    Local::new(EnumMap::from_fn(tags), EnumMap::from_fn(|_| false))
+async fn gpu_gpu_sensor() -> Result<(Swarm, [CliRt; 2]), Error> {
+    two_runtimes(&[TAG_GPU], &[TAG_GPU, TAG_SENSOR]).await
 }
 
 // Case 1: cell requires [gpu]; R1 has gpu, R2 has cpu → lands on R1.
 #[tokio::test(flavor = "multi_thread")]
-async fn single_tag_match() {
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
+async fn single_tag_match() -> anyhow::Result<()> {
+    let (swarm, [gpu, _cpu]) = gpu_cpu().await?;
 
     let cell = swarm
-        .client()
+        .get_client()
         .cell(prebuilt_cell_wasm(DUMMY_CELL))
         .tags(&[TAG_GPU])
         .deploy()
-        .await
-        .unwrap();
+        .await?;
 
-    assert_eq!(swarm.host_of(cell.sri()).await.unwrap(), Some(GpuCpu::Gpu));
+    assert_eq!(swarm.get_host_of(cell.sri()).await?, Some(gpu.get_zid()));
     let placed: Vec<String> = swarm
-        .placements()
-        .await
-        .unwrap()
+        .get_placements()
+        .await?
         .iter()
         .map(|entry| entry.sri.to_string())
         .collect();
     assert_eq!(placed, [cell.sri()], "the deploy placed exactly this cell");
+    Ok(())
 }
 
 // Case 2: cell requires [gpu, sensor]; only R1 has both → lands on R1.
 #[tokio::test(flavor = "multi_thread")]
-async fn multi_tag_and_match() {
-    let (swarm, _runtimes) = Swarm::start(gpu_gpu_sensor()).await.unwrap();
+async fn multi_tag_and_match() -> anyhow::Result<()> {
+    let (swarm, [_gpu, gpu_sensor]) = gpu_gpu_sensor().await?;
 
     let cell = swarm
-        .client()
+        .get_client()
         .cell(prebuilt_cell_wasm(DUMMY_CELL))
         .tags(&[TAG_GPU, TAG_SENSOR])
         .deploy()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(
-        swarm.host_of(cell.sri()).await.unwrap(),
-        Some(GpuGpuSensor::GpuSensor),
+        swarm.get_host_of(cell.sri()).await?,
+        Some(gpu_sensor.get_zid()),
         "the cell lands on the runtime with both tags, not the gpu-only one"
     );
+    Ok(())
 }
 
 // Case 3: cell with no tags deploys onto whatever runtime exists.
 #[tokio::test(flavor = "multi_thread")]
-async fn untagged_placeable_anywhere() {
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
+async fn untagged_placeable_anywhere() -> anyhow::Result<()> {
+    let (swarm, _runtimes) = gpu_cpu().await?;
 
     let cell = swarm
-        .client()
+        .get_client()
         .cell(prebuilt_cell_wasm(DUMMY_CELL))
         .deploy()
-        .await
-        .unwrap();
+        .await?;
 
     assert!(
-        swarm.host_of(cell.sri()).await.unwrap().is_some(),
+        swarm.get_host_of(cell.sri()).await?.is_some(),
         "the untagged cell is placed on one of the tagged runtimes"
     );
+    Ok(())
 }
 
 // Case 4: two untagged cells, two runtimes → they spread one-per-node.
 #[tokio::test(flavor = "multi_thread")]
-async fn untagged_cells_spread_across_nodes() {
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let class = add_dummy_class(&swarm).await;
+async fn untagged_cells_spread_across_nodes() -> anyhow::Result<()> {
+    let (swarm, _runtimes) = gpu_cpu().await?;
+    let class = add_dummy_class(&swarm).await?;
 
     // one request: the planner has to spread within a batch
     let request = deploy_request(vec![wasm_cell("cell_a", class), wasm_cell("cell_b", class)]);
-    swarm.sorg().deploy_cells(request).await.unwrap();
+    swarm.get_sorg().deploy_cells(request).await?;
 
-    let host_a = swarm.host_of(&to_sri("cell_a").to_string()).await.unwrap();
-    let host_b = swarm.host_of(&to_sri("cell_b").to_string()).await.unwrap();
+    let host_a = swarm
+        .get_host_of(&to_sri("cell_a").to_string())
+        .await?
+        .context("cell_a has no host")?;
+    let host_b = swarm
+        .get_host_of(&to_sri("cell_b").to_string())
+        .await?
+        .context("cell_b has no host")?;
     assert_ne!(
         host_a, host_b,
         "two untagged cells should spread across the two nodes, not consolidate"
     );
+    Ok(())
 }
 
 // Case 5: cell X requires [gpu] (forces R1), cell Y untagged → Y spreads to the empty R2.
 #[tokio::test(flavor = "multi_thread")]
-async fn untagged_spreads_off_tagged_node() {
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let class = add_dummy_class(&swarm).await;
+async fn untagged_spreads_off_tagged_node() -> anyhow::Result<()> {
+    let (swarm, [gpu, cpu]) = gpu_cpu().await?;
+    let class = add_dummy_class(&swarm).await?;
 
     let request = deploy_request(vec![
         wasm_cell("pinned", class).with_tags(RequirementTags::new(vec![TAG_GPU])),
         wasm_cell("free", class),
     ]);
-    swarm.sorg().deploy_cells(request).await.unwrap();
+    swarm.get_sorg().deploy_cells(request).await?;
 
     assert_eq!(
-        swarm.host_of(&to_sri("pinned").to_string()).await.unwrap(),
-        Some(GpuCpu::Gpu),
+        swarm.get_host_of(&to_sri("pinned").to_string()).await?,
+        Some(gpu.get_zid()),
         "pinned cell should land on the gpu runtime"
     );
     assert_eq!(
-        swarm.host_of(&to_sri("free").to_string()).await.unwrap(),
-        Some(GpuCpu::Cpu),
+        swarm.get_host_of(&to_sri("free").to_string()).await?,
+        Some(cpu.get_zid()),
         "free cell should spread to the empty cpu node, not pile onto the occupied gpu node"
     );
+    Ok(())
 }
 
 // Case 6: cell requires [fpga], no runtime has it → deploy fails.
 #[tokio::test(flavor = "multi_thread")]
-async fn unplaceable_tag_absent() {
+async fn unplaceable_tag_absent() -> anyhow::Result<()> {
     // Arrange — two runtimes (gpu + cpu), neither has fpga
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let class = add_dummy_class(&swarm).await;
-    let sorg = swarm.sorg();
+    let (swarm, _runtimes) = gpu_cpu().await?;
+    let class = add_dummy_class(&swarm).await?;
+    let sorg = swarm.get_sorg();
 
     let request = deploy_request(vec![
         wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_FPGA])),
@@ -230,18 +230,19 @@ async fn unplaceable_tag_absent() {
         cell.rejections
     );
     assert!(
-        assert_ok!(sorg.get_placement(&to_sri(CELL_SRI)).await).is_none(),
+        sorg.get_placement(&to_sri(CELL_SRI)).await?.is_none(),
         "cell should not be registered after failed deploy"
     );
+    Ok(())
 }
 
 // Case 7: cell requires [gpu, cpu]; R1 has gpu, R2 has cpu, none has both → fail.
 #[tokio::test(flavor = "multi_thread")]
-async fn unplaceable_and_not_satisfiable() {
+async fn unplaceable_and_not_satisfiable() -> anyhow::Result<()> {
     // Arrange — two runtimes with one tag each
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let class = add_dummy_class(&swarm).await;
-    let sorg = swarm.sorg();
+    let (swarm, _runtimes) = gpu_cpu().await?;
+    let class = add_dummy_class(&swarm).await?;
+    let sorg = swarm.get_sorg();
 
     let request = deploy_request(vec![
         wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_GPU, TAG_CPU])),
@@ -271,17 +272,18 @@ async fn unplaceable_and_not_satisfiable() {
         cell.rejections
     );
     assert!(
-        assert_ok!(sorg.get_placement(&to_sri(CELL_SRI)).await).is_none(),
+        sorg.get_placement(&to_sri(CELL_SRI)).await?.is_none(),
         "cell should not be registered after failed deploy"
     );
+    Ok(())
 }
 
 // Case 8: HTTP bridge cell with a tag requirement deploys when the tag is satisfied.
 #[tokio::test(flavor = "multi_thread")]
-async fn bridge_cell_with_tag() {
+async fn bridge_cell_with_tag() -> anyhow::Result<()> {
     // Arrange — two runtimes with distinct tags
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let sorg = swarm.sorg();
+    let (swarm, _runtimes) = gpu_cpu().await?;
+    let sorg = swarm.get_sorg();
 
     let bridge_sri = to_sri("tagged_bridge");
     let bridge = CellDeployment::new(
@@ -300,10 +302,12 @@ async fn bridge_cell_with_tag() {
     // orchestrator (no `deployments()` on any runtime to check), but still go through
     // the same tag-matching triage as wasm cells before deploy is attempted — this only
     // succeeds because a gpu-tagged runtime satisfies the requirement.
-    assert_ok!(sorg.deploy_cells(request).await);
+    sorg.deploy_cells(request).await?;
 
     // Assert — the bridge is registered natively, keyed by its own sri.
-    let entry = assert_ok!(sorg.get_placement(&to_sri("tagged_bridge")).await)
+    let entry = sorg
+        .get_placement(&to_sri("tagged_bridge"))
+        .await?
         .expect("bridge cell should be registered after deploy");
     let PlacementKind::Bridge { sri } = &entry.kind else {
         panic!("expected Bridge placement, got {:?}", entry.kind);
@@ -312,34 +316,35 @@ async fn bridge_cell_with_tag() {
         sri, &bridge_sri,
         "bridge cell should be registered under its own sri"
     );
+    Ok(())
 }
 
 // Case 9: standalone deploy with tag [gpu]; R1 has gpu → lands on R1.
 #[tokio::test(flavor = "multi_thread")]
-async fn standalone_single_tag_match() {
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let class = add_dummy_class(&swarm).await;
+async fn standalone_single_tag_match() -> anyhow::Result<()> {
+    let (swarm, [gpu, _cpu]) = gpu_cpu().await?;
+    let class = add_dummy_class(&swarm).await?;
 
     swarm
-        .sorg()
+        .get_sorg()
         .deploy_wasm_cell(to_sri(CELL_SRI), class, RequirementTags::new(vec![TAG_GPU]))
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(
-        swarm.host_of(&to_sri(CELL_SRI).to_string()).await.unwrap(),
-        Some(GpuCpu::Gpu),
+        swarm.get_host_of(&to_sri(CELL_SRI).to_string()).await?,
+        Some(gpu.get_zid()),
         "standalone cell should land on the gpu-tagged runtime"
     );
+    Ok(())
 }
 
 // Case 10: standalone deploy requiring absent tag → fails.
 #[tokio::test(flavor = "multi_thread")]
-async fn standalone_unplaceable() {
+async fn standalone_unplaceable() -> anyhow::Result<()> {
     // Arrange — two runtimes (gpu + cpu), neither has fpga
-    let (swarm, _runtimes) = Swarm::start(gpu_cpu()).await.unwrap();
-    let class = add_dummy_class(&swarm).await;
-    let sorg = swarm.sorg();
+    let (swarm, _runtimes) = gpu_cpu().await?;
+    let class = add_dummy_class(&swarm).await?;
+    let sorg = swarm.get_sorg();
 
     // Act — load a standalone cell requiring a tag no runtime has
     let err = assert_err!(
@@ -369,9 +374,10 @@ async fn standalone_unplaceable() {
         cell.rejections
     );
     assert!(
-        assert_ok!(sorg.get_placement(&to_sri(CELL_SRI)).await).is_none(),
+        sorg.get_placement(&to_sri(CELL_SRI)).await?.is_none(),
         "cell should not be registered after failed standalone load"
     );
+    Ok(())
 }
 
 // Case 11: a peer whose lease `seq` is 5 min behind the leader's wall clock
