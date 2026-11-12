@@ -5,7 +5,7 @@ use cell_protocol::replication::runtime_tag;
 use enum_map::{Enum, EnumMap};
 use test_framework::{
     myrmic::{self, Error, Myrmic, cell::CellSpec},
-    runtime::{Kill, Running, Stopped},
+    runtime::{Running, Stopped},
     swarm2::{Local, Swarm},
 };
 use zenoh::config::ZenohId;
@@ -75,7 +75,7 @@ async fn a_killed_runtime_restarts_under_the_same_zid() {
     let (swarm, [_a, b, _c]) = Swarm::start(local()).await.unwrap();
     let zid = b.get_zid();
 
-    let b = b.kill().await.unwrap();
+    let b = b.stop_with(|rt| rt.kill()).await.unwrap();
     assert!(!swarm.get_entry(Node::B).is_running());
     let b = b.start().await.unwrap();
     assert_eq!(b.get_zid(), zid);

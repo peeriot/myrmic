@@ -6,8 +6,12 @@
 //! [`Swarm::start`] and [`Swarm::new`] hand them out, one per runtime of the spec, in the order of
 //! its variants, so an array pattern names them. They are the only way to get one, so a test
 //! never holds two handles of the same runtime. A test moves each through its states by
-//! rebinding (`let b = b.kill().await?;`); starting one returns once the swarm, with it, is
-//! connected again, and [`StoppedRt::start_cut_off`] starts one that reaches nobody.
+//! rebinding; starting one returns once the swarm, with it, is connected again, and
+//! [`StoppedRt::start_cut_off`] starts one that reaches nobody.
+//!
+//! A running handle derefs to the backend's own running handle, so everything that doesn't stop
+//! the runtime is the backend kind's own method (`a.pause()`). Stopping it in a way only its kind
+//! knows goes through [`RunningRt::stop_with`] (`let b = b.stop_with(|rt| rt.kill()).await?;`).
 //!
 //! A test that picks runtimes by an id it computes, e.g. the host of a cell, turns the array into
 //! a map by id ([`IntoRuntimeMap`]). [`start_together`], and [`crate::start_runtimes!`] around it,
@@ -20,12 +24,22 @@
 //! handle's guard clears it when the handle goes away, however that happens. The record is the
 //! test's intent, which the swarm's connectivity check compares with the runtimes that answer.
 //!
+//! Every transition that consumes a running runtime ends with it stopped, so one generic
+//! [`RunningRt::stop_with`] covers all of them, whatever the kind can do, and the swarm needs to
+//! know nothing about the kinds beyond [`crate::runtime`]'s traits. The backend's handle is only
+//! lent out for the length of that transition: handing it out for good would leave the swarm's
+//! record wrong whichever way the guard went. A method that doesn't consume the handle (e.g.
+//! `resume`) is reached through `Deref`, so it doesn't wait for the swarm; a test that needs the
+//! swarm connected again calls [`Swarm::wait_until_connected`].
+//!
 //! A stopped handle holds no backend handle: starting it asks the backend for the runtime of its
 //! id anew. That keeps a runtime that ran cut off from coming back cut off after a normal stop.
 
 use std::{
     collections::HashMap,
+    future::Future,
     hash::Hash,
+    ops::Deref,
     sync::{Arc, atomic::Ordering},
 };
 
@@ -35,7 +49,7 @@ use zenoh::config::ZenohId;
 #[cfg(doc)]
 use super::Swarm;
 use super::{CutOff, RtError, Shared, SwarmBackend, SwarmSpec};
-use crate::runtime::{Kill, Lose, Pause, Running, Stopped};
+use crate::runtime::{Running, Stopped};
 
 /// The running state of the backend's runtimes.
 type BackendRunning<B, S> = <<B as SwarmBackend<S>>::Runtime as Stopped>::Running;
@@ -109,7 +123,8 @@ where
     }
 }
 
-/// A running runtime of a [`Swarm`]. Dropping it deletes the runtime.
+/// A running runtime of a [`Swarm`]. Dropping it deletes the runtime. It derefs to the backend's
+/// running handle, for the methods of the backend's runtime kind.
 pub struct RunningRt<B, S>
 where
     B: SwarmBackend<S>,
@@ -119,6 +134,27 @@ where
     // running.
     inner: BackendRunning<B, S>,
     guard: RunningGuard<B, S>,
+}
+
+impl<B, S> RunningRt<B, S>
+where
+    B: SwarmBackend<S>,
+    S: SwarmSpec,
+{
+    /// Stop the runtime with `stop`, which gets the backend's running handle and returns its
+    /// stopped one, e.g. `rt.stop_with(|rt| rt.kill())` or, for a runtime that went
+    /// away on its own, `rt.stop_with(|rt| std::future::ready(Ok(rt.mark_lost())))`. Returns
+    /// once `stop` has; it does not wait for the rest of the swarm to notice.
+    pub async fn stop_with<F, Fut>(self, stop: F) -> Result<StoppedRt<B, S>, RtError<B, S>>
+    where
+        F: FnOnce(BackendRunning<B, S>) -> Fut,
+        Fut: Future<Output = Result<B::Runtime, RtError<B, S>>>,
+    {
+        let RunningRt { inner, guard } = self;
+        // The backend's stopped handle is dropped: starting the swarm's one asks the backend anew.
+        stop(inner).await?;
+        Ok(guard.into_stopped())
+    }
 }
 
 /// The stopped handle of a running runtime, which records the runtime as running in its swarm
@@ -170,56 +206,19 @@ where
     }
 
     async fn delete(self) -> Result<StoppedRt<B, S>, RtError<B, S>> {
-        let RunningRt { inner, guard } = self;
-        inner.delete().await?;
-        Ok(guard.into_stopped())
+        self.stop_with(|rt| rt.delete()).await
     }
 }
 
-impl<B, S> Kill for RunningRt<B, S>
+impl<B, S> Deref for RunningRt<B, S>
 where
     B: SwarmBackend<S>,
     S: SwarmSpec,
-    BackendRunning<B, S>: Kill,
 {
-    /// Returns once the runtime's process is gone; it does not wait for the rest of the swarm to
-    /// notice.
-    async fn kill(self) -> Result<StoppedRt<B, S>, RtError<B, S>> {
-        let RunningRt { inner, guard } = self;
-        inner.kill().await?;
-        Ok(guard.into_stopped())
-    }
-}
+    type Target = BackendRunning<B, S>;
 
-impl<B, S> Lose for RunningRt<B, S>
-where
-    B: SwarmBackend<S>,
-    S: SwarmSpec,
-    BackendRunning<B, S>: Lose,
-{
-    fn mark_lost(self) -> StoppedRt<B, S> {
-        let RunningRt { inner, guard } = self;
-        inner.mark_lost();
-        guard.into_stopped()
-    }
-}
-
-impl<B, S> Pause for RunningRt<B, S>
-where
-    B: SwarmBackend<S>,
-    S: SwarmSpec,
-    BackendRunning<B, S>: Pause,
-{
-    /// The rest of the swarm hears nothing from the runtime until [`Pause::resume`].
-    async fn pause(&self) -> Result<(), RtError<B, S>> {
-        self.inner.pause().await
-    }
-
-    /// Returns once the swarm, with this runtime, is connected again.
-    async fn resume(&self) -> Result<(), RtError<B, S>> {
-        self.inner.resume().await?;
-        self.guard.stopped.shared.wait_until_connected().await?;
-        Ok(())
+    fn deref(&self) -> &BackendRunning<B, S> {
+        &self.inner
     }
 }
 
@@ -271,7 +270,7 @@ pub trait IntoRuntimeMap {
         Self::Id: Enum;
 
     /// the handles by id, to take one out for a transition that consumes it:
-    /// `rts.remove(&host).expect("host is running").kill()`
+    /// `rts.remove(&host).expect("host is running").stop_with(|rt| rt.kill())`
     fn into_map(self) -> HashMap<Self::Id, Self::Rt>
     where
         Self::Id: Hash + Eq;

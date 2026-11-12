@@ -6,7 +6,7 @@
 //! ```ignore
 //! use enum_map::EnumMap;
 //! use test_framework::{
-//!     runtime::{Kill, Stopped},
+//!     runtime::Stopped,
 //!     swarm2::{Local, Swarm},
 //! };
 //!
@@ -26,7 +26,7 @@
 //! }
 //!
 //! let (swarm, [a, b, c]) = Swarm::start(local()).await?;
-//! let b = b.kill().await?; // stopped
+//! let b = b.stop_with(|rt| rt.kill()).await?; // stopped
 //! let b = b.start().await?; // running again; returns once the swarm is connected again
 //! ```
 //!

@@ -3,8 +3,8 @@
 //! from and returns the other state, so calling one on a runtime in the wrong state does not
 //! compile.
 //!
-//! What only some kinds of runtimes can do is an extra trait on the running state: [`Kill`],
-//! [`Pause`], [`Lose`].
+//! What only some kinds of runtimes can do (kill, pause, ...) is a method of that kind's running
+//! type, not part of these traits.
 //!
 //! # Using a runtime
 //!
@@ -14,7 +14,7 @@
 //!
 //! ```ignore
 //! use test_framework::myrmic::Myrmic;
-//! use test_framework::runtime::{Kill, Running, Stopped};
+//! use test_framework::runtime::{Running, Stopped};
 //!
 //! let myrmic = Myrmic::local_isolated();
 //! let rt = myrmic.runtime(&["gpu"]).persistent(true).start().await?; // running
@@ -24,8 +24,9 @@
 //! assert_eq!(rt.get_zid(), zid);
 //! ```
 //!
-//! - The transitions are trait methods: import the traits a test calls ([`Stopped`] to start,
-//!   [`Running`] to delete or read the zid, [`Kill`], [`Pause`], [`Lose`]).
+//! - The transitions every kind has are trait methods: import the traits a test calls
+//!   ([`Stopped`] to start, [`Running`] to delete or read the zid). The others are the kind's own
+//!   methods (e.g. [`crate::myrmic::RunningRt::kill`]).
 //! - [`Stopped::start`] returns once the runtime is ready, i.e. once cells can be placed on it.
 //! - A stopped runtime is the same runtime it was while running: starting it again brings it back
 //!   under the same identity. With the CLI, the identity is the name: the same name gives the
@@ -38,8 +39,8 @@
 //! - A failed transition consumes the value too: the runtime's handle is gone with the error. A
 //!   test treats every such error as a failure (`.unwrap()`, `?`), so there is nothing to
 //!   continue with anyway.
-//! - Code that needs a capability states it as a bound (`R: Kill`); a runtime kind without it is
-//!   rejected at compile time, not at run time.
+//! - Calling a method a kind doesn't have does not compile: a test names the concrete kinds it
+//!   uses, so there is nothing to check at run time.
 //!
 //! These traits are not tied to swarms: a test with a single runtime uses them directly, and a
 //! swarm's runtimes are the same handles.
@@ -56,12 +57,13 @@
 //! types [`Stopped::Running`] and [`Running::Stopped`] tie together, so a round trip always comes
 //! back to the type it started from.
 //!
-//! The core traits hold only what every kind of runtime can do: start, delete, and tell its zid.
-//! Anything a kind may not be able to do is a capability trait instead, the same way the swarm
-//! backends' faults are (see [`crate::swarm2::backend`]). For example, a runtime whose node runs
-//! inside the test process ([`crate::in_process`]) cannot be ended abruptly (closing its zenoh
-//! session always says goodbye) or frozen (there is no process of its own to stop), so it
-//! implements neither [`Kill`] nor [`Pause`].
+//! The traits hold only what every kind of runtime can do: start, delete, and tell its zid. Code
+//! generic over kinds needs no more: a swarm, for example, starts and stops its runtimes through
+//! these traits and hands the test the concrete handle for everything else (see
+//! [`crate::swarm2::RunningRt::stop_with`]). Anything a kind may not be able to do is a method of
+//! that kind alone: a runtime whose node runs inside the test process ([`crate::in_process`])
+//! cannot be ended abruptly (closing its zenoh session always says goodbye) or frozen (there is no
+//! process of its own to stop), so it has neither `kill` nor `pause`.
 //!
 //! A stopped value holds everything starting needs, so a running value has to hold it as well, to
 //! hand it back when it stops. For the CLI, the stopped type is the set of `runtimes start`
@@ -104,29 +106,4 @@ pub trait Running: Sized + Send + Sync {
 
     /// Shut the runtime down gracefully. Returns once it is gone.
     fn delete(self) -> impl Future<Output = Result<Self::Stopped, Self::Error>> + Send;
-}
-
-/// A running runtime that can be ended abruptly.
-pub trait Kill: Running {
-    /// End the runtime as on a crash or power loss: it neither says goodbye to the swarm nor
-    /// cleans up. Returns once it is gone.
-    fn kill(self) -> impl Future<Output = Result<Self::Stopped, Self::Error>> + Send;
-}
-
-/// A running runtime that can disappear without the test stopping it, e.g. with its host's power.
-pub trait Lose: Running {
-    /// Turn the handle of a runtime that is already gone into a stopped one, without contacting
-    /// the runtime or its host (the host may still be down). Starting the result starts the same
-    /// runtime again.
-    fn mark_lost(self) -> Self::Stopped;
-}
-
-/// A running runtime that can be frozen and let run again.
-pub trait Pause: Running {
-    /// Freeze the runtime, as a stalled machine would: it keeps its state and connections but
-    /// does nothing, timers and lease renewals included, until [`Self::resume`].
-    fn pause(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
-
-    /// let the runtime [`Self::pause`] froze run again
-    fn resume(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

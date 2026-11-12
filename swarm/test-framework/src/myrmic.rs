@@ -738,6 +738,40 @@ where
         &self.stopped.name
     }
 
+    /// End the runtime as on a crash or power loss: it neither says goodbye to the swarm nor
+    /// cleans up. Returns once it is gone.
+    ///
+    /// run: myrmic runtimes delete --signal kill
+    pub async fn kill(self) -> Result<StoppedRt<B>, Error> {
+        self.stopped
+            .myrmic
+            .run(&["runtimes", "delete", "--signal", "kill", self.get_name()])
+            .await?;
+        Ok(self.stopped.clone())
+    }
+
+    /// Turn the handle of a runtime that is already gone, e.g. with its host's power, into a
+    /// stopped one, without contacting the runtime or its host (the host may still be down).
+    /// Starting the result starts the same runtime again.
+    ///
+    /// Dropping the running handle still runs `myrmic runtimes delete` on the target, which finds
+    /// nothing left to delete; call it once the target is reachable again.
+    pub fn mark_lost(self) -> StoppedRt<B> {
+        self.stopped.clone()
+    }
+
+    /// Freeze the runtime, as a stalled machine would: it keeps its state and connections but
+    /// does nothing, timers and lease renewals included, until [`Self::resume`]. `SIGSTOP` to the
+    /// runtime's process.
+    pub async fn pause(&self) -> Result<(), Error> {
+        self.signal("-STOP").await
+    }
+
+    /// Let the runtime [`Self::pause`] froze run again: `SIGCONT` to its process.
+    pub async fn resume(&self) -> Result<(), Error> {
+        self.signal("-CONT").await
+    }
+
     /// Send `signal` to the runtime's process on the target. Its pid comes from `myrmic runtimes
     /// list`, so this works on every backend.
     async fn signal(&self, signal: &str) -> Result<(), Error> {
@@ -782,46 +816,6 @@ where
     async fn delete(self) -> Result<StoppedRt<B>, Error> {
         self.stopped.myrmic.delete_runtime(self.get_name()).await?;
         Ok(self.stopped.clone())
-    }
-}
-
-impl<B> runtime::Kill for RunningRt<B>
-where
-    B: MyrmicBackend,
-{
-    /// run: myrmic runtimes delete --signal kill; returns once the runtime has exited
-    async fn kill(self) -> Result<StoppedRt<B>, Error> {
-        self.stopped
-            .myrmic
-            .run(&["runtimes", "delete", "--signal", "kill", self.get_name()])
-            .await?;
-        Ok(self.stopped.clone())
-    }
-}
-
-impl<B> runtime::Lose for RunningRt<B>
-where
-    B: MyrmicBackend,
-{
-    /// Dropping the running handle still runs `myrmic runtimes delete` on the target, which finds
-    /// nothing left to delete; call it once the target is reachable again.
-    fn mark_lost(self) -> StoppedRt<B> {
-        self.stopped.clone()
-    }
-}
-
-impl<B> runtime::Pause for RunningRt<B>
-where
-    B: MyrmicBackend,
-{
-    /// `SIGSTOP` to the runtime's process
-    async fn pause(&self) -> Result<(), Error> {
-        self.signal("-STOP").await
-    }
-
-    /// `SIGCONT` to the runtime's process
-    async fn resume(&self) -> Result<(), Error> {
-        self.signal("-CONT").await
     }
 }
 

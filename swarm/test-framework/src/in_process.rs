@@ -32,8 +32,8 @@
 //!   are [`crate::swarm2::InProcess`]'s job.
 //! - Its database is in memory: every start begins empty. A test that needs data to survive a
 //!   restart wants a [`crate::myrmic`] runtime with `persistent`.
-//! - It implements neither [`runtime::Kill`] nor [`runtime::Pause`]: closing its zenoh session
-//!   always says goodbye to the other nodes, and there is no process of its own to freeze.
+//! - It has neither `kill` nor `pause` (unlike [`crate::myrmic::RunningRt`]): closing its zenoh
+//!   session always says goodbye to the other nodes, and there is no process of its own to freeze.
 //! - Its log events go to the test process's tracing subscriber. A test that watches them (e.g.
 //!   with sorg-tests' log tracker) installs its subscriber before the first start; otherwise the
 //!   first start installs a plain one that writes to the test's output.

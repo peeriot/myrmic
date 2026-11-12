@@ -7,7 +7,7 @@ use sorg_tests::enable_test_logging;
 use test_framework::{
     in_process,
     myrmic::{self, Myrmic},
-    runtime::{Kill, Running, Stopped},
+    runtime::{Running, Stopped},
     wait::DEFAULT_TIMEOUT,
     wait_for,
 };
