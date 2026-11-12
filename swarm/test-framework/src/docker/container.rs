@@ -137,7 +137,7 @@ impl ConnectedContainer {
 ///
 /// Not `Clone`: exactly one value owns the container. Borrow it (it derefs to
 /// [`ConnectedContainer`]) to work with it, or share it in an `Arc`, e.g.
-/// `Myrmic::attach(Arc::new(container))`.
+/// `host::Docker::new(Arc::new(container))`.
 pub struct ManagedContainer {
     container: ConnectedContainer,
     /// Kept alive for the network it is attached to: fields drop after [`Drop::drop`], so the

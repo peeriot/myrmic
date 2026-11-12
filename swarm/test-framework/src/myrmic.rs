@@ -28,7 +28,7 @@
 //! [`MyrmicBackend`] requires `Send + Sync` because the runtime handles' transitions return `Send`
 //! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
@@ -39,7 +39,6 @@ use sorg_common::RestartType;
 use crate::{
     CommandOutput,
     clients::sorg::SorgHandle,
-    docker::container::ManagedContainer,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
     overlay::{MemberId, MulticastGroup, Overlay},
     runtime,
@@ -88,6 +87,8 @@ pub enum Error {
 /// A shim is on one multicast group of an [`crate::overlay::Overlay`]: every CLI call finds the
 /// runtimes there (`--multicast-group`), and every runtime it starts scouts there, so the two
 /// can't drift apart. Runtimes of one machine on two groups come from two shims.
+///
+/// A shim comes from the host it runs on (see [`crate::host`]).
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
@@ -96,71 +97,20 @@ pub struct Myrmic<B> {
     group: MulticastGroup,
 }
 
-impl Myrmic<Local> {
-    /// create a shim around a locally built myrmic binary (see [`crate::resolve_binary!`]), on
-    /// `group`
-    pub fn local(group: &MulticastGroup) -> Self {
-        Self::local_on(Local::default(), group)
-    }
-
-    /// Like [`Self::local`], but on state directories of its own (runtime identities, databases,
-    /// pid files), so tests using it can run in parallel.
-    pub fn local_isolated(group: &MulticastGroup) -> Self {
-        Self::local_on(Local::isolated(), group)
-    }
-
-    /// the locally built myrmic binary on `backend`, on `group`
-    fn local_on(backend: Local, group: &MulticastGroup) -> Self {
-        let binary = crate::resolve_binary!("myrmic");
-        Self {
-            backend,
-            binary: binary
-                .to_str()
-                .unwrap_or_else(|| panic!("myrmic binary path {} is not UTF-8", binary.display()))
-                .to_owned(),
-            group: group.clone(),
-        }
-    }
-}
-
-impl Myrmic<Docker> {
-    /// create a shim that runs the myrmic CLI inside `container`, which has `myrmic` on its
-    /// `PATH`, on `group`; the container is removed once the last shim or guard using it drops
-    pub fn attach(container: Arc<ManagedContainer>, group: &MulticastGroup) -> Self {
-        Self {
-            backend: Docker::attach(container),
-            binary: "myrmic".to_owned(),
-            group: group.clone(),
-        }
-    }
-}
-
-impl Myrmic<Ssh> {
-    /// create a shim that runs the myrmic CLI on `host` over SSH, resolving `myrmic` on the
-    /// remote user's `PATH`, on `group`
-    pub fn ssh(host: impl Into<String>, group: &MulticastGroup) -> Self {
-        Self::ssh_at(host, "myrmic", group)
-    }
-
-    /// like [`Self::ssh`], but the remote myrmic binary lives at `binary` rather than on `PATH`
-    /// (e.g. a path a benchmark harness `scp`'d it to)
-    pub fn ssh_at(
-        host: impl Into<String>,
-        binary: impl Into<String>,
-        group: &MulticastGroup,
-    ) -> Self {
-        Self {
-            backend: Ssh::new(host),
-            binary: binary.into(),
-            group: group.clone(),
-        }
-    }
-}
-
 impl<B> Myrmic<B>
 where
     B: MyrmicBackend,
 {
+    /// A shim that runs `binary` (the myrmic binary, as `backend`'s commands find it on the
+    /// target) through `backend`, on `group`; what a host hands out.
+    pub(crate) fn new(backend: B, binary: String, group: &MulticastGroup) -> Self {
+        Self {
+            backend,
+            binary,
+            group: group.clone(),
+        }
+    }
+
     /// where this shim's commands run
     pub fn backend(&self) -> &B {
         &self.backend
@@ -609,7 +559,7 @@ where
 
 /// How long [`DebugListenerBuilder::start`] waits before returning. The CLI reports nothing once
 /// its subscriptions are in place (it prints `starting debug stream` before it even opens its
-/// session), so the wait is a guess. Measured with [`Myrmic::local_isolated`]: without it, a
+/// session), so the wait is a guess. Measured with [`crate::host::Local::myrmic_isolated`]: without it, a
 /// command sent right after the spawn was missed in most runs; with 5 s, none was.
 pub const DEBUG_LISTENER_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
 

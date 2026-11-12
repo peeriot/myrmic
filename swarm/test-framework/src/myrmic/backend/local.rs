@@ -2,20 +2,14 @@ use std::sync::Arc;
 
 use super::MyrmicBackend;
 
-/// [`MyrmicBackend`] that runs programs on the host, on its own state directories or isolated
-/// (see [`crate::myrmic::Myrmic::local_isolated`]).
-#[derive(Clone, Default)]
+/// [`MyrmicBackend`] that runs programs on the test's machine, isolated: on state directories of
+/// their own (see [`crate::host::Local::myrmic_isolated`]).
+#[derive(Clone)]
 pub struct Local {
-    /// `None` for the host's own state directories; shared by the clones, so its directories live
-    /// as long as any runtime or cell handle that may still need them for cleanup
-    isolation: Option<Arc<Isolation>>,
-}
-
-/// A private myrmic setup on the host (see [`crate::myrmic::Myrmic::local_isolated`]): a
-/// directory holding `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs) and `run/`
-/// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read).
-struct Isolation {
-    dir: tempfile::TempDir,
+    /// Holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs) and `run/`
+    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read). Shared by the clones,
+    /// so it lives as long as any runtime or cell handle that may still need it for cleanup.
+    dir: Arc<tempfile::TempDir>,
 }
 
 impl Local {
@@ -29,25 +23,21 @@ impl Local {
             std::fs::create_dir(dir.path().join(subdir))
                 .unwrap_or_else(|err| panic!("failed to create `{subdir}` in {dir:?}: {err}"));
         }
-        Self {
-            isolation: Some(Arc::new(Isolation { dir })),
-        }
+        Self { dir: Arc::new(dir) }
     }
 }
 
 impl MyrmicBackend for Local {
-    /// `program args`; in an isolation, with its state directories as `XDG_DATA_HOME` and
+    /// `program args`, with the isolation's state directories as `XDG_DATA_HOME` and
     /// `XDG_RUNTIME_DIR`.
     ///
     /// The variables are inherited, so they reach the CLI also when it is exec'd by `sh`.
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut command = std::process::Command::new(program);
-        command.args(args);
-        if let Some(isolation) = &self.isolation {
-            command
-                .env("XDG_DATA_HOME", isolation.dir.path().join("data"))
-                .env("XDG_RUNTIME_DIR", isolation.dir.path().join("run"));
-        }
+        command
+            .args(args)
+            .env("XDG_DATA_HOME", self.dir.path().join("data"))
+            .env("XDG_RUNTIME_DIR", self.dir.path().join("run"));
         command
     }
 

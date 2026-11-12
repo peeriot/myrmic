@@ -6,10 +6,10 @@
 //! # Using it
 //!
 //! ```ignore
-//! use test_framework::{in_process, myrmic::Myrmic, overlay::Overlay};
+//! use test_framework::{host, in_process, overlay::Overlay};
 //!
 //! let group = Overlay::new().new_multicast_group();
-//! let myrmic = Myrmic::local_isolated(&group);
+//! let myrmic = host::Local.myrmic_isolated(&group);
 //! let a = myrmic.runtime();  // a CLI runtime that scouts on `group`
 //! let b = in_process::StoppedRt::new(&group).orchestration();  // a node on the same group
 //! let session = zenoh::open(group.get_zenoh_config()).await.unwrap();  // the test, on the group too

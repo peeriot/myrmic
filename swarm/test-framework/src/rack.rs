@@ -14,7 +14,7 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, RunningRt, Ssh, already_gone};
+use crate::myrmic::{Error, RUNTIME_GONE, RunningRt, Ssh, already_gone};
 use crate::overlay::Overlay;
 use crate::swarm::SwarmProcess;
 
@@ -588,7 +588,7 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     let group = Overlay::new().new_multicast_group();
     let group = &group;
     futures::future::join_all(hosts.iter().map(|host| async move {
-        let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path, group);
+        let myrmic = crate::host::Ssh::new(host.host.clone(), myrmic_path).myrmic(group);
         // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"

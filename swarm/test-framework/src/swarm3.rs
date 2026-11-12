@@ -118,7 +118,7 @@ impl Swarm {
             }),
             sorg: sorg_client::Client::new(session.clone()),
             session,
-            client: Myrmic::local_isolated(group),
+            client: crate::host::Local.myrmic_isolated(group),
         }
     }
 

@@ -7,9 +7,10 @@
 //!
 //! # Where to start
 //!
-//! - **One runtime:** [`myrmic`]. A [`myrmic::Myrmic`] is the CLI on some machine (the host, a
-//!   container, a remote host over SSH); it deploys cells, sends commands and reads status, and
-//!   [`myrmic::Myrmic::runtime`] describes a runtime it can start.
+//! - **One runtime:** [`myrmic`]. A [`myrmic::Myrmic`] is the CLI on some machine; it deploys
+//!   cells, sends commands and reads status, and [`myrmic::Myrmic::runtime`] describes a runtime
+//!   it can start. It comes from its machine, a [`host`] (the test's own, a remote one over SSH,
+//!   a container).
 //! - **Who links to whom:** [`overlay`]. Every runtime is a member of an
 //!   [`overlay::Overlay`], created on one of its multicast groups, and links to the others on
 //!   that group.
@@ -42,6 +43,7 @@ pub mod cell;
 pub mod clients;
 pub mod compose;
 pub mod docker;
+pub mod host;
 pub mod in_process;
 pub mod latency;
 pub mod metrics;
