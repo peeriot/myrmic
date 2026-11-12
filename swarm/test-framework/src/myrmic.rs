@@ -5,7 +5,7 @@
 //!
 //! - [`Myrmic`] operates a swarm: it deploys cells and apps, sends commands, reads status and
 //!   telemetry. It is the same whether or not it ever starts a runtime itself; a shim that only
-//!   operates a swarm is common (e.g. [`crate::swarm3::Swarm::get_client`]).
+//!   operates a swarm is common (e.g. [`crate::swarm3::Swarm::get_myrmic`]).
 //! - [`StoppedRt`] and [`RunningRt`] are one runtime started with `myrmic runtimes start`, in
 //!   its two states (see [`crate::runtime`] for how a test moves it between them). They come from
 //!   [`Myrmic::runtime`], whose options (name, tags, `persistent`) the stopped state carries, so
@@ -28,7 +28,7 @@
 //! [`MyrmicBackend`] requires `Send + Sync` because the runtime handles' transitions return `Send`
 //! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
-use std::path::Path;
+use std::{net::IpAddr, path::Path};
 
 pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
@@ -40,8 +40,7 @@ use crate::{
     CommandOutput,
     clients::sorg::SorgHandle,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
-    overlay::{MemberId, MulticastGroup, Overlay},
-    runtime,
+    overlay, runtime,
     wait::{DEFAULT_TIMEOUT, Timeout, wait_for},
 };
 
@@ -84,9 +83,10 @@ pub enum Error {
 /// succeed. A command that cannot be started at all (binary, `ssh` or `docker` missing, host or
 /// daemon unreachable) is broken test infrastructure, not a result, and panics.
 ///
-/// A shim is on one multicast group of an [`crate::overlay::Overlay`]: every CLI call finds the
-/// runtimes there (`--multicast-group`), and every runtime it starts scouts there, so the two
-/// can't drift apart. Runtimes of one machine on two groups come from two shims.
+/// A shim is attached to an [`crate::overlay::Overlay`] one way ([`overlay::Attachment`]): every CLI call
+/// finds the runtimes that way (`--multicast-group` or `--connect`), and every runtime it starts
+/// attaches that way, so the two can't drift apart. Runtimes of one machine attached two ways
+/// come from two shims.
 ///
 /// A shim comes from the host it runs on (see [`crate::host`]).
 #[derive(Clone)]
@@ -94,7 +94,9 @@ pub struct Myrmic<B> {
     backend: B,
     /// the myrmic binary, as the backend's commands find it on the target
     binary: String,
-    group: MulticastGroup,
+    attachment: overlay::Attachment,
+    /// the address of the host the shim runs on, where a connect to one of its runtimes goes
+    address: IpAddr,
 }
 
 impl<B> Myrmic<B>
@@ -102,27 +104,33 @@ where
     B: MyrmicBackend,
 {
     /// A shim that runs `binary` (the myrmic binary, as `backend`'s commands find it on the
-    /// target) through `backend`, on `group`; what a host hands out.
-    pub(crate) fn new(backend: B, binary: String, group: &MulticastGroup) -> Self {
+    /// target) through `backend`, attached by `attachment`, on the host at `address`; what a host
+    /// hands out.
+    pub(crate) fn new(
+        backend: B,
+        binary: String,
+        attachment: overlay::Attachment,
+        address: IpAddr,
+    ) -> Self {
         Self {
             backend,
             binary,
-            group: group.clone(),
+            attachment,
+            address,
         }
     }
 
     /// where this shim's commands run
-    pub fn backend(&self) -> &B {
+    pub fn get_backend(&self) -> &B {
         &self.backend
     }
 
     /// A runtime on this shim, not started yet, as a new member of the shim's overlay that scouts
-    /// on the shim's group; start it with [`runtime::Stopped::start`].
+    /// attached the way the shim is; start it with [`runtime::Stopped::start`].
     pub fn runtime(&self) -> StoppedRt<B> {
         StoppedRt {
             myrmic: self.clone(),
-            overlay: self.group.get_overlay().clone(),
-            member_id: self.group.add_member(),
+            ovl_member: self.attachment.add_member(self.address),
             tags: vec![],
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
@@ -229,9 +237,9 @@ where
 
     /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
-        let group = self.group.get_address();
+        let attachment = self.attachment.get_cli_args();
         let output = self
-            .run_program(&self.binary, &on_group(&group, args))
+            .run_program(&self.binary, &attached(&attachment, args))
             .await;
         if output.success {
             Ok(output)
@@ -257,8 +265,8 @@ where
 
     /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
-        let group = self.group.get_address();
-        self.run_program_blocking(&self.binary, &on_group(&group, args))
+        let attachment = self.attachment.get_cli_args();
+        self.run_program_blocking(&self.binary, &attached(&attachment, args))
     }
 
     /// Blocking run of `program args` on the target for `Drop`, returning the raw output. A
@@ -311,12 +319,12 @@ where
     }
 }
 
-/// `args` of a `myrmic` call, behind `--multicast-group group`: the shim's group, on which the CLI
-/// finds the runtimes
-fn on_group<'a>(group: &'a str, args: &[&'a str]) -> Vec<&'a str> {
-    let mut on_group = vec!["--multicast-group", group];
-    on_group.extend(args);
-    on_group
+/// `args` of a `myrmic` call, behind `attachment`: the shim's [`overlay::Attachment::get_cli_args`], by
+/// which the CLI finds the runtimes
+fn attached<'a>(attachment: &'a [String; 2], args: &[&'a str]) -> Vec<&'a str> {
+    let mut attached: Vec<&str> = attachment.iter().map(String::as_str).collect();
+    attached.extend(args);
+    attached
 }
 
 /// `path` as a CLI argument; arguments are strings so the ssh backend can quote them
@@ -385,9 +393,8 @@ fn started_runtime_zid(stderr: &str, name: &str) -> Option<zenoh::config::ZenohI
 #[derive(Clone)]
 pub struct StoppedRt<B> {
     myrmic: Myrmic<B>,
-    /// the overlay the runtime is a member of, which tells it its zenoh links at start
-    overlay: Overlay,
-    member_id: MemberId,
+    /// the runtime as a member of its overlay, which tells it its links at start
+    ovl_member: overlay::Member,
     tags: Vec<String>,
     name: String,
     persistent: bool,
@@ -430,17 +437,15 @@ where
     type Running = RunningRt<B>;
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
-    /// `config` sets what the overlay tells the runtime: the group it scouts on
+    /// `config` sets what the overlay tells the runtime: the group it scouts on, the runtimes it
+    /// connects to, the port it listens on
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
     async fn start(self) -> Result<RunningRt<B>, Error> {
-        let group = self.overlay.get_group_of(self.member_id);
         // JSON is YAML, which `runtimes start` parses
         let config = serde_json::json!({
-            "zenoh": {
-                "scouting": { "multicast": { "address": group.get_address() } },
-            },
+            "zenoh": self.ovl_member.get_zenoh_settings(),
         })
         .to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the
@@ -467,8 +472,8 @@ where
         Ok(RunningRt { stopped: self, zid })
     }
 
-    fn get_member_id(&self) -> MemberId {
-        self.member_id
+    fn get_overlay_member(&self) -> &overlay::Member {
+        &self.ovl_member
     }
 }
 

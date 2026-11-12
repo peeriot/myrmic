@@ -12,11 +12,12 @@
 //! ```ignore
 //! use test_framework::{
 //!     in_process::StoppedRt,
+//!     network,
 //!     overlay::Overlay,
 //!     runtime::{Running, Stopped},
 //! };
 //!
-//! let group = Overlay::new().new_multicast_group();
+//! let group = Overlay::new(&network::Local).new_multicast_group();
 //! let rt = StoppedRt::new(&group).orchestration().db().start().await?; // running
 //! let session = zenoh::open(group.get_zenoh_config()).await.unwrap(); // a peer on its group
 //! let rt = rt.delete().await?; // stopped: the node has left the network
@@ -30,8 +31,8 @@
 //! - Its zid is random but fixed at [`StoppedRt::new`], so starting it again brings back the same
 //!   node. [`StoppedRt::zid`] sets a chosen one, for tests where the zid itself matters (an
 //!   orchestrator's zid is its leadership priority).
-//! - [`StoppedRt::new`] makes the node a member of a group's [`crate::overlay::Overlay`]: it
-//!   scouts on that group, and sees exactly the other runtimes on it. Several runtimes as a swarm,
+//! - [`StoppedRt::new`] makes the node a member of an [`crate::overlay::Overlay`], attached on a
+//!   group or by a connect, and it links to exactly what the overlay says. Several runtimes as a swarm,
 //!   with the swarm's connectivity check and CLI, are [`crate::swarm3`]'s job.
 //! - Its database is in memory: every start begins empty. A test that needs data to survive a
 //!   restart wants a [`crate::myrmic`] runtime with `persistent`.
@@ -61,34 +62,30 @@
 
 use zenoh::config::{WhatAmI, ZenohId};
 
-use crate::{
-    overlay::{MemberId, MulticastGroup, Overlay},
-    runtime,
-};
+use crate::{overlay, runtime};
 
 /// An in-process node that is not running: never started yet, or deleted. A builder for the node;
 /// see [the module docs](self).
 pub struct StoppedRt {
     zid: ZenohId,
-    /// the overlay the node is a member of, which tells it its group at start
-    overlay: Overlay,
-    member_id: MemberId,
+    /// the runtime as a member of its overlay, which tells it its links at start
+    ovl_member: overlay::Member,
     orchestration: bool,
     db: bool,
     execution: bool,
-    /// a peer, unless [`Self::router`] made it a router
+    /// a peer, unless [`Self::router_mode`] made it a router
     mode: WhatAmI,
 }
 
 impl StoppedRt {
-    /// A node without plugins, under a random zid it keeps across starts, as a new member of
-    /// `group`'s overlay that scouts on `group`.
-    pub fn new(group: &MulticastGroup) -> Self {
+    /// A node without plugins, under a random zid it keeps across starts, as a new member of an
+    /// overlay, attached by `attachment`, on the test's machine.
+    pub fn new(attachment: impl Into<overlay::Attachment>) -> Self {
+        let attachment = attachment.into();
         Self {
             // `ZenohId`'s default is a random id
             zid: ZenohId::default(),
-            overlay: group.get_overlay().clone(),
-            member_id: group.add_member(),
+            ovl_member: attachment.add_member(overlay::LOCALHOST),
             orchestration: false,
             db: false,
             execution: false,
@@ -102,9 +99,9 @@ impl StoppedRt {
         self
     }
 
-    /// Run in zenoh's router mode instead of as a peer, listening on a random port (zenoh's
-    /// default for routers is the fixed 7447, which parallel tests would share).
-    pub fn router(mut self) -> Self {
+    /// Run in zenoh's router mode instead of as a peer. It listens where every node does (see
+    /// [`crate::overlay`]), not on zenoh's fixed 7447 for routers, which parallel tests would share.
+    pub fn router_mode(mut self) -> Self {
         self.mode = WhatAmI::Router;
         self
     }
@@ -129,8 +126,10 @@ impl StoppedRt {
 
     /// the node library's config for this node
     fn swarm_config(&self) -> swarm::SwarmConfig {
+        let settings = self.ovl_member.get_zenoh_settings();
         let mut config = swarm::SwarmConfig {
-            zenoh: self.overlay.get_group_of(self.member_id).get_zenoh_config(),
+            zenoh: zenoh::Config::from_json5(&settings.to_string())
+                .expect("the overlay's zenoh settings are a valid config"),
             ..Default::default()
         };
         config
@@ -144,12 +143,6 @@ impl StoppedRt {
             .zenoh
             .set_mode(Some(self.mode))
             .expect("setting zenoh mode cannot fail");
-        if self.mode == WhatAmI::Router {
-            config
-                .zenoh
-                .insert_json5("listen/endpoints", r#"["tcp/[::]:0"]"#)
-                .expect("a listen endpoint list is valid");
-        }
         config
     }
 }
@@ -180,8 +173,8 @@ impl runtime::Stopped for StoppedRt {
         })
     }
 
-    fn get_member_id(&self) -> MemberId {
-        self.member_id
+    fn get_overlay_member(&self) -> &overlay::Member {
+        &self.ovl_member
     }
 }
 

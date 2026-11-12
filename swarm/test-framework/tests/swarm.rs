@@ -2,12 +2,17 @@
 //! binary (see [`test_framework::resolve_binary!`]).
 
 use cell_protocol::replication::runtime_tag;
+use introspection_client::v1::Client;
 use test_framework::{
+    host, in_process,
     myrmic::{self, Error, Myrmic, cell::CellSpec},
+    network,
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
     swarm3::{RunningRt, Swarm},
+    wait::DEFAULT_TIMEOUT,
+    wait_for,
 };
 use zenoh::config::ZenohId;
 
@@ -16,11 +21,11 @@ type CliRt = RunningRt<myrmic::RunningRt<myrmic::Local>>;
 
 /// a swarm of three CLI runtimes on one group, started
 async fn three_runtimes() -> Result<(Swarm, [CliRt; 3]), Error> {
-    let group = Overlay::new().new_multicast_group();
+    let group = Overlay::new(&network::Local).new_multicast_group();
     let swarm = Swarm::new(&group).await;
-    let a = swarm.add(swarm.get_client().runtime());
-    let b = swarm.add(swarm.get_client().runtime());
-    let c = swarm.add(swarm.get_client().runtime());
+    let a = swarm.add(swarm.get_myrmic().runtime());
+    let b = swarm.add(swarm.get_myrmic().runtime());
+    let c = swarm.add(swarm.get_myrmic().runtime());
     start_runtimes!(swarm; a, b, c);
     Ok((swarm, [a, b, c]))
 }
@@ -29,11 +34,11 @@ async fn three_runtimes() -> Result<(Swarm, [CliRt; 3]), Error> {
 #[tokio::test(flavor = "multi_thread")]
 async fn cells_are_placed_on_every_runtime() -> anyhow::Result<()> {
     let (swarm, runtimes) = three_runtimes().await?;
-    let cell = new_cell(swarm.get_client()).await?;
+    let cell = new_cell(swarm.get_myrmic()).await?;
 
     for runtime in &runtimes {
         let zid = runtime.get_zid();
-        let placed_on = deploy_pinned(swarm.get_client(), &cell, zid).await?;
+        let placed_on = deploy_pinned(swarm.get_myrmic(), &cell, zid).await?;
         assert_eq!(placed_on, zid.to_string(), "the cell pinned to {zid}");
     }
     Ok(())
@@ -46,11 +51,11 @@ async fn parallel_swarms_are_isolated() -> anyhow::Result<()> {
     let (one, other) = tokio::join!(three_runtimes(), three_runtimes());
     let (one, _one_runtimes) = one?;
     let (_other, [other_a, _other_b, _other_c]) = other?;
-    let cell = new_cell(one.get_client()).await?;
+    let cell = new_cell(one.get_myrmic()).await?;
 
     let foreign = runtime_tag(other_a.get_zid().into());
     let deployed = one
-        .get_client()
+        .get_myrmic()
         .cell(cell.as_path())
         .tags(&[&foreign])
         .deploy()
@@ -80,9 +85,75 @@ async fn a_killed_runtime_restarts_under_the_same_zid() -> anyhow::Result<()> {
     let b = b.start().await?;
     assert_eq!(b.get_zid(), zid);
 
-    let cell = new_cell(swarm.get_client()).await?;
-    let placed_on = deploy_pinned(swarm.get_client(), &cell, zid).await?;
+    let cell = new_cell(swarm.get_myrmic()).await?;
+    let placed_on = deploy_pinned(swarm.get_myrmic(), &cell, zid).await?;
     assert_eq!(placed_on, zid.to_string());
+    Ok(())
+}
+
+/// A runtime moved to a group of its own comes back cut off: the swarm's runtimes no longer
+/// reach it, and it reaches none of them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_moved_to_its_own_group_is_cut_off() -> anyhow::Result<()> {
+    let overlay = Overlay::new(&network::Local);
+    let group = overlay.new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let a = swarm.add(swarm.get_myrmic().runtime());
+    let b = swarm.add(swarm.get_myrmic().runtime());
+    start_runtimes!(swarm; a, b);
+
+    let b = b.stop_with(|rt| rt.kill()).await?;
+    let alone = overlay.new_multicast_group();
+    overlay.set_group(&b, &alone);
+    let b = b.start_without_check().await?;
+
+    // `a` answers alone, linked to nobody: `b` is expected to stay silent
+    swarm.wait_until_connected().await?;
+    let lone = Client::new(zenoh::open(alone.get_zenoh_config()).await.unwrap()).await;
+    let status = wait_for(DEFAULT_TIMEOUT, "the cut-off runtime to answer", || async {
+        lone.swarm_status()
+            .await
+            .expect("failed to query the status on the lone group")
+            .into_iter()
+            .find(|status| status.id == b.get_zid())
+    })
+    .await?;
+    assert!(
+        status.peers.is_empty() && status.routers.is_empty(),
+        "the cut-off runtime is linked to {:?} and {:?}",
+        status.peers,
+        status.routers
+    );
+    Ok(())
+}
+
+/// A runtime attached by a connect links to its target: the target lists it as its peer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connected_runtime_links_to_its_target() -> anyhow::Result<()> {
+    let overlay = Overlay::new(&network::Local);
+    let group = overlay.new_multicast_group();
+    let target = in_process::StoppedRt::new(&group).orchestration();
+    let to_target = overlay.connect_to(&target);
+    let target = target.start().await?;
+    let connected = host::Local
+        .myrmic_isolated(&to_target)
+        .runtime()
+        .start()
+        .await?;
+
+    let client = Client::new(target.get_session().clone()).await;
+    wait_for(
+        DEFAULT_TIMEOUT,
+        "the target to list the connected runtime",
+        || async {
+            let status = client
+                .own_status()
+                .await
+                .expect("failed to query the target's own status");
+            status.peers.contains(&connected.get_zid()).then_some(())
+        },
+    )
+    .await?;
     Ok(())
 }
 

@@ -40,8 +40,7 @@ use zenoh::config::ZenohId;
 use super::Swarm;
 use super::{RuntimeEntry, Shared};
 use crate::{
-    myrmic,
-    overlay::MemberId,
+    myrmic, overlay,
     runtime::{Running, Stopped},
 };
 
@@ -81,13 +80,13 @@ where
             zid,
             inner.get_zid(),
             "{:?} came back under a different zid",
-            entry.member_id
+            entry.member
         );
         // a runtime's handle moved into the swarm's, so its start never finds it running
         assert!(
             !entry.running.load(Ordering::SeqCst),
             "{:?} was started while running",
-            entry.member_id
+            entry.member
         );
         entry.running.store(true, Ordering::SeqCst);
         Ok(RunningRt {
@@ -112,8 +111,8 @@ where
         Ok(running)
     }
 
-    fn get_member_id(&self) -> MemberId {
-        self.inner.get_member_id()
+    fn get_overlay_member(&self) -> &overlay::Member {
+        self.inner.get_overlay_member()
     }
 }
 

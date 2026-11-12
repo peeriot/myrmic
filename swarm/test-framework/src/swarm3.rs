@@ -5,34 +5,36 @@
 //!
 //! ```ignore
 //! use test_framework::{
-//!     in_process, overlay::Overlay, runtime::Stopped, start_runtimes, swarm3::Swarm,
+//!     in_process, network, overlay::Overlay, runtime::Stopped, start_runtimes, swarm3::Swarm,
 //! };
 //!
-//! let group = Overlay::new().new_multicast_group();
+//! let group = Overlay::new(&network::Local).new_multicast_group();
 //! let swarm = Swarm::new(&group).await;
-//! let a = swarm.add(swarm.get_client().runtime().tags(&["gpu"]));  // a CLI runtime
+//! let a = swarm.add(swarm.get_myrmic().runtime().tags(&["gpu"]));  // a CLI runtime
 //! let b = swarm.add(in_process::StoppedRt::new(&group).orchestration().db());
 //! start_runtimes!(swarm; a, b);  // both running, the swarm connected
 //! let b = b.stop_with(|rt| rt.delete()).await?;  // stopped
 //! let b = b.start().await?;  // running again; returns once the swarm is connected again
 //! ```
 //!
-//! - A test builds the runtimes itself, of any kind and on the group the swarm joins, and hands
-//!   each to [`Swarm::add`], which returns the swarm's handle for it ([`StoppedRt`]). The swarm
-//!   knows exactly the runtimes added to it.
-//! - [`Swarm::new`] takes the way the test joins the overlay: the test's session, its CLI
-//!   ([`Swarm::get_client`]) and its clients ([`Swarm::get_sorg`]) scout on that group. The
-//!   status query of the connectivity check goes out on that session too, so a runtime on
-//!   another group of the overlay would never answer it: until runtimes can link across groups
-//!   (connects), all of a swarm's runtimes are on its group.
-//! - Starting a handle returns once the swarm is connected: exactly the runtimes the test has
-//!   running answer the status query, each linked to exactly the runtimes the overlay links it
-//!   to. [`crate::start_runtimes!`] starts several side by side and checks once;
+//! - A test builds the runtimes itself, of any kind and attached to one overlay, and hands each
+//!   to [`Swarm::add`], which returns the swarm's handle for it ([`StoppedRt`]). The swarm knows
+//!   exactly the runtimes added to it.
+//! - [`Swarm::new`] takes the way the test attaches to the overlay
+//!   ([`crate::overlay::Attachment`]): the test's session, its CLI ([`Swarm::get_myrmic`]) and its
+//!   clients ([`Swarm::get_sorg`]) attach that way, on a group or by a connect (e.g. to a router).
+//!   The status query of the connectivity check goes out on that session too, so only the
+//!   runtimes it reaches can answer.
+//! - Starting a handle returns once the swarm is connected: exactly the running runtimes the
+//!   session reaches answer the status query, each linked to exactly the runtimes the overlay
+//!   links it to. A running runtime the session doesn't reach (e.g. one moved to a group of its
+//!   own with [`crate::overlay::Overlay::set_group`]) is expected to stay silent.
+//!   [`crate::start_runtimes!`] starts several side by side and checks once;
 //!   [`StoppedRt::start_without_check`] starts one without the check.
 //! - A running handle derefs to the runtime kind's own handle, for what only that kind can do
 //!   (`a.pause()`); a kind's own way to stop goes through [`RunningRt::stop_with`].
-//! - Which runtime a cell is on comes back as a zid ([`Swarm::get_host_of`]); a test compares it with
-//!   its handles' [`crate::runtime::Running::get_zid`].
+//! - Which runtime a cell is on comes back as a zid ([`Swarm::get_host_of`]); a test compares it
+//!   with its handles' [`crate::runtime::Running::get_zid`].
 //!
 //! # Design notes
 //!
@@ -68,7 +70,7 @@ pub use rt::{RunningRt, StoppedRt};
 
 use crate::{
     myrmic::{self, Error, Myrmic},
-    overlay::{MemberId, MulticastGroup, Overlay},
+    overlay::{self, Overlay},
     runtime::Stopped,
     wait::Timeout,
 };
@@ -88,6 +90,8 @@ pub struct Swarm {
 /// What a swarm shares with its runtimes' handles.
 struct Shared {
     overlay: Overlay,
+    /// how the swarm's session attaches to the overlay, which decides which runtimes answer it
+    attachment: overlay::Attachment,
     /// one per runtime added to the swarm, in the order they were added
     entries: Mutex<Vec<Arc<RuntimeEntry>>>,
     introspection: introspection_client::v1::Client,
@@ -95,7 +99,7 @@ struct Shared {
 
 /// What a [`Swarm`] knows about one of its runtimes, whatever state it is in.
 struct RuntimeEntry {
-    member_id: MemberId,
+    member: overlay::Member,
     /// set at the runtime's first start, the same on every later one
     zid: OnceLock<ZenohId>,
     /// whether the test has the runtime running: set by a start, cleared when the running handle
@@ -104,41 +108,43 @@ struct RuntimeEntry {
 }
 
 impl Swarm {
-    /// A swarm with no runtime yet, whose test session, CLI and clients join `group`'s overlay on
-    /// `group`.
-    pub async fn new(group: &MulticastGroup) -> Self {
-        let session = zenoh::open(group.get_zenoh_config())
+    /// A swarm with no runtime yet, whose test session, CLI and clients attach to an overlay by
+    /// `attachment`.
+    pub async fn new(attachment: impl Into<overlay::Attachment>) -> Self {
+        let attachment = attachment.into();
+        let session = zenoh::open(attachment.get_zenoh_config())
             .await
             .expect("failed to open the test's zenoh session");
         Self {
+            client: crate::host::Local.myrmic_isolated(attachment.clone()),
             shared: Arc::new(Shared {
-                overlay: group.get_overlay().clone(),
+                overlay: attachment.get_overlay().clone(),
+                attachment,
                 entries: Mutex::new(vec![]),
                 introspection: introspection_client::v1::Client::new(session.clone()).await,
             }),
             sorg: sorg_client::Client::new(session.clone()),
             session,
-            client: crate::host::Local.myrmic_isolated(group),
         }
     }
 
     /// Make the stopped runtime `rt`, a member of the swarm's overlay, a runtime of the swarm; the
     /// returned handle is the one the test starts and stops it with from now on.
     pub fn add<S: Stopped>(&self, rt: S) -> StoppedRt<S> {
-        let member_id = rt.get_member_id();
+        let member = rt.get_overlay_member().clone();
         assert!(
-            self.shared.overlay.has_member(member_id),
+            self.shared.overlay.has_member(&member),
             "the runtime is not a member of the swarm's overlay"
         );
         let mut entries = self.shared.entries.lock().expect("not poisoned");
         // one runtime, one entry: a second handle of the same runtime (e.g. a clone of a CLI
         // runtime's stopped handle) would get a second intent flag for it
         assert!(
-            entries.iter().all(|entry| entry.member_id != member_id),
-            "{member_id:?} was added twice"
+            entries.iter().all(|entry| entry.member != member),
+            "{member:?} was added twice"
         );
         let entry = Arc::new(RuntimeEntry {
-            member_id,
+            member,
             zid: OnceLock::new(),
             running: AtomicBool::new(false),
         });
@@ -245,7 +251,7 @@ impl Swarm {
 
     /// The CLI on the test's machine for the commands that act on the whole swarm, e.g.
     /// [`Myrmic::cell`] to deploy a cell. It starts no runtime unless the test has it start one.
-    pub fn get_client(&self) -> &Myrmic<myrmic::Local> {
+    pub fn get_myrmic(&self) -> &Myrmic<myrmic::Local> {
         &self.client
     }
 }
@@ -261,13 +267,20 @@ impl Shared {
             .collect()
     }
 
-    /// The runtimes the test has running, each with the running runtimes the overlay links it to:
-    /// what a connected swarm's status shows.
+    /// The runtimes the test has running and the swarm's session reaches, each with those of them
+    /// the overlay links it to: what a connected swarm's status shows. A running runtime the
+    /// session can't reach (e.g. one moved to a group of its own) can't answer, so it isn't
+    /// expected to.
     fn expected_links(&self) -> BTreeMap<ZenohId, BTreeSet<ZenohId>> {
         let entries = self.entries.lock().expect("not poisoned");
         let running: Vec<&RuntimeEntry> = entries
             .iter()
-            .filter(|entry| entry.running.load(Ordering::SeqCst))
+            .filter(|entry| {
+                entry.running.load(Ordering::SeqCst)
+                    && self
+                        .overlay
+                        .is_reachable_by(&self.attachment, &entry.member)
+            })
             .map(Arc::as_ref)
             .collect();
         running
@@ -276,8 +289,8 @@ impl Shared {
                 let linked = running
                     .iter()
                     .filter(|other| {
-                        other.member_id != entry.member_id
-                            && self.overlay.are_linked(entry.member_id, other.member_id)
+                        other.member != entry.member
+                            && self.overlay.are_linked(&entry.member, &other.member)
                     })
                     .map(|other| other.get_zid())
                     .collect();
@@ -325,7 +338,7 @@ impl RuntimeEntry {
         *self
             .zid
             .get()
-            .unwrap_or_else(|| panic!("{:?} was never started, so it has no zid", self.member_id))
+            .unwrap_or_else(|| panic!("{:?} was never started, so it has no zid", self.member))
     }
 }
 

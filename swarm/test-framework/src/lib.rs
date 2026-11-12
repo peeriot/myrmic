@@ -11,9 +11,9 @@
 //!   cells, sends commands and reads status, and [`myrmic::Myrmic::runtime`] describes a runtime
 //!   it can start. It comes from its machine, a [`host`] (the test's own, a remote one over SSH,
 //!   a container).
-//! - **Who links to whom:** [`overlay`]. Every runtime is a member of an
-//!   [`overlay::Overlay`], created on one of its multicast groups, and links to the others on
-//!   that group.
+//! - **Who links to whom:** [`overlay`] and [`network`]. Every runtime is a member of an
+//!   [`overlay::Overlay`], attached on one of its multicast groups or by a connect to another
+//!   member; the overlay sits on a network, which decides whether hosts reach each other at all.
 //! - **A runtime's lifecycle:** [`runtime`]. Start, stop, kill and pause, with the stopped and
 //!   the running state as separate types, so a call in the wrong state does not compile. The
 //!   same handles serve single-runtime tests and swarms.
@@ -48,6 +48,7 @@ pub mod in_process;
 pub mod latency;
 pub mod metrics;
 pub mod myrmic;
+pub mod network;
 pub mod overlay;
 pub mod producers;
 pub mod rack;

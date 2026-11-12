@@ -14,12 +14,12 @@
 //!
 //! ```ignore
 //! use test_framework::{
-//!     host,
+//!     host, network,
 //!     overlay::Overlay,
 //!     runtime::{Running, Stopped},
 //! };
 //!
-//! let group = Overlay::new().new_multicast_group();
+//! let group = Overlay::new(&network::Local).new_multicast_group();
 //! let myrmic = host::Local.myrmic_isolated(&group);
 //! let rt = myrmic.runtime().tags(&["gpu"]).persistent(true).start().await?; // running
 //! let zid = rt.get_zid();
@@ -87,7 +87,7 @@ use std::future::Future;
 
 use zenoh::config::ZenohId;
 
-use crate::overlay::MemberId;
+use crate::overlay;
 
 /// A runtime that is not running: never started yet, or stopped.
 pub trait Stopped: Sized + Send + Sync {
@@ -102,7 +102,7 @@ pub trait Stopped: Sized + Send + Sync {
 
     /// which member of its [`crate::overlay::Overlay`] the runtime is: every runtime is created as
     /// one, and takes its zenoh links from the overlay
-    fn get_member_id(&self) -> MemberId;
+    fn get_overlay_member(&self) -> &overlay::Member;
 }
 
 /// A running runtime.

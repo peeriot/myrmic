@@ -15,6 +15,7 @@ use sorg_tests::{
 };
 use test_framework::{
     myrmic::{self, Error},
+    network,
     overlay::Overlay,
     runtime::Running,
     start_runtimes,
@@ -66,10 +67,10 @@ type CliRt = RunningRt<myrmic::RunningRt<myrmic::Local>>;
 /// A swarm of two CLI runtimes on one group, tagged `first` and `second`, started; their handles
 /// in that order.
 async fn two_runtimes(first: &[&str], second: &[&str]) -> Result<(Swarm, [CliRt; 2]), Error> {
-    let group = Overlay::new().new_multicast_group();
+    let group = Overlay::new(&network::Local).new_multicast_group();
     let swarm = Swarm::new(&group).await;
-    let first = swarm.add(swarm.get_client().runtime().tags(first));
-    let second = swarm.add(swarm.get_client().runtime().tags(second));
+    let first = swarm.add(swarm.get_myrmic().runtime().tags(first));
+    let second = swarm.add(swarm.get_myrmic().runtime().tags(second));
     start_runtimes!(swarm; first, second);
     Ok((swarm, [first, second]))
 }
@@ -90,7 +91,7 @@ async fn single_tag_match() -> anyhow::Result<()> {
     let (swarm, [gpu, _cpu]) = gpu_cpu().await?;
 
     let cell = swarm
-        .get_client()
+        .get_myrmic()
         .cell(prebuilt_cell_wasm(DUMMY_CELL))
         .tags(&[TAG_GPU])
         .deploy()
@@ -113,7 +114,7 @@ async fn multi_tag_and_match() -> anyhow::Result<()> {
     let (swarm, [_gpu, gpu_sensor]) = gpu_gpu_sensor().await?;
 
     let cell = swarm
-        .get_client()
+        .get_myrmic()
         .cell(prebuilt_cell_wasm(DUMMY_CELL))
         .tags(&[TAG_GPU, TAG_SENSOR])
         .deploy()
@@ -133,7 +134,7 @@ async fn untagged_placeable_anywhere() -> anyhow::Result<()> {
     let (swarm, _runtimes) = gpu_cpu().await?;
 
     let cell = swarm
-        .get_client()
+        .get_myrmic()
         .cell(prebuilt_cell_wasm(DUMMY_CELL))
         .deploy()
         .await?;

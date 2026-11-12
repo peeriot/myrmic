@@ -583,12 +583,15 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     // Concurrent, not sequential — same rationale as `provision`: each host's teardown (a
     // `runtimes delete` plus two `rm -f`s) is an independent SSH round trip, so
     // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
-    // `runtimes delete` finds a runtime by its pid file on the host, not on the network, so the
-    // shims' group is never used: any group will do.
-    let group = Overlay::new().new_multicast_group();
+    // `runtimes delete` finds a runtime by its pid file on the host, not on the network, and no
+    // runtime is created, so neither the shims' group nor the hosts' address is ever used: any
+    // will do.
+    let group = Overlay::new(&crate::network::Local).new_multicast_group();
     let group = &group;
+    let unused_address = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
     futures::future::join_all(hosts.iter().map(|host| async move {
-        let myrmic = crate::host::Ssh::new(host.host.clone(), myrmic_path).myrmic(group);
+        let myrmic =
+            crate::host::Ssh::new(host.host.clone(), unused_address, myrmic_path).myrmic(group);
         // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"
