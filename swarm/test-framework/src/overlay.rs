@@ -11,7 +11,7 @@
 //! let overlay = Overlay::new(&network::Local);
 //! let group = overlay.new_multicast_group();
 //! let a = in_process::StoppedRt::new(&group).router_mode();  // a node that scouts on `group`
-//! let myrmic = host::Local.myrmic_isolated(&overlay.connect_to(&a));
+//! let myrmic = host::Local.myrmic_isolated(overlay.connect_to(&a));
 //! let b = myrmic.runtime();  // a CLI runtime whose one link is a connect to `a`
 //! let session = zenoh::open(group.get_zenoh_config()).await.unwrap();  // the test, on the group
 //! ```
@@ -26,7 +26,7 @@
 //!   different overlays (e.g. of tests running in parallel) never see each other.
 //! - [`Overlay::set_group`] moves a member to another group, for a runtime that should come back
 //!   cut off from the rest; it takes effect at the member's next start.
-//! - Groups and connects hold their overlay, so a test that only needs one of them need not keep
+//! - Groups and members hold their overlay, so a test that only needs one of them need not keep
 //!   the overlay.
 //!
 //! # Design notes
@@ -40,12 +40,15 @@
 //! member goes.
 
 use std::{
+    collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU16, Ordering},
     },
 };
+
+use zenoh::config::WhatAmI;
 
 use crate::{network::Network, runtime::Stopped};
 
@@ -56,7 +59,7 @@ pub struct Overlay {
     shared: Arc<Shared>,
 }
 
-/// What the clones of an overlay and its groups and connects share.
+/// What the clones of an overlay and its groups and members share.
 struct Shared {
     /// the network the overlay sits on
     network: Box<dyn Network>,
@@ -81,6 +84,16 @@ struct MemberState {
     connects: Vec<usize>,
     /// the port it listens on, set once a connect targets it
     listen_port: Option<u16>,
+    /// The mode it runs in, `None` while it doesn't run: what its last start reported, until its
+    /// running handle went away (see [`Member::start_running`]). A router passes traffic on
+    /// between what is linked to it. The mode itself is the runtime's own setting.
+    running: Option<WhatAmI>,
+}
+
+impl MemberState {
+    fn is_router(&self) -> bool {
+        self.running == Some(WhatAmI::Router)
+    }
 }
 
 /// One of an overlay's multicast groups, by its index in [`State::group_addresses`].
@@ -95,20 +108,13 @@ pub struct MulticastGroup {
     id: GroupId,
 }
 
-/// A connect to one member of an [`Overlay`] (see [`Overlay::connect_to`]): what attaches by it
-/// links to that member only. Clones are the same connect.
-#[derive(Clone)]
-pub struct Connect {
-    target: Member,
-}
-
 /// How something attaches to an overlay: a runtime, a test's session or CLI, a swarm.
 #[derive(Clone)]
 pub enum Attachment {
     /// scouting on a group, linked to every member on it
     Group(MulticastGroup),
-    /// by a connect to one member, linked to that member only
-    Connect(Connect),
+    /// by a connect to one member, linked to that member only (see [`Overlay::connect_to`])
+    ConnectTo(Member),
 }
 
 /// A member of an [`Overlay`]: a runtime, as the overlay knows it (see
@@ -143,20 +149,17 @@ impl Overlay {
         }
     }
 
-    /// A connect to the member `target`: what attaches by it links to `target` only. `target`
-    /// listens for it from its next start on, so a runtime is connected to before it starts.
-    ///
-    /// The port it listens on is one that is free on the test's machine when the first connect
-    /// to it is made.
-    pub fn connect_to(&self, target: impl Into<Member>) -> Connect {
+    /// Attaching by a connect to the member `target`: what attaches this way links to `target`
+    /// only. `target` listens for it from its next start on, so a runtime is connected to before
+    /// it starts.
+    pub fn connect_to(&self, target: impl Into<Member>) -> Attachment {
         let target = target.into();
-        let index = self.index_of(&target);
-        let mut state = self.lock();
-        let member = &mut state.members[index];
-        if member.listen_port.is_none() {
-            member.listen_port = Some(free_port());
-        }
-        Connect { target }
+        assert!(
+            self.has_member(&target),
+            "{target:?} is not a member of this overlay"
+        );
+        target.ensure_listen_port();
+        Attachment::ConnectTo(target)
     }
 
     /// Move the member `member` to `group`, one of this overlay's: from its next start on it
@@ -172,44 +175,120 @@ impl Overlay {
         self.lock().members[index].group = Some(group.id);
     }
 
-    /// Whether the members `a` and `b` link to each other: the overlay wants it (the same group,
-    /// or a connect between them) and the network lets their hosts reach each other.
+    /// Whether the members `a` and `b` are linked: directly, by a shared group or a connect, or
+    /// by gossip, which links every peer of a component to every member of it the peer's host
+    /// reaches (see [`Self::links`]).
     pub(crate) fn are_linked(&self, a: &Member, b: &Member) -> bool {
         let (a, b) = (self.index_of(a), self.index_of(b));
-        let state = self.lock();
-        let (member_a, member_b) = (&state.members[a], &state.members[b]);
-        let same_group = member_a.group.is_some() && member_a.group == member_b.group;
-        let connected = member_a.connects.contains(&b) || member_b.connects.contains(&a);
-        (same_group || connected)
-            && (member_a.address == member_b.address
-                || self
-                    .shared
-                    .network
-                    .reaches(member_a.address, member_b.address))
+        self.links(&self.lock(), a, b)
     }
 
-    /// Whether what attaches by `attachment` reaches the member `member`: on a group, the
-    /// members on it; by a connect, its target and what links to the target. The latter
-    /// assumes the target passes traffic on for what attaches to it, as a router does.
+    /// Whether what attaches by `attachment` hears from the member `member`: a graph search from
+    /// what it is linked to, on through the members that pass traffic on.
+    ///
+    /// On a group, the session is a peer on the test's machine: gossip links it to every member
+    /// of the group's component that its machine reaches. By a connect, it is a client of the
+    /// target only, and the target passes traffic on for it, as a peer does for its clients. From
+    /// there on, only routers pass traffic on.
     pub(crate) fn is_reachable_by(&self, attachment: &Attachment, member: &Member) -> bool {
-        let index = self.index_of(member);
+        let wanted = self.index_of(member);
         let state = self.lock();
-        let member = &state.members[index];
-        match attachment {
-            Attachment::Group(group) => member.group == Some(group.id),
-            Attachment::Connect(connect) => {
-                let target_index = self.index_of(&connect.target);
-                let target = &state.members[target_index];
-                index == target_index
-                    || (target.group.is_some() && member.group == target.group)
-                    || member.connects.contains(&target_index)
+        let (first, passes_on_for_session) = match attachment {
+            Attachment::Group(group) => {
+                let on_group = (0..state.members.len()).filter(|&index| {
+                    let member = &state.members[index];
+                    member.running.is_some() && member.group == Some(group.id)
+                });
+                let first: Vec<usize> = self
+                    .get_component(&state, on_group)
+                    .into_iter()
+                    .filter(|&index| self.addresses_reach(LOCALHOST, state.members[index].address))
+                    .collect();
+                (first, None)
+            }
+            Attachment::ConnectTo(target) => {
+                let target = self.index_of(target);
+                (vec![target], Some(target))
+            }
+        };
+        let mut reached: HashSet<usize> = first.iter().copied().collect();
+        let mut queue = first;
+        while let Some(index) = queue.pop() {
+            let passes_on =
+                state.members[index].is_router() || passes_on_for_session == Some(index);
+            if passes_on {
+                for other in 0..state.members.len() {
+                    if !reached.contains(&other) && self.links(&state, index, other) {
+                        reached.insert(other);
+                        queue.push(other);
+                    }
+                }
             }
         }
+        reached.contains(&wanted)
+    }
+
+    /// Whether the members at `a` and `b` are linked. Directly ([`Self::is_direct_link`]), or by
+    /// gossip: zenoh's peers tell each other about their links, and a peer connects to every peer
+    /// and router it learns of. So within a component (the members joined by direct links), every
+    /// pair is linked whose hosts reach each other, but two routers, which connect to nobody on
+    /// their own.
+    fn links(&self, state: &State, a: usize, b: usize) -> bool {
+        let (member_a, member_b) = (&state.members[a], &state.members[b]);
+        let both_routers = member_a.is_router() && member_b.is_router();
+        a != b
+            && (self.is_direct_link(state, a, b)
+                || (!both_routers
+                    && self.hosts_reach(member_a, member_b)
+                    && self.get_component(state, [a]).contains(&b)))
+    }
+
+    /// Whether the members at `a` and `b`, both running, form a link of their own, without
+    /// gossip: a connect between them, or a shared group (but not as two routers, which don't
+    /// connect to what they find there), where their hosts reach each other.
+    fn is_direct_link(&self, state: &State, a: usize, b: usize) -> bool {
+        let (member_a, member_b) = (&state.members[a], &state.members[b]);
+        let both_running = member_a.running.is_some() && member_b.running.is_some();
+        let both_routers = member_a.is_router() && member_b.is_router();
+        let shared_group =
+            member_a.group.is_some() && member_a.group == member_b.group && !both_routers;
+        let connected = member_a.connects.contains(&b) || member_b.connects.contains(&a);
+        both_running && (shared_group || connected) && self.hosts_reach(member_a, member_b)
+    }
+
+    /// the members joined to any of `start` by direct links, hop by hop, `start` included
+    fn get_component(
+        &self,
+        state: &State,
+        start: impl IntoIterator<Item = usize>,
+    ) -> HashSet<usize> {
+        let mut component: HashSet<usize> = start.into_iter().collect();
+        let mut queue: Vec<usize> = component.iter().copied().collect();
+        while let Some(index) = queue.pop() {
+            for other in 0..state.members.len() {
+                if !component.contains(&other) && self.is_direct_link(state, index, other) {
+                    component.insert(other);
+                    queue.push(other);
+                }
+            }
+        }
+        component
     }
 
     /// whether `member` is a member of this overlay
     pub(crate) fn has_member(&self, member: &Member) -> bool {
         Arc::ptr_eq(&member.overlay.shared, &self.shared)
+    }
+
+    /// whether the network lets the hosts of `a` and `b` reach each other
+    fn hosts_reach(&self, a: &MemberState, b: &MemberState) -> bool {
+        self.addresses_reach(a.address, b.address)
+    }
+
+    /// whether the network lets the hosts at `a` and `b` reach each other; the same host always
+    /// does
+    fn addresses_reach(&self, a: IpAddr, b: IpAddr) -> bool {
+        a == b || self.shared.network.reaches(a, b)
     }
 
     /// `member`'s index among this overlay's members
@@ -233,6 +312,7 @@ impl Overlay {
             group,
             connects,
             listen_port: None,
+            running: None,
         });
         Member {
             overlay: self.clone(),
@@ -245,6 +325,41 @@ impl Member {
     /// the overlay this is a member of
     pub fn get_overlay(&self) -> &Overlay {
         &self.overlay
+    }
+
+    /// the zenoh endpoint the member listens on for what connects to it, e.g. for the CLI's
+    /// `--connect`; it must be a connect's target
+    pub(crate) fn get_endpoint(&self) -> String {
+        let index = self.overlay.index_of(self);
+        endpoint(&self.overlay.lock().members[index])
+    }
+
+    /// Report that the member runs now, in `mode`: what a runtime's start calls once it is up.
+    /// The member counts as running until the returned guard goes, which the runtime's running
+    /// handle holds, so however the handle goes, the overlay learns the member stopped.
+    pub(crate) fn start_running(&self, mode: WhatAmI) -> RunningGuard {
+        let index = self.overlay.index_of(self);
+        let mut state = self.overlay.lock();
+        let member = &mut state.members[index];
+        assert!(
+            member.running.is_none(),
+            "{self:?} was started while it runs"
+        );
+        member.running = Some(mode);
+        RunningGuard {
+            member: self.clone(),
+        }
+    }
+
+    /// Give the member a listen port unless it has one: one that is free on the test's machine
+    /// now. What connects to it, and what it listens on from its next start, use that port.
+    pub(crate) fn ensure_listen_port(&self) {
+        let index = self.overlay.index_of(self);
+        let mut state = self.overlay.lock();
+        let member = &mut state.members[index];
+        if member.listen_port.is_none() {
+            member.listen_port = Some(free_port());
+        }
     }
 
     /// The `zenoh` section of this member's config, as of now: the group it scouts on
@@ -269,6 +384,19 @@ impl Member {
             "connect": { "endpoints": connects },
             "listen": { "endpoints": [format!("tcp/[::]:{listen_port}")] },
         })
+    }
+}
+
+/// What records a member as running in its overlay, for as long as it exists (see
+/// [`Member::start_running`]).
+pub(crate) struct RunningGuard {
+    member: Member,
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        let index = self.member.overlay.index_of(&self.member);
+        self.member.overlay.lock().members[index].running = None;
     }
 }
 
@@ -329,54 +457,38 @@ impl MulticastGroup {
     }
 }
 
-impl Connect {
-    /// the overlay this connect belongs to
-    pub fn get_overlay(&self) -> &Overlay {
-        self.target.get_overlay()
-    }
-
-    /// the zenoh endpoint of the connect's target, e.g. for the CLI's `--connect`
-    pub fn get_target_endpoint(&self) -> String {
-        let overlay = self.get_overlay();
-        endpoint(&overlay.lock().members[overlay.index_of(&self.target)])
-    }
-
-    /// A zenoh client config that connects to the target only, for a test's own session. The
-    /// session is no member of the overlay, so no swarm expects links to it. Its open fails unless
-    /// the target already runs.
-    pub fn get_zenoh_config(&self) -> zenoh::Config {
-        let mut config = zenoh::Config::default();
-        config
-            .set_mode(Some(zenoh::config::WhatAmI::Client))
-            .expect("setting zenoh mode cannot fail");
-        config
-            .insert_json5(
-                "connect/endpoints",
-                &serde_json::json!([self.get_target_endpoint()]).to_string(),
-            )
-            .expect("a connect endpoint is valid");
-        config
-            .insert_json5("scouting/multicast/enabled", "false")
-            .expect("disabling multicast scouting cannot fail");
-        config
-    }
-}
-
 impl Attachment {
     /// the overlay this attaches to
     pub fn get_overlay(&self) -> &Overlay {
         match self {
             Self::Group(group) => group.get_overlay(),
-            Self::Connect(connect) => connect.get_overlay(),
+            Self::ConnectTo(target) => target.get_overlay(),
         }
     }
 
-    /// a zenoh config for a test's own session attached this way (see
-    /// [`MulticastGroup::get_zenoh_config`], [`Connect::get_zenoh_config`])
+    /// A zenoh config for a test's own session attached this way: on a group, a peer that
+    /// scouts on it ([`MulticastGroup::get_zenoh_config`]); by a connect, a client that connects
+    /// to the target only, whose open fails unless the target already runs. The session is no
+    /// member of the overlay, so no swarm expects links to it.
     pub fn get_zenoh_config(&self) -> zenoh::Config {
         match self {
             Self::Group(group) => group.get_zenoh_config(),
-            Self::Connect(connect) => connect.get_zenoh_config(),
+            Self::ConnectTo(target) => {
+                let mut config = zenoh::Config::default();
+                config
+                    .set_mode(Some(zenoh::config::WhatAmI::Client))
+                    .expect("setting zenoh mode cannot fail");
+                config
+                    .insert_json5(
+                        "connect/endpoints",
+                        &serde_json::json!([target.get_endpoint()]).to_string(),
+                    )
+                    .expect("a connect endpoint is valid");
+                config
+                    .insert_json5("scouting/multicast/enabled", "false")
+                    .expect("disabling multicast scouting cannot fail");
+                config
+            }
         }
     }
 
@@ -384,7 +496,7 @@ impl Attachment {
     pub(crate) fn get_cli_args(&self) -> [String; 2] {
         match self {
             Self::Group(group) => ["--multicast-group".to_owned(), group.get_address()],
-            Self::Connect(connect) => ["--connect".to_owned(), connect.get_target_endpoint()],
+            Self::ConnectTo(target) => ["--connect".to_owned(), target.get_endpoint()],
         }
     }
 
@@ -393,9 +505,9 @@ impl Attachment {
     pub(crate) fn add_member(&self, address: IpAddr) -> Member {
         match self {
             Self::Group(group) => group.overlay.add_member(address, Some(group.id), vec![]),
-            Self::Connect(connect) => {
-                let overlay = connect.get_overlay();
-                overlay.add_member(address, None, vec![overlay.index_of(&connect.target)])
+            Self::ConnectTo(target) => {
+                let overlay = target.get_overlay();
+                overlay.add_member(address, None, vec![overlay.index_of(target)])
             }
         }
     }
@@ -404,12 +516,6 @@ impl Attachment {
 impl From<&MulticastGroup> for Attachment {
     fn from(group: &MulticastGroup) -> Self {
         Self::Group(group.clone())
-    }
-}
-
-impl From<&Connect> for Attachment {
-    fn from(connect: &Connect) -> Self {
-        Self::Connect(connect.clone())
     }
 }
 

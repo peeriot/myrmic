@@ -3,7 +3,7 @@
 
 //! Helpers and abstractions for end-to-end tests of myrmic: starting real runtimes, alone or as a
 //! swarm, operating them the way a user does (through the `myrmic` CLI), and injecting the faults
-//! a deployed swarm meets (crashes, freezes, power loss).
+//! a deployed swarm meets (crashes, freezes, power loss, network splits, full disks, clock steps).
 //!
 //! # Where to start
 //!

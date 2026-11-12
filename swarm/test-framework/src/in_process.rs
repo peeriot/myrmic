@@ -168,6 +168,7 @@ impl runtime::Stopped for StoppedRt {
             .await?
             .kill_on_drop();
         Ok(RunningRt {
+            _ovl_running: self.ovl_member.start_running(self.mode),
             stopped: self,
             node,
         })
@@ -184,6 +185,8 @@ pub struct RunningRt {
     /// what it was started from, handed back by [`runtime::Running::delete`]
     stopped: StoppedRt,
     node: swarm::spawn::Spawned,
+    /// records the node as running in its overlay while it exists
+    _ovl_running: overlay::RunningGuard,
 }
 
 impl RunningRt {
@@ -206,11 +209,14 @@ impl runtime::Running for RunningRt {
     /// Close the node's zenoh session and runtime, which takes it off the network, then stop its
     /// plugins. Returns once it has left the network (see the module's design notes).
     async fn delete(self) -> Result<StoppedRt, anyhow::Error> {
-        let RunningRt { stopped, mut node } = self;
+        // The overlay guard stays in `self`. Both go when this returns: first `node`, a local,
+        // whose drop stops the plugins, then `self`, the parameter, with the guard.
+        let RunningRt {
+            stopped, mut node, ..
+        } = self;
         node.kill_async().await;
         // closed already: dropping the handle only has to stop the plugins
         node.kill_on_drop = false;
-        drop(node);
         Ok(stopped)
     }
 }

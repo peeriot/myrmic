@@ -1,4 +1,5 @@
-//! Thin docker wrappers (images, containers, networks) on top of [`bollard`].
+//! Thin docker wrappers (images, containers, networks) on top of [`bollard`], and a zenoh router
+//! in a container ([`Router`]).
 
 use std::ops::Deref;
 
@@ -7,6 +8,9 @@ use bollard::Docker;
 pub mod container;
 pub mod image;
 pub mod network;
+mod router;
+
+pub use router::Router;
 
 /// The docker daemon the framework talks to: a bollard client plus the endpoint it connects to,
 /// so the `docker` CLI can be pointed at the same daemon (on its own the CLI follows the active

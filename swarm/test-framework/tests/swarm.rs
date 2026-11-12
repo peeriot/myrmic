@@ -136,7 +136,7 @@ async fn a_connected_runtime_links_to_its_target() -> anyhow::Result<()> {
     let to_target = overlay.connect_to(&target);
     let target = target.start().await?;
     let connected = host::Local
-        .myrmic_isolated(&to_target)
+        .myrmic_isolated(to_target)
         .runtime()
         .start()
         .await?;
@@ -154,6 +154,23 @@ async fn a_connected_runtime_links_to_its_target() -> anyhow::Result<()> {
         },
     )
     .await?;
+    Ok(())
+}
+
+/// A runtime that connects to one member of a group ends up linked to all of the group: zenoh's
+/// gossip tells it about its target's links, and it connects to them. The swarm's check expects
+/// exactly that, so its start only returns when the links are there.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connected_runtime_links_to_its_targets_whole_group() -> anyhow::Result<()> {
+    let overlay = Overlay::new(&network::Local);
+    let group = overlay.new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let target = in_process::StoppedRt::new(&group).orchestration();
+    let to_target = overlay.connect_to(&target);
+    let target = swarm.add(target);
+    let other = swarm.add(in_process::StoppedRt::new(&group).orchestration());
+    let connected = swarm.add(in_process::StoppedRt::new(to_target).orchestration());
+    start_runtimes!(swarm; target, other, connected);
     Ok(())
 }
 

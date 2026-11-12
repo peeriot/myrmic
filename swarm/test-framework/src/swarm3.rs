@@ -163,13 +163,7 @@ impl Swarm {
     /// [`Self::wait_until_connected`]). One query, no waiting, so a test can check that the swarm
     /// stays connected.
     pub async fn get_connection_mismatch(&self) -> Option<String> {
-        let statuses = self
-            .shared
-            .introspection
-            .swarm_status()
-            .await
-            .expect("failed to query the swarm's status");
-        check::mismatch(&statuses, &self.shared.expected_links())
+        self.shared.get_mismatch().await
     }
 
     /// The zid of the runtime the cell `sri` is placed on, or `None` while it has no placement or
@@ -299,22 +293,27 @@ impl Shared {
             .collect()
     }
 
+    /// Why the swarm's status doesn't match [`Self::expected_links`] right now, or `None` if it
+    /// does. A status query that fails is a mismatch too, not an error: while links settle after a
+    /// fault (e.g. a cut link that zenoh hasn't dropped yet), a query can time out.
+    async fn get_mismatch(&self) -> Option<String> {
+        match self.introspection.swarm_status().await {
+            Ok(statuses) => check::mismatch(&statuses, &self.expected_links()),
+            Err(err) => Some(format!("the status query failed: {err}")),
+        }
+    }
+
     /// Wait until the swarm's status matches [`Self::expected_links`], then
-    /// [`LEADER_SETTLE_TIME`]. Fails with the last mismatch after [`crate::wait::DEFAULT_TIMEOUT`].
+    /// [`LEADER_SETTLE_TIME`]. Fails with the last mismatch after [`CONNECTED_TIMEOUT`].
     ///
     /// The expected links are read anew on every poll: another runtime of the swarm may start or
     /// stop while this one waits (e.g. two handles started side by side), and a snapshot taken
     /// before would count it as foreign, or as missing.
     async fn wait_until_connected(&self) -> Result<(), Error> {
         let mut last_mismatch = String::new();
-        let polled = tokio::time::timeout(crate::wait::DEFAULT_TIMEOUT, async {
+        let polled = tokio::time::timeout(CONNECTED_TIMEOUT, async {
             loop {
-                let statuses = self
-                    .introspection
-                    .swarm_status()
-                    .await
-                    .expect("failed to query the swarm's status");
-                match check::mismatch(&statuses, &self.expected_links()) {
+                match self.get_mismatch().await {
                     None => return,
                     Some(mismatch) => last_mismatch = mismatch,
                 }
@@ -324,7 +323,7 @@ impl Shared {
         .await;
         polled.map_err(|_| Timeout {
             what: format!("the swarm to be connected; last: {last_mismatch}"),
-            timeout: crate::wait::DEFAULT_TIMEOUT,
+            timeout: CONNECTED_TIMEOUT,
         })?;
         tokio::time::sleep(LEADER_SETTLE_TIME).await;
         Ok(())
@@ -341,6 +340,12 @@ impl RuntimeEntry {
             .unwrap_or_else(|| panic!("{:?} was never started, so it has no zid", self.member))
     }
 }
+
+/// How long the swarm may take to match its expected links: the default wait, plus zenoh's link
+/// lease (its default, 10 s) for a link a fault cut. A silent link only drops once its lease
+/// runs out, so a runtime keeps listing a peer that a fault cut it from for that long.
+const CONNECTED_TIMEOUT: Duration =
+    Duration::from_secs(crate::wait::DEFAULT_TIMEOUT.as_secs() + 10);
 
 /// How long the orchestrators get to agree on a leader once the swarm is connected. Each one
 /// learns of the others from join events, and until it has, one that knows no lower zid takes

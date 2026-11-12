@@ -4,9 +4,14 @@
 //! An overlay is created on one network ([`crate::overlay::Overlay::new`]) and asks it, for every
 //! link it wants, whether the two hosts can reach each other. A network that the test can fault
 //! (cut a host off, block two hosts from each other) answers according to the faults it has in
-//! place; [`Local`], the test's own machine, never cuts anything.
+//! place; [`Local`], the test's own machine, never cuts anything, and [`Docker`] cuts what the
+//! test tells it to.
 
 use std::net::IpAddr;
+
+pub use self::docker::{Docker, TEST_CONTAINER};
+
+mod docker;
 
 /// A network hosts sit on, as an overlay sees it.
 pub trait Network: Send + Sync {

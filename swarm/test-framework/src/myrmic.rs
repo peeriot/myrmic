@@ -469,7 +469,13 @@ where
                 self.name, output.stderr
             );
         };
-        Ok(RunningRt { stopped: self, zid })
+        // a CLI runtime is a zenoh peer
+        let ovl_running = self.ovl_member.start_running(zenoh::config::WhatAmI::Peer);
+        Ok(RunningRt {
+            stopped: self,
+            zid,
+            _ovl_running: ovl_running,
+        })
     }
 
     fn get_overlay_member(&self) -> &overlay::Member {
@@ -624,6 +630,9 @@ where
     /// what it was started from, handed back when it stops
     stopped: StoppedRt<B>,
     zid: zenoh::config::ZenohId,
+    /// records the runtime as running in its overlay while it exists; dropped after the
+    /// runtime's delete in [`Drop::drop`]
+    _ovl_running: overlay::RunningGuard,
 }
 
 impl<B> RunningRt<B>
