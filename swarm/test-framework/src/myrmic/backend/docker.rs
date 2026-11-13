@@ -1,36 +1,33 @@
-use std::sync::Arc;
-
-use crate::docker::container::{ConnectedContainer, ManagedContainer};
+use crate::{host, network::HostId};
 
 use super::MyrmicBackend;
 
-/// [`MyrmicBackend`] that runs programs inside a docker container.
+/// [`MyrmicBackend`] that runs programs in a docker host's container.
 ///
-/// It shares ownership of the container with its clones, so the container outlives every
+/// It holds its host, which shares the container with its clones, so the container outlives every
 /// [`super::super::Myrmic`] and guard using it, and is removed when the last of them drops.
 #[derive(Clone)]
 pub struct Docker {
-    container: Arc<ManagedContainer>,
+    host: host::Docker,
 }
 
 impl Docker {
-    /// run programs inside `container`
-    pub fn attach(container: Arc<ManagedContainer>) -> Self {
-        Self { container }
+    /// run programs in `host`'s container
+    pub(crate) fn new(host: host::Docker) -> Self {
+        Self { host }
     }
 
-    /// the container programs are executed in
-    pub fn container(&self) -> &ConnectedContainer {
-        &self.container
+    /// the host whose container programs run in
+    pub fn get_host(&self) -> &host::Docker {
+        &self.host
     }
 }
 
 impl MyrmicBackend for Docker {
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
-        let mut command = self.container.docker_cli();
-        command
-            .args(["exec", self.container.id(), program])
-            .args(args);
+        let container = self.host.get_container();
+        let mut command = container.docker_cli();
+        command.args(["exec", container.id(), program]).args(args);
         command
     }
 
@@ -38,5 +35,9 @@ impl MyrmicBackend for Docker {
         // 125: `docker` itself failed (daemon unreachable, no such container); 126: the program
         // cannot be invoked; 127: the program does not exist in the container
         &[125, 126, 127]
+    }
+
+    fn get_host_id(&self) -> HostId {
+        self.host.get_id()
     }
 }

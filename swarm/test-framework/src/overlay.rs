@@ -35,13 +35,14 @@
 //! link between two runtimes exists if the overlay wants it and the network lets their hosts
 //! reach each other. Runtimes on the same host always reach each other. Runtimes don't keep their
 //! group or connects themselves: they keep their membership, and ask the overlay for their
-//! settings at start, so the overlay is the only source of who links to whom. A member's host
-//! address is part of that topology, so the overlay holds it too: it is where a connect to the
-//! member goes.
+//! settings at start, so the overlay is the only source of who links to whom. A member's host is
+//! part of that topology, so the overlay holds it too, by its id; the host's address, where a
+//! connect to the member goes, it asks the network for when it builds the connect, since the
+//! network may have moved the host.
 
 use std::{
     collections::HashSet,
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
+    net::{Ipv4Addr, SocketAddr, TcpListener},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU16, Ordering},
@@ -50,7 +51,10 @@ use std::{
 
 use zenoh::config::WhatAmI;
 
-use crate::{network::Network, runtime::Stopped};
+use crate::{
+    network::{HostId, Network},
+    runtime::Stopped,
+};
 
 /// The zenoh links among a test's runtimes; see [the module docs](self). Clones are the same
 /// overlay.
@@ -76,8 +80,8 @@ struct State {
 
 /// What the overlay knows about one member.
 struct MemberState {
-    /// the address of the host it runs on, where a connect to it goes
-    address: IpAddr,
+    /// the host it runs on
+    host: HostId,
     /// the group it scouts on; `None` for one attached by a connect
     group: Option<GroupId>,
     /// the members it connects to, by index
@@ -202,7 +206,9 @@ impl Overlay {
                 let first: Vec<usize> = self
                     .get_component(&state, on_group)
                     .into_iter()
-                    .filter(|&index| self.addresses_reach(LOCALHOST, state.members[index].address))
+                    .filter(|&index| {
+                        self.hosts_reach(HostId::TEST_MACHINE, state.members[index].host)
+                    })
                     .collect();
                 (first, None)
             }
@@ -239,7 +245,7 @@ impl Overlay {
         a != b
             && (self.is_direct_link(state, a, b)
                 || (!both_routers
-                    && self.hosts_reach(member_a, member_b)
+                    && self.hosts_reach(member_a.host, member_b.host)
                     && self.get_component(state, [a]).contains(&b)))
     }
 
@@ -253,7 +259,9 @@ impl Overlay {
         let shared_group =
             member_a.group.is_some() && member_a.group == member_b.group && !both_routers;
         let connected = member_a.connects.contains(&b) || member_b.connects.contains(&a);
-        both_running && (shared_group || connected) && self.hosts_reach(member_a, member_b)
+        both_running
+            && (shared_group || connected)
+            && self.hosts_reach(member_a.host, member_b.host)
     }
 
     /// the members joined to any of `start` by direct links, hop by hop, `start` included
@@ -280,15 +288,20 @@ impl Overlay {
         Arc::ptr_eq(&member.overlay.shared, &self.shared)
     }
 
-    /// whether the network lets the hosts of `a` and `b` reach each other
-    fn hosts_reach(&self, a: &MemberState, b: &MemberState) -> bool {
-        self.addresses_reach(a.address, b.address)
+    /// whether the network lets the hosts `a` and `b` reach each other; the same host always
+    /// does
+    fn hosts_reach(&self, a: HostId, b: HostId) -> bool {
+        a == b || self.shared.network.reaches(a, b)
     }
 
-    /// whether the network lets the hosts at `a` and `b` reach each other; the same host always
-    /// does
-    fn addresses_reach(&self, a: IpAddr, b: IpAddr) -> bool {
-        a == b || self.shared.network.reaches(a, b)
+    /// the zenoh endpoint `member` listens on; it must have a listen port, i.e. be a connect's
+    /// target
+    fn get_endpoint(&self, member: &MemberState) -> String {
+        let port = member
+            .listen_port
+            .expect("a connect's target has a listen port from the connect on");
+        let address = self.shared.network.get_address(member.host);
+        format!("tcp/{}", SocketAddr::new(address, port))
     }
 
     /// `member`'s index among this overlay's members
@@ -304,11 +317,11 @@ impl Overlay {
         self.shared.state.lock().expect("not poisoned")
     }
 
-    /// a new member on the host at `address`, scouting on `group` and connecting to `connects`
-    fn add_member(&self, address: IpAddr, group: Option<GroupId>, connects: Vec<usize>) -> Member {
+    /// a new member on the host `host`, scouting on `group` and connecting to `connects`
+    fn add_member(&self, host: HostId, group: Option<GroupId>, connects: Vec<usize>) -> Member {
         let mut state = self.lock();
         state.members.push(MemberState {
-            address,
+            host,
             group,
             connects,
             listen_port: None,
@@ -331,7 +344,8 @@ impl Member {
     /// `--connect`; it must be a connect's target
     pub(crate) fn get_endpoint(&self) -> String {
         let index = self.overlay.index_of(self);
-        endpoint(&self.overlay.lock().members[index])
+        self.overlay
+            .get_endpoint(&self.overlay.lock().members[index])
     }
 
     /// Report that the member runs now, in `mode`: what a runtime's start calls once it is up.
@@ -376,7 +390,7 @@ impl Member {
         let connects: Vec<String> = member
             .connects
             .iter()
-            .map(|&target| endpoint(&state.members[target]))
+            .map(|&target| self.overlay.get_endpoint(&state.members[target]))
             .collect();
         let listen_port = member.listen_port.unwrap_or(0);
         serde_json::json!({
@@ -500,14 +514,14 @@ impl Attachment {
         }
     }
 
-    /// Make a new member of the overlay on the host at `address`, attached this way; what a
+    /// Make a new member of the overlay on the host `host`, attached this way; what a
     /// runtime calls when it is created.
-    pub(crate) fn add_member(&self, address: IpAddr) -> Member {
+    pub(crate) fn add_member(&self, host: HostId) -> Member {
         match self {
-            Self::Group(group) => group.overlay.add_member(address, Some(group.id), vec![]),
+            Self::Group(group) => group.overlay.add_member(host, Some(group.id), vec![]),
             Self::ConnectTo(target) => {
                 let overlay = target.get_overlay();
-                overlay.add_member(address, None, vec![overlay.index_of(target)])
+                overlay.add_member(host, None, vec![overlay.index_of(target)])
             }
         }
     }
@@ -517,18 +531,6 @@ impl From<&MulticastGroup> for Attachment {
     fn from(group: &MulticastGroup) -> Self {
         Self::Group(group.clone())
     }
-}
-
-/// The address of the test's own machine, for what runs on it: the endpoint a connect to one of
-/// its members goes to.
-pub(crate) const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-
-/// the zenoh endpoint `member` listens on; it must have a listen port, i.e. be a connect's target
-fn endpoint(member: &MemberState) -> String {
-    let port = member
-        .listen_port
-        .expect("a connect's target has a listen port from the connect on");
-    format!("tcp/{}", SocketAddr::new(member.address, port))
 }
 
 /// A TCP port free on the test's machine right now. Another process may take it before the

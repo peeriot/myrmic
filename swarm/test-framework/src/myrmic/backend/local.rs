@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::MyrmicBackend;
+use crate::network::HostId;
 
 /// [`MyrmicBackend`] that runs programs on the test's machine, isolated: on state directories of
 /// their own (see [`crate::host::Local::myrmic_isolated`]).
@@ -44,5 +45,9 @@ impl MyrmicBackend for Local {
     fn wrapper_exit_codes(&self) -> &'static [i32] {
         // there is no wrapper: a program that cannot be started is a spawn error
         &[]
+    }
+
+    fn get_host_id(&self) -> HostId {
+        HostId::TEST_MACHINE
     }
 }

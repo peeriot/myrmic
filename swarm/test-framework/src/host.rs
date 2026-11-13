@@ -1,38 +1,43 @@
-//! The machines a test's runtimes run on: the test's own machine ([`Local`]), a remote machine
-//! over SSH ([`Ssh`]), a docker container ([`Docker`]). A host hands out the CLI shims that run
-//! on it ([`crate::myrmic::Myrmic`]), and through them the runtimes.
+//! The machines a test's runtimes run on: the test's own machine ([`Local`]), a docker container
+//! ([`Docker`]). A host hands out the CLI shims that run on it ([`crate::myrmic::Myrmic`]), and
+//! through them the runtimes.
 //!
 //! # Using it
 //!
 //! ```ignore
-//! use test_framework::{host, network, overlay::Overlay};
+//! use test_framework::{docker::DockerDaemon, host, network, overlay::Overlay};
 //!
 //! let group = Overlay::new(&network::Local).new_multicast_group();
 //! let myrmic = host::Local.myrmic_isolated(&group);  // the CLI on the test's machine
-//! let pi = host::Ssh::new("pi@rack-1", "192.168.1.21".parse()?, "myrmic");
-//! let remote = pi.myrmic(&group);  // the CLI on the pi
+//!
+//! let network = network::Docker::new(&DockerDaemon::connect()).await;
+//! let group = Overlay::new(&network).new_multicast_group();
+//! let container = network.new_host().await;
+//! let remote = container.myrmic(&group);  // the CLI in a container
 //! ```
 //!
 //! # Design notes
 //!
 //! A host is not the same as a shim's backend ([`crate::myrmic::MyrmicBackend`]): the backend
-//! only knows how to run a command there, while a host is the machine: its address, the shims it
-//! carries (one per attachment or isolation) and, in time, its faults.
+//! only knows how to run a command there, while a host is the machine: its identity on its
+//! network ([`network::HostId`]), the shims it carries (one per attachment or isolation) and, in
+//! time, its faults. Its address is its network's to know (see [`crate::network`]), so it can
+//! change.
 
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     docker::{self, container::ManagedContainer},
     myrmic::{self, Myrmic},
-    overlay,
+    network, overlay,
 };
 
 /// The test's own machine.
 pub struct Local;
 
 impl Local {
-    /// The CLI on this machine, attached by `attachment`, running the locally built myrmic binary (see
-    /// [`crate::resolve_binary!`]). It has state directories of its own (runtime identities,
+    /// The CLI on this machine, attached by `attachment`, running the locally built myrmic binary
+    /// (see [`crate::resolve_binary!`]). It has state directories of its own (runtime identities,
     /// databases, pid files, logs), removed with the last clone of the shim: a runtime's identity
     /// is its name within them, so tests that give their runtimes the same names can run in
     /// parallel, and nothing piles up in the machine's own directories.
@@ -40,56 +45,25 @@ impl Local {
         &self,
         attachment: impl Into<overlay::Attachment>,
     ) -> Myrmic<myrmic::Local> {
-        Myrmic::new(
-            myrmic::Local::isolated(),
-            local_binary(),
-            attachment.into(),
-            overlay::LOCALHOST,
-        )
-    }
-}
-
-/// A remote machine, reached over SSH.
-pub struct Ssh {
-    backend: myrmic::Ssh,
-    /// its address on the network the test's runtimes use, where a connect to one of its
-    /// runtimes goes
-    address: IpAddr,
-    /// the myrmic binary on the machine, a path or a name on the remote user's `PATH`
-    binary: String,
-}
-
-impl Ssh {
-    /// The machine `login` (anything `ssh` accepts, e.g. `user@rack-node-1.example`) at `address`
-    /// on the test's network, whose myrmic binary is `binary`: a path (e.g. where a benchmark
-    /// harness `scp`'d it) or `myrmic` for the one on the remote user's `PATH`.
-    pub fn new(login: impl Into<String>, address: IpAddr, binary: impl Into<String>) -> Self {
-        Self {
-            backend: myrmic::Ssh::new(login),
-            address,
-            binary: binary.into(),
-        }
+        Myrmic::new(myrmic::Local::isolated(), local_binary(), attachment.into())
     }
 
-    /// the CLI on this machine, on its own state directories, attached by `attachment`
-    pub fn myrmic(&self, attachment: impl Into<overlay::Attachment>) -> Myrmic<myrmic::Ssh> {
-        Myrmic::new(
-            self.backend.clone(),
-            self.binary.clone(),
-            attachment.into(),
-            self.address,
-        )
+    /// Like [`Self::myrmic_isolated`], but on a group of its own, in an overlay of its own on
+    /// [`network::Local`]: the CLI for a test whose runtimes all run on this machine and that never
+    /// needs the group itself.
+    pub fn myrmic_isolated_alone(&self) -> Myrmic<myrmic::Local> {
+        let group = overlay::Overlay::new(&network::Local).new_multicast_group();
+        self.myrmic_isolated(&group)
     }
 }
 
 /// A docker container on a [`crate::network::Docker`], which creates it
 /// ([`crate::network::Docker::new_host`]). It has `myrmic` and `zenoh-router` on its `PATH`, and
-/// keeps the data of its runtimes on a small file system of its own.
+/// keeps the data of its runtimes on a small file system of its own. Clones are the same host.
+#[derive(Clone)]
 pub struct Docker {
     container: Arc<ManagedContainer>,
-    backend: myrmic::Docker,
-    /// its address on its docker network
-    address: IpAddr,
+    id: network::HostId,
 }
 
 /// Where a runtime keeps its data in its container: the CLI's data directory as root
@@ -116,19 +90,15 @@ const FAKETIME_FILE: &str = "/etc/faketime";
 const FAKETIME_PICKUP: Duration = Duration::from_secs(2);
 
 impl Docker {
-    /// The container `container` at `address` on its docker network; it is removed once the last
-    /// host or shim using it drops.
-    pub(crate) fn new(container: Arc<ManagedContainer>, address: IpAddr) -> Self {
-        Self {
-            backend: myrmic::Docker::attach(container.clone()),
-            container,
-            address,
-        }
+    /// The container `container` with the id `id` on its docker network; it is removed once the
+    /// last host or shim using it drops.
+    pub(crate) fn new(container: Arc<ManagedContainer>, id: network::HostId) -> Self {
+        Self { container, id }
     }
 
-    /// its address on its docker network
-    pub fn get_address(&self) -> IpAddr {
-        self.address
+    /// its identity on its docker network, by which the network knows its address and cuts
+    pub(crate) fn get_id(&self) -> network::HostId {
+        self.id
     }
 
     /// the container, for the faults its network puts on it
@@ -139,10 +109,9 @@ impl Docker {
     /// the CLI in this container, attached by `attachment`
     pub fn myrmic(&self, attachment: impl Into<overlay::Attachment>) -> Myrmic<myrmic::Docker> {
         Myrmic::new(
-            self.backend.clone(),
+            myrmic::Docker::new(self.clone()),
             "myrmic".to_owned(),
             attachment.into(),
-            self.address,
         )
     }
 
@@ -150,8 +119,8 @@ impl Docker {
     /// Returns once it listens, so a swarm can attach through it right away (see
     /// [`docker::Router`]).
     pub async fn router(&self, attachment: impl Into<overlay::Attachment>) -> docker::Router {
-        let member = attachment.into().add_member(self.address);
-        docker::Router::start(self.container.clone(), member).await
+        let member = attachment.into().add_member(self.id);
+        docker::Router::start(self.clone(), member).await
     }
 
     /// Fill the disk the runtimes in this container keep their data on up to `room` free bytes,
@@ -167,8 +136,9 @@ impl Docker {
             .await;
         assert!(
             output.success,
-            "failed to fill the disk of {}: {}",
-            self.address, output.stderr
+            "failed to fill the disk of container {}: {}",
+            self.container.id(),
+            output.stderr
         );
     }
 
@@ -177,8 +147,9 @@ impl Docker {
         let output = self.container.exec(&["rm", FILLER]).await;
         assert!(
             output.success,
-            "failed to free the disk of {}: {}",
-            self.address, output.stderr
+            "failed to free the disk of container {}: {}",
+            self.container.id(),
+            output.stderr
         );
     }
 
@@ -195,8 +166,9 @@ impl Docker {
             .await;
         assert!(
             output.success,
-            "failed to skew the clock of {}: {}",
-            self.address, output.stderr
+            "failed to skew the clock of container {}: {}",
+            self.container.id(),
+            output.stderr
         );
         tokio::time::sleep(FAKETIME_PICKUP).await;
     }

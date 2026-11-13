@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::IpAddr,
     path::Path,
     sync::{Arc, Mutex},
@@ -8,7 +8,7 @@ use std::{
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 
-use super::Network;
+use super::{HostId, Network};
 use crate::{
     docker::{DockerDaemon, container::ManagedContainer, image::Image, network::ManagedNetwork},
     host, resolve_binary,
@@ -16,7 +16,8 @@ use crate::{
 
 /// A docker network of its own, whose hosts are containers ([`crate::host::Docker`]). The test
 /// cuts its hosts apart ([`Self::isolate`], [`Self::block`]) or moves one ([`Self::readdress`]),
-/// and answers [`Network::reaches`] by the cuts it has in place.
+/// and answers [`Network::reaches`] by the cuts it has in place, [`Network::get_address`] by
+/// where it moved the hosts.
 ///
 /// The test reaches the network's hosts at their addresses on it. On a machine that runs the test
 /// directly, that machine is on every docker network. A test that runs in a container itself
@@ -35,16 +36,18 @@ struct DockerShared {
     daemon: DockerDaemon,
     network: Arc<ManagedNetwork>,
     image: &'static Image,
+    /// the address each host has now
+    addresses: Mutex<HashMap<HostId, IpAddr>>,
     cuts: Mutex<Cuts>,
 }
 
-/// The cuts a [`Docker`] network has in place, by the hosts' addresses.
+/// The cuts a [`Docker`] network has in place.
 #[derive(Default)]
 struct Cuts {
     /// hosts cut off from everything ([`Docker::isolate`])
-    isolated: HashSet<IpAddr>,
-    /// pairs of hosts cut from each other ([`Docker::block`]), the lower address first
-    blocked: HashSet<(IpAddr, IpAddr)>,
+    isolated: HashSet<HostId>,
+    /// pairs of hosts cut from each other ([`Docker::block`]), the lower id first
+    blocked: HashSet<(HostId, HostId)>,
 }
 
 /// The environment variable naming the container the test runs in, if it runs in one.
@@ -86,11 +89,14 @@ impl Docker {
         let name = format!("myrmic-net-{}", uuid::Uuid::new_v4().simple());
         let network =
             ManagedNetwork::create(daemon.clone(), &name, test_container.as_deref()).await;
+        // the test's machine is where the test runs, the container it names or the docker host
+        let test_machine = network.get_creator_address().await;
         Self {
             shared: Arc::new(DockerShared {
                 daemon: daemon.clone(),
                 network: Arc::new(network),
                 image,
+                addresses: Mutex::new(HashMap::from([(HostId::TEST_MACHINE, test_machine)])),
                 cuts: Mutex::new(Cuts::default()),
             }),
         }
@@ -119,7 +125,9 @@ impl Docker {
             .await
             .parse()
             .expect("docker reports a host's address as an IP address");
-        host::Docker::new(Arc::new(container), address)
+        let id = HostId::new();
+        self.lock_addresses().insert(id, address);
+        host::Docker::new(Arc::new(container), id)
     }
 
     /// Cut `host` off the network: drop all its traffic but its loopback, as a host whose cable is
@@ -129,10 +137,10 @@ impl Docker {
         assert!(
             output.success,
             "failed to isolate {}: {}",
-            host.get_address(),
+            self.get_address(host.get_id()),
             output.stderr
         );
-        self.lock_cuts().isolated.insert(host.get_address());
+        self.lock_cuts().isolated.insert(host.get_id());
     }
 
     /// lift [`Self::isolate`] of `host`
@@ -144,28 +152,40 @@ impl Docker {
         assert!(
             output.success,
             "failed to heal {}: {}",
-            host.get_address(),
+            self.get_address(host.get_id()),
             output.stderr
         );
-        self.lock_cuts().isolated.remove(&host.get_address());
+        self.lock_cuts().isolated.remove(&host.get_id());
     }
 
     /// Drop all traffic between `a` and `b`. Both stay connected to everything else, and may still
     /// reach each other through it.
     pub async fn block(&self, a: &host::Docker, b: &host::Docker) {
-        drop_traffic(a, b.get_address()).await;
-        drop_traffic(b, a.get_address()).await;
+        self.drop_traffic(a, b).await;
+        self.drop_traffic(b, a).await;
         self.lock_cuts()
             .blocked
-            .insert(ordered(a.get_address(), b.get_address()));
+            .insert(ordered(a.get_id(), b.get_id()));
     }
 
     /// Move `host` to another address on the network, as when a host's address changes, without
-    /// telling what runs on it or the others: finding back is their business. Docker isn't told
-    /// either, so the address the network and the overlay know `host` by stays the old one, and
-    /// so do the faults' rules.
+    /// telling what runs on it or the others: finding back is their business. From then on the
+    /// network has `host` at the new address, so what starts afterwards connects to it there,
+    /// while what runs keeps the endpoints it started with. Docker isn't told, which nothing
+    /// needs: the network asks docker for a host's address only when it creates the host.
+    ///
+    /// `host` must not be blocked from another host ([`Self::block`]): those rules drop the
+    /// traffic of its old address.
     pub async fn readdress(&self, host: &host::Docker) {
-        let old = host.get_address().to_string();
+        let id = host.get_id();
+        assert!(
+            self.lock_cuts()
+                .blocked
+                .iter()
+                .all(|&(a, b)| a != id && b != id),
+            "a blocked host can't move: its blocks name its old address"
+        );
+        let old = self.get_address(id).to_string();
         let prefix = self.shared.network.ipv4_prefix_len().await;
         assert!(
             prefix <= 24,
@@ -197,6 +217,29 @@ impl Docker {
             "failed to move {old} to {new}: {}",
             output.stderr
         );
+        let new = new.parse().expect("the new address is an IP address");
+        self.lock_addresses().insert(id, new);
+    }
+
+    /// Drop all traffic between `host` and `peer`, in `host`'s [`BLOCK_TABLE`].
+    async fn drop_traffic(&self, host: &host::Docker, peer: &host::Docker) {
+        let peer = self.get_address(peer.get_id());
+        let rules = format!(
+            "{BLOCK_TABLE}; \
+             add rule inet block input ip saddr {peer} drop; \
+             add rule inet block output ip daddr {peer} drop"
+        );
+        let output = host.get_container().exec(&["nft", &rules]).await;
+        assert!(
+            output.success,
+            "failed to drop the traffic between {} and {peer}: {}",
+            self.get_address(host.get_id()),
+            output.stderr
+        );
+    }
+
+    fn lock_addresses(&self) -> std::sync::MutexGuard<'_, HashMap<HostId, IpAddr>> {
+        self.shared.addresses.lock().expect("not poisoned")
     }
 
     fn lock_cuts(&self) -> std::sync::MutexGuard<'_, Cuts> {
@@ -205,33 +248,24 @@ impl Docker {
 }
 
 impl Network for Docker {
-    fn reaches(&self, a: IpAddr, b: IpAddr) -> bool {
+    fn reaches(&self, a: HostId, b: HostId) -> bool {
         let cuts = self.lock_cuts();
         !cuts.isolated.contains(&a)
             && !cuts.isolated.contains(&b)
             && !cuts.blocked.contains(&ordered(a, b))
     }
+
+    fn get_address(&self, host: HostId) -> IpAddr {
+        *self
+            .lock_addresses()
+            .get(&host)
+            .unwrap_or_else(|| panic!("{host:?} is no host of this network"))
+    }
 }
 
 /// `a` and `b`, the lower first: how [`Cuts::blocked`] keys a pair
-fn ordered(a: IpAddr, b: IpAddr) -> (IpAddr, IpAddr) {
+fn ordered(a: HostId, b: HostId) -> (HostId, HostId) {
     (a.min(b), a.max(b))
-}
-
-/// Drop all traffic between `host` and the address `peer`, in `host`'s [`BLOCK_TABLE`].
-async fn drop_traffic(host: &host::Docker, peer: IpAddr) {
-    let rules = format!(
-        "{BLOCK_TABLE}; \
-         add rule inet block input ip saddr {peer} drop; \
-         add rule inet block output ip daddr {peer} drop"
-    );
-    let output = host.get_container().exec(&["nft", &rules]).await;
-    assert!(
-        output.success,
-        "failed to drop the traffic between {} and {peer}: {}",
-        host.get_address(),
-        output.stderr
-    );
 }
 
 /// Build the image with the workspace's current binaries, unless the daemon already has it. Once

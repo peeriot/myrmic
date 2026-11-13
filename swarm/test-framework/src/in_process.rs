@@ -62,7 +62,7 @@
 
 use zenoh::config::{WhatAmI, ZenohId};
 
-use crate::{overlay, runtime};
+use crate::{network, overlay, runtime};
 
 /// An in-process node that is not running: never started yet, or deleted. A builder for the node;
 /// see [the module docs](self).
@@ -85,7 +85,7 @@ impl StoppedRt {
         Self {
             // `ZenohId`'s default is a random id
             zid: ZenohId::default(),
-            ovl_member: attachment.add_member(overlay::LOCALHOST),
+            ovl_member: attachment.add_member(network::HostId::TEST_MACHINE),
             orchestration: false,
             db: false,
             execution: false,

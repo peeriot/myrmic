@@ -1,11 +1,11 @@
-use std::{process::Stdio, sync::Arc};
+use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt, BufReader, Lines};
 
-use super::{container::ManagedContainer, run_cleanup};
+use super::run_cleanup;
 use zenoh::config::WhatAmI;
 
-use crate::overlay;
+use crate::{host, overlay};
 
 /// A standalone zenoh router in a docker container, a member of an overlay that is no runtime:
 /// nothing starts or stops it but its creation ([`crate::host::Docker::router`]) and its drop, and
@@ -16,7 +16,8 @@ use crate::overlay;
 /// scouts on, and a port of its own it listens on for what connects to it.
 pub struct Router {
     member: overlay::Member,
-    container: Arc<ManagedContainer>,
+    /// the host whose container it runs in
+    host: host::Docker,
     /// the router's pid in its container
     pid: String,
     /// the `docker exec` the router runs in
@@ -27,9 +28,10 @@ pub struct Router {
 }
 
 impl Router {
-    /// Start the router `member` in `container`; returns once it listens.
-    pub(crate) async fn start(container: Arc<ManagedContainer>, member: overlay::Member) -> Self {
+    /// Start the router `member` in `host`'s container; returns once it listens.
+    pub(crate) async fn start(host: host::Docker, member: overlay::Member) -> Self {
         member.ensure_listen_port();
+        let container = host.get_container();
         let settings = member.get_zenoh_settings().to_string();
         // `echo $$` first: the router's pid in the container, which the drop kills
         let mut command = container.docker_cli();
@@ -58,10 +60,17 @@ impl Router {
         Self {
             _running: member.start_running(WhatAmI::Router),
             member,
-            container,
+            host,
             pid,
             _process: process,
         }
+    }
+}
+
+impl Router {
+    /// the host the router runs on, e.g. for its network's faults
+    pub fn get_host(&self) -> &host::Docker {
+        &self.host
     }
 }
 
@@ -74,8 +83,9 @@ impl From<&Router> for overlay::Member {
 impl Drop for Router {
     fn drop(&mut self) {
         // ending `docker exec` doesn't end what it runs in the container
-        let mut kill = self.container.docker_cli();
-        kill.args(["exec", self.container.id(), "kill", &self.pid]);
+        let container = self.host.get_container();
+        let mut kill = container.docker_cli();
+        kill.args(["exec", container.id(), "kill", &self.pid]);
         run_cleanup("Router", kill);
     }
 }

@@ -28,7 +28,7 @@
 //! [`MyrmicBackend`] requires `Send + Sync` because the runtime handles' transitions return `Send`
 //! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
-use std::{net::IpAddr, path::Path};
+use std::path::Path;
 
 pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
@@ -39,6 +39,7 @@ use sorg_common::RestartType;
 use crate::{
     CommandOutput,
     clients::sorg::SorgHandle,
+    host,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
     overlay, runtime,
     wait::{DEFAULT_TIMEOUT, Timeout, wait_for},
@@ -95,8 +96,6 @@ pub struct Myrmic<B> {
     /// the myrmic binary, as the backend's commands find it on the target
     binary: String,
     attachment: overlay::Attachment,
-    /// the address of the host the shim runs on, where a connect to one of its runtimes goes
-    address: IpAddr,
 }
 
 impl<B> Myrmic<B>
@@ -104,19 +103,12 @@ where
     B: MyrmicBackend,
 {
     /// A shim that runs `binary` (the myrmic binary, as `backend`'s commands find it on the
-    /// target) through `backend`, attached by `attachment`, on the host at `address`; what a host
-    /// hands out.
-    pub(crate) fn new(
-        backend: B,
-        binary: String,
-        attachment: overlay::Attachment,
-        address: IpAddr,
-    ) -> Self {
+    /// target) through `backend`, attached by `attachment`; what a host hands out.
+    pub(crate) fn new(backend: B, binary: String, attachment: overlay::Attachment) -> Self {
         Self {
             backend,
             binary,
             attachment,
-            address,
         }
     }
 
@@ -130,7 +122,7 @@ where
     pub fn runtime(&self) -> StoppedRt<B> {
         StoppedRt {
             myrmic: self.clone(),
-            ovl_member: self.attachment.add_member(self.address),
+            ovl_member: self.attachment.add_member(self.backend.get_host_id()),
             tags: vec![],
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
@@ -709,6 +701,13 @@ where
             killed.stderr
         );
         Ok(())
+    }
+}
+
+impl RunningRt<Docker> {
+    /// the host the runtime runs on, e.g. for its network's faults
+    pub fn get_host(&self) -> &host::Docker {
+        self.stopped.myrmic.get_backend().get_host()
     }
 }
 

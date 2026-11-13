@@ -14,8 +14,7 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use crate::myrmic::{Error, RUNTIME_GONE, RunningRt, Ssh, already_gone};
-use crate::overlay::Overlay;
+use crate::myrmic::{RunningRt, Ssh};
 use crate::swarm::SwarmProcess;
 
 /// One remote host's role in the deployment: which myrmic runtime to start there, and under
@@ -132,9 +131,7 @@ pub enum RackTelemetry<'a> {
 ///
 /// The returned [`SwarmProcess`] owns every started [`RunningRt`] and the tunnel — dropping it stops
 /// each runtime (best-effort; see [`RunningRt`]'s `Drop` impl) and kills the tunnel process, the
-/// same way a locally-spawned swarm process is killed on drop. Callers whose run might be
-/// interrupted before the [`SwarmProcess`] is dropped cleanly (e.g. a crashed harness) should
-/// follow up with [`cleanup`].
+/// same way a locally-spawned swarm process is killed on drop.
 pub async fn provision(
     hosts: &[HostSpec],
     myrmic_path: &str,
@@ -570,52 +567,6 @@ async fn upload_host_config(
     file.write_all(yaml.as_bytes())
         .expect("failed to write host config");
     run_scp(file.path(), host, remote_path).await;
-}
-
-/// Best-effort: stop any runtime still running on `hosts` and remove the uploaded binary, so a
-/// repeated rack run starts from a clean slate even after an interrupted previous run.
-///
-/// This does not touch `myrmic runtimes start`'s persisted per-runtime state under
-/// `$XDG_DATA_HOME/myrmic` on each host — a runtime started with the same `--name` again reuses
-/// its stable id and any non-`--tmp` database, which is the desired behavior for retries; wipe
-/// that directory over SSH separately if a run needs a truly empty database.
-pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
-    // Concurrent, not sequential — same rationale as `provision`: each host's teardown (a
-    // `runtimes delete` plus two `rm -f`s) is an independent SSH round trip, so
-    // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
-    // `runtimes delete` finds a runtime by its pid file on the host, not on the network, and no
-    // runtime is created, so neither the shims' group nor the hosts' address is ever used: any
-    // will do.
-    let group = Overlay::new(&crate::network::Local).new_multicast_group();
-    let group = &group;
-    let unused_address = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
-    futures::future::join_all(hosts.iter().map(|host| async move {
-        let myrmic =
-            crate::host::Ssh::new(host.host.clone(), unused_address, myrmic_path).myrmic(group);
-        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
-        // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
-        // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"
-        // message — isn't a failure, it's this backstop confirming there was nothing left to do.
-        // It only matters as a backstop for a driver that never got to run its own cleanup (a
-        // crash, a kill -9), so a genuine CLI failure (permission denied, ...) still needs to be
-        // loud. An unreachable host panics, like every other broken-infrastructure case.
-        match myrmic.delete_runtime(&host.runtime_name).await {
-            Ok(()) => {}
-            Err(Error::Cli { stderr }) if already_gone(&stderr, &RUNTIME_GONE) => {}
-            Err(err) => eprintln!(
-                "rack cleanup: failed to delete runtime `{}` on {}: {err}",
-                host.runtime_name, host.host
-            ),
-        }
-
-        let config_path = host_config_path(myrmic_path, &host.runtime_name);
-        futures::future::join(
-            run_ssh(&host.host, &["rm", "-f", myrmic_path]),
-            run_ssh(&host.host, &["rm", "-f", &config_path]),
-        )
-        .await;
-    }))
-    .await;
 }
 
 async fn run_ssh(host: &str, args: &[&str]) {

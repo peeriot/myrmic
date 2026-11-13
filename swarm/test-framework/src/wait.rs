@@ -65,6 +65,21 @@ where
     .is_ok()
 }
 
+/// Run `check` again and again until `duration` has passed, for a state that must hold
+/// throughout, not just become true once: `check` asserts on it every time, and paces itself, by
+/// waiting for the next event it checks or by sleeping between polls. Ends with the first error
+/// `check` returns.
+pub async fn check_throughout<E>(
+    duration: Duration,
+    mut check: impl AsyncFnMut() -> Result<(), E>,
+) -> Result<(), E> {
+    let end = tokio::time::Instant::now() + duration;
+    while tokio::time::Instant::now() < end {
+        check().await?;
+    }
+    Ok(())
+}
+
 /// Assert that an async condition becomes true within a timeout.
 ///
 /// ```ignore
@@ -87,7 +102,7 @@ mod tests {
         time::Duration,
     };
 
-    use super::{wait_for, wait_until};
+    use super::{check_throughout, wait_for, wait_until};
 
     #[tokio::test]
     async fn wait_for_returns_the_value_once_there_is_one() -> anyhow::Result<()> {
@@ -99,6 +114,17 @@ mod tests {
         .await?;
         assert_eq!(found, 2);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn check_throughout_ends_with_the_first_error() {
+        let mut calls = 0;
+        let checked = check_throughout(Duration::from_secs(5), async || {
+            calls += 1;
+            if calls < 3 { Ok(()) } else { Err(calls) }
+        })
+        .await;
+        assert_eq!(checked, Err(3));
     }
 
     #[tokio::test]

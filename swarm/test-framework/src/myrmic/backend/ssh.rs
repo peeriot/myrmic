@@ -1,4 +1,5 @@
 use super::MyrmicBackend;
+use crate::network::HostId;
 
 /// [`MyrmicBackend`] that runs programs on a remote host over SSH, on the host's own state
 /// directories.
@@ -42,5 +43,10 @@ impl MyrmicBackend for Ssh {
         // 255: `ssh` itself failed (host unreachable, authentication); 127: the remote shell
         // found no such program
         &[127, 255]
+    }
+
+    fn get_host_id(&self) -> HostId {
+        // the SSH host, with its network, comes with the rack's redesign
+        todo!()
     }
 }
