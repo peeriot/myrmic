@@ -12,10 +12,12 @@
 extern crate alloc;
 
 mod clock;
+mod join;
 mod session;
 mod zenoh_client;
 
 pub use clock::wall_time;
+pub use join::{JoinFailure, Link};
 pub use session::{
     CONNECTED, SESSION_LEASE, WifiBuffers, WifiCredentials, connection, init_stack, zenoh_session,
 };

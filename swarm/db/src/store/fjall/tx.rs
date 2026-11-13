@@ -46,6 +46,39 @@ fn encode(user_key: &mut Vec<u8>, ts: u64, kind: KeyKind) {
     user_key.extend_from_slice(&(kind as u32).to_be_bytes());
 }
 
+/// Moves a snapshot entry from the scope it was taken in to `scope` (encoded
+/// as `target`). Keys carry the scope as their prefix; a path row's value is
+/// a blob id that carries it too.
+fn rescope_entry(
+    scope: Scope<'_>,
+    target: &[u8],
+    key: RawKey,
+    value: Option<Value>,
+) -> anyhow::Result<(RawKey, Option<Value>)> {
+    if key.starts_with(target) {
+        return Ok((key, value));
+    }
+
+    let mut decoder = skey::decoder(&key);
+    Scope::decode_from(&mut decoder).context("snapshot entry is not a scoped key")?;
+    let rest = &key[key.len() - decoder.remaining()..];
+
+    let value = match value {
+        Some(value) if Path::decode_exact(&key).is_ok() => {
+            let id = BlobId::decode_exact(&value).context("path row holds no blob id")?;
+            let id = Key::blob_id()
+                .namespace(scope.namespace)
+                .database(scope.database)
+                .schema(scope.schema)
+                .hash(id.hash);
+            Some(id.encode()?)
+        }
+        value => value,
+    };
+
+    Ok(([target, rest].concat(), value))
+}
+
 /// Tag byte for the version-index region. Data keys start with the scope
 /// alias's `@`, sync points with `#`; `^` keeps the index disjoint from both.
 const VERSION_INDEX_TAG: u8 = b'^';
@@ -1172,6 +1205,7 @@ impl<M> Transaction<M> {
         let (now, me) = self.split_ts();
 
         let scope = Key::new_scope(scope.namespace, scope.database, scope.schema);
+        let target = scope.encode().context("unable to encode scope")?;
         let sp = Key::sync_point().scope(scope);
 
         tracing::debug!("applying snapshot with {} chunk(s)", snapshot.len());
@@ -1210,6 +1244,7 @@ impl<M> Transaction<M> {
         // Re-insert each snapshot chunk at its original version, re-stamped with the
         // current epoch. The higher epoch makes peers re-pull the version.
         let epoch = now;
+        let mut restored = 0;
 
         for chunk in snapshot {
             // @TODO jezza - 15 June 2026: Double check that links up properly.
@@ -1224,6 +1259,14 @@ impl<M> Transaction<M> {
                 meta,
                 entries,
             } = chunk;
+
+            // Entries carry the scope they were taken in, so an override
+            // restore has to move them, not just the sync point.
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| rescope_entry(scope, &target, key, value))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            restored += entries.iter().filter(|(_, value)| value.is_some()).count();
 
             let last = self
                 .find_last_syncpoint_untracked(scope, Some(version))?
@@ -1246,6 +1289,12 @@ impl<M> Transaction<M> {
             );
 
             self.insert_changeset(point, meta, &entries)?;
+        }
+
+        // Fail closed: a restore that reports success must leave its rows
+        // under the requested scope.
+        if restored > 0 && self.prefix_of(&target).next().is_none() {
+            anyhow::bail!("restore left {scope} empty");
         }
 
         for id in deleted {

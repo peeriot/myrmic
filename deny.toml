@@ -154,9 +154,6 @@ exceptions = [
     # MPL-2.0
 
     { allow = ["MPL-2.0"], crate = "option-ext" },
-    { allow = ["MPL-2.0"], crate = "sized-chunks" },
-    { allow = ["MPL-2.0"], crate = "im-rc" },
-    { allow = ["MPL-2.0"], crate = "bitmaps" },
     #########################
     # espflash dependencies #
     #########################

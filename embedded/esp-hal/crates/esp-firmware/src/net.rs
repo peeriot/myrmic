@@ -121,7 +121,7 @@ async fn connection(controller: WifiController<'static>, credentials: WifiCreden
         controller,
         credentials,
         || bump(Task::Connection),
-        crate::status::set_associated,
+        crate::status::set_link,
     )
     .await;
 }

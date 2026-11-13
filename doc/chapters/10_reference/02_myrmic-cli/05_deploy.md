@@ -14,7 +14,7 @@ Deploy cells, application suites, or bridges to the swarm.
 `PATH` specifies what to deploy:
 
 - A `.wasm` binary - deploys the cell directly, without building.
-- A `.nest` bundle - deploys a pre-built application suite directly.
+- A `.nest` bundle - deploys a pre-built application suite directly. Instance names, `tags`, `init` arguments and `restart` policies come from the bundle, exactly as the specification it was built from declared them. A bundle built by an older `myrmic` carries no instance settings and is refused; rebuild it with `myrmic build`.
 - A `.yml` / `.yaml` bridge configuration file - deploys an MQTT or HTTP bridge.
 - A cell crate directory or `Cargo.toml` - builds the cell and deploys it.
 - A workspace directory or `Cargo.toml` - builds all member crates and deploys them.
@@ -84,8 +84,8 @@ The crash-loop bounds keep their defaults (at most 5 restarts per 60s, 1s apart)
 Only roots are restarted - a cell spawned by another cell recovers through its parent's cell-lost handler, not this policy.
 
 How it is applied depends on what is being deployed:
-- **Cell**, **workspace**, **`.nest` bundle** - applied to every root the deployment creates.
-- **Application specification file** - applied to every instance, replacing any `restart` the specification declares. Each instance whose declared policy is discarded is named in a warning.
+- **Cell**, **workspace** - applied to every root the deployment creates.
+- **Application specification file**, **`.nest` bundle** - applied to every instance, replacing any `restart` the specification declares. Each instance whose declared policy is discarded is named in a warning.
 - **Bridge** - ignored with a warning; bridges have no restart policy.
 
 `-v` / `--verbose` - Verbose mode, shows more detail about what the command is doing. Useful for debugging. Can be set to `-vv` for even more detail.

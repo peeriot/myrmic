@@ -23,6 +23,12 @@ myrmic build .
 myrmic flash .
 ```
 
+A plain `cargo build --release` produces the same image: `.cargo/config.toml`
+carries the target, the link flags and the compile-time environment, and
+`build.rs` links esp-hal's script. Keep flags of your own under the
+`[target.'cfg(target_arch = "riscv32")']` key there; `myrmic build` overrides a
+`[target.riscv32imac-unknown-none-elf]` section but joins the `cfg` one.
+
 ## Change the pipeline
 
 Edit `board.yml` and `pipeline.yml`, then rebuild. Every driver and step shipped

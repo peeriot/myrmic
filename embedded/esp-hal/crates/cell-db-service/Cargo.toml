@@ -10,9 +10,9 @@ publish.workspace = true
 workspace = true
 
 [features]
-esp32c5  = ["esp-hal/esp32c5", "esp-watchdog/esp32c5", "wasm-runtime/esp32c5"]
-esp32c6  = ["esp-hal/esp32c6", "esp-watchdog/esp32c6", "wasm-runtime/esp32c6"]
-esp32c61 = ["esp-hal/esp32c61", "esp-watchdog/esp32c61", "wasm-runtime/esp32c61"]
+esp32c5  = ["esp-hal/esp32c5", "esp-heap/esp32c5", "esp-watchdog/esp32c5", "wasm-runtime/esp32c5"]
+esp32c6  = ["esp-hal/esp32c6", "esp-heap/esp32c6", "esp-watchdog/esp32c6", "wasm-runtime/esp32c6"]
+esp32c61 = ["esp-hal/esp32c61", "esp-heap/esp32c61", "esp-watchdog/esp32c61", "wasm-runtime/esp32c61"]
 
 # Marker: the hosting firmware ships the NimBLE host, so the exec registration
 # advertises the BLE capability tag.
@@ -33,7 +33,8 @@ zenoh-result = { workspace = true }
 # local
 cell-protocol   = { workspace = true }
 db-client       = { workspace = true, features = ["nano"] }
-esp-watchdog = { workspace = true }
+esp-heap        = { workspace = true }
+esp-watchdog    = { workspace = true }
 myrmic-common   = { workspace = true }
 myrmic-tags     = { workspace = true }
 wasm-runtime    = { workspace = true }
