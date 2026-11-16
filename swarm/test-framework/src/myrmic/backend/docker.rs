@@ -1,4 +1,4 @@
-use crate::{host, network::HostId};
+use crate::host::{self, Remote};
 
 use super::MyrmicBackend;
 
@@ -25,10 +25,7 @@ impl Docker {
 
 impl MyrmicBackend for Docker {
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
-        let container = self.host.get_container();
-        let mut command = container.docker_cli();
-        command.args(["exec", container.id(), program]).args(args);
-        command
+        self.host.command(program, args)
     }
 
     fn wrapper_exit_codes(&self) -> &'static [i32] {
@@ -37,7 +34,7 @@ impl MyrmicBackend for Docker {
         &[125, 126, 127]
     }
 
-    fn get_host_id(&self) -> HostId {
+    fn get_host_id(&self) -> host::Id {
         self.host.get_id()
     }
 }

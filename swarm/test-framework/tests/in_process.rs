@@ -3,9 +3,8 @@
 use std::time::Duration;
 
 use test_framework::{
-    assert_eventually,
+    World, assert_eventually,
     in_process::StoppedRt,
-    network,
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
@@ -19,7 +18,7 @@ const SEEN: Duration = Duration::from_secs(10);
 /// A deleted node leaves the network: a peer on its group stops seeing it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_deleted_node_leaves_the_network() -> anyhow::Result<()> {
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let rt = StoppedRt::new(&group).orchestration().start().await?;
     let zid = rt.get_zid();
     let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
@@ -41,7 +40,7 @@ async fn a_deleted_node_leaves_the_network() -> anyhow::Result<()> {
 /// A node started again comes back under the zid it had.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restarted_node_keeps_its_zid() -> anyhow::Result<()> {
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let rt = StoppedRt::new(&group).orchestration().start().await?;
     let zid = rt.get_zid();
     let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
@@ -65,7 +64,7 @@ async fn sees(session: &zenoh::Session, zid: ZenohId) -> bool {
 /// linked to the others.
 #[tokio::test(flavor = "multi_thread")]
 async fn in_process_nodes_form_a_swarm() -> anyhow::Result<()> {
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let node = || swarm.add(StoppedRt::new(&group).orchestration().db().execution());
     let (a, b, c) = (node(), node(), node());
@@ -76,7 +75,7 @@ async fn in_process_nodes_form_a_swarm() -> anyhow::Result<()> {
 /// A node in zenoh's router mode is linked like a peer: a swarm with one connects.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_router_node_joins_a_swarm() -> anyhow::Result<()> {
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let peer = swarm.add(StoppedRt::new(&group).orchestration().db());
     let router = swarm.add(StoppedRt::new(&group).router_mode().execution());

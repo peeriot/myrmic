@@ -14,8 +14,8 @@ use sorg_tests::{
     Platform, prebuilt_cell_wasm, register_fixture_class, scope_test_multicast, swarm_config,
 };
 use test_framework::{
+    World,
     myrmic::{self, Error},
-    network,
     overlay::Overlay,
     runtime::Running,
     start_runtimes,
@@ -67,7 +67,7 @@ type CliRt = RunningRt<myrmic::RunningRt<myrmic::Local>>;
 /// A swarm of two CLI runtimes on one group, tagged `first` and `second`, started; their handles
 /// in that order.
 async fn two_runtimes(first: &[&str], second: &[&str]) -> Result<(Swarm, [CliRt; 2]), Error> {
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let first = swarm.add(swarm.get_myrmic().runtime().tags(first));
     let second = swarm.add(swarm.get_myrmic().runtime().tags(second));

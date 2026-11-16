@@ -14,12 +14,12 @@
 //!
 //! ```ignore
 //! use test_framework::{
-//!     host, network,
+//!     host, World,
 //!     overlay::Overlay,
 //!     runtime::{Running, Stopped},
 //! };
 //!
-//! let group = Overlay::new(&network::Local).new_multicast_group();
+//! let group = Overlay::new(&World::local()).new_multicast_group();
 //! let myrmic = host::Local.myrmic_isolated(&group);
 //! let rt = myrmic.runtime().tags(&["gpu"]).persistent(true).start().await?; // running
 //! let zid = rt.get_zid();

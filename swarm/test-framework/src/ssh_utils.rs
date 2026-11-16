@@ -10,15 +10,6 @@ pub use lock::{HostLocks, lock};
 pub use upload::upload;
 pub use wait::{wait_until_clock_synchronized, wait_until_reachable};
 
-/// A binary on a remote host: how to reach the host, and where the binary lies there.
-#[derive(Debug, Clone)]
-pub struct RemoteBinary {
-    /// SSH destination, e.g. `user@host.example`: anything `ssh` and `scp` accept
-    pub login: String,
-    /// path of the binary the host runs (`myrmic`, or `zenoh-router` on the entry host)
-    pub remote_bin_path: String,
-}
-
 /// A remote host a test can run a swarm's runtimes or its entry router on: an entry of a table
 /// of the hosts available, e.g. a rack.
 #[derive(Debug, Clone)]

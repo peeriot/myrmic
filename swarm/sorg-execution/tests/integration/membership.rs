@@ -1,7 +1,7 @@
 use cell_protocol::RuntimeId;
 use sorg_tests::enable_test_logging;
 use test_framework::{
-    assert_eventually, in_process, network, overlay::Overlay, runtime::Running, swarm3::Swarm,
+    World, assert_eventually, in_process, overlay::Overlay, runtime::Running, swarm3::Swarm,
     wait::DEFAULT_TIMEOUT,
 };
 
@@ -10,7 +10,7 @@ async fn joining_execs_are_registered() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange — a runtime, and a second one joining its swarm
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let start = || {
         swarm
@@ -46,7 +46,7 @@ async fn leaving_exec_is_deregistered() -> anyhow::Result<()> {
     // replica before the second goes, and then it would be missing without anyone having removed
     // it. So only `one` runs a db: `two`'s registry row can then only live on `one`, so it is gone
     // from there only when someone removes it.
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let _one = swarm
         .add(in_process::StoppedRt::new(&group).execution().db())

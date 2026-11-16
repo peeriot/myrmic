@@ -13,13 +13,14 @@ use futures::StreamExt;
 
 use crate::{
     CommandOutput,
-    docker::{DockerDaemon, image::Image, network::ManagedNetwork, run_cleanup},
+    docker::{Daemon, Image, ManagedNetwork},
+    run_cleanup,
 };
 
 #[derive(Clone)]
 /// a thin wrapper for interacting with a running docker container (address, networks, exec)
 pub struct ConnectedContainer {
-    docker: DockerDaemon,
+    docker: Daemon,
     container_id: String,
 }
 
@@ -33,7 +34,7 @@ impl Deref for ConnectedContainer {
 
 impl ConnectedContainer {
     /// a [`ConnectedContainer`] is created by attaching to a `container_id`
-    pub fn attach(docker: DockerDaemon, container_id: impl Into<String>) -> Self {
+    pub fn attach(docker: Daemon, container_id: impl Into<String>) -> Self {
         Self {
             docker,
             container_id: container_id.into(),
@@ -161,7 +162,7 @@ impl ManagedContainer {
     /// [`ContainerBuilder::run`]
     pub(crate) fn builder<'a>(
         image: &'a Image,
-        docker: DockerDaemon,
+        docker: Daemon,
         name: &'a str,
     ) -> ContainerBuilder<'a> {
         ContainerBuilder {
@@ -179,7 +180,7 @@ impl ManagedContainer {
 /// Options for one docker container, created by [`ManagedContainer::builder`].
 pub(crate) struct ContainerBuilder<'a> {
     image: &'a Image,
-    docker: DockerDaemon,
+    docker: Daemon,
     name: &'a str,
     command: &'a [&'a str],
     capabilities: &'a [&'a str],

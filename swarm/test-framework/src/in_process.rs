@@ -12,12 +12,12 @@
 //! ```ignore
 //! use test_framework::{
 //!     in_process::StoppedRt,
-//!     network,
+//!     World,
 //!     overlay::Overlay,
 //!     runtime::{Running, Stopped},
 //! };
 //!
-//! let group = Overlay::new(&network::Local).new_multicast_group();
+//! let group = Overlay::new(&World::local()).new_multicast_group();
 //! let rt = StoppedRt::new(&group).orchestration().db().start().await?; // running
 //! let session = zenoh::open(group.get_zenoh_config()).await.unwrap(); // a peer on its group
 //! let rt = rt.delete().await?; // stopped: the node has left the network
@@ -62,7 +62,7 @@
 
 use zenoh::config::{WhatAmI, ZenohId};
 
-use crate::{network, overlay, runtime};
+use crate::{host, overlay, runtime};
 
 /// An in-process node that is not running: never started yet, or deleted. A builder for the node;
 /// see [the module docs](self).
@@ -85,7 +85,7 @@ impl StoppedRt {
         Self {
             // `ZenohId`'s default is a random id
             zid: ZenohId::default(),
-            ovl_member: attachment.add_member(network::HostId::TEST_MACHINE),
+            ovl_member: attachment.add_member(host::get_local_id()),
             orchestration: false,
             db: false,
             execution: false,

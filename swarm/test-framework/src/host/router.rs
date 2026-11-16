@@ -1,55 +1,48 @@
 use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt, BufReader, Lines};
-
-use super::run_cleanup;
 use zenoh::config::WhatAmI;
 
-use crate::{host, overlay};
+use super::Remote;
+use crate::{overlay, run_cleanup};
 
-/// A standalone zenoh router in a docker container, a member of an overlay that is no runtime:
-/// nothing starts or stops it but its creation ([`crate::host::Docker::router`]) and its drop, and
-/// no swarm counts it among its runtimes. A swarm attaches through one by a connect to it
+/// A standalone zenoh router on a host, a member of an overlay that is no runtime: nothing starts
+/// or stops it but its creation (e.g. [`super::Docker::router`]) and its drop, and no swarm
+/// counts it among its runtimes. A swarm attaches through one by a connect to it
 /// (`overlay.connect_to(&router)`), so faults on the runtimes never cut the test off.
 ///
 /// It runs the `zenoh-router` binary with the overlay's settings for its member: the group it
 /// scouts on, and a port of its own it listens on for what connects to it.
-pub struct Router {
+pub struct Router<H: Remote> {
     member: overlay::Member,
-    /// the host whose container it runs in
-    host: host::Docker,
-    /// the router's pid in its container
+    /// the host it runs on
+    host: H,
+    /// the router's pid on its host
     pid: String,
-    /// the `docker exec` the router runs in
+    /// the local process (`docker exec`, `ssh`) the router runs in
     _process: tokio::process::Child,
     /// records the router as running in its overlay while it exists; dropped after the router is
     /// killed in [`Drop::drop`]
     _running: overlay::RunningGuard,
 }
 
-impl Router {
-    /// Start the router `member` in `host`'s container; returns once it listens.
-    pub(crate) async fn start(host: host::Docker, member: overlay::Member) -> Self {
+impl<H: Remote> Router<H> {
+    /// Start the router `member` on `host`, running the `zenoh-router` binary at `binary` there;
+    /// returns once it listens.
+    pub(crate) async fn start(host: H, binary: &str, member: overlay::Member) -> Self {
         member.ensure_listen_port();
-        let container = host.get_container();
         let settings = member.get_zenoh_settings().to_string();
-        // `echo $$` first: the router's pid in the container, which the drop kills
-        let mut command = container.docker_cli();
-        command.args([
-            "exec",
-            container.id(),
+        // `echo $$` first: the router's pid on its host, which the drop kills
+        let command = host.command(
             "sh",
-            "-c",
-            "echo $$; exec \"$@\"",
-            "sh",
-            "zenoh-router",
-            &settings,
-        ]);
+            &["-c", "echo $$; exec \"$@\"", "sh", binary, &settings],
+        );
         let mut process = tokio::process::Command::from(command)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .expect("failed to run docker exec for the router");
+            .expect("failed to run the router's command");
         let mut lines = BufReader::new(process.stdout.take().expect("stdout is piped")).lines();
         let pid = next_line(&mut lines, "the router's pid").await;
         let ready = next_line(&mut lines, "the router to be ready").await;
@@ -65,28 +58,23 @@ impl Router {
             _process: process,
         }
     }
-}
 
-impl Router {
-    /// the host the router runs on, e.g. for its network's faults
-    pub fn get_host(&self) -> &host::Docker {
+    /// the host the router runs on, e.g. for its faults
+    pub fn get_host(&self) -> &H {
         &self.host
     }
 }
 
-impl From<&Router> for overlay::Member {
-    fn from(router: &Router) -> Self {
+impl<H: Remote> From<&Router<H>> for overlay::Member {
+    fn from(router: &Router<H>) -> Self {
         router.member.clone()
     }
 }
 
-impl Drop for Router {
+impl<H: Remote> Drop for Router<H> {
     fn drop(&mut self) {
-        // ending `docker exec` doesn't end what it runs in the container
-        let container = self.host.get_container();
-        let mut kill = container.docker_cli();
-        kill.args(["exec", container.id(), "kill", &self.pid]);
-        run_cleanup("Router", kill);
+        // ending the local process doesn't end what it runs on the host
+        run_cleanup("Router", self.host.command("kill", &[&self.pid]));
     }
 }
 

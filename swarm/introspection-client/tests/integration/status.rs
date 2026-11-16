@@ -1,7 +1,7 @@
 use introspection_client::v1::Client;
 use sorg_tests::enable_test_logging;
 use test_framework::{
-    in_process, network,
+    World, in_process,
     overlay::Overlay,
     runtime::{Running, Stopped},
 };
@@ -13,7 +13,7 @@ async fn empty() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange - client with a session on a multicast group nothing else is on
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
     let client = Client::new(session).await;
 
@@ -30,7 +30,7 @@ async fn one_node() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange - one swarm node and a client
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let node = in_process::StoppedRt::new(&group)
         .orchestration()
         .db()
@@ -67,7 +67,7 @@ async fn three_nodes() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange - two peers and a router on one group, and a client
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let peer = in_process::StoppedRt::new(&group)
         .orchestration()
         .db()
@@ -140,7 +140,7 @@ async fn own_status() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange - one swarm node; client shares the node's session
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let node = in_process::StoppedRt::new(&group)
         .orchestration()
         .db()

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::MyrmicBackend;
-use crate::network::HostId;
+use crate::host;
 
 /// [`MyrmicBackend`] that runs programs on the test's machine, isolated: on state directories of
 /// their own (see [`crate::host::Local::myrmic_isolated`]).
@@ -47,7 +47,7 @@ impl MyrmicBackend for Local {
         &[]
     }
 
-    fn get_host_id(&self) -> HostId {
-        HostId::TEST_MACHINE
+    fn get_host_id(&self) -> host::Id {
+        host::get_local_id()
     }
 }

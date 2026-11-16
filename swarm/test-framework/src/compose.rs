@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
-use crate::docker::{DockerDaemon, container::ConnectedContainer};
+use crate::docker;
 
 /// helper to spin up a docker compose project
 ///
 /// Dropping the project runs `docker compose down -v` best-effort (panic-safe cleanup).
 /// Call [`ComposeProject::down`] instead when the test asserts on the teardown result.
 pub struct ComposeProject {
-    docker: DockerDaemon,
+    docker: docker::Daemon,
     compose_file: PathBuf,
     project_name: String,
     armed: bool,
@@ -21,7 +21,7 @@ impl ComposeProject {
     /// a [`ComposeProject`] is initialized by running `docker compose up`
     pub async fn up(compose_file: impl Into<PathBuf>, project_name: &str) -> Self {
         let project = Self {
-            docker: DockerDaemon::connect(),
+            docker: docker::Daemon::connect(),
             compose_file: compose_file.into(),
             project_name: project_name.into(),
             armed: true,
@@ -59,7 +59,7 @@ impl ComposeProject {
     }
 
     /// find a container named `service` that was deployed with this [`ComposeProject`]
-    pub async fn service_container(&self, service: &str) -> ConnectedContainer {
+    pub async fn service_container(&self, service: &str) -> docker::ConnectedContainer {
         let containers = self.service_containers(service).await;
         match containers.as_slice() {
             [container] => container.clone(),
@@ -69,7 +69,7 @@ impl ComposeProject {
     }
 
     /// list all service containers deployed with this [`ComposeProject`]
-    pub async fn service_containers(&self, service: &str) -> Vec<ConnectedContainer> {
+    pub async fn service_containers(&self, service: &str) -> Vec<docker::ConnectedContainer> {
         let output = self.compose(&["ps", "-q", service]).await;
         assert_compose_success(
             &output,
@@ -80,7 +80,7 @@ impl ComposeProject {
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
-            .map(|id| ConnectedContainer::attach(self.docker.clone(), id.to_owned()))
+            .map(|id| docker::ConnectedContainer::attach(self.docker.clone(), id.to_owned()))
             .collect()
     }
 

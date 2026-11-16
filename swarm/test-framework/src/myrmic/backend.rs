@@ -1,7 +1,7 @@
 //! Where the myrmic CLI runs: on the host, on a remote host over SSH, or inside a docker
 //! container.
 
-use crate::network::HostId;
+use crate::host;
 
 mod docker;
 mod local;
@@ -26,5 +26,5 @@ pub trait MyrmicBackend: Clone + Send + Sync {
     fn wrapper_exit_codes(&self) -> &'static [i32];
 
     /// the host the commands run on, as its network knows it
-    fn get_host_id(&self) -> HostId;
+    fn get_host_id(&self) -> host::Id;
 }

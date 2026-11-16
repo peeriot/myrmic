@@ -6,7 +6,7 @@ use bollard::{body_full, query_parameters::BuildImageOptionsBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 
-use crate::docker::DockerDaemon;
+use crate::docker::Daemon;
 
 /// A docker image the daemon has: only [`Self::find`] and [`Self::build`] create one.
 pub struct Image {
@@ -16,7 +16,7 @@ pub struct Image {
 
 impl Image {
     /// the image `tag`, or `None` if the daemon doesn't have it
-    pub async fn find(docker: &DockerDaemon, tag: impl Into<String>) -> Option<Self> {
+    pub async fn find(docker: &Daemon, tag: impl Into<String>) -> Option<Self> {
         let tag = tag.into();
         match docker.inspect_image(&tag).await {
             Ok(_) => Some(Self { tag }),
@@ -30,7 +30,7 @@ impl Image {
     /// Build the image `tag` from `dockerfile` with an in-memory tar build context containing the
     /// given `files` as `(host path, name in context)` pairs.
     pub async fn build(
-        docker: &DockerDaemon,
+        docker: &Daemon,
         tag: impl Into<String>,
         dockerfile: &Path,
         files: &[(&Path, &str)],

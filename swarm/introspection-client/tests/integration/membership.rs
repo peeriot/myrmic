@@ -4,7 +4,7 @@ use introspection_client::v1::Client;
 use introspection_common::v1::NodeStatus;
 use sorg_tests::enable_test_logging;
 use test_framework::{
-    in_process, myrmic, network,
+    World, in_process, myrmic,
     overlay::Overlay,
     runtime::Running,
     swarm3::{self, Swarm},
@@ -97,7 +97,7 @@ struct ObservedSwarm {
 impl ObservedSwarm {
     async fn new() -> anyhow::Result<Self> {
         enable_test_logging("debug");
-        let group = Overlay::new(&network::Local).new_multicast_group();
+        let group = Overlay::new(&World::local()).new_multicast_group();
         let swarm = Swarm::new(&group).await;
         let pre_existing = swarm
             .add(swarm.get_myrmic().runtime())

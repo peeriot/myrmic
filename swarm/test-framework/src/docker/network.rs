@@ -2,14 +2,15 @@ use std::net::IpAddr;
 
 use bollard::models::NetworkCreateRequest;
 
-use crate::docker::{DockerDaemon, container::ConnectedContainer, run_cleanup};
+use super::{ConnectedContainer, Daemon};
+use crate::run_cleanup;
 
 /// a docker network that was created by this framework and is removed when dropped
 ///
-/// The [`ManagedContainer`](super::container::ManagedContainer)s attached to it hold it, so it
+/// The [`ManagedContainer`](super::ManagedContainer)s attached to it hold it, so it
 /// outlives them.
 pub struct ManagedNetwork {
-    docker: DockerDaemon,
+    docker: Daemon,
     name: String,
     /// a running container this framework did not create (e.g. the one the test runs in),
     /// attached at creation and detached before removal: docker refuses to remove a network
@@ -19,7 +20,7 @@ pub struct ManagedNetwork {
 
 impl ManagedNetwork {
     /// create a bridge network named `name`, with the running container `outsider` attached
-    pub(crate) async fn create(docker: DockerDaemon, name: &str, outsider: Option<&str>) -> Self {
+    pub(crate) async fn create(docker: Daemon, name: &str, outsider: Option<&str>) -> Self {
         docker
             .create_network(NetworkCreateRequest {
                 name: name.to_owned(),

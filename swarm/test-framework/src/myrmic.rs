@@ -126,6 +126,7 @@ where
             tags: vec![],
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
+            telemetry: swarm_telemetry::TelemetryConfig::default(),
         }
     }
 
@@ -229,7 +230,7 @@ where
 
     /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
-        let attachment = self.attachment.get_cli_args();
+        let attachment = self.attachment.get_cli_args(&self.backend.get_host_id());
         let output = self
             .run_program(&self.binary, &attached(&attachment, args))
             .await;
@@ -257,7 +258,7 @@ where
 
     /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
-        let attachment = self.attachment.get_cli_args();
+        let attachment = self.attachment.get_cli_args(&self.backend.get_host_id());
         self.run_program_blocking(&self.binary, &attached(&attachment, args))
     }
 
@@ -311,10 +312,17 @@ where
     }
 }
 
+/// How long a `myrmic` call waits for a runtime to answer before it gives up (its `--timeout`).
+/// The CLI's own default, 500 ms, is too short for a swarm across a VPN: a fresh session, and a
+/// reply through a router at some 30 ms round trip, don't always fit in it. A runtime that answers
+/// sooner ends the wait sooner, so a fast swarm loses nothing.
+const CLI_TIMEOUT: &str = "5s";
+
 /// `args` of a `myrmic` call, behind `attachment`: the shim's [`overlay::Attachment::get_cli_args`], by
-/// which the CLI finds the runtimes
+/// which the CLI finds the runtimes, and [`CLI_TIMEOUT`]
 fn attached<'a>(attachment: &'a [String; 2], args: &[&'a str]) -> Vec<&'a str> {
     let mut attached: Vec<&str> = attachment.iter().map(String::as_str).collect();
+    attached.extend(["--timeout", CLI_TIMEOUT]);
     attached.extend(args);
     attached
 }
@@ -390,6 +398,7 @@ pub struct StoppedRt<B> {
     tags: Vec<String>,
     name: String,
     persistent: bool,
+    telemetry: swarm_telemetry::TelemetryConfig,
 }
 
 impl<B> StoppedRt<B>
@@ -418,6 +427,13 @@ where
         self.persistent = persistent;
         self
     }
+
+    /// How the runtime exports its telemetry (logs, metrics, traces): where to, how often, how
+    /// much; defaults to the runtime's own defaults.
+    pub fn telemetry(mut self, telemetry: swarm_telemetry::TelemetryConfig) -> Self {
+        self.telemetry = telemetry;
+        self
+    }
 }
 
 impl<B> runtime::Stopped for StoppedRt<B>
@@ -429,8 +445,8 @@ where
     type Running = RunningRt<B>;
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
-    /// `config` sets what the overlay tells the runtime: the group it scouts on, the runtimes it
-    /// connects to, the port it listens on
+    /// `config` sets what the overlay tells the runtime (the group it scouts on, the runtimes it
+    /// connects to, the port it listens on) and its telemetry
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
@@ -438,6 +454,7 @@ where
         // JSON is YAML, which `runtimes start` parses
         let config = serde_json::json!({
             "zenoh": self.ovl_member.get_zenoh_settings(),
+            "telemetry": self.telemetry,
         })
         .to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the

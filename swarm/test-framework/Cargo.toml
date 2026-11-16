@@ -23,6 +23,9 @@ hex = { workspace = true }
 introspection-client = { workspace = true }
 introspection-common = { workspace = true }
 myrmic-build = { workspace = true }
+netlink-packet-core = { workspace = true }
+netlink-packet-route = { workspace = true }
+netlink-sys = { workspace = true }
 postcard = { workspace = true }
 rand = { workspace = true }
 reqwest = { version = "0.13.3", features = ["query", "json"] }

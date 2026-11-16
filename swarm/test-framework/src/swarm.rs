@@ -2,9 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::docker::DockerDaemon;
-
-use crate::docker::image::Image;
+use crate::docker;
 
 pub mod backend;
 pub mod process;
@@ -20,7 +18,7 @@ impl SwarmImage {
     /// (as `swarm`) and any `extra_files` (`(host path, name in context)` pairs) in the build
     /// context.
     pub async fn build(
-        docker: &DockerDaemon,
+        docker: &docker::Daemon,
         swarm_dockerfile: impl Into<PathBuf>,
         swarm_binary: impl Into<PathBuf>,
         tag: &str,
@@ -29,7 +27,7 @@ impl SwarmImage {
         let swarm_binary = swarm_binary.into();
         let mut files = vec![(swarm_binary.as_path(), "swarm")];
         files.extend_from_slice(extra_files);
-        Image::build(
+        docker::Image::build(
             docker,
             tag,
             swarm_dockerfile.into().iter().as_path(),

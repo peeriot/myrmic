@@ -11,9 +11,10 @@
 //!   cells, sends commands and reads status, and [`myrmic::Myrmic::runtime`] describes a runtime
 //!   it can start. It comes from its machine, a [`host`] (the test's own, a remote one over SSH,
 //!   a container).
-//! - **Who links to whom:** [`overlay`] and [`network`]. Every runtime is a member of an
+//! - **Who links to whom:** [`overlay`], [`World`] and [`host_set`]. Every runtime is a member of an
 //!   [`overlay::Overlay`], attached on one of its multicast groups or by a connect to another
-//!   member; the overlay sits on a network, which decides whether hosts reach each other at all.
+//!   member; the overlay sits on a world, whose host sets decide whether one host can dial
+//!   another at all.
 //! - **A runtime's lifecycle:** [`runtime`]. Start, stop, kill and pause, with the stopped and
 //!   the running state as separate types, so a call in the wrong state does not compile. The
 //!   same handles serve single-runtime tests and swarms.
@@ -48,7 +49,6 @@ pub mod in_process;
 pub mod latency;
 pub mod metrics;
 pub mod myrmic;
-pub mod network;
 pub mod overlay;
 pub mod producers;
 pub mod rack;
@@ -61,12 +61,28 @@ pub mod swarm;
 pub mod swarm3;
 pub mod telemetry_files;
 pub mod wait;
+mod world;
 
 use cell_protocol::Sri;
 use swarm_telemetry::db::opentelemetry_proto::tonic::{
     common::v1::any_value::Value, trace::v1::Span,
 };
 pub use wait::{wait_for, wait_until};
+pub use world::*;
+
+/// Run the cleanup `command` of the drop-guard `guard`. A failure is reported, not raised: a panic
+/// during unwinding aborts the process and hides the original one.
+fn run_cleanup(guard: &str, mut command: std::process::Command) {
+    let invocation = format!("{command:?}");
+    match command.output() {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => eprintln!(
+            "{guard} drop-guard: {invocation} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(err) => eprintln!("{guard} drop-guard: failed to run {invocation}: {err}"),
+    }
+}
 
 /// for [`start_runtimes!`], which expands to `futures::join!` in the caller's crate
 #[doc(hidden)]

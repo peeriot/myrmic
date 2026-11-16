@@ -5,10 +5,10 @@
 //!
 //! ```ignore
 //! use test_framework::{
-//!     in_process, network, overlay::Overlay, runtime::Stopped, start_runtimes, swarm3::Swarm,
+//!     World, in_process, overlay::Overlay, runtime::Stopped, start_runtimes, swarm3::Swarm,
 //! };
 //!
-//! let group = Overlay::new(&network::Local).new_multicast_group();
+//! let group = Overlay::new(&World::local()).new_multicast_group();
 //! let swarm = Swarm::new(&group).await;
 //! let a = swarm.add(swarm.get_myrmic().runtime().tags(&["gpu"]));  // a CLI runtime
 //! let b = swarm.add(in_process::StoppedRt::new(&group).orchestration().db());

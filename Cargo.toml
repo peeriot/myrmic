@@ -402,6 +402,9 @@ thiserror = { version = "2.0.12", default-features = false }
 bollard = "0.21"
 enum-map = "3.1"
 tar = "0.4"
+netlink-packet-core = "0.9"
+netlink-packet-route = "0.34"
+netlink-sys = "0.9"
 
 futures = { version = "0.3.31", default-features = false }
 futures-util = { version = "0.3.31", default-features = false }

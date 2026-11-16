@@ -4,9 +4,8 @@
 use cell_protocol::replication::runtime_tag;
 use introspection_client::v1::Client;
 use test_framework::{
-    host, in_process,
+    World, host, in_process,
     myrmic::{self, Error, Myrmic, cell::CellSpec},
-    network,
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
@@ -21,7 +20,7 @@ type CliRt = RunningRt<myrmic::RunningRt<myrmic::Local>>;
 
 /// a swarm of three CLI runtimes on one group, started
 async fn three_runtimes() -> Result<(Swarm, [CliRt; 3]), Error> {
-    let group = Overlay::new(&network::Local).new_multicast_group();
+    let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let a = swarm.add(swarm.get_myrmic().runtime());
     let b = swarm.add(swarm.get_myrmic().runtime());
@@ -95,7 +94,7 @@ async fn a_killed_runtime_restarts_under_the_same_zid() -> anyhow::Result<()> {
 /// reach it, and it reaches none of them.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_runtime_moved_to_its_own_group_is_cut_off() -> anyhow::Result<()> {
-    let overlay = Overlay::new(&network::Local);
+    let overlay = Overlay::new(&World::local());
     let group = overlay.new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let a = swarm.add(swarm.get_myrmic().runtime());
@@ -130,7 +129,7 @@ async fn a_runtime_moved_to_its_own_group_is_cut_off() -> anyhow::Result<()> {
 /// A runtime attached by a connect links to its target: the target lists it as its peer.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_connected_runtime_links_to_its_target() -> anyhow::Result<()> {
-    let overlay = Overlay::new(&network::Local);
+    let overlay = Overlay::new(&World::local());
     let group = overlay.new_multicast_group();
     let target = in_process::StoppedRt::new(&group).orchestration();
     let to_target = overlay.connect_to(&target);
@@ -162,7 +161,7 @@ async fn a_connected_runtime_links_to_its_target() -> anyhow::Result<()> {
 /// exactly that, so its start only returns when the links are there.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_connected_runtime_links_to_its_targets_whole_group() -> anyhow::Result<()> {
-    let overlay = Overlay::new(&network::Local);
+    let overlay = Overlay::new(&World::local());
     let group = overlay.new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let target = in_process::StoppedRt::new(&group).orchestration();

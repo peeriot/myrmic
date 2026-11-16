@@ -3,11 +3,11 @@
 //! `myrmic` and `zenoh-router` binaries (see [`test_framework::resolve_binary!`]).
 
 use test_framework::{
-    docker::{self, DockerDaemon},
-    host, myrmic, network,
+    docker, host, host_set, myrmic,
     overlay::{MulticastGroup, Overlay},
     start_runtimes,
     swarm3::{self, Swarm},
+    world,
 };
 
 /// a CLI runtime in a container, not started
@@ -15,22 +15,22 @@ type DockerRt = swarm3::StoppedRt<myrmic::StoppedRt<myrmic::Docker>>;
 
 /// A swarm on a docker network of its own, attached through a router on a host of its own.
 struct DockerSwarm {
-    network: network::Docker,
+    host_set: host_set::Docker,
     group: MulticastGroup,
     /// only kept alive: the swarm reaches its runtimes through it
-    _router: docker::Router,
+    _router: host::Router<host::Docker>,
     swarm: Swarm,
 }
 
 impl DockerSwarm {
     async fn new() -> Self {
-        let network = network::Docker::new(&DockerDaemon::connect()).await;
-        let overlay = Overlay::new(&network);
+        let host_set = host_set::Docker::new(&docker::Daemon::connect()).await;
+        let overlay = Overlay::new(&world![host_set]);
         let group = overlay.new_multicast_group();
-        let router = network.new_host().await.router(&group).await;
+        let router = host_set.new_host().await.router(&group).await;
         let swarm = Swarm::new(overlay.connect_to(&router)).await;
         Self {
-            network,
+            host_set,
             group,
             _router: router,
             swarm,
@@ -39,7 +39,7 @@ impl DockerSwarm {
 
     /// a CLI runtime of the swarm on a new host of the network, not started, and its host
     async fn new_runtime(&self) -> (host::Docker, DockerRt) {
-        let host = self.network.new_host().await;
+        let host = self.host_set.new_host().await;
         let rt = self.swarm.add(host.myrmic(&self.group).runtime());
         (host, rt)
     }
@@ -65,7 +65,7 @@ async fn an_isolated_hosts_runtime_drops_out_of_the_swarm() -> anyhow::Result<()
     let (b_host, b) = setup.new_runtime().await;
     start_runtimes!(setup.swarm; a, b);
 
-    setup.network.isolate(&b_host).await;
+    b_host.isolate().await;
     setup.swarm.wait_until_connected().await?;
     Ok(())
 }
@@ -78,7 +78,7 @@ async fn blocked_hosts_lose_their_link() -> anyhow::Result<()> {
     let (b_host, b) = setup.new_runtime().await;
     start_runtimes!(setup.swarm; a, b);
 
-    setup.network.block(&a_host, &b_host).await;
+    a_host.block(&b_host).await;
     setup.swarm.wait_until_connected().await?;
     Ok(())
 }
