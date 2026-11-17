@@ -67,3 +67,11 @@ reason = "The unsafe-libyaml crate is unmaintained, but needed by zenoh-config v
 [[IgnoredVulns]]
 id = "GHSA-qwgh-2vcv-g2f7"
 reason = "block-buffer 0.10.4 via digest 0.10 keeps its cursor outside the block, so the inline-cursor corruption cannot happen; see comment."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = "chrono is unmaintained, but needed by oauth2, openidconnect, object_store and cbor-edn besides our own crates. No safe upgrade exists yet."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0542"
+reason = "humantime is flagged unmaintained along with chrono. We use it to parse and print durations; moving to jiff would replace it."
