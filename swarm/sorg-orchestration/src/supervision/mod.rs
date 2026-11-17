@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 use cell_protocol::{CellInstance, Gen, PlacementEntry, RuntimeId, Sri};
 use sorg_common::root_death::RootDeath;
 use sorg_common::supervision::{
-    ExpiryGate, LeaseTracker, RESTART_DEPLOY_TIMEOUT, RestartBudget, SupervisionTiming, jittered,
+    ClockSkewWatch, ExpiryGate, LeaseTracker, RESTART_DEPLOY_TIMEOUT, RestartBudget,
+    SupervisionTiming, jittered,
 };
 use sorg_common::{
     CellDeployment, DeployRequest, DeploymentError, FenceOutcome, LostReason, deploy_cells,
@@ -192,11 +193,16 @@ pub(crate) fn spawn_lease_watcher(
         let mut absence_gate = ExpiryGate::new(timing.ttl + timing.margin);
         let mut budget = RestartBudget::new();
         let mut sweep = RestartSweep::default();
+        // Placement copes with skew once peers are observed, but the operator
+        // should still hear about it.
+        let mut skew = ClockSkewWatch::new();
         let mut tick: u64 = 0;
         loop {
             tick += 1;
             tokio::time::sleep(jittered(timing.verify, tick)).await;
 
+            let local_now_ms = ClockSkewWatch::local_now_ms();
+            let scan_at = Instant::now();
             let leases = match node_lease::list_leases(&session).await {
                 Ok(leases) => leases,
                 Err(err) => {
@@ -210,6 +216,22 @@ pub(crate) fn spawn_lease_watcher(
                 for (id, lease) in &leases {
                     tracker.observe(*id, lease.seq, Duration::from_millis(lease.ttl_ms), now);
                 }
+            }
+            if let Some(report) = skew.sample(
+                session.zid().into(),
+                local_now_ms,
+                scan_at,
+                leases
+                    .iter()
+                    .map(|(id, lease)| (*id, lease.seq, lease.ttl_ms)),
+            ) {
+                warn!(
+                    offset_ms = report.offset_ms,
+                    peers = report.peers,
+                    tracked = report.tracked,
+                    "this orchestrator's clock disagrees with its peers by {} ms - check time synchronisation on this node and on its peers",
+                    report.offset_ms
+                );
             }
             let leased: HashSet<RuntimeId> = leases.iter().map(|(id, _)| *id).collect();
 
