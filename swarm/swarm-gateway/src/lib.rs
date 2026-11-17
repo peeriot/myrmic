@@ -83,9 +83,16 @@ pub struct Config {
     #[serde(default)]
     pub session_inactivity_timer_secs: Option<i64>,
 
-    /// Which discovered routes to serve, and the OIDC provider guarding each —
+    /// Serve mounts without `oidc` to anyone, with full API access; routes
+    /// marked `anonymous: true` stay owner-only. Local development only; logs
+    /// a warning at startup.
+    #[serde(default)]
+    pub anonymous: bool,
+
+    /// Which discovered routes to serve, and the OIDC provider guarding each -
     /// either inline, or a path to a JSON file holding the same. `None` serves
-    /// every route that is discovered, unguarded.
+    /// every route that is discovered, but refuses each one with 403 unless
+    /// [`Config::anonymous`] is set.
     #[serde(default, flatten)]
     pub routing: Option<Either<PathBuf, RoutingConfig>>,
 }
@@ -109,6 +116,16 @@ pub struct RoutingConfig {
     pub routes: Option<HashMap<String, RouteConfig>>,
 }
 
+impl RoutingConfig {
+    fn has_guarded_route(&self) -> bool {
+        self.routes.as_ref().is_some_and(|routes| {
+            routes
+                .values()
+                .any(|route| route.oidc.is_some() || route.anonymous)
+        })
+    }
+}
+
 /// How this gateway treats one mount.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RouteConfig {
@@ -117,9 +134,16 @@ pub struct RouteConfig {
     #[serde(default)]
     pub srn: Option<String>,
 
-    /// The provider guarding this mount. `None` leaves it public.
+    /// The provider guarding this mount. Without it (and without
+    /// `anonymous`) the mount is refused, unless the gateway runs with
+    /// `--anonymous`.
     #[serde(default)]
     pub oidc: Option<OidcConfig>,
+
+    /// Serve this mount without a login. Its API then only reaches the
+    /// mount's owner cell, and clients may not publish events through it.
+    #[serde(default)]
+    pub anonymous: bool,
 }
 
 /// Per-route OIDC configuration
@@ -145,6 +169,8 @@ struct AppState {
     sessions: sessions::Sessions,
 
     routing: Option<RoutingView>,
+
+    anonymous: bool,
 
     http_client: reqwest::Client,
 }
@@ -173,6 +199,7 @@ where
         port,
         over_https,
         session_inactivity_timer_secs,
+        anonymous,
         routing,
     } = config;
 
@@ -194,6 +221,24 @@ where
         Some(Either::Right(config)) => Some(Arc::new(RwLock::new(config))),
         None => None,
     };
+
+    if anonymous {
+        tracing::warn!(
+            "gateway: --anonymous / gateway.anonymous is set; mounts without `oidc` are served to anyone, without a login"
+        );
+    } else if routing.is_none() {
+        tracing::warn!(
+            "gateway: no routing config and no --anonymous / gateway.anonymous; every mount answers 403 until a route has `oidc` or `anonymous: true`"
+        );
+    } else if routing.as_ref().is_some_and(|routing| {
+        routing
+            .read()
+            .is_ok_and(|config| !config.has_guarded_route())
+    }) {
+        tracing::warn!(
+            "gateway: no route has `oidc` or `anonymous: true` and no --anonymous / gateway.anonymous; every mount answers 403"
+        );
+    }
 
     let port = port.unwrap_or(DEFAULT_PORT);
     let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
@@ -225,6 +270,7 @@ where
         routes,
         sessions,
         routing,
+        anonymous,
         http_client,
     };
 
@@ -273,10 +319,11 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
             .into_response();
     };
 
-    let req = if let Some(routing) = state.routing.as_ref() {
-        let oidc = {
-            // Fail closed: without the config we cannot tell whether this route
-            // is guarded, so we must not serve it as if it were public.
+    // Fail closed: a login, `anonymous: true` (owner only) or `--anonymous`, else 403.
+    let (oidc, owner_only) = match state.routing.as_ref() {
+        Some(routing) => {
+            // Without the config we cannot tell whether this route is
+            // guarded, so we must not serve it as if it were public.
             let Ok(guard) = routing.read() else {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -284,24 +331,33 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
                 )
                     .into_response();
             };
-            guard
-                .routes
-                .as_ref()
-                .and_then(|map| map.get(&route.mount).and_then(|c| c.oidc.clone()))
-        };
+            let entry = guard.routes.as_ref().and_then(|map| map.get(&route.mount));
 
-        if let Some(oidc) = oidc {
-            match oidc::apply_oidc(&state.http_client, req, oidc).await {
-                Ok(req) => req,
-                Err(err) => {
-                    return err;
-                }
-            }
-        } else {
-            req
+            (
+                entry.and_then(|config| config.oidc.clone()),
+                entry.is_some_and(|config| config.anonymous),
+            )
         }
-    } else {
+        None => (None, false),
+    };
+
+    let req = if let Some(oidc) = oidc {
+        match oidc::apply_oidc(&state.http_client, req, oidc).await {
+            Ok(req) => req,
+            Err(err) => return err,
+        }
+    } else if owner_only || state.anonymous {
         req
+    } else {
+        tracing::info!(
+            "gateway: refusing {method} {path}: mount {} has no `oidc`; set `anonymous: true` on the route or start the gateway with --anonymous",
+            route.mount
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            "myrmic gateway: forbidden: login required\n",
+        )
+            .into_response();
     };
 
     // Canonicalize a bare mount root to a trailing slash (the standard
@@ -863,6 +919,11 @@ impl Drop for StreamGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use axum::body::Body;
+    use sorg_common::gateway_config::GatewayRoute;
+
     use super::*;
 
     #[test]
@@ -937,8 +998,6 @@ mod tests {
 
     #[test]
     fn reattach_token_sources() {
-        use axum::body::Body;
-
         let want = Uuid::new_v4();
 
         // `?token=` query parameter.
@@ -976,5 +1035,187 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert_eq!(reattach_token(&req), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mount_access_without_login() -> anyhow::Result<()> {
+        let unguarded = RoutingConfig {
+            base_url: None,
+            routes: Some(HashMap::from([(
+                "/chat".to_owned(),
+                RouteConfig::default(),
+            )])),
+        };
+        let anonymous_route = RoutingConfig {
+            base_url: None,
+            routes: Some(HashMap::from([(
+                "/chat".to_owned(),
+                RouteConfig {
+                    anonymous: true,
+                    ..RouteConfig::default()
+                },
+            )])),
+        };
+
+        // (case, routing, --anonymous, method, path, expected status)
+        let cases = [
+            // No routing, no --anonymous: the whole mount is refused.
+            (
+                "no routing GET api",
+                None,
+                false,
+                Method::GET,
+                "/chat/api",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "no routing POST api",
+                None,
+                false,
+                Method::POST,
+                "/chat/api",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "no routing GET ws",
+                None,
+                false,
+                Method::GET,
+                "/chat/ws",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "no routing GET root",
+                None,
+                false,
+                Method::GET,
+                "/chat/",
+                StatusCode::FORBIDDEN,
+            ),
+            // --anonymous: served as before (ws extractor rejects a non-upgrade GET).
+            (
+                "--anonymous GET ws",
+                None,
+                true,
+                Method::GET,
+                "/chat/ws",
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "--anonymous GET root",
+                None,
+                true,
+                Method::GET,
+                "/chat/",
+                StatusCode::NOT_FOUND,
+            ),
+            // Routing entry without oidc and without anonymous: refused.
+            (
+                "unguarded route POST api",
+                Some(unguarded.clone()),
+                false,
+                Method::POST,
+                "/chat/api",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "unguarded route GET ws",
+                Some(unguarded),
+                false,
+                Method::GET,
+                "/chat/ws",
+                StatusCode::FORBIDDEN,
+            ),
+            // Routing file without routes: nothing is guarded, all refused.
+            (
+                "routes None POST api",
+                Some(RoutingConfig::default()),
+                false,
+                Method::POST,
+                "/chat/api",
+                StatusCode::FORBIDDEN,
+            ),
+            // Routing entry marked anonymous: served.
+            (
+                "anonymous route GET ws",
+                Some(anonymous_route),
+                false,
+                Method::GET,
+                "/chat/ws",
+                StatusCode::BAD_REQUEST,
+            ),
+        ];
+
+        for (case, routing, anonymous, method, path, expected) in cases {
+            let state = AppState::for_test(routing, anonymous).await?;
+            let response = handler(State(state), request(method.clone(), path, None, "")?).await;
+            assert_eq!(
+                response.status(),
+                expected,
+                "{case}: {method} {path}, --anonymous={anonymous}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn mistyped_anonymous_is_rejected() {
+        let route =
+            serde_json::from_str::<RoutingConfig>(r#"{"routes": {"/chat": {"anonymous": "yes"}}}"#);
+        let config = serde_json::from_str::<Config>(r#"{"anonymous": "yes"}"#);
+
+        for error in [route.err(), config.err()] {
+            assert!(error.is_some_and(|err| err.to_string().contains("expected a boolean")));
+        }
+    }
+
+    impl AppState {
+        /// A gateway state over a loopback zenoh session (no scouting, no
+        /// peers) serving one route, `/chat`, owned by `chat-owner`, with
+        /// `api` at `/api` and `ws` at `/ws` and no assets.
+        async fn for_test(routing: Option<RoutingConfig>, anonymous: bool) -> anyhow::Result<Self> {
+            let mut config = zenoh::Config::default();
+            config
+                .insert_json5("scouting/multicast/enabled", "false")
+                .map_err(|err| anyhow!("scouting config: {err}"))?;
+            config
+                .insert_json5("timestamping/enabled", "{ peer: true }")
+                .map_err(|err| anyhow!("timestamping config: {err}"))?;
+            let session = zenoh::open(config)
+                .await
+                .map_err(|err| anyhow!("unable to open session: {err}"))?;
+
+            let route = GatewayRoute {
+                owner: Sri::of_path("chat-owner").map_err(|err| anyhow!("srn: {err}"))?,
+                mount: "/chat".to_owned(),
+                assets: None,
+                api: Some("/api".to_owned()),
+                ws: Some("/ws".to_owned()),
+            };
+
+            Ok(Self {
+                session,
+                routes: Arc::new(RwLock::new(vec![route])),
+                sessions: Arc::new(Mutex::new(HashMap::new())),
+                routing: routing.map(|routing| Arc::new(RwLock::new(routing))),
+                http_client: reqwest::Client::new(),
+                anonymous,
+            })
+        }
+    }
+
+    fn request(
+        method: Method,
+        path: &str,
+        session: Option<Uuid>,
+        body: &str,
+    ) -> anyhow::Result<Request> {
+        let mut builder = axum::http::Request::builder().method(method).uri(path);
+        if let Some(session) = session {
+            builder = builder.header("x-gateway-session", session.to_string());
+        }
+
+        Ok(builder.body(Body::from(body.to_owned()))?)
     }
 }

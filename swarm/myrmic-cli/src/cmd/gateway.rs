@@ -12,9 +12,15 @@ pub struct Gateway {
     pub port: Option<u16>,
 
     /// Routing configuration (JSON): which cell is allowed to own each mount,
-    /// and the OIDC settings guarding it.
+    /// and the OIDC settings or `anonymous` opt-in guarding it.
     #[clap(long)]
     pub routing: Option<std::path::PathBuf>,
+
+    /// Serve mounts that have no OIDC guard to anyone, without a login; routes
+    /// marked `anonymous: true` stay owner-only. For local development only;
+    /// the gateway warns about it at startup.
+    #[clap(long)]
+    pub anonymous: bool,
 
     /// Serve behind HTTPS, so session cookies are marked `Secure`.
     #[clap(long)]
@@ -29,6 +35,7 @@ pub async fn handle(ctx: Ctx, cmd: Gateway) -> anyhow::Result<()> {
     let Gateway {
         port,
         routing,
+        anonymous,
         over_https,
         session_inactivity,
     } = cmd;
@@ -45,6 +52,7 @@ pub async fn handle(ctx: Ctx, cmd: Gateway) -> anyhow::Result<()> {
         over_https,
         session_inactivity_timer_secs: session_inactivity
             .map(|idle| i64::try_from(idle.as_secs()).unwrap_or(i64::MAX)),
+        anonymous,
         routing: routing.map(swarm_gateway::Either::Left),
     });
     // The gateway registers no exec, so network listings would show a bare id;
