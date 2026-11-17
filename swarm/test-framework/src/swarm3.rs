@@ -33,6 +33,8 @@
 //!   [`StoppedRt::start_without_check`] starts one without the check.
 //! - A running handle derefs to the runtime kind's own handle, for what only that kind can do
 //!   (`a.pause()`); a kind's own way to stop goes through [`RunningRt::stop_with`].
+//! - Cells deploy through the CLI ([`Swarm::get_myrmic`]), or, for many cells of one class or
+//!   several in one request, from a registered class ([`cell`], [`Swarm::register`]).
 //! - Which runtime a cell is on comes back as a zid ([`Swarm::get_host_of`]); a test compares it
 //!   with its handles' [`crate::runtime::Running::get_zid`].
 //!
@@ -75,6 +77,7 @@ use crate::{
     wait::Timeout,
 };
 
+pub mod cell;
 mod check;
 mod rt;
 

@@ -12,13 +12,13 @@ use crate::clients::sorg::SorgHandle;
 /// remote runtime on drop instead — [`SwarmProcess`]'s own API only ever needs the session, so
 /// nothing here has to know which kind of teardown it's holding.
 pub struct SwarmProcess {
-    _teardown: Box<dyn std::any::Any + Send>,
+    _teardown: Box<dyn std::any::Any + Send + Sync>,
     session: Session,
     telemetry_files: Option<crate::telemetry_files::TelemetryFiles>,
 }
 
 impl SwarmProcess {
-    pub(crate) fn new(teardown: impl std::any::Any + Send, session: Session) -> Self {
+    pub(crate) fn new(teardown: impl std::any::Any + Send + Sync, session: Session) -> Self {
         Self {
             _teardown: Box::new(teardown),
             session,

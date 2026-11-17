@@ -4,25 +4,25 @@ use std::{
     time::Duration,
 };
 
-use super::Host;
-
-/// the [`Host::name`]s some test of this process holds
+/// the names of the machines some test of this process holds
 static HELD: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 /// notified whenever hosts are released from [`HELD`]
 static RELEASED: Condvar = Condvar::new();
 
 const POISONED: &str = "the host lock table is never left poisoned: nothing panics holding it";
 
-/// Holds `hosts` against every other test of this process until the returned guard is dropped,
-/// waiting up to `timeout` for hosts another test holds. Panics, naming them, if they stay held.
+/// Holds the machines named `hosts` (one name per machine, e.g. `rack-node-9`, however its SSH
+/// destination is spelled) against every other test of this process until the returned guard is
+/// dropped, waiting up to `timeout` for machines another test holds. Panics, naming them, if they
+/// stay held.
 ///
 /// The tests of one test binary run in parallel threads, and two of them on one host would
 /// interfere. All hosts are taken at once, so two tests waiting for each other's hosts cannot
 /// deadlock. Other processes are not covered: test binaries run one after another, and in CI the
 /// runner runs one job at a time.
-pub fn lock(hosts: &[&Host], timeout: Duration) -> HostLocks {
+pub fn lock(hosts: &[&str], timeout: Duration) -> HostLocks {
     // a set: a host given twice (e.g. the entry host also running a runtime) is held once
-    let names: BTreeSet<String> = hosts.iter().map(|host| host.name.clone()).collect();
+    let names: BTreeSet<String> = hosts.iter().map(|&host| host.to_owned()).collect();
     let held = HELD.lock().expect(POISONED);
     let (mut held, wait) = RELEASED
         .wait_timeout_while(held, timeout, |held| !held.is_disjoint(&names))
@@ -59,25 +59,19 @@ impl Drop for HostLocks {
 mod tests {
     use std::{sync::mpsc, time::Duration};
 
-    use super::{Host, lock};
+    use super::lock;
 
-    /// a host no other test locks: the table is shared by every test of this binary
-    fn host(name: &str) -> Host {
-        Host {
-            name: name.to_owned(),
-            login: format!("user@{name}"),
-            bin_dir: "/bin".to_owned(),
-        }
-    }
+    // Every host name below is used by no other test: the table is shared by every test of this
+    // binary.
 
     #[test]
     fn a_held_host_is_taken_once_released() {
-        let (a, b) = (host("lock-test-released-a"), host("lock-test-released-b"));
-        let first = lock(&[&a], Duration::from_secs(1));
+        let (a, b) = ("lock-test-released-a", "lock-test-released-b");
+        let first = lock(&[a], Duration::from_secs(1));
         let (taken_tx, taken) = mpsc::channel();
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                let _second = lock(&[&b, &a], Duration::from_secs(10));
+                let _second = lock(&[b, a], Duration::from_secs(10));
                 taken_tx.send(()).expect("the test waits for this");
             });
             assert!(
@@ -94,8 +88,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "lock-test-timeout")]
     fn a_host_held_past_the_timeout_panics_naming_it() {
-        let busy = host("lock-test-timeout");
-        let _first = lock(&[&busy], Duration::from_secs(1));
-        lock(&[&busy], Duration::from_millis(50));
+        let busy = "lock-test-timeout";
+        let _first = lock(&[busy], Duration::from_secs(1));
+        lock(&[busy], Duration::from_millis(50));
     }
 }

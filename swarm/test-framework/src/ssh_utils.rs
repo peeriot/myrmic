@@ -10,19 +10,6 @@ pub use lock::{HostLocks, lock};
 pub use upload::upload;
 pub use wait::{wait_until_clock_synchronized, wait_until_reachable};
 
-/// A remote host a test can run a swarm's runtimes or its entry router on: an entry of a table
-/// of the hosts available, e.g. a rack.
-#[derive(Debug, Clone)]
-pub struct Host {
-    /// identifies the machine for locking, e.g. `rack-node-9`: one name per machine, however its
-    /// `login` is spelled
-    pub name: String,
-    /// SSH destination, e.g. `user@host.example`: anything `ssh` and `scp` accept
-    pub login: String,
-    /// the directory the host's binaries lie in
-    pub bin_dir: String,
-}
-
 /// Optional SSH identity file (`ssh -i`/`scp -i`) applied to every SSH/SCP connection the
 /// test-framework opens (the myrmic-over-SSH backend, rack provisioning) — set `SSH_IDENTITY_FILE`
 /// when the target hosts require a non-default key. Read fresh on every call (not cached) so
@@ -36,10 +23,10 @@ pub(crate) fn ssh_identity_file() -> Option<String> {
 
 /// Optional `known_hosts` file (`ssh -o UserKnownHostsFile=`/`scp -o UserKnownHostsFile=`)
 /// applied to every SSH/SCP connection the test-framework opens — set `SSH_KNOWN_HOSTS_FILE` to
-/// pin the exact file host-key trust was written to (e.g. by a preceding `ssh-keyscan` step),
-/// rather than relying on `ssh`'s own default (`~/.ssh/known_hosts`, resolved from `$HOME` and
-/// whatever `ssh_config` the environment ships), which isn't guaranteed to be the file a CI setup
-/// step actually populated. Read fresh on every call (not cached), matching
+/// pin the exact file host-key trust is read from and written to (e.g. the keys `ssh` accepts
+/// under `SSH_STRICT_HOST_KEY_CHECKING=accept-new`), rather than relying on `ssh`'s own default
+/// (`~/.ssh/known_hosts`, resolved from `$HOME` and whatever `ssh_config` the environment ships),
+/// which isn't guaranteed to be the file a CI setup prepared. Read fresh on every call (not cached), matching
 /// [`ssh_identity_file`].
 #[must_use]
 pub(crate) fn ssh_known_hosts_file() -> Option<String> {
@@ -48,8 +35,21 @@ pub(crate) fn ssh_known_hosts_file() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// Optional host key policy (`ssh -o StrictHostKeyChecking=`/`scp -o StrictHostKeyChecking=`)
+/// applied to every SSH/SCP connection the test-framework opens — set
+/// `SSH_STRICT_HOST_KEY_CHECKING` (e.g. to `accept-new` in a CI job whose fresh container knows no
+/// host yet) to override `ssh`'s own, which asks, or refuses in batch mode. Read fresh on every
+/// call (not cached), matching [`ssh_identity_file`].
+#[must_use]
+fn ssh_strict_host_key_checking() -> Option<String> {
+    std::env::var("SSH_STRICT_HOST_KEY_CHECKING")
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
 /// `program` (`ssh` or `scp`, which take the same options) with the options every SSH connection
-/// the test-framework opens shares: [`ssh_identity_file`] and [`ssh_known_hosts_file`], where set.
+/// the test-framework opens shares: [`ssh_identity_file`], [`ssh_known_hosts_file`] and
+/// [`ssh_strict_host_key_checking`], where set.
 pub(crate) fn command_with_ssh_config(program: &str) -> std::process::Command {
     let mut command = std::process::Command::new(program);
     if let Some(identity_file) = ssh_identity_file() {
@@ -59,6 +59,11 @@ pub(crate) fn command_with_ssh_config(program: &str) -> std::process::Command {
         command
             .arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
+    }
+    if let Some(policy) = ssh_strict_host_key_checking() {
+        command
+            .arg("-o")
+            .arg(format!("StrictHostKeyChecking={policy}"));
     }
     command
 }

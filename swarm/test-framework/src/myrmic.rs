@@ -127,6 +127,7 @@ where
             name: uuid::Uuid::new_v4().to_string(),
             persistent: false,
             telemetry: swarm_telemetry::TelemetryConfig::default(),
+            execution: sorg_common::ExecConfig::default(),
         }
     }
 
@@ -399,6 +400,7 @@ pub struct StoppedRt<B> {
     name: String,
     persistent: bool,
     telemetry: swarm_telemetry::TelemetryConfig,
+    execution: sorg_common::ExecConfig,
 }
 
 impl<B> StoppedRt<B>
@@ -434,6 +436,15 @@ where
         self.telemetry = telemetry;
         self
     }
+
+    /// How the runtime runs its cells (mailbox batch size, event buffer size, fuel, ...);
+    /// defaults to the runtime's own defaults. Give the runtime its name and tags with
+    /// [`Self::name`] and [`Self::tags`], not here: the CLI replaces a name set here, and adds
+    /// tags set here to the runtime's.
+    pub fn execution(mut self, execution: sorg_common::ExecConfig) -> Self {
+        self.execution = execution;
+        self
+    }
 }
 
 impl<B> runtime::Stopped for StoppedRt<B>
@@ -446,7 +457,7 @@ where
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
     /// `config` sets what the overlay tells the runtime (the group it scouts on, the runtimes it
-    /// connects to, the port it listens on) and its telemetry
+    /// connects to, the port it listens on), its telemetry and its execution settings
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
@@ -455,6 +466,7 @@ where
         let config = serde_json::json!({
             "zenoh": self.ovl_member.get_zenoh_settings(),
             "telemetry": self.telemetry,
+            "execution": self.execution,
         })
         .to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the

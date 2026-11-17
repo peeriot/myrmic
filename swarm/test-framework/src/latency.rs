@@ -249,7 +249,7 @@ pub struct DurationDistribution {
 /// Formats a duration with a single appropriate unit and a few significant digits (e.g.
 /// `989.269ms`), instead of `humantime`'s full breakdown (`989ms 268us 753ns`) — the latter
 /// reads fine as a one-off but becomes very dense once repeated across many stats and cells.
-fn format_duration(d: Duration) -> String {
+pub fn format_duration(d: Duration) -> String {
     let nanos = d.as_nanos() as f64;
     let (value, unit) = if nanos >= 1_000_000_000.0 {
         (nanos / 1_000_000_000.0, "s")

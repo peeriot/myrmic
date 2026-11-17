@@ -2,8 +2,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use cell_protocol::{
-    BlobHash, CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, NodeLease, PlacementKind,
-    RuntimeId,
+    CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, NodeLease, PlacementKind, RuntimeId,
 };
 use claims::{assert_err, assert_ok};
 use sorg_common::{
@@ -19,7 +18,10 @@ use test_framework::{
     overlay::Overlay,
     runtime::Running,
     start_runtimes,
-    swarm3::{RunningRt, Swarm},
+    swarm3::{
+        RunningRt, Swarm,
+        cell::{self, Deployment},
+    },
 };
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
@@ -35,27 +37,12 @@ const TAG_FPGA: &str = "fpga";
 /// the cell crate whose prebuilt wasm the tests deploy
 const DUMMY_CELL: &str = "../../tests/fixtures/dummy_cell";
 
-fn wasm_cell(sri: &str, class: BlobHash) -> CellDeployment {
-    CellDeployment::new(to_sri(sri), CellConfig::Wasm { class })
-}
-
-fn deploy_request(cells: Vec<CellDeployment>) -> DeployRequest {
-    DeployRequest::new(
-        cells
-            .into_iter()
-            .map(|cell| cell.with_app(Some(APP_NAME.to_owned())))
-            .collect(),
-    )
-}
-
 /// Register the prebuilt `DUMMY_CELL` wasm as a class in `swarm`, for the tests that deploy
 /// through the sorg client.
-async fn add_dummy_class(swarm: &Swarm) -> anyhow::Result<BlobHash> {
-    let wasm = std::fs::read(prebuilt_cell_wasm(DUMMY_CELL))?;
-    Ok(swarm
-        .get_sorg()
-        .add_class("tagged_cell.wasm", wasm, vec![])
-        .await?)
+async fn register_dummy(swarm: &Swarm) -> Result<cell::Class, sorg_client::Error> {
+    swarm
+        .register(&cell::Wasm::from_file(prebuilt_cell_wasm(DUMMY_CELL)))
+        .await
 }
 
 // Every test holds the swarm's runtime handles until it ends: dropping them deletes the
@@ -150,11 +137,23 @@ async fn untagged_placeable_anywhere() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn untagged_cells_spread_across_nodes() -> anyhow::Result<()> {
     let (swarm, _runtimes) = gpu_cpu().await?;
-    let class = add_dummy_class(&swarm).await?;
+    let class = register_dummy(&swarm).await?;
 
     // one request: the planner has to spread within a batch
-    let request = deploy_request(vec![wasm_cell("cell_a", class), wasm_cell("cell_b", class)]);
-    swarm.get_sorg().deploy_cells(request).await?;
+    swarm
+        .deploy_all(&[
+            Deployment {
+                class: &class,
+                sri: to_sri("cell_a"),
+                tags: &[],
+            },
+            Deployment {
+                class: &class,
+                sri: to_sri("cell_b"),
+                tags: &[],
+            },
+        ])
+        .await?;
 
     let host_a = swarm
         .get_host_of(&to_sri("cell_a").to_string())
@@ -175,13 +174,22 @@ async fn untagged_cells_spread_across_nodes() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn untagged_spreads_off_tagged_node() -> anyhow::Result<()> {
     let (swarm, [gpu, cpu]) = gpu_cpu().await?;
-    let class = add_dummy_class(&swarm).await?;
+    let class = register_dummy(&swarm).await?;
 
-    let request = deploy_request(vec![
-        wasm_cell("pinned", class).with_tags(RequirementTags::new(vec![TAG_GPU])),
-        wasm_cell("free", class),
-    ]);
-    swarm.get_sorg().deploy_cells(request).await?;
+    swarm
+        .deploy_all(&[
+            Deployment {
+                class: &class,
+                sri: to_sri("pinned"),
+                tags: &[TAG_GPU],
+            },
+            Deployment {
+                class: &class,
+                sri: to_sri("free"),
+                tags: &[],
+            },
+        ])
+        .await?;
 
     assert_eq!(
         swarm.get_host_of(&to_sri("pinned").to_string()).await?,
@@ -201,16 +209,18 @@ async fn untagged_spreads_off_tagged_node() -> anyhow::Result<()> {
 async fn unplaceable_tag_absent() -> anyhow::Result<()> {
     // Arrange — two runtimes (gpu + cpu), neither has fpga
     let (swarm, _runtimes) = gpu_cpu().await?;
-    let class = add_dummy_class(&swarm).await?;
+    let class = register_dummy(&swarm).await?;
     let sorg = swarm.get_sorg();
-
-    let request = deploy_request(vec![
-        wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_FPGA])),
-    ]);
 
     // Act — deploy a cell requiring a tag no runtime has
     let err = assert_err!(
-        sorg.deploy_cells(request).await,
+        swarm
+            .deploy_all(&[Deployment {
+                class: &class,
+                sri: to_sri(CELL_SRI),
+                tags: &[TAG_FPGA],
+            }])
+            .await,
         "deploy should fail when no runtime has the required tag"
     );
 
@@ -242,16 +252,18 @@ async fn unplaceable_tag_absent() -> anyhow::Result<()> {
 async fn unplaceable_and_not_satisfiable() -> anyhow::Result<()> {
     // Arrange — two runtimes with one tag each
     let (swarm, _runtimes) = gpu_cpu().await?;
-    let class = add_dummy_class(&swarm).await?;
+    let class = register_dummy(&swarm).await?;
     let sorg = swarm.get_sorg();
-
-    let request = deploy_request(vec![
-        wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_GPU, TAG_CPU])),
-    ]);
 
     // Act — deploy a cell requiring both tags (no single runtime has both)
     let err = assert_err!(
-        sorg.deploy_cells(request).await,
+        swarm
+            .deploy_all(&[Deployment {
+                class: &class,
+                sri: to_sri(CELL_SRI),
+                tags: &[TAG_GPU, TAG_CPU],
+            }])
+            .await,
         "deploy should fail when no single runtime satisfies all required tags"
     );
 
@@ -297,7 +309,7 @@ async fn bridge_cell_with_tag() -> anyhow::Result<()> {
     )
     .with_tags(RequirementTags::new(vec![TAG_GPU]));
 
-    let request = deploy_request(vec![bridge]);
+    let request = DeployRequest::new(vec![bridge.with_app(Some(APP_NAME.to_owned()))]);
 
     // Act — deploy an app with a tagged bridge cell. Bridge cells run natively on the
     // orchestrator (no `deployments()` on any runtime to check), but still go through
@@ -324,12 +336,9 @@ async fn bridge_cell_with_tag() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn standalone_single_tag_match() -> anyhow::Result<()> {
     let (swarm, [gpu, _cpu]) = gpu_cpu().await?;
-    let class = add_dummy_class(&swarm).await?;
+    let class = register_dummy(&swarm).await?;
 
-    swarm
-        .get_sorg()
-        .deploy_wasm_cell(to_sri(CELL_SRI), class, RequirementTags::new(vec![TAG_GPU]))
-        .await?;
+    swarm.deploy(&class, to_sri(CELL_SRI), &[TAG_GPU]).await?;
 
     assert_eq!(
         swarm.get_host_of(&to_sri(CELL_SRI).to_string()).await?,
@@ -344,17 +353,12 @@ async fn standalone_single_tag_match() -> anyhow::Result<()> {
 async fn standalone_unplaceable() -> anyhow::Result<()> {
     // Arrange — two runtimes (gpu + cpu), neither has fpga
     let (swarm, _runtimes) = gpu_cpu().await?;
-    let class = add_dummy_class(&swarm).await?;
+    let class = register_dummy(&swarm).await?;
     let sorg = swarm.get_sorg();
 
     // Act — load a standalone cell requiring a tag no runtime has
     let err = assert_err!(
-        sorg.deploy_wasm_cell(
-            to_sri(CELL_SRI),
-            class,
-            RequirementTags::new(vec![TAG_FPGA])
-        )
-        .await,
+        swarm.deploy(&class, to_sri(CELL_SRI), &[TAG_FPGA]).await,
         "standalone load should fail when no runtime has the required tag"
     );
 
@@ -449,8 +453,10 @@ async fn deploy_pinned_to_a_peer_behind_the_leaders_clock_selects_that_peer() {
     // rejecting it; the first reads see the peer's seq before it advances
     let deadline = Instant::now() + Duration::from_secs(40);
     let err = loop {
-        let request = deploy_request(vec![
-            wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_PEER])),
+        let request = DeployRequest::new(vec![
+            CellDeployment::new(to_sri(CELL_SRI), CellConfig::Wasm { class })
+                .with_tags(RequirementTags::new(vec![TAG_PEER]))
+                .with_app(Some(APP_NAME.to_owned())),
         ]);
         let err = assert_err!(
             sorg.deploy_cells(request).await,

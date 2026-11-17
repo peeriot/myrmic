@@ -53,7 +53,7 @@ pub fn spans_cover_hops(spans: &[Span], expected_hops: &[Vec<Sri>]) -> bool {
 }
 
 /// Decodes a big-endian 16-byte distributed-tracing trace id, as stored on spans/log records.
-pub(crate) fn trace_id_of(bytes: &[u8]) -> Option<Uuid> {
+pub fn trace_id_of(bytes: &[u8]) -> Option<Uuid> {
     bytes
         .try_into()
         .ok()

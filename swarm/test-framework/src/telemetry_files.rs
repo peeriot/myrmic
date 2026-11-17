@@ -81,16 +81,9 @@ impl TelemetryFiles {
 /// silently missing a whole host's telemetry is exactly the kind of gap a
 /// benchmark report must not paper over.
 async fn fetch_lines(host: &str, path: String) -> Vec<String> {
-    let mut command = tokio::process::Command::new("ssh");
+    let mut command =
+        tokio::process::Command::from(crate::ssh_utils::command_with_ssh_config("ssh"));
     command.arg("-o").arg("BatchMode=yes");
-    if let Some(identity_file) = crate::ssh_utils::ssh_identity_file() {
-        command.arg("-i").arg(identity_file);
-    }
-    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
-        command
-            .arg("-o")
-            .arg(format!("UserKnownHostsFile={known_hosts_file}"));
-    }
 
     // The remote shell resolves the redirect: a missing file is an empty
     // result by design, while ssh-level failures still exit non-zero.

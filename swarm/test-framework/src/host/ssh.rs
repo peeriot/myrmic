@@ -91,7 +91,8 @@ impl Ssh {
 }
 
 impl Remote for Ssh {
-    /// `ssh [-i identity] [-o UserKnownHostsFile=..] <destination> <quoted program args>`
+    /// `ssh [-i identity] [-o UserKnownHostsFile=..] [-o StrictHostKeyChecking=..] <destination>
+    /// <quoted program args>`
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut words = vec![program];
         words.extend(args);
