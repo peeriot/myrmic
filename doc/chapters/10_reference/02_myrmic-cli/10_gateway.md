@@ -17,6 +17,8 @@ and serves static web assets from the blob store.
 
 A gateway can also run embedded inside a Myrmic runtime - see [runtime configuration](../01_configuration/01_runtime-configuration.md#gateway).
 
+A gateway fails closed: a mount is only served when its routing entry has an `oidc` block (login required) or `anonymous: true`, or when the gateway runs with `--anonymous`. Everything else answers `403 Forbidden`, and the gateway logs why.
+
 The gateway serves no application of its own. Cells declare how they should be served, and every gateway in the network picks the routes up from the shared route registry and serves them alike.
 
 ### Cell-declared routes
@@ -51,7 +53,7 @@ A common pitfall is when embedding assets into the cell, you might need to incre
 
 ### Routing configuration
 
-As mentioned, the default configuration for a gateway acts on a first-come basis. The gateway can, however, declare a routing file, which is monitored, and acts as an authority. It can declare which
+As mentioned, the default configuration for a gateway acts on a first-come basis. The gateway can, however, declare a routing file, which is read once at startup, and acts as an authority. It can declare which
 cell owns which routes, and OIDC configuration.
 
 ```json
@@ -70,6 +72,10 @@ cell owns which routes, and OIDC configuration.
 		  "email"
 		]
 	  }
+	},
+	"/status": {
+	  "srn": "status-page",
+	  "anonymous": true
 	}
   }
 }
@@ -79,6 +85,8 @@ When a `routes` block is declared, it acts as an allow-list. Only serving mounts
 
 The `srn` pins it to a specific cell, but can be omitted. The `oidc` block enables OIDC support for that route, and will only permit users that have the correct permissions.
 
+`anonymous: true` serves the mount without a login. Its API then only reaches the mount's owner cell - a command naming any other cell is refused - and clients may not publish events through it. A route with neither `oidc` nor `anonymous` is refused. A route with both `oidc` and `anonymous: true` still requires the login, and stays limited to its owner cell with no client events.
+
 ## Options
 
 `-p` / `--port PORT`
@@ -87,7 +95,11 @@ TCP port to bind the gateway on. Defaults to `8080`.
 
 `--routing PATH`
 
-Path to the routing configuration as described above. Without it, there's no restrictions in place.
+Path to the routing configuration as described above. Without it, every mount is refused unless `--anonymous` is set.
+
+`--anonymous`
+
+Serve mounts that have no `oidc` block to anyone, without a login, with full API access. Meant for local development; the gateway logs a warning at startup. A route marked `anonymous: true` stays limited to its owner cell even with this flag.
 
 `--over-https`
 
@@ -115,16 +127,16 @@ Prints help information.
 
 ## Examples
 
-1. Start the gateway on the default port:
+1. Start the gateway for local development, without a login, on the default port:
 
 ```bash
-myrmic gateway
+myrmic gateway --anonymous
 ```
 
 2. Start the gateway on a custom port:
 
 ```bash
-myrmic gateway --port 9090
+myrmic gateway --anonymous --port 9090
 ```
 
 3. Serve only the routes in a configuration file, behind a TLS terminator, with a longer idle window:
@@ -136,5 +148,5 @@ myrmic gateway --routing ./routing.json --over-https --session-inactivity 15m
 4. Join a swarm that is only reachable by endpoint:
 
 ```bash
-myrmic --connect tcp/10.0.0.5:7447 gateway --port 8080
+myrmic --connect tcp/10.0.0.5:7447 gateway --anonymous --port 8080
 ```

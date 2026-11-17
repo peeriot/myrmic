@@ -143,8 +143,10 @@ myrmic deploy dashboard
 Time to open the doors. The gateway is the swarm's HTTP entry point - start it in Terminal 4 and leave it running:
 
 ```bash
-myrmic gateway
+myrmic gateway --anonymous
 ```
+
+`--anonymous` lets the browser in without a login - fine on your own machine. Without it the gateway refuses every page with `403 Forbidden`; a real deployment guards its mounts with OIDC in a [routing file](../../10_reference/02_myrmic-cli/10_gateway.md#routing-configuration) instead.
 
 The default port is 8080 (`--port` changes it). Open your browser at:
 

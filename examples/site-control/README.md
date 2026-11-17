@@ -40,8 +40,10 @@ Terminal 3, deploy the application and serve the page:
 ```shell
 cd examples/site-control
 myrmic deploy app_specs.yml
-myrmic gateway
+myrmic gateway --anonymous
 ```
+
+`--anonymous` lets the browser in without a login - fine on your own machine. Without it the gateway refuses every page with `403 Forbidden`; a real deployment guards its mounts with OIDC in a [routing file](../../doc/chapters/10_reference/02_myrmic-cli/10_gateway.md#routing-configuration) instead.
 
 Open `localhost:8080/site-control/`. The simulated temperature starts at 20 C,
 below the 26 C low target, so the agent asks for heat immediately; it stops
