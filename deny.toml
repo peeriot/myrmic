@@ -99,6 +99,11 @@ ignore = [
     { id = "RUSTSEC-2024-0320", reason = "The yaml-rust crate is unmaintained, but needed by rumqtt and jrsonnet. Should be uncritical, because we do not use the yaml feature of the crate." },
     { id = "RUSTSEC-2025-0134", reason = "This is because the pemfile parser we use is unmaintained, and while this should be migrated away from, it's used within rustls. There's no easy way forward, however pemfiles haven't changed for many years, so no critical issue here." },
     { id = "RUSTSEC-2025-0141", reason = "The team considers version 1.3.3 a complete version of bincode that is not in need of any updates." },
+    # chrono is unmaintained, and humantime is flagged with it. chrono comes in through oauth2,
+    # openidconnect, object_store and cbor-edn too, so dropping our own uses does not remove it.
+    # Moving our own date and duration handling to jiff is the way out of both.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, but needed by oauth2, openidconnect, object_store and cbor-edn besides our own crates. No safe upgrade exists yet." },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is flagged unmaintained along with chrono. We use it to parse and print durations; moving to jiff would replace it." },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
