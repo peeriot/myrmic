@@ -104,6 +104,8 @@
 //! it. It is the firmware's view of what the network service and the db service
 //! have achieved, which is otherwise theirs alone: an indicator light, a
 //! display, or a decision to hold off work until the node is deployable.
+//! [`Down`](NodeStatus::Down) carries why the radio cannot join its network,
+//! once that is known.
 //!
 //! # What your crate still owns
 //!
@@ -139,7 +141,7 @@ pub use cell::{
     Cell, Command, Event, Message, Network, RegisterError, Registration, SendError, Sri, Tx,
 };
 pub use config::Config;
-pub use esp_common::esp_network::WifiCredentials;
+pub use esp_common::esp_network::{JoinFailure, WifiCredentials};
 pub use outlet::Outlet;
 pub use status::{NodeStatus, StatusWatch, status, status_watch};
 pub use tap::{DeclareError, EventTap, Tap};

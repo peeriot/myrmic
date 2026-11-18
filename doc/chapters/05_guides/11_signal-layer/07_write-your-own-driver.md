@@ -270,7 +270,9 @@ descriptor is not read at all, so correcting that alone fixes nothing.
 ## Configuration and defaults
 
 Every `config_schema` field needs a default that works, because a board file or pipeline may not
-mention it. Prefer defaults matching the most common wiring of the part.
+mention it. Prefer defaults matching the most common wiring of the part. A numeric field can also
+carry `min` and `max`, inclusive bounds the generator checks the configured value and the default
+against, so a value the part cannot take fails the build rather than reaching the driver.
 
 For a knob with a fixed set of choices, use a typed enum rather than a raw number. The generator
 maps it, the pipeline reads legibly, and an invalid value is caught during generation rather than

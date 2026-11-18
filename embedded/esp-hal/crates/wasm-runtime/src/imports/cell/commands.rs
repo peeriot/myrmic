@@ -1,9 +1,8 @@
-use alloc::borrow::ToOwned;
-use alloc::string::ToString;
 use core::ffi::c_int;
 
-use cell_protocol::{CellAttachment, MailboxCommand, PLACEMENT_TABLE, placement_scope};
-use db_client::v1::models::{Id, tb_get};
+use cell_protocol::generations::generations_of;
+use cell_protocol::{CellAttachment, MailboxCommand, Sri, placement_scope};
+use db_client::v1::models::key_prefix;
 use myrmic_common::cells::CommandRequest;
 use myrmic_common::types::error::{GENERIC_ERROR, SUCCESS};
 use wasm_runtime_macros::host_function;
@@ -44,7 +43,7 @@ pub(crate) fn send_command_impl(command_request: CommandRequest) -> c_int {
     // orchestrator on another node and need not be visible in this ESP's db
     // view, so gating a self-send on it only ever false-negatives.
     if dest_sri != own_sri {
-        match placement_exists(dest_sri.to_string().into_bytes()) {
+        match placement_exists(&dest_sri) {
             Ok(false) => {
                 log::error!("Destination cell {} has no placement", command_request.sri);
                 return GENERIC_ERROR;
@@ -77,13 +76,12 @@ pub(crate) fn send_command_impl(command_request: CommandRequest) -> c_int {
     }
 }
 
-/// Checks whether the cell with the given EID has a placement
-fn placement_exists(eid: Id) -> Result<bool, c_int> {
-    let tb_get::Response { value } = apply(tb_get::Op {
+/// Checks whether the cell has a placement, of any generation
+fn placement_exists(sri: &Sri) -> Result<bool, c_int> {
+    let key_prefix::Response { keys } = apply(key_prefix::Op {
         scope: placement_scope(),
-        table: PLACEMENT_TABLE.to_owned(),
-        eid,
+        prefix: generations_of(sri),
     })?;
 
-    Ok(value.is_some())
+    Ok(!keys.is_empty())
 }

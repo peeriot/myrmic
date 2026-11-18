@@ -29,32 +29,18 @@ pub enum SignalOutcome {
 }
 
 impl Pid {
-    /// Build from CLI args. Validates the name and applies the
-    /// directory-vs-file resolution rule:
-    ///
-    /// - If `--pid-path` is an existing directory, the file is
-    ///   `<path>/<name>.pid`.
-    /// - Else if the path's parent is an existing directory, the path itself
-    ///   is taken as the PID file (user passed a full file path).
-    /// - Else the path is treated as a directory to be created, with
-    ///   `<name>.pid` inside.
-    pub fn from_args(path: &Path, name: &str) -> anyhow::Result<Self> {
-        fn is_directory(path: &Path) -> bool {
-            path.is_dir()
-                || path
-                    .parent()
-                    .is_some_and(|p| p.is_dir() || p.as_os_str().is_empty())
-        }
-
+    /// Build from CLI args: if `--pid-path` is an existing file, that is the
+    /// PID file; anything else is a directory, holding `<name>.pid`, which
+    /// [`Self::ensure_parent`] creates where it's missing, its parents
+    /// included (e.g. a runtime directory a reboot emptied).
+    pub fn from_args(path: &Path, name: &str) -> Self {
         let path = if path.is_file() {
             path.to_path_buf()
-        } else if is_directory(path) {
-            path.join(format!("{name}.pid"))
         } else {
-            anyhow::bail!("unable to determine pid path: {}", path.display());
+            path.join(format!("{name}.pid"))
         };
 
-        Ok(Self { path })
+        Self { path }
     }
 
     /// Build from an existing PID file
@@ -156,21 +142,32 @@ impl Pid {
 /// Thankfully, that's generally defined by the `$XDG_*` family of env vars.
 /// In this case, we want `$XDG_RUNTIME_DIR`.
 ///
-/// If that's not set, then we just fall back to the tmp directory (as defined by `std::env::temp_dir`).
+/// If that's not set, or names a directory that does not exist, then we just
+/// fall back to the tmp directory (as defined by `std::env::temp_dir`).
 ///
 /// All said, this tries to isolate user pids, so there's no collisions.
 pub fn default_pid_dir(pid_group: &str) -> PathBuf {
-    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        return PathBuf::from(dir).join(pid_group);
+    let user = std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("LOGNAME").ok());
+    pid_dir(xdg_runtime_dir().as_deref(), user.as_deref(), pid_group)
+}
+
+/// `$XDG_RUNTIME_DIR` as exported, existing or not: WSL, containers and cron
+/// inherit one that nothing ever created.
+pub fn xdg_runtime_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+fn pid_dir(xdg_runtime_dir: Option<&Path>, user: Option<&str>, pid_group: &str) -> PathBuf {
+    if let Some(dir) = xdg_runtime_dir.filter(|dir| dir.is_dir()) {
+        return dir.join(pid_group);
     }
 
-    let user_dir = std::env::var("USER")
-        .ok()
-        .or_else(|| std::env::var("LOGNAME").ok())
-        .filter(|v| !v.is_empty());
-
-    let dir_name = match user_dir {
-        Some(user) => format!("{}-{}", pid_group, user),
+    let dir_name = match user.filter(|v| !v.is_empty()) {
+        Some(user) => format!("{pid_group}-{user}"),
         None => pid_group.to_owned(),
     };
 
@@ -221,5 +218,27 @@ mod tests {
         assert_eq!(process_state("42 (myrmic) Z 1 2 3"), Some('Z'));
         assert_eq!(process_state("42 (worker (child)) S 1 2 3"), Some('S'));
         assert_eq!(process_state("not a proc stat"), None);
+    }
+
+    #[test]
+    fn an_existing_xdg_runtime_dir_holds_the_pid_group() {
+        let xdg = std::env::temp_dir();
+        assert_eq!(
+            pid_dir(Some(&xdg), Some("carlos"), "myrmic"),
+            xdg.join("myrmic")
+        );
+    }
+
+    #[test]
+    fn a_missing_xdg_runtime_dir_falls_back_to_the_temp_dir() {
+        let xdg = std::env::temp_dir().join("myrmic-pid-test-does-not-exist");
+        assert_eq!(
+            pid_dir(Some(&xdg), Some("carlos"), "myrmic"),
+            std::env::temp_dir().join("myrmic-carlos")
+        );
+        assert_eq!(
+            pid_dir(Some(&xdg), None, "myrmic"),
+            std::env::temp_dir().join("myrmic")
+        );
     }
 }

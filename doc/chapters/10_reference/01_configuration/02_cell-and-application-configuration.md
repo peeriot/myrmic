@@ -54,14 +54,14 @@ The YAML application specification file accepts the following top-level keys:
 *(optional)* - Unique name used to identify the application in the swarm. Defaults to the spec file's parent directory name.
 
 ### `classes`
-A list of buildable classes. Each entry has an `id` and is either a **cell** (built from a crate) or a **bridge** (described by a spec file). `build` and `spec` are mutually exclusive.
+A list of buildable classes. Each entry has an `id` and is either a **cell** (built from a crate, key `build`) or a **bridge** (described by a spec file, key `spec` or its aliases `http` / `mqtt`). `build` and `spec` are mutually exclusive, and no other key is accepted: in particular `cell:` is rejected with a hint to use `build:`.
 
 - `id` - **Required.** Identifier for the class, referenced from `instances`.
 - `build` - Cell classes. Build configuration; a bare string is taken as the crate path. Omitting both `build` and `spec` builds the crate in the app-specs folder (`path: "."`) with automatic target selection.
   - `path` *(optional)* - Aliases: `source`, `directory`, `dir`. Path to the Cell's `Cargo.toml` or source directory. Defaults to `.`.
   - `target` *(optional)* - A single cargo target: `lib` or a target name. A class produces exactly one artifact, so at most one target may be named. Omit to auto-select (sole binary, else sole library).
   - `platforms` *(optional)* - One or a list of build platforms: `linux`, `esp32c5`, `esp32c6`, `esp32c61`. Defaults to `linux`.
-- `spec` - Bridge classes. Aliases: `http`, `mqtt`, `cell`. Path to the bridge specification YAML file, relative to the app-specs file.
+- `spec` - Bridge classes. Aliases: `http`, `mqtt`. Path to the bridge specification YAML file, relative to the app-specs file.
 
 ### `instances`
 A list of instances to deploy. Each entry references exactly one entry from `classes`:

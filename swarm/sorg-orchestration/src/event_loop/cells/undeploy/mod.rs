@@ -98,20 +98,23 @@ impl Runtime {
 
         let mut leftovers = self.release_cell_resources(cell_sri, true).await;
 
-        match remove_placement(&self.session, cell_sri, gen_id).await? {
+        // Only this incarnation's rows are removed, even when the cell was
+        // redeployed concurrently: that is reported once both are gone.
+        let placement = remove_placement(&self.session, cell_sri, gen_id).await?;
+        // Embedded cells have no exec-side cleanup to remove their instance
+        // row; for Linux cells this races the exec's own removal, so an absent
+        // row is expected and not an error.
+        if let Err(err) =
+            sorg_common::instance_registry::remove_instance(&self.session, cell_sri, gen_id).await
+        {
+            leftovers.push(format!("instance row: {err}"));
+        }
+        match placement {
             FenceOutcome::Applied | FenceOutcome::Absent => {}
             FenceOutcome::Superseded { current } => bail!(
                 "cell '{cell_sri}' was redeployed concurrently (generation {current}); \
                  the new incarnation was left untouched"
             ),
-        }
-        // Embedded cells have no exec-side cleanup to erase their instance
-        // row; for Linux cells this races the exec's own erase, so an absent
-        // row is expected and not an error.
-        if let Err(err) =
-            sorg_common::instance_registry::erase_instance(&self.session, cell_sri, gen_id).await
-        {
-            leftovers.push(format!("instance row: {err}"));
         }
 
         // The cell is gone and, with its placement released, a retry has

@@ -6,14 +6,11 @@ use crate::pid::*;
 
 #[derive(clap::Parser)]
 pub struct Delete {
-    /// Directory holding runtime PID files, or a full PID file path.
+    /// Directory holding runtime PID files, or a single PID file.
     ///
-    /// If the given path is (or will be created as) a directory, the PID
-    /// file sits inside it as `<name>.pid`. If the path's parent is an
-    /// existing directory, the path itself is taken as the PID file.
-    ///
-    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when set (the per-user
-    /// runtime tmpfs under systemd), otherwise `<tempdir>/myrmic-<user>/`.
+    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when that directory exists (the
+    /// per-user runtime tmpfs under systemd), otherwise
+    /// `<tempdir>/myrmic-<user>/`.
     #[clap(long = "pid-path")]
     pub pid_path: Option<PathBuf>,
 

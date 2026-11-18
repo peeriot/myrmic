@@ -2,8 +2,10 @@
 # pins in this directory. On nightly, `-Zbuild-std=core,alloc` can be appended
 # to any of them.
 
+# esp-hal's linker script comes from each firmware's build.rs
+# (`esp_firmware_build::configure`), so it is not passed here as well.
 [target.'cfg(target_arch = "riscv32")']
-rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers", "-C", "linker=rust-lld"]
+rustflags = ["-C", "force-frame-pointers", "-C", "linker=rust-lld"]
 
 [target.'cfg(target_arch = "xtensa")']
 runner = "espflash flash --monitor"

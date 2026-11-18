@@ -83,13 +83,6 @@ ignore = [
     # https://github.com/oxigraph/oxigraph/issues/1793
     { id = "RUSTSEC-2026-0194", reason = "Requires update of spareval and object_store." },
     { id = "RUSTSEC-2026-0195", reason = "Requires update of spareval and object_store." },
-    # Both pulled in transitively via typst/typst-pdf/krilla/usvg/fontdb, used only by the
-    # warehouse benchmark's PDF report rendering (benchmarks/report). No safe upgrade is
-    # available for either — typst itself would need to migrate to harfrust/skrifa upstream.
-    # https://rustsec.org/advisories/RUSTSEC-2026-0206
-    # https://rustsec.org/advisories/RUSTSEC-2026-0192
-    { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; transitive dep of typst, no safe upgrade available." },
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; transitive dep of typst, no safe upgrade available." },
     # crypto-bigint 0.5 has secret-dependent timing in arithmetic meant to be constant-time; the
     # fix is only in 0.7.6, which needs p256 0.14. openidconnect 4.0.1 and embedded-tls 0.19, the
     # latest releases, both still require p256 0.13. In shipped builds p256 only verifies OIDC ID
@@ -106,6 +99,11 @@ ignore = [
     { id = "RUSTSEC-2024-0320", reason = "The yaml-rust crate is unmaintained, but needed by rumqtt and jrsonnet. Should be uncritical, because we do not use the yaml feature of the crate." },
     { id = "RUSTSEC-2025-0134", reason = "This is because the pemfile parser we use is unmaintained, and while this should be migrated away from, it's used within rustls. There's no easy way forward, however pemfiles haven't changed for many years, so no critical issue here." },
     { id = "RUSTSEC-2025-0141", reason = "The team considers version 1.3.3 a complete version of bincode that is not in need of any updates." },
+    # chrono is unmaintained, and humantime is flagged with it. chrono comes in through oauth2,
+    # openidconnect, object_store and cbor-edn too, so dropping our own uses does not remove it.
+    # Moving our own date and duration handling to jiff is the way out of both.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, but needed by oauth2, openidconnect, object_store and cbor-edn besides our own crates. No safe upgrade exists yet." },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is flagged unmaintained along with chrono. We use it to parse and print durations; moving to jiff would replace it." },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -161,9 +159,6 @@ exceptions = [
     # MPL-2.0
 
     { allow = ["MPL-2.0"], crate = "option-ext" },
-    { allow = ["MPL-2.0"], crate = "sized-chunks" },
-    { allow = ["MPL-2.0"], crate = "im-rc" },
-    { allow = ["MPL-2.0"], crate = "bitmaps" },
     #########################
     # espflash dependencies #
     #########################

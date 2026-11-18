@@ -5,16 +5,18 @@
 //! a failed read (radio, timeout, db down) is "unknown" and changes nothing.
 
 use alloc::borrow::ToOwned;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use cell_protocol::generations::{
+    GENERATIONS, generation_key, generations_of, newest_instances, newest_placements,
+};
 use cell_protocol::supervision::{
     Evidence, FencingState, LeaseFacts, LeaseTracker, RowFacts, RowRead, Verdict, WatchedCell,
 };
 use cell_protocol::{
-    CellAttachment, CellInstance, INSTANCE_REGISTRY_TABLE, MailboxCommand, NODE_LEASE_TABLE,
-    NodeLease, PLACEMENT_TABLE, PlacementEntry, PlacementKind, RuntimeId, Sri,
-    instance_registry_scope, node_lease_scope, placement_scope,
+    CellAttachment, CellInstance, Gen, MailboxCommand, NODE_LEASE_TABLE, NodeLease, PlacementEntry,
+    PlacementKind, RuntimeId, Sri, instance_registry_scope, node_lease_scope, placement_scope,
 };
 use db_client::v1::models as db_models;
 use db_client::v1::{Client, models::Scope};
@@ -40,7 +42,7 @@ pub(crate) async fn verify_tick(
     watched: &mut Option<WatchedCell>,
     tracker: &mut LeaseTracker,
     fencing: &mut FencingState,
-    owed: &mut Vec<Sri>,
+    owed: &mut Vec<(Sri, Gen)>,
 ) {
     drain_owed(client, owed).await;
 
@@ -79,7 +81,7 @@ pub(crate) async fn verify_tick(
     if let Verdict::Kill(why) = fencing.evaluate(my_exec, cell, &evidence) {
         log::warn!("[fencing] killing cell '{sri}': {why:?}", sri = cell.sri);
         wasm_runtime::terminate_module();
-        owed.push(cell.sri);
+        owed.push((cell.sri, cell.gen_id));
         *watched = None;
         drain_owed(client, owed).await;
     }
@@ -95,7 +97,7 @@ pub(crate) async fn boot_sweep(
     client: &Client,
     zid: ZenohIdProto,
     hosted: Option<&Sri>,
-    owed: &mut Vec<Sri>,
+    owed: &mut Vec<(Sri, Gen)>,
 ) -> bool {
     let my_exec: RuntimeId = zid.into();
     let Ok(cells) = list_placements(client).await else {
@@ -131,7 +133,7 @@ pub(crate) async fn boot_sweep(
                 continue;
             }
         }
-        owed.push(entry.sri);
+        owed.push((entry.sri, entry.gen_id));
     }
     done
 }
@@ -167,95 +169,73 @@ async fn emit_cell_lost(client: &Client, parent: Sri, cell: &Sri, instance: &Cel
     }
 }
 
-/// Lists every placement row; `Err` means no evidence.
+/// Lists every cell's newest placement; `Err` means no evidence.
 async fn list_placements(client: &Client) -> Result<Vec<PlacementEntry>, ()> {
-    let list = client.read_tx_in(placement_scope(), async move |client, id| {
+    let entries = list_rows(client, placement_scope(), GENERATIONS.to_owned()).await?;
+
+    Ok(newest_placements(entries)
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect())
+}
+
+/// Reads a cell's newest instance row (its lineage) into evidence semantics.
+async fn read_instance(client: &Client, sri: &Sri) -> RowRead<CellInstance> {
+    let Ok(entries) = list_rows(client, instance_registry_scope(), generations_of(sri)).await
+    else {
+        return RowRead::Failed;
+    };
+
+    // The prefix covers this one SRI. Rows that can't be read come last, so a
+    // malformed one makes this read count as no evidence.
+    match newest_instances(entries).pop() {
+        Some(Ok(instance)) => RowRead::Ok(instance),
+        Some(Err(_)) => RowRead::Failed,
+        None => RowRead::Absent,
+    }
+}
+
+/// Reads a cell's newest placement row into fencing evidence.
+async fn read_row(client: &Client, sri: &Sri, my_exec: RuntimeId) -> RowRead<RowFacts> {
+    let Ok(entries) = list_rows(client, placement_scope(), generations_of(sri)).await else {
+        return RowRead::Failed;
+    };
+
+    // The prefix covers this one SRI. Rows that can't be read come last, so a
+    // malformed one makes this read count as no evidence.
+    match newest_placements(entries).pop() {
+        Some(Ok(entry)) => {
+            // Placeholder rows (mid-deploy) and bridge rows carry no
+            // exec placement; this exec's own id stands in and only
+            // the generation is compared.
+            let node = entry.kind.host().unwrap_or(my_exec);
+            RowRead::Ok((node, entry.gen_id))
+        }
+        Some(Err(_)) => RowRead::Failed,
+        None => RowRead::Absent,
+    }
+}
+
+/// The rows (keys with values) under `prefix` in `scope`; `Err` means no
+/// evidence.
+async fn list_rows(
+    client: &Client,
+    scope: Scope,
+    prefix: String,
+) -> Result<Vec<(String, Vec<u8>)>, ()> {
+    let list = client.read_tx_in(scope.clone(), async move |client, id| {
         let response = client
-            .send(db_models::tb_list::Request {
+            .send(db_models::key_list::Request {
                 id,
-                op: db_models::tb_list::Op {
-                    scope: placement_scope(),
-                    table: PLACEMENT_TABLE.to_owned(),
-                    cursor: None,
-                    limit: None,
-                    order: None,
-                },
+                op: db_models::key_list::Op { scope, prefix },
             })
             .await?
             .map_err(|err| zerror!("{}", err.message))?;
         Ok(response)
     });
     match with_timeout(DEFAULT_TIMEOUT, list).await {
-        Ok(Ok(response)) => Ok(response
-            .entities
-            .into_iter()
-            .filter_map(|(_, value)| postcard::from_bytes::<PlacementEntry>(&value).ok())
-            .collect()),
+        Ok(Ok(response)) => Ok(response.entries),
         _ => Err(()),
-    }
-}
-
-/// Reads a cell's instance row (its lineage) into evidence semantics.
-async fn read_instance(client: &Client, sri: &Sri) -> RowRead<CellInstance> {
-    let eid = sri.to_string().into_bytes();
-    let read = client.read_tx_in(instance_registry_scope(), async move |client, id| {
-        let response = client
-            .send(db_models::tb_get::Request {
-                id,
-                op: db_models::tb_get::Op {
-                    scope: instance_registry_scope(),
-                    table: INSTANCE_REGISTRY_TABLE.to_owned(),
-                    eid,
-                },
-            })
-            .await?
-            .map_err(|err| zerror!("{}", err.message))?;
-        Ok(response)
-    });
-    match with_timeout(DEFAULT_TIMEOUT, read).await {
-        Ok(Ok(response)) => match response.value {
-            Some(value) => match postcard::from_bytes::<CellInstance>(&value) {
-                Ok(instance) => RowRead::Ok(instance),
-                Err(_) => RowRead::Failed,
-            },
-            None => RowRead::Absent,
-        },
-        _ => RowRead::Failed,
-    }
-}
-
-/// Reads a placement row into fencing evidence.
-async fn read_row(client: &Client, sri: &Sri, my_exec: RuntimeId) -> RowRead<RowFacts> {
-    let eid = sri.to_string().into_bytes();
-    let read = client.read_tx_in(placement_scope(), async move |client, id| {
-        let response = client
-            .send(db_models::tb_get::Request {
-                id,
-                op: db_models::tb_get::Op {
-                    scope: placement_scope(),
-                    table: PLACEMENT_TABLE.to_owned(),
-                    eid,
-                },
-            })
-            .await?
-            .map_err(|err| zerror!("{}", err.message))?;
-        Ok(response)
-    });
-    match with_timeout(DEFAULT_TIMEOUT, read).await {
-        Ok(Ok(response)) => match response.value {
-            Some(value) => match postcard::from_bytes::<PlacementEntry>(&value) {
-                Ok(entry) => {
-                    // Placeholder rows (mid-deploy) and bridge rows carry no
-                    // exec placement; this exec's own id stands in and only
-                    // the generation is compared.
-                    let node = entry.kind.host().unwrap_or(my_exec);
-                    RowRead::Ok((node, entry.gen_id))
-                }
-                Err(_) => RowRead::Failed,
-            },
-            None => RowRead::Absent,
-        },
-        _ => RowRead::Failed,
     }
 }
 
@@ -290,46 +270,40 @@ async fn read_lease(client: &Client, node: RuntimeId) -> RowRead<LeaseFacts> {
 }
 
 /// Attempts every owed row cleanup, keeping what still fails.
-async fn drain_owed(client: &Client, owed: &mut Vec<Sri>) {
+async fn drain_owed(client: &Client, owed: &mut Vec<(Sri, Gen)>) {
     if owed.is_empty() {
         return;
     }
     let pending = core::mem::take(owed);
-    for sri in pending {
-        if release_rows(client, &sri).await {
+    for (sri, gen_id) in pending {
+        if release_rows(client, &sri, gen_id).await {
             log::info!("[fencing] released rows for '{sri}'");
         } else {
             log::debug!("[fencing] row cleanup for '{sri}' pending");
-            owed.push(sri);
+            owed.push((sri, gen_id));
         }
     }
 }
 
-/// Placement row first, instance row second (the Linux ordering); both
-/// deletes are idempotent, so a retry after partial success is safe.
-async fn release_rows(client: &Client, sri: &Sri) -> bool {
-    delete_row(client, placement_scope(), PLACEMENT_TABLE, sri).await
-        && delete_row(
-            client,
-            instance_registry_scope(),
-            INSTANCE_REGISTRY_TABLE,
-            sri,
-        )
-        .await
+/// Placement row first, instance row second (the Linux ordering), both of
+/// generation `gen_id` only: a newer life of the cell elsewhere keeps its rows.
+/// Both deletes are idempotent, so a retry after partial success is safe.
+async fn release_rows(client: &Client, sri: &Sri, gen_id: Gen) -> bool {
+    let key = generation_key(sri, gen_id);
+    delete_row(client, placement_scope(), key.clone()).await
+        && delete_row(client, instance_registry_scope(), key).await
 }
 
-/// `true` when the db answered at all: an op-level error (e.g. the row is
-/// already gone) counts as done; only transport failures are retried.
-async fn delete_row(client: &Client, scope: Scope, table: &str, sri: &Sri) -> bool {
-    let eid = sri.to_string().into_bytes();
-    let table = table.to_owned();
+/// Adds a tombstone for `key` in `scope`. `true` when the db answered at all:
+/// an op-level error counts as done; only transport failures are retried.
+async fn delete_row(client: &Client, scope: Scope, key: String) -> bool {
     let delete = client.write_tx_in(scope.clone(), async move |client, id| {
-        // The op-level result is returned untouched: a "row missing" error
-        // still means the db answered, which is all the caller needs.
+        // The op-level result is returned untouched: an op-level error still
+        // means the db answered, which is all the caller needs.
         let result = client
-            .send(db_models::tb_delete::Request {
+            .send(db_models::key_delete::Request {
                 id,
-                op: db_models::tb_delete::Op { scope, table, eid },
+                op: db_models::key_delete::Op { scope, key },
             })
             .await?;
         Ok(result)

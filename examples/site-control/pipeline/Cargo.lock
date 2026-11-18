@@ -436,7 +436,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "linux-codegen"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "include_dir",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "linux-gpio-shim"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "linux-embedded-hal",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "linux-i2c-shim"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -489,7 +489,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "linux-spi-shim"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-signal-layer-types"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "postcard",
  "serde",
@@ -635,7 +635,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipeline-backend-api"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "pipeline-codegen"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-core"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "critical-section",
  "heapless",
@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-ipc"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "libc",
  "postcard",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-linux-rt"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "libc",
  "signal-layer-ipc",
@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "sim-source-driver"
-version = "0.6.1"
+version = "0.7.1"
 dependencies = [
  "embedded-hal-async",
  "log",
