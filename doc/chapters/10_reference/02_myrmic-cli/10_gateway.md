@@ -19,6 +19,8 @@ A gateway can also run embedded inside a Myrmic runtime - see [runtime configura
 
 A gateway fails closed: a mount is only served when its routing entry has an `oidc` block (login required) or `anonymous: true`, or when the gateway runs with `--anonymous`. Everything else answers `403 Forbidden`, and the gateway logs why.
 
+All mounts of one gateway share one browser origin, and the gateway does not isolate them from each other: a page served from one mount can call another mount's API, and the browser sends the user's cookies, the login included, along. A session token only works on the mount it was opened on, which stops script clients and misrouted requests, but not a hostile app served by the same gateway. Serve apps side by side on one gateway only when you trust all of them.
+
 The gateway serves no application of its own. Cells declare how they should be served, and every gateway in the network picks the routes up from the shared route registry and serves them alike.
 
 ### Cell-declared routes
@@ -103,7 +105,7 @@ Serve mounts that have no `oidc` block to anyone, without a login, with full API
 
 `--over-https`
 
-Serve behind HTTPS: session cookies are marked `Secure`, so browsers only send them back over TLS. Set this whenever a TLS terminator sits in front of the gateway.
+Serve behind HTTPS: session cookies are marked `Secure`, so browsers only send them back over TLS. Set this whenever a TLS terminator sits in front of the gateway. The gateway's own session cookie follows it too: it is then named `__Host-myrmic_gw` and marked `Secure`.
 
 `--session-inactivity DURATION`
 

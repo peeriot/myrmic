@@ -62,11 +62,11 @@ A path belongs to the cell that claimed it first. That cell can register it agai
 
 On the **API** path:
 
-- a GET opens a stream, whose first message hands back a session id
-- a POST sends one command or event, with that session id in a header
+- a GET opens a stream, whose first message hands back a session token, and sets a cookie that ties the token to the browser
+- a POST sends one command or event, with that token in a header and the cookie along
 - replies arrive on the stream, not in the POST's response
 
-On the **WebSocket** path, one connection carries both directions, and needs no session id of its own.
+On the **WebSocket** path, one connection carries both directions, and needs no token of its own.
 
 A command goes to the cell the client names, or to the cell that owns the route when none was named. An event goes to every cell that handles it.
 
