@@ -22,7 +22,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
 use axum::http::{Method, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -57,6 +57,14 @@ pub const DEFAULT_PORT: u16 = 8080;
 /// disconnects, so an `EventSource` auto-reconnect can re-attach to the same
 /// identity (and pending mailbox) instead of minting a fresh one.
 const HTTP_SESSION_GRACE: Duration = Duration::from_secs(30);
+
+/// Close reason (`WebSocket`) and error message (SSE) when a stream on a guarded
+/// mount outlives its login's ID token.
+const TOKEN_EXPIRED_REASON: &str = "revoked";
+
+/// How long the close frame of an expired `WebSocket` may take to send, so a
+/// client that stopped reading cannot keep the session alive.
+const WS_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Maximum accepted body size for a `POST` to the HTTP cell API (1 `MiB`).
 const MAX_HTTP_BODY: usize = 1 << 20;
@@ -273,7 +281,9 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
             .into_response();
     };
 
-    let req = if let Some(routing) = state.routing.as_ref() {
+    // `expires_at` is when the caller's login ends on a guarded mount; a
+    // stream opened by this request ends then. `None` on a public mount.
+    let (req, expires_at) = if let Some(routing) = state.routing.as_ref() {
         let oidc = {
             // Fail closed: without the config we cannot tell whether this route
             // is guarded, so we must not serve it as if it were public.
@@ -292,16 +302,16 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
 
         if let Some(oidc) = oidc {
             match oidc::apply_oidc(&state.http_client, req, oidc).await {
-                Ok(req) => req,
+                Ok((req, expires_at)) => (req, Some(expires_at)),
                 Err(err) => {
                     return err;
                 }
             }
         } else {
-            req
+            (req, None)
         }
     } else {
-        req
+        (req, None)
     };
 
     // Canonicalize a bare mount root to a trailing slash (the standard
@@ -323,7 +333,7 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
 
     // WebSocket upgrade path → the bidirectional cell API.
     if route.ws.as_deref().is_some_and(|p| path_is_under(&rel, p)) {
-        return ws_upgrade(state, route.owner, req).await;
+        return ws_upgrade(state, route.owner, req, expires_at).await;
     }
 
     // HTTP API path → the same per-session cell API as WebSocket, method-
@@ -491,11 +501,16 @@ fn looks_like_file(path: &str) -> bool {
 /// Upgrades a request on the route's `ws` path to a `WebSocket` carrying
 /// `ClientMessage`/`ServerMessage`. `owner` is the cell that declared the
 /// route — the default target for messages that name none.
-async fn ws_upgrade(state: AppState, owner: Sri, req: Request) -> Response {
+async fn ws_upgrade(
+    state: AppState,
+    owner: Sri,
+    req: Request,
+    expires_at: Option<Instant>,
+) -> Response {
     let (mut parts, _body) = req.into_parts();
     match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(ws) => ws
-            .on_upgrade(move |socket| handle_ws(state, owner, socket))
+            .on_upgrade(move |socket| handle_ws(state, owner, socket, expires_at))
             .into_response(),
         Err(rejection) => rejection.into_response(),
     }
@@ -506,8 +521,10 @@ async fn ws_upgrade(state: AppState, owner: Sri, req: Request) -> Response {
 /// Mints a per-session SRI, announces it as `Ready`, forwards inbound
 /// `ClientMessage`s as fire-and-forget cell commands/events (stamped with the
 /// session SRI as sender, and addressed to `owner` when they name no target),
-/// and streams the session's mailbox back as `ServerMessage`s.
-async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket) {
+/// and streams the session's mailbox back as `ServerMessage`s. On a guarded
+/// mount the session ends when `expires_at` passes: the client gets a `1008
+/// revoked` close frame and no frame read after that is dispatched.
+async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket, expires_at: Option<Instant>) {
     let session_uuid = Uuid::new_v4();
     let session_sri = Sri::from_uuid(session_uuid);
     tracing::debug!("ws session up: {session_sri}");
@@ -546,6 +563,7 @@ async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket) {
     let pump = {
         let session = state.session.clone();
         let sri = session_sri;
+        let sink = &mut sink;
         async move {
             let mut replies = std::pin::pin!(session_replies(session, sri));
             while let Some(message) = replies.next().await {
@@ -583,9 +601,21 @@ async fn handle_ws(state: AppState, owner: Sri, socket: WebSocket) {
         }
     };
 
-    tokio::select! {
-        () = pump => {}
-        () = read => {}
+    // Expiry is checked first on every wakeup, ahead of the pump and the read loop.
+    let expired = tokio::select! {
+        biased;
+        () = token_expiry(expires_at) => true,
+        () = pump => false,
+        () = read => false,
+    };
+
+    if expired {
+        tracing::debug!("ws session {session_sri}: login expired, closing");
+        let close = sink.send(Message::Close(Some(CloseFrame {
+            code: close_code::POLICY,
+            reason: TOKEN_EXPIRED_REASON.into(),
+        })));
+        let _ = tokio::time::timeout(WS_CLOSE_TIMEOUT, close).await;
     }
 
     tracing::debug!("ws session down: {session_sri}");
@@ -642,6 +672,15 @@ async fn dispatch(
         }
     }
     Ok(())
+}
+
+/// Resolves when the caller's login expires; never on a public mount
+/// (`None`). A deadline already in the past resolves on the first poll.
+async fn token_expiry(expires_at: Option<Instant>) {
+    match expires_at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// A stream of a session's cell replies (its inbound mailbox), shared by the
@@ -977,4 +1016,36 @@ mod tests {
             .unwrap();
         assert_eq!(reattach_token(&req), None);
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn token_expiry_fires_only_with_a_deadline() {
+        let at = Instant::now() + Duration::from_secs(60);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(59), token_expiry(Some(at)))
+                .await
+                .is_err(),
+            "fired before its deadline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), token_expiry(Some(at)))
+                .await
+                .is_ok()
+        );
+
+        let past = Instant::now() - Duration::from_secs(1);
+        assert!(
+            tokio::time::timeout(Duration::ZERO, token_expiry(Some(past)))
+                .await
+                .is_ok()
+        );
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3600), token_expiry(None))
+                .await
+                .is_err()
+        );
+    }
 }
+
+#[cfg(test)]
+mod oidc_expiry_tests;
