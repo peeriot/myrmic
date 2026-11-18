@@ -32,3 +32,6 @@ serde_json = { workspace = true, features = ["std"] }
 reqwest = { workspace = true }
 openidconnect = { workspace = true }
 tower-sessions = { workspace = true }
+
+[dev-dependencies]
+zenoh = { workspace = true, features = ["unstable", "default"] }

@@ -304,8 +304,9 @@ supports:
   with `myrmic delete <name> --app`; use `--cell` to remove a single
   cell. Without a flag, `myrmic delete` refuses a target that is part
   of a multi-cell app so you say which you mean.
-- **HTTP gateway.** `myrmic gateway --port 8080` deploys a gateway
-  that exposes your deployed cells over HTTP.
+- **HTTP gateway.** `myrmic gateway --anonymous --port 8080` starts a gateway
+  that exposes your deployed cells over HTTP without a login (local
+  development only).
 
 Run `./workspace/myrmic <subcommand> --help` to see the flags for each
 command.

@@ -44,9 +44,10 @@ Configures storage behavior.
 
 ## `gateway`
 
-When this section is present, the runtime also runs an embedded gateway - it starts and stops together with the runtime - providing an entry point for external clients to the swarm, to send commands and publish events over HTTP and WebSocket, and serving static web assets.
+When this section is present, the runtime also runs an embedded gateway - it starts and stops together with the runtime - providing an entry point for external clients to the swarm, to send commands and publish events over HTTP and WebSocket, and serving static web assets. Like the standalone gateway, it fails closed - see [`myrmic gateway`](../02_myrmic-cli/10_gateway.md).
 
 - `port` *(optional)* - TCP port the embedded gateway listens on. Defaults to `8080`.
+- `anonymous` *(optional)* - Serve mounts without a login, as `myrmic gateway --anonymous` does. Defaults to `false`: without it, every mount answers `403 Forbidden`.
 
 To run the gateway as its own process independently of a runtime, use [`myrmic gateway`](../02_myrmic-cli/10_gateway.md) instead.
 

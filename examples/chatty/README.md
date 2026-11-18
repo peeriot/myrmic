@@ -8,9 +8,11 @@ myrmic runtime start
 In another shell, we need to configure the "entry-point".
 This is how we can get into the network.
 ```shell
-myrmic gateway
-myrmic gateway --port 8080 # The default port is 8080, but you can change it.
+myrmic gateway --anonymous
+myrmic gateway --anonymous --port 8080 # The default port is 8080, but you can change it.
 ```
+
+`--anonymous` lets the browser in without a login - fine on your own machine. Without it the gateway refuses every page with `403 Forbidden`; a real deployment guards its mounts with OIDC in a [routing file](../../doc/chapters/10_reference/02_myrmic-cli/10_gateway.md#routing-configuration) instead.
 
 Finally, we want to actually deploy our cell:
 

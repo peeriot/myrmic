@@ -17,8 +17,10 @@ Run the whole application:
 ```shell
 myrmic runtimes start        # terminal 1
 myrmic deploy app_specs.yml  # terminal 2
-myrmic gateway               # terminal 3, then open localhost:8080/greenhouse/
+myrmic gateway --anonymous   # terminal 3, then open localhost:8080/greenhouse/
 ```
+
+`--anonymous` lets the browser in without a login - fine on your own machine. Without it the gateway refuses every page with `403 Forbidden`; a real deployment guards its mounts with OIDC in a [routing file](../../doc/chapters/10_reference/02_myrmic-cli/10_gateway.md#routing-configuration) instead.
 
 Poke at it from the CLI:
 
