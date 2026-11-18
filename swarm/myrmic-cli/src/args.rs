@@ -22,6 +22,8 @@ pub struct Ctx {
 
     /// Connect directly to a runtime endpoint instead of using multicast
     /// discovery. May be supplied more than once for fallback endpoints.
+    /// Without this flag or `--multicast-group`, `DEFAULT_MYRMIC_CONNECT` sets
+    /// one endpoint.
     #[clap(long, value_name = "ENDPOINT", global = true)]
     pub connect: Vec<String>,
 

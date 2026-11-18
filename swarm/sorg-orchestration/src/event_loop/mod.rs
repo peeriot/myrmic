@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error};
 use zenoh::{Session, config::ZenohId, query::Query};
 
-use crate::{Config, Result, state::State};
+use crate::{Config, Result, state::State, supervision::SharedLeaseTracker};
 
 pub(crate) use events::Event;
 
@@ -30,6 +30,7 @@ pub(crate) fn set_up_event_loop(
     session: Session,
     state: State,
     config: Config,
+    lease_tracker: SharedLeaseTracker,
     poison_rcv: PoisonRcv,
 ) -> (Client<Event>, JoinHandle<Result<()>>) {
     let (event_sender, event_receiver) = tokio::sync::mpsc::channel(EVENT_BUFFER_SIZE);
@@ -39,6 +40,7 @@ pub(crate) fn set_up_event_loop(
         client.handle(),
         config,
         state,
+        lease_tracker,
         event_receiver,
         poison_rcv,
     ));
@@ -50,6 +52,7 @@ async fn event_loop(
     client: Client<Event>,
     config: Config,
     state: State,
+    lease_tracker: SharedLeaseTracker,
     mut event_rcv: EventReceiver,
     mut poison_rcv: PoisonRcv,
 ) -> Result<()> {
@@ -81,6 +84,7 @@ async fn event_loop(
                 client.handle(),
                 config.init_timeout(),
                 state.clone(),
+                lease_tracker.clone(),
             );
             tokio::spawn(runtime.process_event(event));
         }
@@ -107,15 +111,23 @@ struct Runtime {
     client: Client<Event>,
     init_timeout: Duration,
     state: State,
+    lease_tracker: SharedLeaseTracker,
 }
 
 impl Runtime {
-    fn new(session: Session, client: Client<Event>, init_timeout: Duration, state: State) -> Self {
+    fn new(
+        session: Session,
+        client: Client<Event>,
+        init_timeout: Duration,
+        state: State,
+        lease_tracker: SharedLeaseTracker,
+    ) -> Self {
         Self {
             session,
             client,
             init_timeout,
             state,
+            lease_tracker,
         }
     }
 

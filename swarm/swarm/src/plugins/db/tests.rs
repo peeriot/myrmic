@@ -270,6 +270,69 @@ async fn commit_publishes_insert_event() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn commit_publishes_a_key_event() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+
+    let (events_tx, events_rx) = flume::unbounded();
+    let _sub = client
+        .subscribe(
+            Subject::Scope(scope()),
+            models::events::KEY_EVENTS,
+            move |notification| {
+                if events_tx.send(notification).is_err() {
+                    // the test has stopped listening
+                }
+            },
+        )
+        .await
+        .expect("unable to subscribe");
+
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+
+    for key in ["a", "b"] {
+        client
+            .send(models::key_put::Request {
+                id: tx.id,
+                op: models::key_put::Op {
+                    scope: scope(),
+                    key: String::from(key),
+                    value: b"1".to_vec(),
+                },
+            })
+            .await
+            .expect("send failed")
+            .expect("put failed");
+    }
+
+    client
+        .send(models::tx_commit::Request { id: tx.id })
+        .await
+        .expect("send failed")
+        .expect("commit failed");
+
+    let notification = tokio::time::timeout(Duration::from_secs(10), events_rx.recv_async())
+        .await
+        .expect("no event within 10s")
+        .expect("event channel closed");
+
+    assert_eq!(notification.scope, scope());
+    assert_eq!(notification.table, models::events::KEY_EVENTS);
+    assert!(matches!(notification.event, TableEvent::Inserted(_)));
+
+    // Both puts landed in one commit, so there is exactly one poke.
+    let extra = tokio::time::timeout(Duration::from_millis(500), events_rx.recv_async()).await;
+    assert!(
+        extra.is_err(),
+        "expected a single key event per scope per commit"
+    );
+}
+
 /// Configures a replication set pinning `subject` to the node (via its runtime
 /// tag), so a locate queryable covering it is declared (a routed `tx_begin`
 /// finds a holder via locate over replicating nodes). The watcher applies the
@@ -375,7 +438,7 @@ async fn locate_finds_a_replicating_holder_at_version() {
 
     let version = commit_and_await_version(&client, &events_rx).await;
 
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
 
     // At the head version, the sole replicating node answers.
@@ -404,7 +467,7 @@ async fn locate_hears_a_replica_holding_no_data() {
     // Nothing was ever committed to the scope. The configured replica still
     // answers (at head 0), so a first write routes to it instead of falling
     // back and promoting some unrelated node.
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
 
     let holders = locate_eventually(&replica, &scope(), None).await;
@@ -436,7 +499,7 @@ async fn tx_begin_resumes_from_an_event_version() {
 
     // Wait until the node answers locate for the scope at the version, so the
     // routed_at below deterministically finds it.
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     locate_eventually(&replica, &scope(), Some(version)).await;
 
@@ -511,7 +574,7 @@ async fn a_routed_fallback_makes_the_scope_locatable() {
 
     // The fallback holds the scope as a findable provisional offloader, so it
     // answers locate — no durable promotion on a single miss.
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     let holders = locate_eventually(&replica, &scope(), None).await;
     assert!(
@@ -571,7 +634,7 @@ async fn an_uncovered_fallback_escalates_to_a_custody_row() {
     );
 
     // The promoted node is a full replica in every functional sense.
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     let holders = locate_eventually(&replica, &scope(), None).await;
     assert!(
@@ -606,7 +669,7 @@ async fn a_pinned_custodian_deletes_its_own_row() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     let holders = locate_eventually(&replica, &scope(), None).await;
     assert!(
@@ -632,7 +695,7 @@ async fn a_routed_read_fallback_leaves_no_trace() {
     // made this node hold the scope, let alone promote itself for it.
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     let holders = replica.locate(&scope(), None).await.expect("locate failed");
     assert!(
@@ -669,7 +732,7 @@ async fn a_rolled_back_routed_write_leaves_no_trace() {
     // Past the escalation window: nothing landed, so nothing is held.
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     let holders = replica.locate(&scope(), None).await.expect("locate failed");
     assert!(
@@ -753,7 +816,7 @@ async fn dropping_replication_stops_locate_and_starts_offloading() {
 
     // Replicating before the commit: a commit landing first would start a
     // stray drain of its own, still running when the replica is dropped.
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     locate_eventually(&replica, &scope(), None).await;
 
@@ -864,7 +927,7 @@ async fn a_replica_dropped_beside_a_leftover_hidden_drain_stays_findable() {
         .expect("commit failed");
 
     replicate(&client, &session, Subject::Scope(scope())).await;
-    let replica = db_client::replica_v1::Client::new(&session, Subject::Scope(scope()))
+    let replica = db_client::replica_v1::Client::new(&session, &Subject::Scope(scope()))
         .expect("unable to create replica client");
     locate_eventually(&replica, &scope(), None).await;
 
@@ -1554,7 +1617,7 @@ async fn own_locate_reply(
     session: &zenoh::Session,
     scope: &Scope,
 ) -> Option<models::locate::Response> {
-    let replica = db_client::replica_v1::Client::new(session, Subject::Scope(scope.clone()))
+    let replica = db_client::replica_v1::Client::new(session, &Subject::Scope(scope.clone()))
         .expect("unable to create replica client");
     let me = node_id(session);
 
@@ -1622,4 +1685,212 @@ async fn a_departed_peer_stops_being_vouched_for_within_seconds() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scope_zenoh_refuses_is_refused_before_anything_registers() {
+    let session = open_session().await;
+    let context = store_context(&session);
+    let over_long = "s".repeat(models::MAX_SEGMENT_LEN + 1);
+
+    for schema in ["x?", "x#", "**", "$*", over_long.as_str()] {
+        let scope = Scope::new("testing", "events", schema);
+        let subject = Subject::Scope(scope.clone());
+
+        // Zenoh itself takes an over-long chunk; only the db refuses it.
+        if schema != over_long {
+            assert!(
+                db_client::replica_v1::Client::new(&session, &subject).is_err(),
+                "replica client for {schema:?} must be refused",
+            );
+        }
+        assert!(
+            context
+                .start_offload(scope.clone(), super::OffloadKind::Sink)
+                .is_err(),
+            "offload of {schema:?} must be refused",
+        );
+        assert!(
+            context.start_replication(subject).await.is_err(),
+            "replication of {schema:?} must be refused",
+        );
+        assert!(
+            !context.store.is_offloading(&scope),
+            "{schema:?} left an offloader behind"
+        );
+        assert!(
+            !context.store.is_replicating(&scope),
+            "{schema:?} left a replicator behind"
+        );
+    }
+
+    // A valid scope still starts.
+    context
+        .start_replication(Subject::Scope(scope()))
+        .await
+        .expect("a valid scope replicates");
+    assert!(context.store.is_replicating(&scope()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_scope_segment_is_refused() {
+    use db_commons::query::Handler;
+
+    let session = open_session().await;
+    let context = store_context(&session);
+    let bad = Scope::new("testing", "events", "");
+
+    // No client sends this (it cannot form the key expression), so the
+    // request goes straight to the handler.
+    let err = context
+        .handle(models::tx_apply::Request::commit_new(
+            models::tx_begin::Constraint::Routed(bad),
+            vec![models::TxOp::TbInsertBatched(
+                models::tb_insert_batched::Op {
+                    scope: scope(),
+                    table: String::from(TABLE),
+                    entries: Vec::new(),
+                },
+            )],
+        ))
+        .await
+        .expect_err("an empty segment must be refused")
+        .expect("with a message");
+    assert_eq!(err.message, "schema is empty");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_replication_start_leaves_no_replicator_behind() {
+    let session = open_session().await;
+    let context = store_context(&session);
+    session.close().await.expect("unable to close the session");
+
+    assert!(
+        context
+            .start_replication(Subject::Scope(scope()))
+            .await
+            .is_err(),
+        "a closed session cannot declare",
+    );
+    assert!(!context.store.is_replicating(&scope()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_offload_declaration_releases_the_drain() {
+    let session = open_session().await;
+    let context = store_context(&session);
+    session.close().await.expect("unable to close the session");
+
+    context
+        .start_offload(scope(), super::OffloadKind::Sink)
+        .expect("the key expressions are valid");
+
+    // The signals are registered before the spawned declarations fail; only
+    // that failure takes them out again.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !context.offload_signals.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the failed offload kept its drain signals");
+    assert!(!context.store.is_offloading(&scope()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_over_long_name_is_refused_not_a_panic() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+
+    // No wasm in between: a direct request, as the esp runtime or any zenoh
+    // client sends it.
+    let cases = [
+        (
+            scope(),
+            "k".repeat(usize::from(u16::MAX)),
+            "key longer than",
+        ),
+        (
+            Scope::new("testing", "events", "s".repeat(models::MAX_SEGMENT_LEN + 1)),
+            String::from("k"),
+            "schema is longer than",
+        ),
+    ];
+
+    for (scope, key, expected) in cases {
+        let tx = client
+            .send(models::tx_begin::Request::default())
+            .await
+            .expect("send failed")
+            .expect("tx begin failed");
+
+        let err = client
+            .send(models::key_put::Request {
+                id: tx.id,
+                op: models::key_put::Op {
+                    scope,
+                    key,
+                    value: b"v".to_vec(),
+                },
+            })
+            .await
+            .expect("send failed")
+            .expect_err("an over-long name must be refused");
+        assert!(err.message.contains(expected), "{}", err.message);
+    }
+
+    // The db worker is still serving.
+    let tx = client
+        .send(models::tx_begin::Request::default())
+        .await
+        .expect("send failed")
+        .expect("tx begin failed");
+    insert_one(&client, tx.id, &scope()).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_batch_to_a_bad_scope_is_refused() {
+    let (session, _drop_tx) = start_node().await;
+    let client = Client::new(&session);
+    let bad = Scope::new("testing", "d".repeat(usize::from(u16::MAX) + 1), "s");
+
+    // A batch without entries has no per-row check to trip, but still opens
+    // the scope for write and starts an offload for it on commit.
+    let batch = |scope: &Scope| {
+        models::TxOp::TbInsertBatched(models::tb_insert_batched::Op {
+            scope: scope.clone(),
+            table: String::from(TABLE),
+            entries: Vec::new(),
+        })
+    };
+
+    let err = client
+        .send(models::tx_apply::Request::commit_new(
+            models::tx_begin::Constraint::Routed(scope()),
+            vec![batch(&bad)],
+        ))
+        .await
+        .expect("send failed")
+        .expect_err("a bad scope must be refused");
+    assert_eq!(err.index, Some(0));
+    assert!(
+        err.message.contains("database is longer than"),
+        "{}",
+        err.message
+    );
+}
+
+/// A store context on `session` over a default store, for driving
+/// replication and offload setup directly.
+fn store_context(session: &zenoh::Session) -> super::StoreContext {
+    let hlc = session.hlc().expect("HLC enabled");
+    let store = super::build_store(Default::default(), hlc);
+
+    super::StoreContext::new(
+        session.clone(),
+        tokio::runtime::Handle::current(),
+        store,
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    )
 }

@@ -57,7 +57,7 @@ pub use event_loop::queryables::{QueryableTrait, set_up_queryable};
 pub use fs::{FilestorePath, MissingFileRecord, WritableDirectory};
 pub use mqtt::{
     BrokerAddress as MqttBrokerAddress, MqttConnection, PubTopic as MqttPubTopic, Qos as MqttQos,
-    SubTopic as MqttSubTopic,
+    SubTopic as MqttSubTopic, topic_matches as mqtt_topic_matches,
 };
 pub use myrmic_common::cells::{CellLost, LostReason, SYS_CELL_LOST, SYS_COMMAND_PREFIX};
 pub use records::OrchRuntimeRecord;

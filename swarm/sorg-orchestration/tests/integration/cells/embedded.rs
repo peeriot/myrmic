@@ -33,7 +33,7 @@ const APP_NAME: &str = "embedded_app";
 const CELL_SRI: &str = "embedded-cell";
 const CELL_CLASS: &str = "embedded_cell";
 
-/// The artifact target of the embedded runtime under test. The mock registers
+/// The artifact platform of the embedded runtime under test. The mock registers
 /// with [`Platform::Esp32c6`]'s tags; the orchestrator reads the matching
 /// [`ArtifactPlatform`] back from those tags when routing the deploy dispatch.
 const TARGET: ArtifactPlatform = ArtifactPlatform::Riscv32imac;

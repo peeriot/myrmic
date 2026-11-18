@@ -3,6 +3,7 @@ pub mod class_registry;
 pub(crate) mod commands;
 pub(crate) mod deployment_error;
 pub(crate) mod fence;
+pub(crate) mod generation_rows;
 pub mod instance_registry;
 pub(crate) mod lifecycle;
 pub(crate) mod placement;

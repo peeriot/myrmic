@@ -76,13 +76,16 @@ pub enum Scope {
 }
 
 /// A single entry in a driver or step descriptor's `configSchema`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ConfigField {
     #[serde(default)]
     pub scope: Scope,
     /// Rust type emitted in codegen (e.g. `u8`, `u32`, `f32`).
     pub rust_type: Option<String>,
     pub default: serde_yaml::Value,
+    /// Inclusive bounds for a numeric field; a value outside fails validation.
+    pub min: Option<serde_yaml::Value>,
+    pub max: Option<serde_yaml::Value>,
 }
 
 /// Driver or step descriptor schema — holds config fields and output declarations.

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# Fails when a tracked Cargo.lock no longer matches its workspace manifests, i.e. when
+# cargo would have to rewrite it to build. Every tracked lockfile is checked, so a new
+# standalone workspace is covered as soon as its Cargo.lock is committed.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(dirname "$0")"
+REPO_ROOT="$(readlink -f "$SCRIPT_DIR/../..")"
+
+mapfile -t LOCKFILES < <(git -C "$REPO_ROOT" ls-files -- 'Cargo.lock' '**/Cargo.lock')
+
+if [ "${#LOCKFILES[@]}" -eq 0 ]; then
+    printf 'no tracked Cargo.lock found\n' >&2
+    exit 1
+fi
+
+stale=()
+
+for lockfile in "${LOCKFILES[@]}"; do
+    manifest="$REPO_ROOT/$(dirname "$lockfile")/Cargo.toml"
+    printf '%s\n' "$lockfile"
+
+    # `--locked` makes cargo fail instead of rewriting a lockfile that needs an update.
+    # Not --offline: the workspaces have git dependencies that a cold cache lacks.
+    if ! cargo metadata --locked --format-version 1 --manifest-path "$manifest" >/dev/null; then
+        stale+=("$lockfile")
+    fi
+done
+
+if [ "${#stale[@]}" -ne 0 ]; then
+    printf '\nout-of-date lockfiles (refresh with `cargo metadata --manifest-path <dir>/Cargo.toml`):\n'
+    printf '  %s\n' "${stale[@]}"
+    exit 1
+fi
+
+printf '\nall lockfiles up to date\n'

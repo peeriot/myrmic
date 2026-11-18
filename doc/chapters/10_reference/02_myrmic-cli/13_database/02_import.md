@@ -19,7 +19,7 @@ Restores a snapshot into a database scope. The snapshot can be read from:
 
 A `SCOPE` is a way to organize and split the data space, it also identifies a specific dataset in the distributed swarm storage, should be provided in this format `namespace/database/schema`.
 
-> **Note:** Snapshots record the scope they were exported from, So `SCOPE` here is a way to override it, it is optional and if not passed the one recorded in the snapshot is used
+> **Note:** Snapshots record the scope they were exported from, So `SCOPE` here is a way to override it, it is optional and if not passed the one recorded in the snapshot is used. A restore is authoritative: whatever the target scope held is replaced by the snapshot, and the scope recorded in the snapshot is left untouched.
 
 For S3 sources, credentials are read from environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`. The bucket must exist before running this command.
 

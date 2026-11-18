@@ -221,6 +221,7 @@ devices:
                 scope: Scope::Hardware,
                 rust_type: Some("u8".into()),
                 default: serde_yaml::Value::Number(0x76.into()),
+                ..Default::default()
             },
         );
         cs.insert(
@@ -229,6 +230,7 @@ devices:
                 scope: Scope::Application,
                 rust_type: Some("u64".into()),
                 default: serde_yaml::Value::Number(1000.into()),
+                ..Default::default()
             },
         );
         DriverSchema {
@@ -363,6 +365,7 @@ devices:
                 scope: Scope::Application,
                 rust_type: Some("usize".into()),
                 default: serde_yaml::Value::Number(8.into()),
+                ..Default::default()
             },
         );
         step_schemas.insert(
@@ -868,6 +871,7 @@ devices:
                 scope: Scope::Hardware,
                 rust_type: Some("u8".into()),
                 default: serde_yaml::Value::Number(0x76.into()),
+                ..Default::default()
             },
         );
         cs.insert(
@@ -876,6 +880,7 @@ devices:
                 scope: Scope::Application,
                 rust_type: Some("Oversampling".into()),
                 default: serde_yaml::Value::String("X1".into()),
+                ..Default::default()
             },
         );
         cs.insert(
@@ -884,6 +889,7 @@ devices:
                 scope: Scope::Application,
                 rust_type: Some("u64".into()),
                 default: serde_yaml::Value::Number(1000.into()),
+                ..Default::default()
             },
         );
         let schema = DriverSchema {
@@ -938,6 +944,7 @@ devices:
                 scope: Scope::Hardware,
                 rust_type: Some("bool".into()),
                 default: serde_yaml::Value::Bool(false),
+                ..Default::default()
             },
         );
         DriverSchema {

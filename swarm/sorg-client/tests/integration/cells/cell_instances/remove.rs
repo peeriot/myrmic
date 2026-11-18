@@ -18,8 +18,8 @@ async fn happy_path() {
     // Act
     assert_eq!(
         assert_ok!(
-            sorg.erase_instance(&sri, SEEDED_GEN).await,
-            "erase_instance should succeed"
+            sorg.remove_instance(&sri, SEEDED_GEN).await,
+            "remove_instance should succeed"
         ),
         FenceOutcome::Applied
     );
@@ -28,7 +28,7 @@ async fn happy_path() {
     let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
     assert!(
         instances.is_empty(),
-        "instance list should be empty after erasure"
+        "instance list should be empty after removal"
     );
 }
 
@@ -36,7 +36,7 @@ async fn happy_path() {
 async fn deployed_is_rejected() {
     let swarm = sorg_tests::swarm_config!("full.jsonnet");
     let cell_class = "dummy";
-    let cell_sri = "test-deployed-erase";
+    let cell_sri = "test-deployed-remove";
     sorg_tests::register_fixture_class("../../tests/fixtures/dummy_cell", cell_class, &swarm).await;
     let test_app = crate::integration::spawn_full_test_app_with_swarm(swarm).await;
     let sorg = sorg_client(test_app.session());
@@ -51,10 +51,10 @@ async fn deployed_is_rejected() {
     );
     let instance = assert_ok!(sorg.inspect_instance(&sri).await);
 
-    // Act — try to erase the deployed instance under its own generation
+    // Act — try to remove the deployed instance under its own generation
     assert_err!(
-        sorg.erase_instance(&sri, instance.gen_id).await,
-        "erase_instance for deployed instance should fail"
+        sorg.remove_instance(&sri, instance.gen_id).await,
+        "remove_instance for deployed instance should fail"
     );
 }
 
@@ -64,11 +64,11 @@ async fn absent_is_reported() {
     let sorg = sorg_client(test_app.session());
     let sri = Sri::from_target(INSTANCE_SRI).unwrap();
 
-    // Act — erase an SRI that was never created
+    // Act — remove an SRI that was never created
     assert_eq!(
         assert_ok!(
-            sorg.erase_instance(&sri, SEEDED_GEN).await,
-            "erasing a missing instance is an outcome, not an error"
+            sorg.remove_instance(&sri, SEEDED_GEN).await,
+            "removing a missing instance is an outcome, not an error"
         ),
         FenceOutcome::Absent
     );
@@ -81,8 +81,8 @@ async fn other_generation_is_refused() {
     let sri = Sri::from_target(INSTANCE_SRI).unwrap();
     seed_instance(test_app.session(), &sri).await;
 
-    // Act — an erase issued for another incarnation of the same SRI
-    let outcome = assert_ok!(sorg.erase_instance(&sri, Gen::from_parts(2, 1)).await);
+    // Act — a removal issued for another incarnation of the same SRI
+    let outcome = assert_ok!(sorg.remove_instance(&sri, Gen::from_parts(2, 1)).await);
 
     // Assert — refused, and the row is untouched
     assert_eq!(

@@ -539,6 +539,29 @@ impl ChipBackend for Esp32Backend {
             }
         }
 
+        // Linux-only fields have no meaning here; refuse them rather than let
+        // a manifest written for the wrong backend pass.
+        for (bus_id, bus) in &manifest.buses {
+            if bus.dev_path.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "bus `{bus_id}`: `dev_path` is a Linux field; the ESP backend drives the pins itself"
+                )));
+            }
+        }
+        for device in &manifest.devices {
+            for (field, value) in [
+                ("gpio_chip", &device.gpio_chip),
+                ("pwm_chip", &device.pwm_chip),
+            ] {
+                if value.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "device `{}`: `{field}` is a Linux field and has no meaning on ESP32",
+                        device.id
+                    )));
+                }
+            }
+        }
+
         let Some(layout) = chip_pin_layout(&manifest.chip) else {
             errors.push(ValidationError::new(format!(
                 "chip `{}` has no pin layout in the ESP backend; supported chips are {}",

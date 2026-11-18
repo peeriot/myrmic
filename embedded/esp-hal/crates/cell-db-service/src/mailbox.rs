@@ -1,6 +1,5 @@
 use alloc::borrow::ToOwned;
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use cell_protocol::{
@@ -272,21 +271,124 @@ pub(crate) async fn discard_message(client: &Client, sri: &Sri, msg_id: Id) {
     }
 }
 
-/// Drains every subscribed event that has new entries since its cursor.
-pub(crate) async fn poll_for_events(
-    client: &Client,
-    subscribed_events: &mut Vec<(Event, Cursor)>,
-) -> Vec<CellMessage> {
-    let mut messages = vec![];
+/// How many entries of one event are read per turn: small enough that a turn
+/// neither holds the db loop for long nor buffers a busy event's backlog.
+pub(crate) const EVENT_BATCH: usize = 5;
 
-    // Poll all subscribed events
-    for (event, event_cursor) in subscribed_events {
-        while let Some(new_events) = try_get_next_event(client, event, event_cursor).await {
-            messages.extend(new_events);
+/// The cursor past every event currently stored, so a new subscriber sees only
+/// events published after it subscribed, as on Linux. When the count fails the
+/// subscription still succeeds, starting at the head of the log.
+pub(crate) async fn event_tail(client: &Client, event: &Event) -> Cursor {
+    let counted = client
+        .send(db_models::tb_peek::Request {
+            scope: scope_of_event(event.as_ref()),
+            table: String::from(EVENTS_TABLE),
+            cursor: None,
+            limit: Some(0),
+            order: None,
+            count: true,
+        })
+        .await;
+
+    match counted {
+        Ok(Ok(response)) => Cursor::Skip(response.count.unwrap_or(0)),
+        Ok(Err(err)) => {
+            log::warn!(
+                "[db-client] unable to count events of {}, replaying from the start: {}",
+                event.as_ref(),
+                err.message
+            );
+            Cursor::Skip(0)
+        }
+        Err(err) => {
+            log::warn!(
+                "[db-client] unable to count events of {} [zenoh issue], replaying from the start: {err}",
+                event.as_ref()
+            );
+            Cursor::Skip(0)
         }
     }
+}
 
-    messages
+/// The next batch of an event's entries after `cursor`, oldest first, read
+/// without moving the cursor: the caller advances it per entry it hands over.
+pub(crate) async fn read_events(
+    client: &Client,
+    event: &Event,
+    cursor: &Cursor,
+) -> Vec<(Id, Vec<u8>)> {
+    let scope = scope_of_event(event.as_ref());
+
+    let req = db_models::tx_begin::Request::routed(scope.clone());
+    let tx_id = match client.send(req).await {
+        Ok(Ok(response)) => response.id,
+        Ok(Err(err)) => {
+            log::error!("unable to start db transaction [db issue] {}", err.message);
+            return Vec::new();
+        }
+        Err(err) => {
+            log::error!("failed to begin events transaction [zenoh issue]: {err}");
+            return Vec::new();
+        }
+    };
+
+    let listed = client
+        .send(db_models::tb_list::Request {
+            id: tx_id,
+            op: db_models::tb_list::Op {
+                scope,
+                table: String::from(EVENTS_TABLE),
+                cursor: Some(cursor.clone()),
+                limit: Some(EVENT_BATCH),
+                order: None,
+            },
+        })
+        .await;
+
+    // Read-only: take a clean cut and roll it back.
+    drop(
+        client
+            .send(db_models::tx_rollback::Request { id: tx_id })
+            .await,
+    );
+
+    match listed {
+        Ok(Ok(response)) => response.entities,
+        Ok(Err(err)) => {
+            log::error!(
+                "failed to read events of {}: {}",
+                event.as_ref(),
+                err.message
+            );
+            Vec::new()
+        }
+        Err(err) => {
+            log::error!(
+                "unable to read events of {} [zenoh issue]: {err}",
+                event.as_ref()
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// Decodes a stored event row into the message the cell receives. An
+/// undecodable row is reported and skipped; the caller moves past it, so one
+/// bad row never holds back the entries behind it.
+pub(crate) fn decode_event(event: &Event, id: &Id, payload: &[u8]) -> Option<CellMessage> {
+    let Ok(mailbox_event) = postcard::from_bytes::<MailboxEvent>(payload) else {
+        log::error!(
+            "[db-client] undecodable row {id:?} in {EVENTS_TABLE} of event {}; skipping it",
+            event.as_ref()
+        );
+        return None;
+    };
+
+    Some(CellMessage::Event {
+        event: mailbox_event.event,
+        payload: mailbox_event.payload,
+        sender: mailbox_event.attachment.sender().map(Sri::from_uuid),
+    })
 }
 
 /// Publishes a mailbox item to the DB in a transaction of its own, for items the
@@ -320,93 +422,4 @@ pub(crate) async fn publish_item(client: &Client, item: MailboxItem) -> Result<(
             Err(())
         }
     }
-}
-
-/// Try to poll the given event to see if there's anything pending
-async fn try_get_next_event(
-    client: &Client,
-    event: &Event,
-    cursor: &mut Cursor,
-) -> Option<Vec<CellMessage>> {
-    let scope = scope_of_event(event.as_ref());
-    let table = EVENTS_TABLE;
-
-    let req = db_models::tx_begin::Request::routed(scope.clone());
-    let tx_id = match client.send(req).await {
-        Ok(Ok(response)) => response.id,
-        Ok(Err(err)) => {
-            log::error!(
-                "unable to start db transaction [db encountered an issue] {}",
-                err.message
-            );
-            return None;
-        }
-        Err(err) => {
-            log::error!(
-                "failed to begin mailbox transaction [unable to communicate over zenoh]: {}",
-                err
-            );
-            return None;
-        }
-    };
-
-    let list_req = client
-        .send(db_models::tb_list::Request {
-            id: tx_id,
-            op: db_models::tb_list::Op {
-                scope: scope.clone(),
-                table: String::from(table),
-                cursor: Some(cursor.clone()),
-                limit: Some(5),
-                order: None,
-            },
-        })
-        .await;
-
-    drop(
-        client
-            .send(db_models::tx_rollback::Request { id: tx_id })
-            .await,
-    );
-
-    let entities = match list_req {
-        Ok(Ok(response)) => response.entities,
-        Ok(Err(err)) => {
-            log::error!(
-                "unable to start db transaction [db encountered an issue] {}",
-                err.message
-            );
-            return None;
-        }
-        Err(err) => {
-            log::error!(
-                "failed to begin mailbox transaction [unable to communicate over zenoh]: {}",
-                err
-            );
-            return None;
-        }
-    };
-    if entities.is_empty() {
-        return None;
-    }
-
-    let mut messages = vec![];
-
-    for (msg_id, payload) in entities {
-        *cursor = Cursor::After(msg_id);
-
-        let Ok(mailbox_event) = postcard::from_bytes::<MailboxEvent>(&payload) else {
-            log::error!("[db-client] Failed to deserialize MailboxEvent");
-
-            return None;
-        };
-
-        messages.push(CellMessage::Event {
-            event: mailbox_event.event,
-            payload: mailbox_event.payload,
-            sender: mailbox_event.attachment.sender().map(Sri::from_uuid),
-        });
-    }
-
-    Some(messages)
 }

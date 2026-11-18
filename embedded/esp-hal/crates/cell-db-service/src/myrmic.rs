@@ -53,8 +53,9 @@ fn intrinsic_tags(zid: ZenohIdProto) -> Vec<String> {
     }
     // Add hardware capabilities
     tags.push(String::from("gpio"));
-    if cfg!(any(feature = "esp32c5", feature = "esp32c61")) {
-        tags.push(String::from("psram"));
+    // Found at boot, not by target: a C5-N4 module carries no PSRAM chip.
+    if esp_heap::psram_size() > 0 {
+        tags.push(String::from(myrmic_tags::TAG_PSRAM));
     }
     // Add the system tag naming this runtime, so a deploy can pin to it
     tags.push(runtime_tag(zid.into()));

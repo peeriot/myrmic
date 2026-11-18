@@ -14,22 +14,14 @@ use pipeline_backend_api::manifest::{BoardManifest, BusTransport};
 use pipeline_backend_api::scaffold;
 use pipeline_backend_api::validate_types::ValidationError;
 
-use crate::linux_manifest::{LinuxManifestOverlay, parse_linux_overlay};
-
-/// GPIO character device used when a device's overlay omits `gpio_chip`.
+/// GPIO character device used when a device omits `gpio_chip`.
 const DEFAULT_GPIO_CHIP: &str = "/dev/gpiochip0";
-/// sysfs PWM chip used when a device's overlay omits `pwm_chip`.
+/// sysfs PWM chip used when a device omits `pwm_chip`.
 const DEFAULT_PWM_CHIP: &str = "pwmchip0";
 
 /// Backend that generates tokio-based Linux pipeline crates.
-///
-/// The optional `overlay` carries Linux-specific bus fields (e.g. `dev_path`)
-/// that the common `BoardManifest` does not store.
-pub struct LinuxChipBackend {
-    /// Linux-specific bus overlay parsed from the raw manifest YAML.
-    /// `None` in test/validation contexts where the YAML is not available.
-    pub overlay: Option<LinuxManifestOverlay>,
-}
+#[derive(Default)]
+pub struct LinuxChipBackend;
 
 impl ChipBackend for LinuxChipBackend {
     // ── Required base methods ─────────────────────────────────────────────────
@@ -55,12 +47,7 @@ impl ChipBackend for LinuxChipBackend {
                 // spidev node with the kernel chip-select disabled; CS lines
                 // are per-device GPIO fields emitted in the device loop below.
                 let field_ident = snake_ident(bus_id);
-                let dev_path = self
-                    .overlay
-                    .as_ref()
-                    .and_then(|ov| ov.buses.get(bus_id))
-                    .and_then(|b| b.dev_path.clone())
-                    .unwrap_or_default();
+                let dev_path = bus.dev_path.clone().unwrap_or_default();
                 let freq_hz = bus.freq_khz.saturating_mul(1000);
                 let mode = bus.mode;
                 let expect_msg = format!("open {dev_path} (bus {bus_id})");
@@ -83,13 +70,11 @@ impl ChipBackend for LinuxChipBackend {
                 pub #field_ident: linux_i2c_shim::SharedI2c<linux_i2c_shim::LinuxI2cdev>,
             });
 
-            // Resolve the dev_path: prefer overlay (exact path from manifest YAML),
-            // fall back to deriving from bus id by convention (i2c0 → /dev/i2c-0).
-            let dev_path = self
-                .overlay
-                .as_ref()
-                .and_then(|ov| ov.buses.get(bus_id))
-                .and_then(|b| b.dev_path.clone())
+            // Resolve the dev_path: the manifest's exact path, else derived
+            // from the bus id by convention (i2c0 → /dev/i2c-0).
+            let dev_path = bus
+                .dev_path
+                .clone()
                 .unwrap_or_else(|| manifest_bus_dev_path(bus_id));
 
             inits.push(quote! {
@@ -109,7 +94,7 @@ impl ChipBackend for LinuxChipBackend {
 
         // Chip-select lines for SPI devices: one `<id>_cs` GPIO output per
         // device, booted deasserted (high) so no chip is selected at start.
-        // The chip comes from the device's Linux overlay (`gpio_chip`).
+        // The chip comes from the device's `gpio_chip`.
         for device in &manifest.devices {
             let on_spi = manifest
                 .buses
@@ -121,11 +106,9 @@ impl ChipBackend for LinuxChipBackend {
             let Some(&cs_pin) = device.pins.get("cs") else {
                 continue; // validation requires the `cs` pin
             };
-            let gpio_chip = self
-                .overlay
-                .as_ref()
-                .and_then(|ov| ov.device(&device.id))
-                .and_then(|d| d.gpio_chip.clone())
+            let gpio_chip = device
+                .gpio_chip
+                .clone()
                 .unwrap_or_else(|| DEFAULT_GPIO_CHIP.to_string());
             let cs_field = snake_ident(&format!("{}_cs", device.id));
             let cs_line = u32::from(cs_pin);
@@ -156,9 +139,9 @@ impl ChipBackend for LinuxChipBackend {
             let Some(&out_pin) = device.pins.get("out") else {
                 continue; // validation requires the `out` pin
             };
-            let overlay_device = self.overlay.as_ref().and_then(|ov| ov.device(&device.id));
-            let gpio_chip = overlay_device
-                .and_then(|d| d.gpio_chip.clone())
+            let gpio_chip = device
+                .gpio_chip
+                .clone()
                 .unwrap_or_else(|| DEFAULT_GPIO_CHIP.to_string());
             let field = snake_ident(&format!("{}_out", device.id));
 
@@ -186,8 +169,9 @@ impl ChipBackend for LinuxChipBackend {
                     });
                 }
                 OutputMode::Pwm => {
-                    let pwm_chip = overlay_device
-                        .and_then(|d| d.pwm_chip.clone())
+                    let pwm_chip = device
+                        .pwm_chip
+                        .clone()
                         .unwrap_or_else(|| DEFAULT_PWM_CHIP.to_string());
                     let channel = u32::from(out_pin);
                     // freq_khz is declared as a small integer in descriptors
@@ -299,9 +283,7 @@ impl ChipBackend for LinuxChipBackend {
     }
 
     fn validate_manifest(&self, manifest: &BoardManifest) -> Vec<ValidationError> {
-        // When the overlay is present, use it for path validation.
-        // When absent (test/structural-only context), just check SPI rejection.
-        validate_linux_manifest_with_overlay(manifest, self.overlay.as_ref())
+        validate_linux_manifest(manifest)
     }
 
     // ── Runtime hooks: delegate to scaffold::tokio ────────────────────────────
@@ -526,85 +508,65 @@ pub fn emit_linux_tap_handoff() -> TokenStream {
     }
 }
 
-/// Validate a Linux manifest.
-///
-/// `yaml` may be `Some(raw_yaml_str)` so the Linux overlay fields (like
-/// `dev_path`) can be checked; pass `None` to skip overlay checks (used in
-/// unit tests that work with a pre-parsed `BoardManifest`).
-pub fn validate_linux_manifest(
-    manifest: &BoardManifest,
-    yaml: Option<&str>,
-) -> Vec<ValidationError> {
-    let overlay = yaml.and_then(|y| parse_linux_overlay(y).ok());
-    validate_linux_manifest_with_overlay(manifest, overlay.as_ref())
-}
-
-/// Validate a Linux manifest using a pre-parsed overlay (may be `None`).
-pub fn validate_linux_manifest_with_overlay(
-    manifest: &BoardManifest,
-    overlay: Option<&LinuxManifestOverlay>,
-) -> Vec<ValidationError> {
+/// Validate a Linux manifest: every bus names its device node and the chip
+/// names on devices are well-formed.
+pub fn validate_linux_manifest(manifest: &BoardManifest) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    // SR-4: validate /dev/i2c-* paths when overlay is available.
-    if let Some(ov) = overlay {
-        for (bus_id, bus) in &manifest.buses {
-            if bus.transport != BusTransport::I2c {
-                continue;
+    // SR-4: validate /dev/i2c-* paths.
+    for (bus_id, bus) in &manifest.buses {
+        if bus.transport != BusTransport::I2c {
+            continue;
+        }
+        match bus.dev_path.as_deref() {
+            None => {
+                errors.push(ValidationError::new(format!(
+                    "bus `{bus_id}`: missing `dev_path` — Linux I2C buses require \
+                     a `dev_path: /dev/i2c-N` field in the manifest"
+                )));
             }
-            let overlay_bus = ov.buses.get(bus_id);
-            let dev_path_opt = overlay_bus.and_then(|b| b.dev_path.as_deref());
-            match dev_path_opt {
-                None => {
-                    errors.push(ValidationError::new(format!(
-                        "bus `{bus_id}`: missing `dev_path` — Linux I2C buses require \
-                         a `dev_path: /dev/i2c-N` field in the manifest"
-                    )));
-                }
-                Some(path) => {
-                    if let Err(e) = validate_i2c_dev_path(path) {
-                        errors.push(ValidationError::new(format!("bus `{bus_id}`: {e}")));
-                    }
+            Some(path) => {
+                if let Err(e) = validate_i2c_dev_path(path) {
+                    errors.push(ValidationError::new(format!("bus `{bus_id}`: {e}")));
                 }
             }
         }
+    }
 
-        // SPI buses require an explicit spidev node (no naming convention to
-        // fall back on, unlike i2c-N).
-        for (bus_id, bus) in &manifest.buses {
-            if bus.transport != BusTransport::Spi {
-                continue;
+    // SPI buses require an explicit spidev node (no naming convention to
+    // fall back on, unlike i2c-N).
+    for (bus_id, bus) in &manifest.buses {
+        if bus.transport != BusTransport::Spi {
+            continue;
+        }
+        match bus.dev_path.as_deref() {
+            None => {
+                errors.push(ValidationError::new(format!(
+                    "bus `{bus_id}`: missing `dev_path` — Linux SPI buses require \
+                     a `dev_path: /dev/spidevB.C` field in the manifest"
+                )));
             }
-            match ov.buses.get(bus_id).and_then(|b| b.dev_path.as_deref()) {
-                None => {
-                    errors.push(ValidationError::new(format!(
-                        "bus `{bus_id}`: missing `dev_path` — Linux SPI buses require \
-                         a `dev_path: /dev/spidevB.C` field in the manifest"
-                    )));
-                }
-                Some(path) => {
-                    if let Err(e) = validate_spi_dev_path(path) {
-                        errors.push(ValidationError::new(format!("bus `{bus_id}`: {e}")));
-                    }
+            Some(path) => {
+                if let Err(e) = validate_spi_dev_path(path) {
+                    errors.push(ValidationError::new(format!("bus `{bus_id}`: {e}")));
                 }
             }
         }
+    }
 
-        // Device overlay checks: `gpio_chip` / `pwm_chip` must be well-formed
-        // when present. Devices without an overlay entry fall back to the
-        // defaults, so nothing is required here.
-        for overlay_device in &ov.devices {
-            let id = &overlay_device.id;
-            if let Some(chip) = overlay_device.gpio_chip.as_deref()
-                && let Err(e) = validate_gpio_chip_path(chip)
-            {
-                errors.push(ValidationError::new(format!("device `{id}`: {e}")));
-            }
-            if let Some(chip) = overlay_device.pwm_chip.as_deref()
-                && let Err(e) = validate_pwm_chip_name(chip)
-            {
-                errors.push(ValidationError::new(format!("device `{id}`: {e}")));
-            }
+    // `gpio_chip` / `pwm_chip` must be well-formed when present; a device
+    // without them falls back to the defaults.
+    for device in &manifest.devices {
+        let id = &device.id;
+        if let Some(chip) = device.gpio_chip.as_deref()
+            && let Err(e) = validate_gpio_chip_path(chip)
+        {
+            errors.push(ValidationError::new(format!("device `{id}`: {e}")));
+        }
+        if let Some(chip) = device.pwm_chip.as_deref()
+            && let Err(e) = validate_pwm_chip_name(chip)
+        {
+            errors.push(ValidationError::new(format!("device `{id}`: {e}")));
         }
     }
 
@@ -723,7 +685,7 @@ pub fn validate_linux_manifest_from_yaml(
 ) {
     match pipeline_backend_api::manifest::parse_manifest(yaml) {
         Ok(manifest) => {
-            let errs = validate_linux_manifest(&manifest, Some(yaml));
+            let errs = validate_linux_manifest(&manifest);
             (Ok(manifest), errs)
         }
         Err(e) => (Err(e), vec![]),
@@ -731,21 +693,7 @@ pub fn validate_linux_manifest_from_yaml(
 }
 
 impl LinuxChipBackend {
-    /// Create a backend with no overlay (structural validation only).
     pub fn new() -> Self {
-        Self { overlay: None }
-    }
-
-    /// Create a backend with an overlay parsed from the manifest YAML.
-    pub fn with_overlay(overlay: LinuxManifestOverlay) -> Self {
-        Self {
-            overlay: Some(overlay),
-        }
-    }
-}
-
-impl Default for LinuxChipBackend {
-    fn default() -> Self {
-        Self::new()
+        Self
     }
 }

@@ -19,7 +19,7 @@ The configuration file for MQTT bridge has the following fields.
 - `broker_url` - **Required.** Alias: `broker`. MQTT broker URL.
 - `ingress` - **Required.** Alias: `ingresses`. List of inbound subscriptions - each MQTT message received on a subscribed topic is published as a swarm event.
   - `id` - **Required.** The swarm event name published when a message arrives on this topic.
-  - `topic` - **Required.** MQTT topic to subscribe to.
+  - `topic` - **Required.** MQTT topic filter to subscribe to. Wildcards follow MQTT semantics: `+` matches one level (`plant/+/temp`), `#` matches the rest, including nothing (`site/#` receives `site` as well as `site/x/y`). Topics starting with `$` only match a filter whose first level is spelled out (`$SYS/+`, not `+/+` or `#`).
   - `qos` *(optional)* - QoS level. Accepts `0`, `1` or `2`. Defaults to `0`.
   - `payload` - **Required.** Maps the MQTT message payload to a field in the event type. Uses the `${type:name}` format - `name` is a field name in the event type, `type` is the encoding (`string`, `json`, or `bytes`). See [Template Syntax](#template-syntax).
 - `egress` - **Required.** Alias: `egresses`. List of outbound publishers - each entry defines a command the bridge cell accepts and triggers as an MQTT publish.

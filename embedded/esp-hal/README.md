@@ -89,11 +89,11 @@ the output directory.
 
 The flags it encodes per target are:
 
-| SoC       | `--cpu-features` | `cargo` target                                             |
-|-----------|-----------------|------------------------------------------------------------|
-| ESP32-C5  | `+i,+m,+a,+c`   | `--target riscv32imac-unknown-none-elf --features esp32c5` |
-| ESP32-C6  | `+i,+m,+a,+c`   | `--target riscv32imac-unknown-none-elf --features esp32c6` |
-| ESP32-C61 | `+i,+m,+a,+c`   | `--target riscv32imac-unknown-none-elf --features esp32c61`|
+| SoC       | `--cpu-features`                      | `cargo` target                                              |
+|-----------|---------------------------------------|-------------------------------------------------------------|
+| ESP32-C5  | `+i,+m,+a,+c,+unaligned-scalar-mem`   | `--target riscv32imac-unknown-none-elf --features esp32c5`  |
+| ESP32-C6  | `+i,+m,+a,+c,+unaligned-scalar-mem`   | `--target riscv32imac-unknown-none-elf --features esp32c6`  |
+| ESP32-C61 | `+i,+m,+a,+c,+unaligned-scalar-mem`   | `--target riscv32imac-unknown-none-elf --features esp32c61` |
 
 ### Tuning the firmware / AOT flash split
 
