@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::sessions::Secret;
+
 /// A message from a web client into the gateway.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -46,8 +48,12 @@ pub enum ServerMessage {
     /// Sent once when a session is established; carries the session's SRI so
     /// the client knows the identity cells will address replies to.
     Ready {
-        /// The session's SRI.
+        /// The session's SRI. Public: cells see it as the sender.
         session: String,
+        /// The HTTP session token the client sends as `X-Gateway-Session`.
+        /// `None` on `WebSocket`, which needs none.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        token: Option<Secret>,
     },
     /// A command a cell sent back to this session (a "reply").
     Command {
@@ -82,5 +88,36 @@ mod b64 {
         STANDARD
             .decode(encoded.as_bytes())
             .map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn ready_token_is_optional() -> Result<(), serde_json::Error> {
+        let without = ServerMessage::Ready {
+            session: "s".to_owned(),
+            token: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&without)?,
+            json!({"type": "ready", "session": "s"})
+        );
+
+        let token = Secret::random();
+        let with = ServerMessage::Ready {
+            session: "s".to_owned(),
+            token: Some(token.clone()),
+        };
+        assert_eq!(
+            serde_json::to_value(&with)?,
+            json!({"type": "ready", "session": "s", "token": token.expose()})
+        );
+
+        Ok(())
     }
 }
