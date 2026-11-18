@@ -29,9 +29,9 @@ Before writing code, gather the hardware facts the port depends on. For the C61 
 - **ISA / cargo target triple.** RISC-V ISA extensions determine the target triple. C3 is `riscv32imc`
   (no atomics → `riscv32imc-unknown-none-elf`); C6 and C61 are `riscv32imac` (with atomics →
   `riscv32imac-unknown-none-elf`). This also decides the AOT compiler `--cpu-features` string (see
-  [Build & AOT tooling](#10-build--aot-tooling)) and the `ArtifactTarget` your cells are keyed under — AOT artifacts
-  are shared across every chip of the same ISA, so a chip whose ISA is already supported ships **no new artifact
-  variant** (see [Target / artifact enums](#8-target--artifact-enums)).
+  [Build & AOT tooling](#10-build--aot-tooling)) and the `ArtifactPlatform` your cells are keyed under — AOT artifacts
+  are shared across every chip of the same ISA that supports misaligned access in hardware, so such a chip ships **no
+  new artifact variant** (see [Target / artifact enums](#8-target--artifact-enums)).
 - **MMU geometry.** Max page number, page size register layout, valid-bit position, and the IBUS/DBUS base addresses.
   These differ per chip and are the crux of the MMU driver.
 - **PAC crate. (maybe required for some chips)** Sometimes, the peripherals that are needed to operate on the MMU are
@@ -186,9 +186,10 @@ The host side must learn the target so cells can be built, tagged, placed, and d
 additions — the compiler's exhaustiveness checking points you at every match arm that needs a new branch. Add the
 variant, then follow the errors.
 
-> **Exception: `ArtifactTarget` is keyed by ISA class, not by chip.** The AOT bytes depend only on the
-> `--cpu-features`, so all `riscv32imac` chips (C6, C61, …) share one artifact. A chip whose ISA already has a variant
-> (`Riscv32imc` / `Riscv32imac`) adds **no** `ArtifactTarget` variant, so exhaustiveness will *not* flag the sites that
+> **Exception: `ArtifactPlatform` is keyed by ISA class, not by chip.** The AOT bytes depend only on the
+> `--cpu-features`, so all `riscv32imac` chips (C6, C61, …) share one artifact, provided the chip also supports
+> misaligned access in hardware (see [Build & AOT tooling](#10-build--aot-tooling)). A chip whose ISA already has a variant
+> (`Riscv32imc` / `Riscv32imac`) adds **no** `ArtifactPlatform` variant, so exhaustiveness will *not* flag the sites that
 > consume it — you route the new chip into the existing ISA variant by hand. `grep` for the ISA name
 > (`Riscv32imac`) to find them.
 
@@ -196,13 +197,15 @@ variant, then follow the errors.
 
 - [`swarm/myrmic-tags/src/lib.rs`](../../swarm/myrmic-tags/src/lib.rs) — add `Target::Esp32*`, its tag list, and the
   `TryFrom<&str>` arm. The tag list carries **both** the chip name and the ISA class
-  (`["esp32*", "esp32", "riscv32im*", "embedded"]`) — the orchestrator resolves the device's `ArtifactTarget` from the
+  (`["esp32*", "esp32", "riscv32im*", "embedded"]`) — the orchestrator resolves the device's `ArtifactPlatform` from the
   ISA tag, so it must be present.
-- [`swarm/cell-protocol/src/lib.rs`](../../swarm/cell-protocol/src/lib.rs) — `ArtifactTarget` is keyed by **ISA class**,
+- [`swarm/cell-protocol/src/lib.rs`](../../swarm/cell-protocol/src/lib.rs) — `ArtifactPlatform` is keyed by **ISA class**,
   not by chip (all `riscv32imac` chips share one artifact). If your chip's ISA already has a variant (`Riscv32imc` for
   C3; `Riscv32imac` for C6/C61) you add **no new variant** — just extend the `FromStr` arm so the chip's names
   (`"esp32*"` and `"esp32_*"`) resolve to the existing ISA variant. Only a chip that introduces a *new* ISA needs a new
-  `Riscv32*` variant, with its `as_str()` returning the ISA string (e.g. `"riscv32imac"`).
+  `Riscv32*` variant, with its `as_str()` returning the ISA string (e.g. `"riscv32imac"`). A chip that fails the
+  misaligned-access check in [Build & AOT tooling](#10-build--aot-tooling) needs a new variant too, even with a known
+  ISA.
 - [`swarm/cell-protocol/src/exec_runtime.rs`](../../swarm/cell-protocol/src/exec_runtime.rs) — add a
   `RuntimeKind::Esp32*` variant and map `Target::Esp32* → RuntimeKind::Esp32*` (a target known to myrmic but without a
   deploy path maps to `RuntimeKind::Unknown` instead — that's the fallback for chips the orchestrator can't yet deploy
@@ -217,8 +220,8 @@ Linux) path:
   `=> deploy_wasm_cell_embedded(...)` arm.
 - `event_loop/cells/undeploy/mod.rs` — same for `undeploy_wasm_cell_embedded`.
 - `event_loop/cells/deploy/placement/preprocessing/mod.rs` — the `artifact_rejection` arm rejects placement unless the
-  cell ships an AOT artifact for the runtime's **ISA class** (`ArtifactTarget::Riscv32im*`). Chips of the same ISA share
-  one arm — e.g. `RuntimeKind::Esp32c6 | RuntimeKind::Esp32c61 => … ArtifactTarget::Riscv32imac`. If your chip's ISA is
+  cell ships an AOT artifact for the runtime's **ISA class** (`ArtifactPlatform::Riscv32im*`). Chips of the same ISA share
+  one arm — e.g. `RuntimeKind::Esp32c6 | RuntimeKind::Esp32c61 => … ArtifactPlatform::Riscv32imac`. If your chip's ISA is
   already handled, add its `RuntimeKind` to the existing arm's pattern rather than writing a new arm.
 
 ### 10. Build & AOT tooling
@@ -229,6 +232,29 @@ Linux) path:
   `Target::ESP32*` and put it in the correct `--cpu-features` group. The C61 groups with C5/C6 (`riscv32`, `ilp32`,
   `+i,+m,+a,+c`); the C3 is the `imc` group without atomics. Getting the CPU features wrong produces an AOT that links
   but faults at runtime.
+
+> **Misaligned access: verify every new chip, even one whose ISA is already supported.** The `riscv32imac` group
+> (C5/C6/C61) also passes `+unaligned-scalar-mem`, which lets LLVM turn wasm loads and stores into single
+> `lw`/`lh`/`lhu`/`sw`/`sh` instructions instead of byte sequences. Wasm alignment is only a hint, so these
+> instructions can hit misaligned addresses at runtime, e.g. when a cell parses packed or byte-buffer data. This is
+> only correct because the C5, C6 and C61 perform misaligned word loads and stores in hardware, measured in
+> [#87](https://github.com/peeriot/myrmic/issues/87) at offsets +1, +2, +3 and across a cache line, in SRAM and PSRAM.
+> Misaligned-access support is an implementation choice of the core, not part of the ISA string, so a chip that
+> matches `riscv32imac` gives no guarantee. On a core without it, the best case is a trap on misaligned access, which
+> crashes the cell loudly. The worst case is a core that silently ignores the low address bits or otherwise returns
+> wrong data, which corrupts cell memory with no error at all.
+>
+> Before routing a chip to the shared `riscv32imac` artifact, run a native test on the board that does
+> `lw`/`lh`/`lhu`/`sw`/`sh` at offsets +1, +2 and +3, across a cache-line boundary, and on both SRAM and PSRAM, and
+> checks the values read back byte by byte. Also compare misaligned and aligned timing: a core that traps and
+> emulates the access in a firmware handler passes the value check but is far slower than byte accesses. A chip that
+> fails cannot share the `riscv32imac` artifact, because that artifact is built with the flag. It needs its own
+> `aot-compiler` group without `+unaligned-scalar-mem` and its own artifact platform (`ArtifactPlatform` in
+> `cell-protocol`, `PlatformFamily` in `myrmic-build`), even though its ISA is `riscv32imac`.
+>
+> The flag name is LLVM's and has changed across LLVM releases. LLVM ignores an unknown `+feature` with only a
+> warning, so when bumping the pinned `wamrc` version, check that the flag is still accepted and that AOT sizes still
+> shrink.
 
 ### 11. Firmware runtime identity
 
@@ -268,10 +294,11 @@ Firmware:
 
 Swarm / tooling:
 
-- [ ] `myrmic-tags` (chip tag **+ ISA tag**), `cell-protocol` `RuntimeKind` enum (+ `ArtifactTarget` only if the chip
-  introduces a new ISA)
+- [ ] `myrmic-tags` (chip tag **+ ISA tag**), `cell-protocol` `RuntimeKind` enum (+ `ArtifactPlatform` only if the chip
+  introduces a new ISA or lacks hardware misaligned access)
 - [ ] `sorg-orchestration` deploy / undeploy / placement arms
 - [ ] `myrmic-build` + `aot-compiler` target mapping & CPU features
+- [ ] Misaligned-access check on the board before sharing the `riscv32imac` artifact (`+unaligned-scalar-mem`)
 - [ ] `cell-db-service` runtime identity (`myrmic.rs`, `deploy.rs`)
 - [ ] HIL target helpers, in the CI repository that owns the boards
 
