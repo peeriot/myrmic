@@ -133,29 +133,57 @@ Now the page. Create `dashboard/assets/index.html` with:
     }
 
     // ---- writing: commands to the roots through the gateway's API path ----
-    // GET /greenhouse/api opens a session; its first message carries the
-    // session id, which every POST must present.
-    let session = null;
-    const stream = new EventSource('/greenhouse/api');
-    stream.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'ready') {
-        session = msg.session;
-        document.getElementById('status').textContent = 'connected';
-      }
-    };
-    stream.onerror = () => { document.getElementById('status').textContent = 'gateway unreachable'; };
+    // GET /greenhouse/api opens a session. Its `ready` message carries the
+    // session token every POST presents; the gateway also sets a cookie that
+    // ties the token to this browser, and fetch sends it along.
+    let token = null;
+    let reopened = false;
+    let stream = null;
+
+    function connect() {
+      if (stream) stream.close();
+      stream = new EventSource('/greenhouse/api');
+      stream.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        // Take the token from every `ready`: after an automatic reconnect
+        // the gateway may have opened a new session.
+        if (msg.type === 'ready') {
+          token = msg.token;
+          document.getElementById('status').textContent = 'connected';
+        }
+      };
+      stream.onerror = () => { document.getElementById('status').textContent = 'gateway unreachable'; };
+    }
+    connect();
 
     async function command(target, name, payload) {
-      if (!session) return;
+      if (!token) {
+        // Waiting for the new `ready` after a reopen: say so instead of dropping silently.
+        document.getElementById('status').textContent = 'reconnecting - send it again in a moment';
+        return;
+      }
       const res = await fetch('/greenhouse/api', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Gateway-Session': session },
+        headers: { 'Content-Type': 'application/json', 'X-Gateway-Session': token },
         // The payload is JSON, carried as base64 inside the envelope.
         body: JSON.stringify({ type: 'command', sri: target, name, payload: btoa(JSON.stringify(payload)) }),
       });
-      document.getElementById('status').textContent =
-        res.ok ? `sent ${name} to ${target}` : `${name} failed: ${await res.text()}`;
+      const status = document.getElementById('status');
+      if (res.status === 401) {
+        // Session gone: the command is dropped. Reopen once; a second 401
+        // in a row means cookies are blocked, so stop instead of looping.
+        if (!reopened) {
+          reopened = true;
+          token = null;
+          connect();
+          status.textContent = `${name} dropped, reconnecting - send it again`;
+        } else {
+          status.textContent = 'session refused - are cookies blocked for this site?';
+        }
+        return;
+      }
+      if (res.ok) reopened = false;
+      status.textContent = res.ok ? `sent ${name} to ${target}` : `${name} failed: ${await res.text()}`;
     }
 
     document.getElementById('add-bed').onsubmit = (e) => {
@@ -181,8 +209,8 @@ Now the page. Create `dashboard/assets/index.html` with:
 
 The reading half is the Smart Greenhouse loop, polling `beds.json` every two seconds. The writing half is new, and worth following once:
 
-1. `GET /greenhouse/api` opens a stream. Its first message is `{"type":"ready","session":"..."}`: the gateway has created a **session** for this browser tab. While the stream is open, the session is alive.
-2. A command is a `POST` to the same path, with the session id in the `X-Gateway-Session` header and a small JSON envelope: the target cell as an SRN, the command name, and the payload as base64. The payload itself is what `myrmic send` would take - here the JSON string `"sectorA"`.
+1. `GET /greenhouse/api` opens a stream. Its first message is `{"type":"ready","session":"...","token":"..."}`: the gateway has created a **session** for this browser tab. `session` is the identity cells reply to; `token` is the secret the page sends back. The response also sets a `myrmic_gw` cookie that ties the token to this browser. While the stream is open, the session is alive.
+2. A command is a `POST` to the same path, with the token in the `X-Gateway-Session` header (the browser adds the cookie by itself) and a small JSON envelope: the target cell as an SRN, the command name, and the payload as base64. The payload itself is what `myrmic send` would take - here the JSON string `"sectorA"`. If the session is gone, the `POST` gets `401`: the page drops that command and reopens the stream once for a new session.
 3. The gateway resolves the SRN, checks that the cell exists, and puts the command in its mailbox. The response is `202 Accepted`; the command runs in the swarm, and the page learns the outcome the same way anyone does - by watching the swarm change.
 
 The page names its targets `bed-root` and `sensor-root`. It can, because they are roots with fixed names from `app_specs.yml`; it never handles a UUID.

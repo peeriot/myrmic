@@ -24,7 +24,7 @@ use std::time::Duration;
 use anyhow::{Context as _, anyhow, bail};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Redirect, Response};
 use cell_protocol::{PlacementEntry, PlacementKind, Sri};
@@ -32,15 +32,14 @@ use db_client::v1::models::{Scope, path_resolve};
 use futures_util::{SinkExt, Stream, StreamExt, stream};
 use myrmic_common::cells::{Command as CellCommand, Event as CellEvent};
 use serde::Deserialize;
-use sorg_common::gateway_config::{AssetConfig, Fallback};
+use sorg_common::gateway_config::{AssetConfig, Fallback, GatewayRoute};
 use sorg_common::{Mailbox, claim_placement, placement_exists, remove_placement};
-use tokio::time::Instant;
-use tower_sessions::cookie::time;
+use tower_sessions::cookie::{Cookie, SameSite, time};
 use uuid::Uuid;
 use zenoh::Session;
 
 use crate::api::{ClientMessage, ServerMessage};
-use crate::sessions::Sessions;
+use crate::sessions::{Secret, Sessions};
 
 pub mod api;
 pub mod oidc;
@@ -60,6 +59,10 @@ const HTTP_SESSION_GRACE: Duration = Duration::from_secs(30);
 
 /// Maximum accepted body size for a `POST` to the HTTP cell API (1 `MiB`).
 const MAX_HTTP_BODY: usize = 1 << 20;
+
+/// How many `myrmic_gw` cookie values a request may present; the rest are
+/// ignored. Bounds the work done under the `Sessions` lock.
+const MAX_PRESENTED_BINDINGS: usize = 8;
 
 /// Operator-provided configuration for a gateway process.
 ///
@@ -172,6 +175,8 @@ struct AppState {
 
     anonymous: bool,
 
+    over_https: bool,
+
     http_client: reqwest::Client,
 }
 
@@ -271,6 +276,7 @@ where
         sessions,
         routing,
         anonymous,
+        over_https,
         http_client,
     };
 
@@ -285,7 +291,6 @@ where
         .with_state(state)
         .layer(sessions)
         .layer(DefaultBodyLimit::max(4096));
-    // .layer(CorsLayer::permissive())
     // .layer(TraceLayer::new_for_http());
 
     let result = axum::serve(listener, app)
@@ -387,10 +392,10 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
     // POST sends one fire-and-forget command/event.
     if route.api.as_deref().is_some_and(|p| path_is_under(&rel, p)) {
         if method == Method::GET || method == Method::HEAD {
-            return sse_stream(state, req).await;
+            return sse_stream(state, &route, req).await;
         }
         if method == Method::POST {
-            return http_send(state, route.owner, owner_only, req).await;
+            return http_send(state, &route, owner_only, req).await;
         }
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed\n").into_response();
     }
@@ -593,6 +598,7 @@ async fn handle_ws(state: AppState, owner: Sri, owner_only: bool, socket: WebSoc
     // the address replies are delivered to.
     let ready = serde_json::to_string(&ServerMessage::Ready {
         session: session_uuid.to_string(),
+        token: None,
     })
     .unwrap_or_default();
     if sink.send(Message::Text(ready.into())).await.is_err() {
@@ -766,17 +772,34 @@ fn session_replies(session: Session, sri: Sri) -> impl Stream<Item = ServerMessa
 ///
 /// A fresh connection mints a new session SRI (registered as a placeholder cell
 /// so replies can be delivered) and announces it as the first `Ready` event. A
-/// connection carrying a known token — via `?token=` or the `Last-Event-ID`
-/// header that `EventSource` resends on auto-reconnect — re-attaches to the
-/// existing session within its grace window instead. The client echoes the
-/// session id in `X-Gateway-Session` on its `POST`s.
-async fn sse_stream(state: AppState, req: Request) -> Response {
-    let session_uuid = match reattach_token(&req) {
-        Some(id) if sessions::attach_stream(&state.sessions, id) => {
-            tracing::debug!("http session reattached: {id}");
-            id
+/// connection carrying the token in the `Last-Event-ID` header that
+/// `EventSource` resends on auto-reconnect re-attaches to the existing session
+/// within its grace window instead, but only when it also presents the
+/// session's binding cookie on the mount and for the owner it was minted on.
+/// The client echoes the token, not the session id, in `X-Gateway-Session` on
+/// its `POST`s.
+async fn sse_stream(state: AppState, route: &GatewayRoute, req: Request) -> Response {
+    let presented = presented_bindings(&req, cookie_name(state.over_https));
+    let reattached = reattach_token(&req).and_then(|token| {
+        sessions::attach_stream(
+            &state.sessions,
+            &token,
+            &presented,
+            &route.mount,
+            route.owner,
+        )
+    });
+    let mut set_cookie = None;
+    let (session_uuid, token) = match reattached {
+        Some((session_uuid, token)) => {
+            tracing::debug!(
+                "http session reattached: {} on {}",
+                Sri::from_uuid(session_uuid),
+                route.mount
+            );
+            (session_uuid, token)
         }
-        _ => {
+        None => {
             let id = Uuid::new_v4();
             let sri = Sri::from_uuid(id);
             let gen_id = cell_protocol::Gen::from_timestamp(&state.session.new_timestamp());
@@ -793,20 +816,28 @@ async fn sse_stream(state: AppState, req: Request) -> Response {
             {
                 tracing::warn!("failed to register http session {id}: {err}");
             }
-            sessions::register(&state.sessions, id, gen_id);
-            tracing::debug!("http session up: {id}");
-            id
+            let (token, binding) = sessions::register(
+                &state.sessions,
+                id,
+                gen_id,
+                &presented,
+                &route.mount,
+                route.owner,
+            );
+            set_cookie = Some(binding);
+            tracing::debug!("http session up: {sri} on {}", route.mount);
+            (id, token)
         }
     };
 
     let session_sri = Sri::from_uuid(session_uuid);
-    let id = session_uuid.to_string();
+    let id = token.expose().to_owned();
 
     // Decrements the stream count (and arms the grace countdown) when the client
     // disconnects — the guard is dropped with the response stream below.
     let guard = StreamGuard {
         sessions: state.sessions.clone(),
-        id: session_uuid,
+        token: token.clone(),
     };
 
     let ready = stream::once({
@@ -814,7 +845,8 @@ async fn sse_stream(state: AppState, req: Request) -> Response {
         async move {
             Ok::<Event, Infallible>(sse_event(
                 &ServerMessage::Ready {
-                    session: id.clone(),
+                    session: session_uuid.to_string(),
+                    token: Some(token),
                 },
                 &id,
             ))
@@ -830,32 +862,35 @@ async fn sse_stream(state: AppState, req: Request) -> Response {
         |(mut body, guard)| async move { body.next().await.map(|item| (item, (body, guard))) },
     );
 
-    Sse::new(body)
+    let mut response = Sse::new(body)
         .keep_alive(KeepAlive::default())
-        .into_response()
+        .into_response();
+    if let Some(binding) = set_cookie {
+        match HeaderValue::try_from(binding_cookie(&binding, state.over_https)) {
+            Ok(value) => {
+                response.headers_mut().append(header::SET_COOKIE, value);
+            }
+            Err(err) => tracing::warn!("binding cookie is not a valid header value: {err}"),
+        }
+    }
+
+    response
 }
 
 /// Sends one `POST`ed [`ClientMessage`] into the swarm as a fire-and-forget
 /// command/event, stamped with the caller's session SRI so cells can reply to
 /// it, and addressed to `owner` when the message names no target. `owner_only`
 /// limits commands to `owner` and refuses client events (an anonymous mount).
-async fn http_send(state: AppState, owner: Sri, owner_only: bool, req: Request) -> Response {
-    let Some(session_uuid) = req
-        .headers()
-        .get("x-gateway-session")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| Uuid::parse_str(value).ok())
-    else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "missing or malformed X-Gateway-Session header\n",
-        )
-            .into_response();
+async fn http_send(
+    state: AppState,
+    route: &GatewayRoute,
+    owner_only: bool,
+    req: Request,
+) -> Response {
+    let session_uuid = match authorize(&state, &route.mount, route.owner, &req) {
+        Ok(session_uuid) => session_uuid,
+        Err(refused) => return refused,
     };
-
-    if !sessions::touch(&state.sessions, session_uuid) {
-        return (StatusCode::UNAUTHORIZED, "unknown or expired session\n").into_response();
-    }
 
     let Ok(bytes) = axum::body::to_bytes(req.into_body(), MAX_HTTP_BODY).await else {
         return (StatusCode::BAD_REQUEST, "unable to read request body\n").into_response();
@@ -871,7 +906,15 @@ async fn http_send(state: AppState, owner: Sri, owner_only: bool, req: Request) 
         }
     };
 
-    match dispatch(&state.session, session_uuid, owner, owner_only, message).await {
+    match dispatch(
+        &state.session,
+        session_uuid,
+        route.owner,
+        owner_only,
+        message,
+    )
+    .await
+    {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
         Err(err) => {
             tracing::warn!("http session {session_uuid} dispatch failed: {err}");
@@ -889,6 +932,26 @@ async fn http_send(state: AppState, owner: Sri, owner_only: bool, req: Request) 
     }
 }
 
+/// Checks a `POST`'s session and returns the SRI to send as. Exactly one
+/// `X-Gateway-Session` header is accepted; every refusal is [`session_refused`].
+fn authorize(state: &AppState, mount: &str, owner: Sri, req: &Request) -> Result<Uuid, Response> {
+    let mut values = req.headers().get_all("x-gateway-session").iter();
+    let (Some(value), None) = (values.next(), values.next()) else {
+        return Err(session_refused());
+    };
+    let Ok(token) = value.to_str() else {
+        return Err(session_refused());
+    };
+    let presented = presented_bindings(req, cookie_name(state.over_https));
+
+    sessions::touch(&state.sessions, token, &presented, mount, owner).ok_or_else(session_refused)
+}
+
+/// The one response for every refused session.
+fn session_refused() -> Response {
+    (StatusCode::UNAUTHORIZED, "unknown or expired session\n").into_response()
+}
+
 /// Builds an SSE event for one `ServerMessage`. The `id` is the session token,
 /// so a browser resends it as `Last-Event-ID` on auto-reconnect. No `event:`
 /// name is set, so the browser dispatches it to the default `onmessage` handler
@@ -899,50 +962,75 @@ fn sse_event(message: &ServerMessage, id: &str) -> Event {
         .data(serde_json::to_string(message).unwrap_or_default())
 }
 
-/// Extracts a re-attach token from a stream request: the `?token=` query
-/// parameter takes precedence over the `Last-Event-ID` header.
-fn reattach_token(req: &Request) -> Option<Uuid> {
-    if let Some(query) = req.uri().query() {
-        for pair in query.split('&') {
-            if let Some(value) = pair.strip_prefix("token=")
-                && let Ok(id) = Uuid::parse_str(value)
-            {
-                return Some(id);
-            }
-        }
-    }
+/// Extracts a re-attach token from a stream request: the `Last-Event-ID`
+/// header that `EventSource` resends on auto-reconnect. Never the URL.
+fn reattach_token(req: &Request) -> Option<String> {
     req.headers()
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| Uuid::parse_str(value).ok())
+        .map(str::to_owned)
+}
+
+/// The browser binding cookie's name; `__Host-` pins it to this host over HTTPS.
+fn cookie_name(over_https: bool) -> &'static str {
+    if over_https {
+        "__Host-myrmic_gw"
+    } else {
+        "myrmic_gw"
+    }
+}
+
+/// The first `MAX_PRESENTED_BINDINGS` values of cookie `name`, in request
+/// order, across every `Cookie` header.
+fn presented_bindings(req: &Request, name: &str) -> Vec<String> {
+    req.headers()
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(Cookie::split_parse)
+        .filter_map(Result::ok)
+        .filter(|cookie| cookie.name() == name)
+        .map(|cookie| cookie.value().to_owned())
+        .take(MAX_PRESENTED_BINDINGS)
+        .collect()
+}
+
+/// The `Set-Cookie` value carrying `binding`. All attributes are constants.
+fn binding_cookie(binding: &Secret, over_https: bool) -> String {
+    Cookie::build((cookie_name(over_https), binding.expose().to_owned()))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Strict)
+        .secure(over_https)
+        .build()
+        .to_string()
 }
 
 /// Decrements a session's stream count when an SSE response is dropped, arming
 /// the grace countdown once the last stream goes away.
 struct StreamGuard {
     sessions: Sessions,
-    id: Uuid,
+    token: Secret,
 }
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
-        if let Ok(mut map) = self.sessions.lock()
-            && let Some(state) = map.get_mut(&self.id)
-        {
-            state.active_streams = state.active_streams.saturating_sub(1);
-            if state.active_streams == 0 {
-                state.deadline = Instant::now() + HTTP_SESSION_GRACE;
-            }
+        if let Ok(mut table) = self.sessions.lock() {
+            table.release_stream(&self.token);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::ops::Range;
+    use std::str::from_utf8;
 
-    use axum::body::Body;
+    use axum::body::{Body, BodyDataStream, to_bytes};
+    use cell_protocol::Gen;
+    use serde_json::Value;
     use sorg_common::gateway_config::GatewayRoute;
+    use tokio::time::{Instant, timeout};
 
     use super::*;
 
@@ -1017,44 +1105,25 @@ mod tests {
     }
 
     #[test]
-    fn reattach_token_sources() {
-        let want = Uuid::new_v4();
-
-        // `?token=` query parameter.
-        let req = axum::http::Request::builder()
-            .uri(format!("/chat/api?token={want}"))
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), Some(want));
-
-        // `Last-Event-ID` header — what EventSource resends on auto-reconnect.
-        let req = axum::http::Request::builder()
-            .uri("/chat/api")
-            .header("last-event-id", want.to_string())
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), Some(want));
-
-        // The query parameter wins over the header.
-        let other = Uuid::new_v4();
-        let req = axum::http::Request::builder()
-            .uri(format!("/chat/api?token={want}"))
-            .header("last-event-id", other.to_string())
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(reattach_token(&req), Some(want));
-
-        // Absent or malformed → no token (a fresh session is minted).
-        let req = axum::http::Request::builder()
-            .uri("/chat/api")
-            .body(Body::empty())
-            .unwrap();
+    fn reattach_token_sources() -> anyhow::Result<()> {
+        // `?token=` is ignored: a credential never comes from the URL.
+        let req = Request::builder()
+            .uri("/chat/api?token=abc")
+            .body(Body::empty())?;
         assert_eq!(reattach_token(&req), None);
-        let req = axum::http::Request::builder()
-            .uri("/chat/api?token=not-a-uuid")
-            .body(Body::empty())
-            .unwrap();
+
+        // `Last-Event-ID`, what EventSource resends on auto-reconnect.
+        let req = Request::builder()
+            .uri("/chat/api?token=other")
+            .header("last-event-id", "abc")
+            .body(Body::empty())?;
+        assert_eq!(reattach_token(&req), Some("abc".to_owned()));
+
+        // Absent: a fresh session is minted.
+        let req = Request::builder().uri("/chat/api").body(Body::empty())?;
         assert_eq!(reattach_token(&req), None);
+
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1066,8 +1135,6 @@ mod tests {
                 RouteConfig::default(),
             )])),
         };
-        let anonymous_route = anonymous_route();
-
         // (case, routing, --anonymous, method, path, expected status)
         let cases = [
             // No routing, no --anonymous: the whole mount is refused.
@@ -1149,7 +1216,7 @@ mod tests {
             // Routing entry marked anonymous: served.
             (
                 "anonymous route GET ws",
-                Some(anonymous_route),
+                Some(anonymous_route()),
                 false,
                 Method::GET,
                 "/chat/ws",
@@ -1159,12 +1226,350 @@ mod tests {
 
         for (case, routing, anonymous, method, path, expected) in cases {
             let state = AppState::for_test(routing, anonymous).await?;
-            let response = handler(State(state), request(method.clone(), path, None, "")?).await;
+            let response =
+                handler(State(state), request(method.clone(), path, None, None, "")?).await;
             assert_eq!(
                 response.status(),
                 expected,
                 "{case}: {method} {path}, --anonymous={anonymous}"
             );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn session_refusals_are_uniform() -> anyhow::Result<()> {
+        let state = AppState::for_test(None, true).await?;
+        let event = r#"{"type":"event","name":"x"}"#;
+        let seeded = Seeded::new(&state)?;
+        let post = |token: Option<&str>, cookie: Option<&str>, body: &str| {
+            request(Method::POST, "/chat/api", token, cookie, body)
+        };
+        let (token, cookie) = (seeded.token.expose(), Some(seeded.cookie.as_str()));
+
+        // Positive control: the valid header and cookie get past the check and
+        // refresh only the deadline of their own session.
+        let before = seeded.snapshot(&state);
+        let (status, set_cookie, _) = send(&state, post(Some(token), cookie, event)?).await?;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(set_cookie, None);
+        let touched = seeded.snapshot(&state);
+        assert!(touched[0] > before[0]);
+        assert_eq!(touched[1..], before[1..]);
+
+        let before = touched;
+        let mut twice = post(Some(token), cookie, event)?;
+        twice
+            .headers_mut()
+            .append("x-gateway-session", token.parse()?);
+        let mut refused = vec![
+            ("missing header".to_owned(), post(None, cookie, event)?),
+            ("two headers".to_owned(), twice),
+            (
+                "unknown token".to_owned(),
+                post(Some(Secret::random().expose()), cookie, event)?,
+            ),
+            (
+                "bad body, no header".to_owned(),
+                post(None, cookie, "not json")?,
+            ),
+            (
+                "mount mismatch".to_owned(),
+                post(
+                    Some(seeded.mount_token.expose()),
+                    Some(&seeded.mount_cookie),
+                    event,
+                )?,
+            ),
+            (
+                "owner mismatch".to_owned(),
+                post(
+                    Some(seeded.owner_token.expose()),
+                    Some(&seeded.owner_cookie),
+                    event,
+                )?,
+            ),
+            (
+                "binding mismatch".to_owned(),
+                post(Some(token), Some(&seeded.random_cookie), event)?,
+            ),
+            ("missing cookie".to_owned(), post(Some(token), None, event)?),
+            (
+                "empty cookie".to_owned(),
+                post(Some(token), Some("myrmic_gw="), event)?,
+            ),
+            (
+                "another session's binding".to_owned(),
+                post(Some(token), Some(&seeded.mount_cookie), event)?,
+            ),
+        ];
+        for (case, value) in seeded.hostile_values() {
+            let mut req = post(None, cookie, event)?;
+            req.headers_mut()
+                .insert("x-gateway-session", HeaderValue::from_bytes(&value)?);
+            refused.push((format!("header {case}"), req));
+        }
+
+        for (case, req) in refused {
+            let (status, set_cookie, body) = send(&state, req).await?;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{case}");
+            assert_eq!(set_cookie, None, "{case}");
+            assert_eq!(body, "unknown or expired session\n", "{case}");
+            assert_eq!(seeded.snapshot(&state), before, "{case}");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refused_last_event_id_mints_a_fresh_session() -> anyhow::Result<()> {
+        let state = AppState::for_test(None, true).await?;
+        let seeded = Seeded::new(&state)?;
+        let token = seeded.token.expose().as_bytes();
+        let (cookie, random) = (Some(&seeded.cookie), Some(&seeded.random_cookie));
+        let mut reattach = vec![
+            (
+                "missing cookie".to_owned(),
+                None,
+                token.to_vec(),
+                seeded.sri,
+            ),
+            (
+                "binding mismatch".to_owned(),
+                random,
+                token.to_vec(),
+                seeded.sri,
+            ),
+            (
+                "mount mismatch".to_owned(),
+                Some(&seeded.mount_cookie),
+                seeded.mount_token.expose().into(),
+                seeded.mount_sri,
+            ),
+            (
+                "owner mismatch".to_owned(),
+                Some(&seeded.owner_cookie),
+                seeded.owner_token.expose().into(),
+                seeded.owner_sri,
+            ),
+        ];
+        for (case, value) in seeded.hostile_values() {
+            reattach.push((format!("id {case}"), cookie, value, seeded.sri));
+        }
+        let before = seeded.snapshot(&state);
+
+        for (case, cookie, id, target) in reattach {
+            let opened =
+                open_stream(&state, "/chat/api", cookie.map(String::as_str), Some(&id)).await?;
+            assert_ne!(opened.session, target.to_string(), "{case}");
+            assert_eq!(seeded.snapshot(&state), before, "{case}");
+        }
+
+        // Positive control: the valid token and cookie do re-attach.
+        let opened =
+            open_stream(&state, "/chat/api", cookie.map(String::as_str), Some(token)).await?;
+        assert_eq!(opened.session, seeded.sri.to_string());
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sse_token_is_not_the_sri() -> anyhow::Result<()> {
+        let state = AppState::for_test(None, true).await?;
+        let owner = chat_owner()?;
+        let opened = open_stream(&state, "/chat/api", None, None).await?;
+        let cookie = cookie_pair(opened.set_cookie.as_deref())?;
+        let binding = cookie.trim_start_matches("myrmic_gw=").to_owned();
+
+        assert_eq!(opened.token.len(), 43);
+        assert!(Uuid::parse_str(&opened.token).is_err());
+        assert_ne!(opened.token, opened.session);
+        assert_eq!(opened.id, opened.token);
+        assert_eq!(
+            sessions::touch(&state.sessions, &opened.token, &[binding], "/chat", owner),
+            Some(Uuid::parse_str(&opened.session)?)
+        );
+
+        // The token gets past the check; the SRI does not.
+        let event = r#"{"type":"event","name":"x"}"#;
+        let (status, _, body) = send(
+            &state,
+            request(
+                Method::POST,
+                "/chat/api",
+                Some(&opened.token),
+                Some(&cookie),
+                event,
+            )?,
+        )
+        .await?;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(body.contains("failed to publish event:"), "{body}");
+        let (status, _, _) = send(
+            &state,
+            request(
+                Method::POST,
+                "/chat/api",
+                Some(&opened.session),
+                Some(&cookie),
+                event,
+            )?,
+        )
+        .await?;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reattach_keeps_session_and_token() -> anyhow::Result<()> {
+        let state = AppState::for_test(None, true).await?;
+        let first = open_stream(&state, "/chat/api", None, None).await?;
+        let cookie = cookie_pair(first.set_cookie.as_deref())?;
+        let again = open_stream(
+            &state,
+            "/chat/api",
+            Some(&cookie),
+            Some(first.token.as_bytes()),
+        )
+        .await?;
+
+        assert_eq!(again.session, first.session);
+        assert_eq!(again.token, first.token);
+        assert_eq!(again.set_cookie, None);
+        assert_eq!(
+            stream_state(&state, &first.token).map(|(streams, _)| streams),
+            Some(2)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn any_of_the_first_eight_cookies_matches() -> anyhow::Result<()> {
+        let state = AppState::for_test(None, true).await?;
+        let event = r#"{"type":"event","name":"x"}"#;
+        let (_, token, binding) = seed(&state, "/chat", chat_owner()?);
+        let right = format!("myrmic_gw={}", binding.expose());
+        let other = format!("myrmic_gw={}", Secret::random().expose());
+
+        for cookie in [format!("{other}; {right}"), format!("{right}; {other}")] {
+            let (status, _, _) = send(
+                &state,
+                request(
+                    Method::POST,
+                    "/chat/api",
+                    Some(token.expose()),
+                    Some(&cookie),
+                    event,
+                )?,
+            )
+            .await?;
+            assert_eq!(status, StatusCode::BAD_GATEWAY, "{cookie}");
+        }
+
+        // The right value at position 9 is never looked at.
+        let ninth = [other.as_str(); 8].join("; ") + "; " + &right;
+        let (status, _, _) = send(
+            &state,
+            request(
+                Method::POST,
+                "/chat/api",
+                Some(token.expose()),
+                Some(&ninth),
+                event,
+            )?,
+        )
+        .await?;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        Ok(())
+    }
+
+    #[test]
+    fn presented_bindings_keeps_the_first_eight() -> anyhow::Result<()> {
+        let values: Vec<String> = (1..=9).map(|n| format!("v{n}")).collect();
+        let pairs = |range: Range<usize>| {
+            values
+                .iter()
+                .skip(range.start)
+                .take(range.len())
+                .map(|value| format!("myrmic_gw={value}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        let req = Request::builder()
+            .header(header::COOKIE, format!("other=x; =; {}", pairs(0..5)))
+            .header(header::COOKIE, pairs(5..9))
+            .body(Body::empty())?;
+
+        let presented = presented_bindings(&req, "myrmic_gw");
+        assert_eq!(presented.len(), MAX_PRESENTED_BINDINGS);
+        assert_eq!(
+            presented,
+            values.iter().take(8).cloned().collect::<Vec<_>>()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn binding_cookie_attributes() -> anyhow::Result<()> {
+        let mut state = AppState::for_test(None, true).await?;
+        for (over_https, name) in [(false, "myrmic_gw"), (true, "__Host-myrmic_gw")] {
+            state.over_https = over_https;
+            let opened = open_stream(&state, "/chat/api", None, None).await?;
+            let cookie = Cookie::parse(
+                opened
+                    .set_cookie
+                    .clone()
+                    .ok_or_else(|| anyhow!("no Set-Cookie"))?,
+            )?;
+
+            assert_eq!(cookie.name(), name);
+            assert_eq!(cookie.value().len(), 43);
+            assert_eq!(cookie.path(), Some("/"));
+            assert_eq!(cookie.http_only(), Some(true));
+            assert_eq!(cookie.same_site(), Some(SameSite::Strict));
+            assert_eq!(cookie.secure().unwrap_or(false), over_https);
+            assert_eq!(cookie.domain(), None);
+            assert_eq!(cookie.max_age(), None);
+            assert_eq!(cookie.expires(), None);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mint_reuses_only_a_live_binding() -> anyhow::Result<()> {
+        let state = AppState::for_test(None, true).await?;
+        let event = r#"{"type":"event","name":"x"}"#;
+        let (_, token, binding) = seed(&state, "/chat", chat_owner()?);
+        let live = format!("myrmic_gw={}", binding.expose());
+        let garbage = format!("myrmic_gw={}", "x".repeat(4000));
+        let dead = format!("myrmic_gw={}", Secret::random().expose());
+
+        let reused = open_stream(&state, "/chat/api", Some(&live), None).await?;
+        assert_eq!(cookie_pair(reused.set_cookie.as_deref())?, live);
+
+        // Both streams post with the one cookie jar.
+        assert_ne!(reused.token, token.expose());
+        for token in [token.expose(), &reused.token] {
+            let (status, _, _) = send(
+                &state,
+                request(Method::POST, "/chat/api", Some(token), Some(&live), event)?,
+            )
+            .await?;
+            assert_eq!(status, StatusCode::BAD_GATEWAY);
+        }
+
+        // Not live or oversized: a fresh value.
+        for cookie in [garbage, dead.clone()] {
+            let opened = open_stream(&state, "/chat/api", Some(&cookie), None).await?;
+            let minted = cookie_pair(opened.set_cookie.as_deref())?;
+            assert_ne!(minted, live);
+            assert_ne!(minted, dead);
         }
 
         Ok(())
@@ -1262,10 +1667,11 @@ mod tests {
             Ok(Self {
                 session,
                 routes: Arc::new(RwLock::new(vec![route])),
-                sessions: Arc::new(Mutex::new(HashMap::new())),
+                sessions: Sessions::default(),
                 routing: routing.map(|routing| Arc::new(RwLock::new(routing))),
                 http_client: reqwest::Client::new(),
                 anonymous,
+                over_https: false,
             })
         }
     }
@@ -1273,15 +1679,181 @@ mod tests {
     fn request(
         method: Method,
         path: &str,
-        session: Option<Uuid>,
+        session: Option<&str>,
+        cookie: Option<&str>,
         body: &str,
     ) -> anyhow::Result<Request> {
-        let mut builder = axum::http::Request::builder().method(method).uri(path);
+        let mut builder = Request::builder().method(method).uri(path);
         if let Some(session) = session {
-            builder = builder.header("x-gateway-session", session.to_string());
+            builder = builder.header("x-gateway-session", session);
+        }
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
         }
 
         Ok(builder.body(Body::from(body.to_owned()))?)
+    }
+
+    /// Runs one request through `handler`, bounded, and returns status,
+    /// `Set-Cookie` and body.
+    async fn send(
+        state: &AppState,
+        req: Request,
+    ) -> anyhow::Result<(StatusCode, Option<String>, String)> {
+        let response = timeout(Duration::from_secs(10), handler(State(state.clone()), req)).await?;
+        let status = response.status();
+        let set_cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .map(|value| value.to_str().map(str::to_owned))
+            .transpose()?;
+        let bytes = to_bytes(response.into_body(), MAX_HTTP_BODY).await?;
+
+        Ok((status, set_cookie, String::from_utf8(bytes.to_vec())?))
+    }
+
+    /// The first frame of an SSE stream. `_body` keeps the stream, and with
+    /// it the session's `StreamGuard`, alive until this value is dropped.
+    struct Opened {
+        set_cookie: Option<String>,
+        session: String,
+        token: String,
+        id: String,
+        _body: BodyDataStream,
+    }
+
+    /// Opens `GET path` with an optional `Cookie` and `Last-Event-ID`, and reads
+    /// the first frame.
+    async fn open_stream(
+        state: &AppState,
+        path: &str,
+        cookie: Option<&str>,
+        last_event_id: Option<&[u8]>,
+    ) -> anyhow::Result<Opened> {
+        let mut req = request(Method::GET, path, None, cookie, "")?;
+        if let Some(id) = last_event_id {
+            req.headers_mut()
+                .insert("last-event-id", HeaderValue::from_bytes(id)?);
+        }
+        let response = timeout(Duration::from_secs(10), handler(State(state.clone()), req)).await?;
+        let set_cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .map(|value| value.to_str().map(str::to_owned))
+            .transpose()?;
+        let mut body = response.into_body().into_data_stream();
+        let frame = timeout(Duration::from_secs(10), body.next())
+            .await?
+            .ok_or_else(|| anyhow!("stream ended before the first frame"))??;
+        let frame = from_utf8(&frame)?;
+        let field = |name: &str| {
+            frame
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .map(|value| value.trim_start().to_owned())
+                .ok_or_else(|| anyhow!("no {name} in {frame:?}"))
+        };
+        let id = field("id:")?;
+        let ready = serde_json::from_str::<Value>(&field("data:")?)?;
+        let text = |key: &str| {
+            ready
+                .get(key)
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
+
+        Ok(Opened {
+            set_cookie,
+            session: text("session"),
+            token: text("token"),
+            id,
+            _body: body,
+        })
+    }
+
+    /// A session on `/chat` with its cookie, one minted on another mount and
+    /// one for another owner, and a cookie that is bound to nothing.
+    struct Seeded {
+        sri: Uuid,
+        token: Secret,
+        cookie: String,
+        mount_sri: Uuid,
+        mount_token: Secret,
+        mount_cookie: String,
+        owner_sri: Uuid,
+        owner_token: Secret,
+        owner_cookie: String,
+        random_cookie: String,
+    }
+
+    impl Seeded {
+        fn new(state: &AppState) -> anyhow::Result<Self> {
+            let other = Sri::of_path("someone-else").map_err(|err| anyhow!("srn: {err}"))?;
+            let (sri, token, binding) = seed(state, "/chat", chat_owner()?);
+            let (mount_sri, mount_token, mount_binding) = seed(state, "/secure", chat_owner()?);
+            let (owner_sri, owner_token, owner_binding) = seed(state, "/chat", other);
+            let jar = |binding: &Secret| format!("myrmic_gw={}", binding.expose());
+
+            Ok(Self {
+                sri,
+                token,
+                cookie: jar(&binding),
+                mount_sri,
+                mount_token,
+                mount_cookie: jar(&mount_binding),
+                owner_sri,
+                owner_token,
+                owner_cookie: jar(&owner_binding),
+                random_cookie: jar(&Secret::random()),
+            })
+        }
+
+        /// Values a client could send as the token that must never match.
+        fn hostile_values(&self) -> [(&'static str, Vec<u8>); 4] {
+            [
+                ("empty", Vec::new()),
+                ("non-utf8", b"\xff".to_vec()),
+                ("4 KiB", vec![b'a'; 4096]),
+                ("session sri", self.sri.to_string().into_bytes()),
+            ]
+        }
+
+        /// `active_streams` and `deadline` of the three sessions.
+        fn snapshot(&self, state: &AppState) -> [Option<(u32, Instant)>; 3] {
+            [&self.token, &self.mount_token, &self.owner_token]
+                .map(|token| stream_state(state, token.expose()))
+        }
+    }
+
+    /// Registers a session as `sse_stream` mints one; returns its SRI, token and
+    /// binding.
+    fn seed(state: &AppState, mount: &str, owner: Sri) -> (Uuid, Secret, Secret) {
+        let sri = Uuid::new_v4();
+        let gen_id = Gen::from_timestamp(&state.session.new_timestamp());
+        let (token, binding) = sessions::register(&state.sessions, sri, gen_id, &[], mount, owner);
+
+        (sri, token, binding)
+    }
+
+    /// `active_streams` and `deadline` of the session behind `token`.
+    fn stream_state(state: &AppState, token: &str) -> Option<(u32, Instant)> {
+        let table = state.sessions.lock().ok()?;
+
+        table
+            .get(token)
+            .map(|session| (session.active_streams, session.deadline))
+    }
+
+    /// The `name=value` pair of a `Set-Cookie` header, as a browser sends it back.
+    fn cookie_pair(set_cookie: Option<&str>) -> anyhow::Result<String> {
+        let cookie = Cookie::parse(set_cookie.ok_or_else(|| anyhow!("no Set-Cookie"))?)?;
+
+        Ok(format!("{}={}", cookie.name(), cookie.value()))
+    }
+
+    fn chat_owner() -> anyhow::Result<Sri> {
+        Sri::of_path("chat-owner").map_err(|err| anyhow!("srn: {err}"))
     }
 
     /// The `/chat` mount marked `anonymous: true`.
@@ -1303,24 +1875,26 @@ mod tests {
     /// past the guard, dispatch goes on to a placement lookup against a db that
     /// is not there.
     async fn post(state: &AppState, body: &str) -> anyhow::Result<(StatusCode, String)> {
-        let session = Uuid::new_v4();
-        sessions::register(
-            &state.sessions,
-            session,
-            cell_protocol::Gen::from_timestamp(&state.session.new_timestamp()),
-        );
+        let (_, token, binding) = seed(state, "/chat", chat_owner()?);
+        let cookie = format!("myrmic_gw={}", binding.expose());
 
-        let response = tokio::time::timeout(
+        let response = timeout(
             Duration::from_secs(10),
             handler(
                 State(state.clone()),
-                request(Method::POST, "/chat/api", Some(session), body)?,
+                request(
+                    Method::POST,
+                    "/chat/api",
+                    Some(token.expose()),
+                    Some(&cookie),
+                    body,
+                )?,
             ),
         )
         .await?;
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), MAX_HTTP_BODY).await?;
-        let message = serde_json::from_slice::<serde_json::Value>(&bytes)
+        let bytes = to_bytes(response.into_body(), MAX_HTTP_BODY).await?;
+        let message = serde_json::from_slice::<Value>(&bytes)
             .ok()
             .and_then(|reply| reply.get("message")?.as_str().map(str::to_owned))
             .unwrap_or_default();
