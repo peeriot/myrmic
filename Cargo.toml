@@ -255,9 +255,11 @@ codegen-units = 1
 [profile.dev.package.esp-network]
 codegen-units = 1
 
+# Cell builds. Keep in sync with the codegen flags in `rustflags()` in
+# `swarm/myrmic-build/src/compile.rs`, which also explains why `opt-level` is `s` rather than `z`.
 [profile.wasm-release]
 inherits = "release"
-opt-level = "z"
+opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
