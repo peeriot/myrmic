@@ -29,7 +29,7 @@
 //!   target:        riscv32
 //!   target cpu:    generic-rv32
 //!   target triple: riscv32-pc-linux-ilp32
-//!   cpu features:  +i,+m,+a,+c
+//!   cpu features:  +i,+m,+a,+c,+unaligned-scalar-mem
 //!   opt level:     3
 //!   size level:    3
 //!   output format: AoT file
