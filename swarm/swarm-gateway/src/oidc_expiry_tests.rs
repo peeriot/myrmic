@@ -104,6 +104,47 @@ async fn guarded_ws_closes_with_revoked_at_token_expiry() -> anyhow::Result<()> 
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guarded_sse_ends_with_error_event_at_token_expiry() -> anyhow::Result<()> {
+    let idp = MockIdp::start().await?;
+    let gateway = Gateway::spawn(&idp).await?;
+    let login = gateway.login(&idp).await?;
+
+    let mut response = gateway
+        .client
+        .get(format!("http://{}{MOUNT}/api", gateway.addr))
+        .header(header::COOKIE, &login.cookie)
+        .header(header::ACCEPT, "text/event-stream")
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let wait = until(login.expires_at) + SLACK;
+    let body = tokio::time::timeout(wait, async {
+        let mut body = String::new();
+        while let Some(chunk) = response.chunk().await? {
+            body.push_str(&String::from_utf8_lossy(&chunk));
+        }
+        anyhow::Ok(body)
+    })
+    .await
+    .context("stream still open after the token expired")??;
+
+    assert!(
+        SystemTime::now() >= login.expires_at,
+        "stream ended before the token expired"
+    );
+    let data: Vec<&str> = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
+        .collect();
+    // Ready first (the stream was live), then the expiry error, then the end.
+    assert_eq!(data.len(), 2, "{body}");
+    assert!(data[0].contains(r#""type":"ready""#), "{body}");
+    assert_eq!(data[1], r#"{"type":"error","message":"revoked"}"#);
+    Ok(())
+}
+
 /// Time left until `at`, zero once it has passed.
 fn until(at: SystemTime) -> Duration {
     at.duration_since(SystemTime::now()).unwrap_or_default()

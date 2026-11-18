@@ -341,7 +341,7 @@ async fn handler(State(state): State<AppState>, req: Request) -> Response {
     // POST sends one fire-and-forget command/event.
     if route.api.as_deref().is_some_and(|p| path_is_under(&rel, p)) {
         if method == Method::GET || method == Method::HEAD {
-            return sse_stream(state, req).await;
+            return sse_stream(state, req, expires_at).await;
         }
         if method == Method::POST {
             return http_send(state, route.owner, req).await;
@@ -733,8 +733,10 @@ fn session_replies(session: Session, sri: Sri) -> impl Stream<Item = ServerMessa
 /// connection carrying a known token — via `?token=` or the `Last-Event-ID`
 /// header that `EventSource` resends on auto-reconnect — re-attaches to the
 /// existing session within its grace window instead. The client echoes the
-/// session id in `X-Gateway-Session` on its `POST`s.
-async fn sse_stream(state: AppState, req: Request) -> Response {
+/// session id in `X-Gateway-Session` on its `POST`s. On a guarded mount the
+/// stream ends when `expires_at` passes, with a final `Error { message:
+/// "revoked" }` event.
+async fn sse_stream(state: AppState, req: Request, expires_at: Option<Instant>) -> Response {
     let session_uuid = match reattach_token(&req) {
         Some(id) if sessions::attach_stream(&state.sessions, id) => {
             tracing::debug!("http session reattached: {id}");
@@ -784,14 +786,36 @@ async fn sse_stream(state: AppState, req: Request) -> Response {
             ))
         }
     });
-    let replies = session_replies(state.session.clone(), session_sri)
-        .map(move |message| Ok::<Event, Infallible>(sse_event(&message, &id)));
+    let replies = session_replies(state.session.clone(), session_sri).map({
+        let id = id.clone();
+        move |message| Ok::<Event, Infallible>(sse_event(&message, &id))
+    });
+    let revoked = sse_event(
+        &ServerMessage::Error {
+            message: TOKEN_EXPIRED_REASON.to_owned(),
+        },
+        &id,
+    );
 
-    // Carry the guard in the stream's state so it drops exactly when the client
-    // goes away (stream exhausted or dropped).
+    // The guard rides in the stream's state, so it drops when the client goes
+    // away or the login expires; expiry is checked first and `revoked` is last.
     let body = stream::unfold(
-        (Box::pin(ready.chain(replies)), guard),
-        |(mut body, guard)| async move { body.next().await.map(|item| (item, (body, guard))) },
+        Some((
+            Box::pin(ready.chain(replies)),
+            Box::pin(token_expiry(expires_at)),
+            guard,
+            revoked,
+        )),
+        |state| async move {
+            let (mut body, mut expiry, guard, revoked) = state?;
+            tokio::select! {
+                biased;
+                () = &mut expiry => Some((Ok(revoked), None)),
+                item = body.next() => {
+                    item.map(|item| (item, Some((body, expiry, guard, revoked))))
+                }
+            }
+        },
     );
 
     Sse::new(body)
