@@ -20,8 +20,13 @@ use openidconnect::{
 };
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::time::{Duration, SystemTime};
+use tokio::time::Instant;
 
 const SESSION_KEY: &str = "_oidc";
+
+/// Stand-in deadline for an ID token whose expiry overflows `Instant`.
+const FAR_FUTURE: Duration = Duration::from_hours(876_000);
 
 type IdTokenFields<AC = EmptyAdditionalClaims, TF = EmptyExtraTokenFields> =
     openidconnect::IdTokenFields<
@@ -104,15 +109,17 @@ struct Query {
 
 /// Guards one request with the route's OIDC configuration.
 ///
-/// `Ok` carries the request on to the application: the caller's session holds a
-/// verified ID token. `Err` carries the response to send instead — a redirect
-/// into (or back out of) the provider's login flow, or a status and a reason for
-/// any step that failed.
+/// `Ok` carries the request on to the application, with the moment the
+/// session's verified ID token expires: the caller's session holds a verified
+/// ID token, and a stream opened by this request must end at that deadline.
+/// `Err` carries the response to send instead - a redirect into (or back out
+/// of) the provider's login flow, or a status and a reason for any step that
+/// failed.
 pub async fn apply_oidc(
     http_client: &reqwest::Client,
     req: Request,
     config: OidcConfig,
-) -> Result<Request, Response> {
+) -> Result<(Request, Instant), Response> {
     let (parts, body) = req.into_parts();
 
     let OidcConfig {
@@ -180,7 +187,7 @@ pub async fn apply_oidc(
             .map(|claims| (session, claims))
     });
 
-    let (_access_token, _claims) = if let Some((session, claims)) = authenticated_session {
+    let (_access_token, claims) = if let Some((session, claims)) = authenticated_session {
         tracing::debug!("has authenticated session");
         let access_token = session.access_token.secret().clone();
         (access_token, claims.clone())
@@ -210,7 +217,14 @@ pub async fn apply_oidc(
         return Err(challenge(session, &oidc_client, &scopes).await);
     };
 
-    Ok(Request::from_parts(parts, body))
+    let expires_at = Instant::now()
+        .checked_add(remaining(
+            SystemTime::from(claims.expiration()),
+            SystemTime::now(),
+        ))
+        .unwrap_or_else(|| Instant::now() + FAR_FUTURE);
+
+    Ok((Request::from_parts(parts, body), expires_at))
 }
 
 /// Ends the request with a status and a one-line reason. The request never
@@ -219,6 +233,11 @@ pub async fn apply_oidc(
 fn reject(status: StatusCode, message: impl std::fmt::Display) -> Response {
     tracing::warn!("oidc: {message}");
     (status, format!("oidc: {message}\n")).into_response()
+}
+
+/// How long until `exp`, or zero once it has passed.
+fn remaining(exp: SystemTime, now: SystemTime) -> Duration {
+    exp.duration_since(now).unwrap_or(Duration::ZERO)
 }
 
 /// Builds the client for a route by discovering the provider's metadata.
@@ -515,4 +534,23 @@ fn strip_oidc_from_path(uri: &Uri) -> Result<Option<PathAndQuery>, InvalidUri> {
             PathAndQuery::from_maybe_shared(format!("{}{}", path_and_query.path(), query))
         })
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::UNIX_EPOCH;
+
+    use super::*;
+
+    #[test]
+    fn remaining_until_exp() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+        assert_eq!(
+            remaining(now + Duration::from_secs(90), now),
+            Duration::from_secs(90)
+        );
+        assert_eq!(remaining(now, now), Duration::ZERO);
+        assert_eq!(remaining(now - Duration::from_secs(5), now), Duration::ZERO);
+    }
 }

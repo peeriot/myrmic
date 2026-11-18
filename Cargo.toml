@@ -499,6 +499,8 @@ dashmap = "6.1.0"
 revision = { version = "0.17.0" }
 
 axum = "0.8"
+tokio-tungstenite = "0.29"
+rsa = "0.9.10"
 tower-http = "0.6"
 
 openidconnect = { version = "4.0.1" }
