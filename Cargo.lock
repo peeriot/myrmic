@@ -10058,6 +10058,7 @@ dependencies = [
  "tryhard",
  "uuid",
  "wasmtime",
+ "webpki-roots",
  "zenoh",
  "zenoh-protocol",
 ]
@@ -10110,6 +10111,7 @@ dependencies = [
  "myrmic-common",
  "myrmic-tags",
  "postcard",
+ "rcgen",
  "rumqttc",
  "rumqttd",
  "rustls",

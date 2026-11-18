@@ -150,9 +150,9 @@ fn mqtt_bridge_def(sri: &Sri, bridge: MqttBridge) -> Result<MqttBridgeDef> {
         bail!("mqtt bridge '{sri}': broker '{broker}' has no scheme");
     };
 
-    let default_port = match scheme {
-        "mqtt" => 1883,
-        "mqtts" => 8883,
+    let (default_port, tls) = match scheme {
+        "mqtt" => (1883, false),
+        "mqtts" => (8883, true),
         other => bail!(
             "mqtt bridge '{sri}': unsupported broker scheme '{other}', expected 'mqtt' or 'mqtts'"
         ),
@@ -174,6 +174,7 @@ fn mqtt_bridge_def(sri: &Sri, bridge: MqttBridge) -> Result<MqttBridgeDef> {
         keep_alive_period: Duration::from_secs(10),
         client_id: format!("mqtt-bridge-{sri}"),
         channel_cap: 16,
+        tls,
     };
 
     Ok(MqttBridgeDef {
@@ -186,7 +187,9 @@ fn mqtt_bridge_def(sri: &Sri, bridge: MqttBridge) -> Result<MqttBridgeDef> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sri, register_bridge_cell, terminate_bridge_cell};
+    use sorg_common::MqttBridge;
+
+    use super::{Sri, mqtt_bridge_def, register_bridge_cell, terminate_bridge_cell};
 
     #[tokio::test]
     async fn terminating_a_never_registered_sri_reports_no_live_bridge() {
@@ -208,5 +211,31 @@ mod tests {
             !terminate_bridge_cell(&sri),
             "a second termination of the same sri should find nothing, not panic"
         );
+    }
+
+    #[test]
+    fn broker_scheme_decides_tls() {
+        let sri = Sri::from_target("unit-test-bridge-tls-scheme").unwrap();
+        for (broker, tls, port) in [
+            ("mqtt://broker.example", false, 1883),
+            ("mqtts://broker.example", true, 8883),
+            ("mqtts://broker.example:1883", true, 1883),
+        ] {
+            let def = mqtt_bridge_def(
+                &sri,
+                MqttBridge {
+                    cell_name: String::new(),
+                    broker: broker.to_string(),
+                    egress: vec![],
+                    ingress: vec![],
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                (def.connection.tls, def.connection.broker_port),
+                (tls, port),
+                "{broker}"
+            );
+        }
     }
 }

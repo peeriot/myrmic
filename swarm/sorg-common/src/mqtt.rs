@@ -13,6 +13,8 @@ pub struct MqttConnection {
     pub keep_alive_period: core::time::Duration,
     pub client_id: String,
     pub channel_cap: u16,
+    /// Connect over TLS, verifying the broker certificate and host name; no plaintext fallback.
+    pub tls: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
