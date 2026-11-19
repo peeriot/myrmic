@@ -158,6 +158,27 @@ mod tests {
         assert!(err.contains("TLS:"), "expected a TLS error, got: {err}");
     }
 
+    #[tokio::test]
+    async fn mqtts_connects_to_an_ipv6_literal_with_an_ip_san() {
+        let broker = TlsTestBroker::start().await;
+        let Some(port) = broker.tls_v6_port else {
+            eprintln!("skipping: this host has no IPv6 loopback");
+            return;
+        };
+
+        let connected = timeout(
+            CONNECT_TIMEOUT,
+            connect_with_roots(&connection("::1", port, true), broker.root_store()),
+        )
+        .await
+        .expect("tls connect timed out");
+        assert!(
+            connected.is_ok(),
+            "tls connect to ::1 failed: {:?}",
+            connected.err()
+        );
+    }
+
     fn connection(host: &str, port: u16, tls: bool) -> MqttConnection {
         MqttConnection {
             broker_address: MqttBrokerAddress::new(host).expect("valid broker address"),

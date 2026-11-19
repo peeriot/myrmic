@@ -47,7 +47,7 @@ impl TestApp {
             let mut broker = Broker::new(config);
             broker.start().expect("failed to start broker");
         });
-        wait_for_broker(BROKER_PORT).await;
+        wait_for_broker(BROKER_HOST, BROKER_PORT).await;
 
         // start up a tokio task to receive messages we may subscribe to during tests
         let received_msgs = self.received_mqtt_msgs.clone();
@@ -198,6 +198,8 @@ impl Drop for MqttOutageProxy {
 pub struct TlsTestBroker {
     pub plain_port: u16,
     pub tls_port: u16,
+    /// Port of the TLS listener on `[::1]`, `None` when the host has no `IPv6` loopback.
+    pub tls_v6_port: Option<u16>,
     ca_der: CertificateDer<'static>,
     // keeps the generated PEM files alive for as long as the broker is
     _dir: TempDir,
@@ -210,6 +212,10 @@ impl TlsTestBroker {
         default_provider().install_default().unwrap_or_default();
 
         let [plain_port, tls_port] = free_ports();
+        let tls_v6_port = StdTcpListener::bind("[::1]:0")
+            .ok()
+            .and_then(|listener| listener.local_addr().ok())
+            .map(|addr| addr.port());
         let (ca_der, cert_pem, key_pem) = generate_test_pki();
         let tmp = tempdir().expect("failed to create the tls tempdir");
         let dir = tmp.path().display();
@@ -219,6 +225,26 @@ impl TlsTestBroker {
         fs::write(tmp.path().join("server.key.pem"), key_pem)
             .await
             .expect("failed to write the server key");
+        let v6_listener = tls_v6_port
+            .map(|port| {
+                format!(
+                    r#"
+[v4.3]
+name = "tls6"
+listen = "[::1]:{port}"
+next_connection_delay_ms = 1
+[v4.3.tls]
+certpath = "{dir}/server.cert.pem"
+keypath = "{dir}/server.key.pem"
+[v4.3.connections]
+connection_timeout_ms = 5000
+max_payload_size = 20480
+max_inflight_count = 100
+dynamic_filters = true
+"#
+                )
+            })
+            .unwrap_or_default();
         let config_str = format!(
             r#"
 id = 0
@@ -251,7 +277,7 @@ connection_timeout_ms = 5000
 max_payload_size = 20480
 max_inflight_count = 100
 dynamic_filters = true
-"#
+{v6_listener}"#
         );
         let config: Config = config::Config::builder()
             .add_source(File::from_str(&config_str, FileFormat::Toml))
@@ -265,12 +291,16 @@ dynamic_filters = true
                 .start()
                 .expect("failed to start tls broker");
         });
-        wait_for_broker(plain_port).await;
-        wait_for_broker(tls_port).await;
+        wait_for_broker(BROKER_HOST, plain_port).await;
+        wait_for_broker(BROKER_HOST, tls_port).await;
+        if let Some(port) = tls_v6_port {
+            wait_for_broker("::1", port).await;
+        }
 
         Self {
             plain_port,
             tls_port,
+            tls_v6_port,
             ca_der,
             _dir: tmp,
         }
@@ -286,8 +316,8 @@ dynamic_filters = true
     }
 }
 
-/// A fresh CA plus a server cert for `localhost` only (so `127.0.0.1` fails host name
-/// verification). Returns the CA cert (DER), the server cert and key (PEM).
+/// A fresh CA plus a server cert for `localhost` and `::1` (not `127.0.0.1`, so that
+/// fails host name verification). Returns the CA cert (DER), the server cert and key (PEM).
 fn generate_test_pki() -> (CertificateDer<'static>, String, String) {
     let ca_key = KeyPair::generate().expect("failed to generate the CA key");
     let mut ca_params = CertificateParams::new(Vec::new()).expect("invalid CA params");
@@ -298,7 +328,7 @@ fn generate_test_pki() -> (CertificateDer<'static>, String, String) {
         .expect("failed to self-sign the CA");
 
     let server_key = KeyPair::generate().expect("failed to generate the server key");
-    let server = CertificateParams::new(vec!["localhost".to_string()])
+    let server = CertificateParams::new(vec!["localhost".to_string(), "::1".to_string()])
         .expect("invalid server params")
         .signed_by(&server_key, &Issuer::new(ca_params, ca_key))
         .expect("failed to sign the server cert");
@@ -328,10 +358,10 @@ fn connect_to_test_broker(client_id: &str) -> (AsyncClient, EventLoop) {
 /// no readiness signal to subscribe to. Probing the port is the signal: until it
 /// accepts, a client's first poll fails outright with `ConnectionRefused`, and
 /// the subscribe that follows fails with it.
-async fn wait_for_broker(port: u16) {
+async fn wait_for_broker(host: &str, port: u16) {
     let deadline = Instant::now() + BROKER_START_TIMEOUT;
     loop {
-        if TcpStream::connect((BROKER_HOST, port)).await.is_ok() {
+        if TcpStream::connect((host, port)).await.is_ok() {
             return;
         }
         assert!(
