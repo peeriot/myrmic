@@ -75,3 +75,23 @@ reason = "chrono is unmaintained, but needed by oauth2, openidconnect, object_st
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0542"
 reason = "humantime is flagged unmaintained along with chrono. We use it to parse and print durations; moving to jiff would replace it."
+
+# heapless before 0.9.4 is unsound (RUSTSEC-2026-0574 to RUSTSEC-2026-0582) and
+# only 0.9.4 is fixed. Our own crates use 0.9.4. The older lines come in through
+# third-party crates with no heapless 0.9 release in our tree yet: 0.8.0 through
+# embassy-sync (via the esp-hal fork), bt-hci and serde-json-core, 0.6.1 through
+# embedded-tls. Ignored per package, not per advisory id, so heapless 0.9 below
+# 0.9.4 still fails this check. Drop these once those crates are upgraded.
+[[PackageOverrides]]
+name = "heapless"
+version = "0.8.0"
+ecosystem = "crates.io"
+vulnerability.ignore = true
+reason = "Pulled only by embassy-sync, bt-hci and serde-json-core; no fixed 0.8 release exists. Remove once they are upgraded to releases on heapless 0.9."
+
+[[PackageOverrides]]
+name = "heapless"
+version = "0.6.1"
+ecosystem = "crates.io"
+vulnerability.ignore = true
+reason = "Pulled only by embedded-tls 0.18; no fixed 0.6 release exists. Remove with the upgrade to embedded-tls 0.19."
