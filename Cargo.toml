@@ -460,6 +460,7 @@ wasmtime = { version = "49.0.6", default-features = false, features = [
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 
 rustls = { version = "0.23.46", default-features = false }
+webpki-roots = "1.0.10"
 rumqttc = { git = "https://github.com/peeriot/rumqtt.git", rev = "19fdf07", default-features = false, features = [
     "use-rustls-no-provider",
 ] }
@@ -479,6 +480,7 @@ fjall = { git = "https://github.com/peeriot/fjall.git", rev = "589d861e" }
 #fjall = { path = "../fjall" }
 #fjall = { version = "3.1.5" }
 tempfile = { version = "3.17.1", default-features = false }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 
 object_store = { version = "0.14.0", features = ["aws"] }
 

@@ -62,6 +62,15 @@ impl Error {
         Self::Validation(val.to_string())
     }
 
+    /// Prefixes the message of a validation error with `context`; other errors pass through.
+    #[must_use]
+    pub fn with_validation_context(self, context: impl Display) -> Self {
+        match self {
+            Self::Validation(msg) => Self::Validation(format!("{context}: {msg}")),
+            other => other,
+        }
+    }
+
     pub fn zenoh(context: impl Display, zenoh_err: ZenohError) -> Self {
         Self::Zenoh {
             context: context.to_string(),

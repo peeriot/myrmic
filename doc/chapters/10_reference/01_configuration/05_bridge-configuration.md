@@ -16,7 +16,7 @@ Connects to an external MQTT broker. The cell can send commands to the bridge to
 The configuration file for MQTT bridge has the following fields.
 
 - `name` - **Required.** Name of the bridge cell.
-- `broker_url` - **Required.** Alias: `broker`. MQTT broker URL.
+- `broker_url` - **Required.** Alias: `broker`. MQTT broker URL, `mqtt://host[:port]` or `mqtts://host[:port]` (default port 1883 or 8883). The scheme is case-insensitive. An IPv6 address goes in square brackets (`mqtts://[::1]:8883`); a zone id (a numeric interface index, `mqtt://[fe80::1%3]`) works for `mqtt://` only, because it cannot be verified over TLS. A trailing `/` is fine. User info, any other path, a query, port 0, underscores and non-ASCII characters in host names are rejected. `mqtt://` is unencrypted: topics and payloads cross the network in plaintext. `mqtts://` uses TLS, checks the broker certificate against the public web PKI roots (webpki roots) and its host name, and never falls back to plaintext. Brokers with a private CA, client certificates and broker credentials are not supported yet.
 - `ingress` - **Required.** Alias: `ingresses`. List of inbound subscriptions - each MQTT message received on a subscribed topic is published as a swarm event.
   - `id` - **Required.** The swarm event name published when a message arrives on this topic.
   - `topic` - **Required.** MQTT topic filter to subscribe to. Wildcards follow MQTT semantics: `+` matches one level (`plant/+/temp`), `#` matches the rest, including nothing (`site/#` receives `site` as well as `site/x/y`). Topics starting with `$` only match a filter whose first level is spelled out (`$SYS/+`, not `+/+` or `#`).
