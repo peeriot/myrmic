@@ -180,6 +180,7 @@ default-members = [
     "tests/fixtures/cell-docs-counter",
     "tests/fixtures/cell-event-pub-logic",
     "tests/fixtures/cell-failing-init-logic",
+    "tests/fixtures/cell-fuel-hog-logic",
     "tests/fixtures/cell-ff-receiver-logic",
     "tests/fixtures/cell-ff-sender-logic",
     "tests/fixtures/cell-gateway-mount-logic",

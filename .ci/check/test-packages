@@ -103,6 +103,7 @@ cell-counter-logic
 cell-docs-counter
 cell-event-pub-logic
 cell-failing-init-logic
+cell-fuel-hog-logic
 cell-ff-receiver-logic
 cell-ff-sender-logic
 cell-gateway-mount-logic
