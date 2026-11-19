@@ -15,8 +15,11 @@
 #  name: "default" # always overridden by --name
 #  tags: []
 #  mailbox_poll_interval_ms: 500
-#  mailbox_batch_size: 8
-#  runner_fuel: 1_000_000
+#  mailbox_batch_size: 64
+#  runner_fuel: 1000000000
+#  runner_fuel_max: 1000000000 # defaults to runner_fuel
+#  cell_memory: 16777216 # bytes per cell
+#  cell_memory_max: 16777216 # defaults to cell_memory
 #  fuel_yield_interval: 1000
 #  init_timeout_secs: 10
 
