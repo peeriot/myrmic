@@ -99,9 +99,11 @@ fn start_invalid(_md: Metadata) -> Result<()> {
 
 /// The timer target invoked by every timer above. Timers invoke a `#[cmd]`
 /// handler via `Callback`, so this is a command, not a bare export. Publishes a
-/// `timer_tick` event.
+/// `timer_tick` event carrying the cell's `uptime()` in milliseconds.
 #[myrmic_sdk::cmd]
 fn tick(_md: Metadata) -> Result<()> {
-    publish("timer_tick", &JsonValue::from("tick"))?;
+    let uptime = myrmic_sdk::uptime().map_err(|_| "uptime failed")?;
+    let stamp_ms = u64::try_from(uptime.as_millis()).map_err(|_| "uptime overflow")?;
+    publish("timer_tick", &JsonValue::from(stamp_ms))?;
     Ok(())
 }

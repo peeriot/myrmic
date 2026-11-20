@@ -19,6 +19,11 @@ const MAIN_SRI: &str = "main_cell";
 const HELPER_SRI: &str = "helper_cell";
 const EVENT_COUNTER_READ: &str = "counter_read";
 
+// --- Scenario 3 constants ---
+/// How long cell B stays busy. Long enough that A's event, sent 10 ms later, can only lose
+/// the race if B blocks A.
+const BUSY_MS: u32 = 500;
+
 /// The cells publish `"{md.id}:{count}"`, and `md.id` renders as the cell's SRI
 /// (a UUID), not its human name. Derive the expected string from the same SRI
 /// the cell was deployed under so host and guest agree.
@@ -162,7 +167,7 @@ pub async fn sequential_processing_per_cell() {
 /// Requirement 3: Cross-cell parallelism (#376)
 ///
 /// A long-running handler in one cell does not prevent other cells from
-/// making progress. Cell B (50ms delay) receives a message first, then
+/// making progress. Cell B (`BUSY_MS` delay) receives a message first, then
 /// cell A (no delay) receives one 10ms later. A's event must arrive
 /// before B's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -188,11 +193,11 @@ pub async fn cross_cell_parallelism() {
         .await;
 
     let payload_0 = postcard::to_allocvec(&0u32).unwrap();
-    let payload_50 = postcard::to_allocvec(&50u32).unwrap();
+    let payload_busy = postcard::to_allocvec(&BUSY_MS).unwrap();
 
     // Act — send to B first, then to A after a short gap
     test_app
-        .command_send(SRI_B, "process", Some(payload_50))
+        .command_send(SRI_B, "process", Some(payload_busy))
         .await;
     tokio::time::sleep(Duration::from_millis(10)).await;
     test_app
