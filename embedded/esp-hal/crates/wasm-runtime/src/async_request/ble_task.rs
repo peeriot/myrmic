@@ -377,14 +377,20 @@ async fn subscribe(
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     };
-    if let Err(e) = ble::char_register_notif(&mut state.ctx, characteristic).await {
-        if matches!(e, Error::Disconnected) {
-            handle_remote_disconnect(state).await;
-        }
+    // The subscriber must exist before the CCCD write: the peripheral may notify as soon as the
+    // write is accepted, and the notification channel only delivers to existing subscribers.
+    // Anything that arrives before the `SubEntry` below is pushed waits in the subscriber's queue
+    // until the manager polls it in notification mode.
+    if ble::ensure_notif_sub(&mut state.ctx).is_err() {
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
-    if ble::ensure_notif_sub(&mut state.ctx).is_err() {
+    if let Err(e) = ble::char_register_notif(&mut state.ctx, characteristic).await {
+        if matches!(e, Error::Disconnected) {
+            handle_remote_disconnect(state).await;
+        } else if state.subs.is_empty() {
+            ble::clear_notif_sub(&mut state.ctx);
+        }
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
@@ -396,7 +402,11 @@ async fn subscribe(
         characteristic,
         callback,
     };
-    if state.subs.push(entry).is_err() {
+    if let Err(entry) = state.subs.push(entry) {
+        ble::char_unregister(&mut state.ctx, entry.characteristic).await;
+        if state.subs.is_empty() {
+            ble::clear_notif_sub(&mut state.ctx);
+        }
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
