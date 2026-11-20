@@ -29,7 +29,7 @@ use crate::{
     wasm::{
         WasmEnvironment,
         cell::{cell_task::CellRuntime, state::CellState},
-        module_load::{load_module_cell, load_wasm_binary_from_class},
+        module_load::{cell_store_limits, load_module_cell, load_wasm_binary_from_class},
     },
 };
 use myrmic_common::cells::{Command, Event};
@@ -161,7 +161,9 @@ pub(crate) async fn run_cell(
         cell_state.subscribe_event(event)?;
     }
 
+    *cell_state.limits() = cell_store_limits(wasm_env.max_cell_memory)?;
     let mut store = Store::new(&wasm_env.engine, cell_state);
+    store.limiter(|state| state.limits());
     store.set_fuel(wasm_env.runner_fuel)?;
     store.fuel_async_yield_interval(Some(wasm_env.fuel_yield_interval))?;
 
@@ -171,6 +173,7 @@ pub(crate) async fn run_cell(
         &wasm_env.engine,
         &mut store,
         &wasm_env.linker,
+        wasm_env.max_cell_memory,
     )
     .await?;
 

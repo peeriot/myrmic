@@ -25,12 +25,14 @@ pub(crate) struct WasmEnvironment {
     pub(crate) linker: Arc<Linker<CellState>>,
     pub(crate) runner_fuel: u64,
     pub(crate) fuel_yield_interval: u64,
+    pub(crate) max_cell_memory: u64,
 }
 
 impl WasmEnvironment {
     pub(super) fn new(
         runner_fuel: u64,
         fuel_yield_interval: u64,
+        max_cell_memory: u64,
         signal_layer_socket: Option<PathBuf>,
         live_tags: &LiveTags,
     ) -> Result<Self> {
@@ -67,6 +69,7 @@ impl WasmEnvironment {
             linker: Arc::new(linker_cells),
             runner_fuel,
             fuel_yield_interval,
+            max_cell_memory,
         })
     }
 }

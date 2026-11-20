@@ -1,0 +1,20 @@
+[package]
+name = "cell-fuel-hog-logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# Room to grow: the memory limit test grows this cell's memory past what the
+# node allows.
+[package.metadata.myrmic]
+max_memory = 1_048_576
+
+[lints]
+workspace = true
+
+[dependencies]
+myrmic-sdk = { workspace = true }

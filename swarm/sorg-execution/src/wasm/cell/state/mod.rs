@@ -11,6 +11,7 @@ use db_client::v1::models::{Deferrable, Operation, TxId};
 use opentelemetry::trace::SpanContext;
 use sorg_common::{SpawnLineage, bail, custom_err};
 use tokio::sync::{mpsc, oneshot};
+use wasmtime::StoreLimits;
 use zenoh::Session;
 
 use crate::wasm::cell::observability;
@@ -51,6 +52,7 @@ pub(crate) struct CellState {
     /// the db costs nothing at all.
     application: Option<Application>,
     msg_handler: CellMessageHandler,
+    limits: StoreLimits,
     /// Span of the message currently being processed, and the trace context
     /// stamped onto any messages the cell emits while handling it. Set in
     /// [`begin_message`](Self::begin_message), cleared when the message
@@ -73,6 +75,10 @@ pub(crate) struct CellState {
 }
 
 impl CellState {
+    pub(crate) fn limits(&mut self) -> &mut StoreLimits {
+        &mut self.limits
+    }
+
     pub(crate) fn state_and_msg_rcv(
         sri: Sri,
         gen_id: Gen,
@@ -101,6 +107,7 @@ impl CellState {
             err_msg: None,
             application: None,
             msg_handler,
+            limits: StoreLimits::default(),
             current_span: tracing::Span::none(),
             current_span_context: None,
             verified_targets: HashSet::new(),
