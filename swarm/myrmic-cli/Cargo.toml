@@ -104,4 +104,3 @@ human_bytes = "0.4.3"
 [dev-dependencies]
 claims = { workspace = true }
 tempfile = { workspace = true }
-test-framework = { workspace = true }
