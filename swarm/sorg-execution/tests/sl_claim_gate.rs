@@ -1,6 +1,6 @@
-//! End-to-end test for exclusive single-cell ownership of the signal layer
-//! (swarm#1340): the gate on the tap host functions, driven through real
-//! Wasmtime instances with distinct cell identities against a live server.
+//! End-to-end tests for the signal-layer claim: tap calls are not gated, only
+//! outlet writes are owner-only, driven through real Wasmtime instances with
+//! distinct cell identities against a live server.
 //!
 //! Each "cell" is a `Store<CellId>` whose `CellIdentity` returns a distinct
 //! `(Sri, Gen)`; they share one linker (one `TapClient`), exactly as cells do
@@ -9,8 +9,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use cell_protocol::{Gen, Sri};
+use myrmic_common::types::error::EACCES;
 use signal_layer_ipc::{StoreRead, TapStore};
-use sorg_execution::wasm_tap::{CellIdentity, link_tap_functions};
+use sorg_execution::wasm_tap::{CellIdentity, link_outlet_functions, link_tap_functions};
 use tempfile::TempDir;
 use tokio::net::UnixListener;
 use wasmtime::{Config, Engine, Linker, Module, Store};
@@ -101,11 +102,8 @@ async fn resolve_temp(engine: &Engine, linker: &Linker<CellId>, mut store: Store
     f.call_async(&mut store, (0, 4)).await.expect("call")
 }
 
-/// EACCES — the code a non-owner cell receives (must match `sl_claim::SL_CLAIMED`).
-const EACCES: i32 = -13;
-
 #[tokio::test]
-async fn first_cell_claims_second_is_denied_then_reclaims_after_release() {
+async fn two_cells_can_both_read_taps() {
     let dir = TempDir::new().unwrap();
     let path = spawn_server(&dir);
     let client = Arc::new(signal_layer_ipc::TapClient::new(path));
@@ -114,29 +112,49 @@ async fn first_cell_claims_second_is_denied_then_reclaims_after_release() {
     let mut linker: Linker<CellId> = Linker::new(&eng);
     link_tap_functions(&mut linker, client).expect("link");
 
-    // Cell A resolves first → claims the SL, gets a real handle.
     let a = resolve_temp(&eng, &linker, Store::new(&eng, cell(1, 10))).await;
-    assert!(a >= 1, "owner cell must resolve, got {a}");
+    assert!(a >= 1, "first cell must resolve, got {a}");
 
-    // Cell A again → still allowed.
-    let a2 = resolve_temp(&eng, &linker, Store::new(&eng, cell(1, 10))).await;
-    assert!(a2 >= 1, "owner cell must keep access, got {a2}");
-
-    // Cell B (different identity) → refused with EACCES, no handle.
     let b = resolve_temp(&eng, &linker, Store::new(&eng, cell(2, 20))).await;
-    assert_eq!(
-        b, EACCES,
-        "a second cell must be refused while A owns the SL"
-    );
+    assert!(b >= 1, "a second cell must read taps too, got {b}");
+}
 
-    // A is destroyed → release its claim (what CellMessageHandler::drop does).
-    let (a_sri, a_gen) = id(1, 10);
-    sorg_execution::wasm_tap::release_sl_claim(a_sri, a_gen);
+const WRITE_WAT: &str = r#"
+(module
+  (import "outlet" "outlet_write_retained" (func $write (param i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (func (export "write") (result i32)
+    i32.const 1  i32.const 0  i32.const 1  call $write)
+)
+"#;
 
-    // Now cell B can claim.
-    let b2 = resolve_temp(&eng, &linker, Store::new(&eng, cell(2, 20))).await;
-    assert!(
-        b2 >= 1,
-        "after the owner releases, the next cell claims, got {b2}"
-    );
+/// Call `outlet_write_retained` from a cell's own store; returns the raw host status.
+async fn write_outlet(engine: &Engine, linker: &Linker<CellId>, mut store: Store<CellId>) -> i32 {
+    store.set_fuel(u64::MAX).unwrap();
+    let module = Module::new(engine, WRITE_WAT).expect("module");
+    let instance = linker
+        .instantiate_async(&mut store, &module)
+        .await
+        .expect("instantiate");
+    let f = instance
+        .get_typed_func::<(), i32>(&mut store, "write")
+        .expect("func");
+    f.call_async(&mut store, ()).await.expect("call")
+}
+
+#[tokio::test]
+async fn second_cell_outlet_write_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let path = spawn_server(&dir);
+    let client = Arc::new(signal_layer_ipc::TapClient::new(path));
+
+    let eng = engine();
+    let mut linker: Linker<CellId> = Linker::new(&eng);
+    link_outlet_functions(&mut linker, client).expect("link");
+
+    let first = write_outlet(&eng, &linker, Store::new(&eng, cell(3, 10))).await;
+    assert_ne!(first, EACCES, "the first writer must claim the SL");
+
+    let second = write_outlet(&eng, &linker, Store::new(&eng, cell(4, 20))).await;
+    assert_eq!(second, EACCES, "a different Sri must be refused");
 }

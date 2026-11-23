@@ -37,8 +37,8 @@ pub enum ApiError {
     /// The host cannot serve the request yet; retrying later may succeed
     /// (e.g. an embedded host's clock has not synced with the swarm).
     NotReady,
-    /// Another cell has claimed exclusive ownership of the signal layer
-    /// (swarm#1340); this cell cannot access taps or outlets.
+    /// Another cell has claimed exclusive ownership of the signal layer; this
+    /// cell cannot write outlets.
     SignalLayerClaimed,
     /// The handle is not — or is no longer — valid for this operation: the
     /// backing service is gone, the handle predates a reconnect, or it was
