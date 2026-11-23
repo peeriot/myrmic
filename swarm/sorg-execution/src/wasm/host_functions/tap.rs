@@ -22,8 +22,6 @@ use std::sync::Arc;
 use myrmic_common::types::error::{EINVAL, ESTALE};
 use wasmtime::{Caller, Linker};
 
-use super::sl_claim::CellIdentity;
-
 use crate::Result;
 
 /// Register the six tap host functions on `linker` using the shared `tap_client`.
@@ -39,7 +37,7 @@ use crate::Result;
 #[allow(clippy::cast_possible_wrap)] // u32/u64 → i32 for WASM return values
 #[allow(clippy::cast_possible_truncation)] // usize → i32 for byte counts
 #[allow(clippy::needless_pass_by_value)] // Arc cloned into closures; by-value is intentional
-pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
+pub fn link_tap_functions<S: Send + 'static>(
     linker: &mut Linker<S>,
     tap_client: Arc<signal_layer_ipc::TapClient>,
 ) -> Result<()> {
@@ -53,11 +51,7 @@ pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
             "tap_resolve",
             move |mut caller: Caller<'_, S>, (name_ptr, name_len): (i32, i32)| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     // Reject a negative or over-long name_len before it is used
                     // to allocate host memory or to build a request frame; the
                     // tap connection is shared by every cell, so an oversized
@@ -93,12 +87,8 @@ pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
             move |mut caller: Caller<'_, S>,
                   (handle, buf_ptr, buf_len, ts_out_ptr, ts_out_len): (i32, i32, i32, i32, i32)| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
                     use signal_layer_ipc::ClientRead;
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     // Reject negative buf_len before any cast to usize.
                     if buf_len < 0 {
                         return -1i32;
@@ -152,12 +142,8 @@ pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
             "tap_take_event",
             move |mut caller: Caller<'_, S>, (handle, buf_ptr, buf_len): (i32, i32, i32)| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
                     use signal_layer_ipc::ClientRead;
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     // Reject negative buf_len before any cast to usize.
                     if buf_len < 0 {
                         return -1i32;
@@ -189,14 +175,9 @@ pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
         linker.func_wrap_async(
             "tap",
             "tap_drain_batch",
-            move |caller: Caller<'_, S>, (_handle, _buf_ptr, buf_len): (i32, i32, i32)| {
-                let __denied = super::sl_claim::gate(caller.data()).err();
-                Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
-                    if buf_len < 0 { -1i32 } else { 0i32 }
-                }) as Box<dyn Future<Output = i32> + Send>
+            move |_caller: Caller<'_, S>, (_handle, _buf_ptr, buf_len): (i32, i32, i32)| {
+                Box::new(async move { if buf_len < 0 { -1i32 } else { 0i32 } })
+                    as Box<dyn Future<Output = i32> + Send>
             },
         )?;
     }
@@ -208,13 +189,9 @@ pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
         linker.func_wrap_async(
             "tap",
             "tap_list_len",
-            move |caller: Caller<'_, S>, (): ()| {
+            move |_caller: Caller<'_, S>, (): ()| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     match client.list_len().await {
                         Some(count) => count as i32,
                         // `list_len`'s None has no out-of-range case: it always
@@ -245,11 +222,7 @@ pub fn link_tap_functions<S: CellIdentity + Send + 'static>(
                 i32,
             )| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     // Reject negative name_len before any cast to usize.
                     if name_len < 0 {
                         return -1i32;

@@ -80,8 +80,8 @@ const QUEUE_CAPACITY: usize = 16;
 pub(crate) struct CellMessageHandler {
     session: Session,
     sri: Sri,
-    /// Cell incarnation, paired with `sri` to release the signal-layer claim
-    /// (swarm#1340) — a later incarnation is a distinct owner.
+    /// Cell incarnation, paired with `sri` to release the signal-layer claim;
+    /// only the exact owning `(sri, gen_id)` releases it.
     gen_id: Gen,
 
     message_snd: mpsc::Sender<IncomingMessage>,
@@ -384,9 +384,8 @@ impl LateStreak {
 
 impl Drop for CellMessageHandler {
     fn drop(&mut self) {
-        // Free this cell's signal-layer claim so the next cell can take it
-        // (swarm#1340); a no-op if this cell never claimed or a later
-        // incarnation now owns it.
+        // Free this cell's signal-layer claim so the next cell can take it; a
+        // no-op unless this exact `(sri, gen_id)` is the owner.
         crate::wasm::host_functions::release_sl_claim(self.sri, self.gen_id);
         for (_, task) in self.event_tasks.drain() {
             task.abort();
