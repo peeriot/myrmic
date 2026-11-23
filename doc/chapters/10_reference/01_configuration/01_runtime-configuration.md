@@ -23,9 +23,12 @@ The `--connect` and `--listen` flags of [`myrmic runtimes start`](../02_myrmic-c
 Configures the execution behavior.
 
 - `mailbox_poll_interval_ms` *(optional)* - How often the runtime checks for new inbound messages, in milliseconds. Defaults to `5000`.
-- `mailbox_batch_size` *(optional)* - Number of event rows fetched per mailbox poll interval. Defaults to `8`.
+- `mailbox_batch_size` *(optional)* - Number of event rows fetched per mailbox poll interval. Defaults to `64`.
 - `tags` *(optional)* - Capability tags this runtime advertises. Controls which Cells are placed on this runtime. Tags set here are combined with any additional tags passed via the CLI at startup. Defaults to none.
-- `max_fuel_per_handler` *(optional)* - Compute budget the runtime grants to each handler invocation - limits how many wasm instructions a single handler invocation may execute before it is interrupted. Every invocation gets its own fresh budget, independent of the Cell and of previous invocations. See [External Links](#external-links) for the underlying wasmtime fuel mechanism. Defaults to unlimited.
+- `runner_fuel` *(optional)* - Compute budget of one handler invocation, counted in wasmtime fuel (roughly one unit per executed wasm instruction). Every invocation gets a fresh budget, independent of the Cell and of previous invocations; time the Cell spends waiting in runtime operations does not use fuel. Defaults to `1000000000`, which takes about 2 seconds to burn on a current desktop CPU; slower CPUs need proportionally longer. A handler that exceeds the budget is interrupted with an error: the invocation's transaction is rolled back, the Cell keeps running, and a message that came from the Cell's mailbox stays queued and is delivered again with a fresh budget, so a handler that always exceeds the budget is retried indefinitely. A command that did not come from the mailbox is not queued anywhere: it fails and is not delivered again. The old name `max_fuel_per_handler` is still accepted. See [External Links](#external-links) for the underlying wasmtime fuel mechanism.
+- `runner_fuel_max` *(optional)* - The largest fuel budget this runtime allows. Reserved for per-Cell budgets, which do not exist yet: every Cell currently runs with `runner_fuel`. Defaults to `runner_fuel`. A `runner_fuel` above `runner_fuel_max` is a configuration error and the runtime does not start.
+- `cell_memory` *(optional)* - Memory limit of one Cell, in bytes. A Cell whose module declares more initial memory is not deployed, and the error names this limit. Growing memory past the limit fails (`memory.grow` returns `-1`) instead of ending the Cell. Defaults to `16777216` (16 MiB).
+- `cell_memory_max` *(optional)* - The largest memory limit this runtime allows. Reserved for per-Cell limits, which do not exist yet: every Cell currently runs with `cell_memory`. Defaults to `cell_memory`. A `cell_memory` above `cell_memory_max` is a configuration error and the runtime does not start.
 - `fuel_yield_interval` *(optional)* - Number of fuel units a Cell consumes before yielding to the async scheduler, letting other tasks run. See [External Links](#external-links) for the underlying wasmtime fuel mechanism. Defaults to `1000`.
 - `init_timeout_secs` *(optional)* - How long to wait for a Cell to initialize, in seconds. If exceeded, initialization fails and the entire deployment is rolled back. Defaults to `10.0`.
 
@@ -115,6 +118,6 @@ telemetry:
 
 ## External Links
 
-- [wasmtime `Store::set_fuel`](https://docs.rs/wasmtime/43.0.2/wasmtime/struct.Store.html#method.set_fuel) - how a fuel budget is set on a wasm store
-- [wasmtime `Store::fuel_async_yield_interval`](https://docs.rs/wasmtime/43.0.2/wasmtime/struct.Store.html#method.fuel_async_yield_interval) - yielding to the async scheduler at a fuel interval
+- [wasmtime `Store::set_fuel`](https://docs.rs/wasmtime/49.0.6/wasmtime/struct.Store.html#method.set_fuel) - how a fuel budget is set on a wasm store
+- [wasmtime `Store::fuel_async_yield_interval`](https://docs.rs/wasmtime/49.0.6/wasmtime/struct.Store.html#method.fuel_async_yield_interval) - yielding to the async scheduler at a fuel interval
 - [wasmtime deterministic fuel](https://docs.wasmtime.dev/examples-interrupting-wasm.html#deterministic-fuel) - background on interrupting wasm execution with fuel

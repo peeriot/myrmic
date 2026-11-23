@@ -1262,6 +1262,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cell-fuel-hog-logic"
+version = "0.7.1"
+dependencies = [
+ "myrmic-sdk",
+]
+
+[[package]]
 name = "cell-gateway-mount-logic"
 version = "0.7.1"
 dependencies = [

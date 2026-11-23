@@ -134,6 +134,7 @@ impl Runtime {
         let wasm_environment = WasmEnvironment::new(
             config.runner_fuel(),
             config.fuel_yield_interval(),
+            config.cell_memory(),
             None,
             live_tags,
         )?;
