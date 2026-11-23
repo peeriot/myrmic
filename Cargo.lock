@@ -10073,7 +10073,6 @@ dependencies = [
  "filestore-client",
  "flume 0.11.1",
  "futures",
- "introspection-client",
  "module-examples-common",
  "postcard",
  "serde",

@@ -51,10 +51,6 @@ impl StateInner {
         Ok(self.orch_cluster.is_leader())
     }
 
-    pub(crate) fn knows_orch(&self, zid: ZenohId) -> bool {
-        self.orch_cluster.contains_member(zid)
-    }
-
     pub(crate) fn update_state(&mut self, state_update: &StateUpdate) {
         match state_update {
             StateUpdate::OrchLeave(zid) => self.remove_orch(*zid),
@@ -71,5 +67,10 @@ impl StateInner {
         if let Err(err) = self.orch_cluster.remove_member(zid) {
             self.error = Some(err);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn knows_orch(&self, zid: ZenohId) -> bool {
+        self.orch_cluster.contains_member(zid)
     }
 }
