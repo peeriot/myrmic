@@ -245,7 +245,11 @@ async fn handle_command(state: &mut State, cmd: BleCommand) {
         BleCommand::Unsubscribe { id } => {
             if let Some(pos) = state.subs.iter().position(|sub| sub.id == id) {
                 let entry = state.subs.swap_remove(pos);
-                ble::char_unregister(&mut state.ctx, entry.characteristic).await;
+                // The CCCD is per characteristic, not per subscription: keep notifications on
+                // while another subscription to the same characteristic remains.
+                if !state.subs.iter().any(|sub| sub.handle == entry.handle) {
+                    ble::char_unregister(&mut state.ctx, entry.characteristic).await;
+                }
                 // The notification subscriber is shared across every characteristic;
                 // only drop it once the last subscription is gone.
                 if state.subs.is_empty() {
