@@ -20,10 +20,10 @@
 //!   same handles serve single-runtime tests and swarms.
 //! - **A node inside the test process:** [`in_process`], for what a CLI runtime cannot give: a
 //!   node with only some plugins, a zid the test chooses, its log events in the test process.
-//! - **Several runtimes:** [`swarm3`]. A [`swarm3::Swarm`] holds the runtimes a test added to it,
+//! - **Several runtimes:** [`swarm`]. A [`swarm::Swarm`] holds the runtimes a test added to it,
 //!   of any kind, and each start of one waits until they are linked as their overlay says.
 //! - **Talking to a swarm's services directly,** for what the CLI does not cover: its db
-//!   ([`swarm3::Swarm::get_db`]) and its sorg client ([`swarm3::Swarm::get_sorg`]).
+//!   ([`swarm::Swarm::get_db`]) and its sorg client ([`swarm::Swarm::get_sorg`]).
 //! - **Waiting for something to become true:** [`wait`] ([`wait_for`] when the test needs a
 //!   value from the state it waits for, [`assert_eventually!`], [`wait_until`]).
 //! - **Finding the binaries under test:** [`resolve_binary!`] and [`binary`].
@@ -38,7 +38,7 @@ pub mod in_process;
 pub mod myrmic;
 pub mod overlay;
 pub mod runtime;
-pub mod swarm3;
+pub mod swarm;
 pub mod wait;
 mod world;
 

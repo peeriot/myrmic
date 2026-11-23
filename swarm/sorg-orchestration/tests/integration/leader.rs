@@ -4,7 +4,7 @@ use test_framework::{
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
-    swarm3::{self, Swarm},
+    swarm::{self, Swarm},
 };
 use zenoh::config::ZenohId;
 
@@ -17,7 +17,7 @@ const ID_THREE: &str = "1619e204bc90ec6fa7870dac7842dac5";
 /// the leader among the orchestrators, `a < b < c`.
 async fn three_nodes(
     a_plugins: fn(in_process::StoppedRt) -> in_process::StoppedRt,
-) -> (Swarm, [swarm3::StoppedRt<in_process::StoppedRt>; 3]) {
+) -> (Swarm, [swarm::StoppedRt<in_process::StoppedRt>; 3]) {
     let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let a = swarm.add(a_plugins(in_process::StoppedRt::new(&group)).zid(zid(ID_ONE)));

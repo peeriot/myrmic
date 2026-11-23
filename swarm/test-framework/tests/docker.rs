@@ -1,4 +1,4 @@
-//! Tests of [`test_framework::swarm3`] on a docker network: hosts in containers, the swarm
+//! Tests of [`test_framework::swarm`] on a docker network: hosts in containers, the swarm
 //! attached through a router, and the network's faults. They need a docker daemon and built
 //! `myrmic` and `zenoh-router` binaries (see [`test_framework::resolve_binary!`]).
 
@@ -6,12 +6,12 @@ use test_framework::{
     docker, host, host_set, myrmic,
     overlay::{MulticastGroup, Overlay},
     start_runtimes,
-    swarm3::{self, Swarm},
+    swarm::{self, Swarm},
     world,
 };
 
 /// a CLI runtime in a container, not started
-type DockerRt = swarm3::StoppedRt<myrmic::StoppedRt<myrmic::Docker>>;
+type DockerRt = swarm::StoppedRt<myrmic::StoppedRt<myrmic::Docker>>;
 
 /// A swarm on a docker network of its own, attached through a router on a host of its own.
 struct DockerSwarm {

@@ -5,7 +5,7 @@
 //!
 //! ```ignore
 //! use test_framework::{
-//!     World, in_process, overlay::Overlay, runtime::Stopped, start_runtimes, swarm3::Swarm,
+//!     World, in_process, overlay::Overlay, runtime::Stopped, start_runtimes, swarm::Swarm,
 //! };
 //!
 //! let group = Overlay::new(&World::local()).new_multicast_group();
@@ -52,8 +52,6 @@
 //!
 //! The links the check expects come from the overlay, not from the swarm: the overlay is the one
 //! place that says which runtime links to which (see [`crate::overlay`]).
-//!
-//! The name is temporary: this module takes over the name `swarm` from the one it replaced.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},

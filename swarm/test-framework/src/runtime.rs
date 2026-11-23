@@ -65,7 +65,7 @@
 //! The traits hold only what every kind of runtime can do: start, delete, tell its zid and its
 //! overlay membership. Code generic over kinds needs no more: a swarm, for example, starts and
 //! stops its runtimes through these traits and hands the test the concrete handle for everything
-//! else (see [`crate::swarm3::RunningRt::stop_with`]). Anything a kind may not be able to do is a
+//! else (see [`crate::swarm::RunningRt::stop_with`]). Anything a kind may not be able to do is a
 //! method of that kind alone: a runtime whose node runs inside the test process
 //! ([`crate::in_process`]) cannot be ended abruptly (closing its zenoh session always says
 //! goodbye) or frozen (there is no process of its own to stop), so it has neither `kill` nor
@@ -77,7 +77,7 @@
 //! ([`crate::myrmic::RunningRt`]).
 //!
 //! Handles are `Send + Sync`: tests hold them across awaits on a multi-threaded runtime, and a
-//! swarm's handles share its state with the swarm (see [`crate::swarm3`]).
+//! swarm's handles share its state with the swarm (see [`crate::swarm`]).
 //!
 //! Each kind reports failures in its own error type ([`Stopped::Error`], shared by both states of
 //! a kind): a CLI runtime fails with what the CLI said ([`crate::myrmic::Error`]), an in-process

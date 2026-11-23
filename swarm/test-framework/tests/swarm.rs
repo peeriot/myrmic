@@ -1,4 +1,4 @@
-//! Tests of [`test_framework::swarm3`] with CLI runtimes on the host. They need a built `myrmic`
+//! Tests of [`test_framework::swarm`] with CLI runtimes on the host. They need a built `myrmic`
 //! binary (see [`test_framework::resolve_binary!`]).
 
 use std::{num::NonZeroU16, time::Duration};
@@ -13,7 +13,7 @@ use test_framework::{
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
-    swarm3::{RunningRt, Swarm, cell},
+    swarm::{RunningRt, Swarm, cell},
     wait::DEFAULT_TIMEOUT,
     wait_for,
 };

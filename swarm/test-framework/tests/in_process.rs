@@ -8,7 +8,7 @@ use test_framework::{
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
-    swarm3::Swarm,
+    swarm::Swarm,
 };
 use zenoh::config::ZenohId;
 

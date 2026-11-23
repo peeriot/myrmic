@@ -18,7 +18,7 @@ use test_framework::{
     overlay::Overlay,
     runtime::Running,
     start_runtimes,
-    swarm3::{
+    swarm::{
         RegisterError, RunningRt, Swarm,
         cell::{self, Deployment},
     },

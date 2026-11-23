@@ -1,7 +1,7 @@
 use cell_protocol::RuntimeId;
 use sorg_tests::enable_test_logging;
 use test_framework::{
-    World, assert_eventually, in_process, overlay::Overlay, runtime::Running, swarm3::Swarm,
+    World, assert_eventually, in_process, overlay::Overlay, runtime::Running, swarm::Swarm,
     wait::DEFAULT_TIMEOUT,
 };
 

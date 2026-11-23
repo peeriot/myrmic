@@ -7,7 +7,7 @@ use test_framework::{
     World, in_process, myrmic,
     overlay::Overlay,
     runtime::Running,
-    swarm3::{self, Swarm},
+    swarm::{self, Swarm},
     wait::{DEFAULT_TIMEOUT, Timeout},
     wait_for,
 };
@@ -78,7 +78,7 @@ async fn current_nodes_and_on_join_combined() -> anyhow::Result<()> {
 }
 
 /// a running CLI runtime of the swarm
-type CliRt = swarm3::RunningRt<myrmic::RunningRt<myrmic::Local>>;
+type CliRt = swarm::RunningRt<myrmic::RunningRt<myrmic::Local>>;
 
 /// A swarm of a CLI runtime and the observer, an in-process node the test's client runs on: the
 /// client's callbacks and `current_nodes()` only work on the session of a node with an
@@ -90,7 +90,7 @@ struct ObservedSwarm {
     swarm: Swarm,
     pre_existing: CliRt,
     /// only kept alive: the client runs on its session
-    _observer: swarm3::RunningRt<in_process::RunningRt>,
+    _observer: swarm::RunningRt<in_process::RunningRt>,
     client: Client,
 }
 

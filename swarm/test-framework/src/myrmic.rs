@@ -5,7 +5,7 @@
 //!
 //! - [`Myrmic`] operates a swarm: it deploys cells and apps, sends commands, reads status and
 //!   telemetry. It is the same whether or not it ever starts a runtime itself; a shim that only
-//!   operates a swarm is common (e.g. [`crate::swarm3::Swarm::get_myrmic`]).
+//!   operates a swarm is common (e.g. [`crate::swarm::Swarm::get_myrmic`]).
 //! - [`StoppedRt`] and [`RunningRt`] are one runtime started with `myrmic runtimes start`, in
 //!   its two states (see [`crate::runtime`] for how a test moves it between them). They come from
 //!   [`Myrmic::runtime`], whose options (name, tags, `persistent`) the stopped state carries, so
@@ -477,7 +477,7 @@ where
     /// lead its orchestration, so a swarm that needs a setting gives it to every runtime.
     ///
     /// A client that should see the orchestration give up waits at least as long itself (see
-    /// [`Myrmic::timeout`] and [`crate::swarm3::Swarm::sorg_query_timeout`]).
+    /// [`Myrmic::timeout`] and [`crate::swarm::Swarm::sorg_query_timeout`]).
     pub fn orchestration(mut self, orchestration: swarm::OrchestrationConfig) -> Self {
         self.orchestration = orchestration;
         self

@@ -33,7 +33,7 @@
 //!   orchestrator's zid is its leadership priority).
 //! - [`StoppedRt::new`] makes the node a member of an [`crate::overlay::Overlay`], attached on a
 //!   group or by a connect, and it links to exactly what the overlay says. Several runtimes as a swarm,
-//!   with the swarm's connectivity check and CLI, are [`crate::swarm3`]'s job.
+//!   with the swarm's connectivity check and CLI, are [`crate::swarm`]'s job.
 //! - Its database is in memory: every start begins empty. A test that needs data to survive a
 //!   restart wants a [`crate::myrmic`] runtime with `persistent`.
 //! - It has neither `kill` nor `pause` (unlike [`crate::myrmic::RunningRt`]): closing its zenoh
