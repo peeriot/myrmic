@@ -377,6 +377,12 @@ async fn subscribe(
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     };
+    // Rejected before any side effect: undoing an accepted CCCD write could disable
+    // notifications that an existing subscription to the same characteristic still needs.
+    if state.subs.is_full() {
+        BLE_RESPONSE.signal(Err(Error::Generic));
+        return;
+    }
     // The subscriber must exist before the CCCD write: the peripheral may notify as soon as the
     // write is accepted, and the notification channel only delivers to existing subscribers.
     // Anything that arrives before the `SubEntry` below is pushed waits in the subscriber's queue
@@ -402,11 +408,8 @@ async fn subscribe(
         characteristic,
         callback,
     };
-    if let Err(entry) = state.subs.push(entry) {
-        ble::char_unregister(&mut state.ctx, entry.characteristic).await;
-        if state.subs.is_empty() {
-            ble::clear_notif_sub(&mut state.ctx);
-        }
+    if state.subs.push(entry).is_err() {
+        // Unreachable: capacity was checked above and nothing in between adds entries.
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
