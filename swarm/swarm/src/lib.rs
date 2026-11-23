@@ -13,6 +13,7 @@ use swarm_api::DropNotifier;
 
 use crate::config::PluginConfigs;
 pub use config::SwarmConfig;
+pub use plugins::orchestration::Config as OrchestrationConfig;
 
 /// How long a swarm's plugins may take to report ready once its zenoh runtime started.
 pub const PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);

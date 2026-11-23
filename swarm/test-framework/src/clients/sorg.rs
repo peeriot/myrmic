@@ -14,14 +14,13 @@ use sorg_common::{
 use uuid::Uuid;
 use zenoh::Session;
 
+use crate::wait::{Timeout, wait_for};
+
 pub use sorg_client::EventQueue;
 
 /// How long [`SorgHandle::connect`] / [`SorgHandle::connect_with_tags`] wait for a matching exec
 /// runtime to appear in the registry with a fresh liveness lease (i.e. to become placeable).
 pub const DEFAULT_EXEC_RUNTIME_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Interval between exec-registry polls while waiting for a runtime.
-const EXEC_RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Test assertion helpers on top of [`EventQueue`].
 #[allow(async_fn_in_trait)]
@@ -71,7 +70,9 @@ impl SorgHandle {
     ) -> Self {
         let req_tags =
             RequirementTags::new(tags.iter().map(std::string::ToString::to_string).collect());
-        wait_for_exec_runtime(&session, tags, timeout).await;
+        wait_for_exec_runtime(&session, tags, timeout)
+            .await
+            .unwrap_or_else(|timeout| panic!("{timeout}"));
         let sorg_client = Client::new(session.clone());
         Self {
             session,
@@ -104,7 +105,9 @@ impl SorgHandle {
     /// scenarios that deploy across more than one runtime (e.g. a device plus the swarm's own
     /// Linux exec) and so must know the second one has registered too.
     pub async fn wait_for_runtime(&self, tags: &[&str], timeout: Duration) {
-        wait_for_exec_runtime(&self.session, tags, timeout).await;
+        wait_for_exec_runtime(&self.session, tags, timeout)
+            .await
+            .unwrap_or_else(|timeout| panic!("{timeout}"));
     }
 
     /// Deploy a registered wasm class as a cell under `cell_sri`, scoped to this handle's tags.
@@ -271,35 +274,36 @@ impl SorgHandle {
     }
 }
 
-async fn wait_for_exec_runtime(session: &Session, tags: &[&str], timeout: Duration) {
-    let retries = (timeout.as_millis() / EXEC_RUNTIME_POLL_INTERVAL.as_millis()).max(1);
-    let retries = u32::try_from(retries).unwrap_or(u32::MAX);
-
-    tryhard::retry_fn(|| async {
-        // `list_registered_execs` reads the same DB-backed exec registry the orchestrator
-        // itself reads before placing cells (see `sorg_common::exec_registry`). A runtime's
-        // own `TOPIC_EXEC_RUNTIMES` queryable is not equivalent: that queryable starts
-        // answering as soon as the exec runtime's queryables are registered, which happens
-        // *before* it registers itself in the DB-backed registry (see
-        // `sorg-execution/src/spawn.rs`) — racing ahead of that registration let a
-        // subsequent `load_cell` reach the orchestrator before it could see the runtime,
-        // failing with `NoRuntimesAvailable`.
-        let execs = list_registered_execs(session).await.map_err(|_| ())?;
-        let fresh = fresh_lease_ids(session).await?;
-
-        if execs
-            .iter()
-            .any(|info| runtime_has_tags(info, tags) && fresh.contains(&info.id()))
-        {
-            Ok(())
-        } else {
-            Err(())
-        }
-    })
-    .retries(retries)
-    .fixed_backoff(EXEC_RUNTIME_POLL_INTERVAL)
+/// Wait up to `timeout` until an exec runtime with all `tags` is placeable through `session`:
+/// registered, with a fresh liveness lease.
+pub(crate) async fn wait_for_exec_runtime(
+    session: &Session,
+    tags: &[&str],
+    timeout: Duration,
+) -> Result<(), Timeout> {
+    wait_for(
+        timeout,
+        &format!("an exec runtime with tags {tags:?} to be placeable"),
+        || async {
+            // `list_registered_execs` reads the same DB-backed exec registry the orchestrator
+            // itself reads before placing cells (see `sorg_common::exec_registry`). A runtime's
+            // own `TOPIC_EXEC_RUNTIMES` queryable is not equivalent: that queryable starts
+            // answering as soon as the exec runtime's queryables are registered, which happens
+            // *before* it registers itself in the DB-backed registry (see
+            // `sorg-execution/src/spawn.rs`) — racing ahead of that registration let a
+            // subsequent `load_cell` reach the orchestrator before it could see the runtime,
+            // failing with `NoRuntimesAvailable`.
+            // A failed read finds nothing this round: the registry and the leases are written
+            // while runtimes come up, so reads can miss them for a while.
+            let execs = list_registered_execs(session).await.ok()?;
+            let fresh = fresh_lease_ids(session).await.ok()?;
+            execs
+                .iter()
+                .any(|info| runtime_has_tags(info, tags) && fresh.contains(&info.id()))
+                .then_some(())
+        },
+    )
     .await
-    .unwrap_or_else(|()| panic!("exec runtime with tags {tags:?} not available after {timeout:?}"));
 }
 
 fn runtime_has_tags(info: &ExecRuntimeInfo, tags: &[&str]) -> bool {

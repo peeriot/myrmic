@@ -27,6 +27,8 @@
 //!   different overlays (e.g. of tests running in parallel) never see each other.
 //! - [`Overlay::set_group`] moves a member to another group, for a runtime that should come back
 //!   cut off from the rest; it takes effect at the member's next start.
+//! - [`Overlay::set_listen_port`] fixes the port a member listens on, for something outside the
+//!   overlay that dials a known address, e.g. an embedded runtime whose firmware has it built in.
 //! - Groups and members hold their overlay, so a test that only needs one of them need not keep
 //!   the overlay.
 //!
@@ -89,7 +91,7 @@ struct MemberState {
     group: Option<GroupId>,
     /// the members it connects to, by index
     connects: Vec<usize>,
-    /// the port it listens on, set once a connect targets it
+    /// the port it listens on: set by the test, or a free one once a connect targets it
     listen_port: Option<NonZeroU16>,
     /// The mode it runs in, `None` while it doesn't run: what its last start reported, until its
     /// running handle went away (see [`Member::start_running`]). A router passes traffic on
@@ -180,6 +182,15 @@ impl Overlay {
         );
         let index = self.index_of(&member);
         self.lock().members[index].group = Some(group.id);
+    }
+
+    /// Have the member `member` listen on `port`: from its next start on it listens there, and
+    /// what connects to it from its own next start on dials there. For something outside the
+    /// overlay that dials a known address, e.g. an embedded runtime whose firmware has it built
+    /// in; the overlay's own connects work with any port.
+    pub fn set_listen_port(&self, member: impl Into<Member>, port: NonZeroU16) {
+        let index = self.index_of(&member.into());
+        self.lock().members[index].listen_port = Some(port);
     }
 
     /// Whether the members `a` and `b` are linked: directly, by a shared group or a connect, or
@@ -398,8 +409,9 @@ impl Member {
         }
     }
 
-    /// Give the member a listen port unless it has one: one that is free on the test's machine
-    /// now. What connects to it, and what it listens on from its next start, use that port.
+    /// Give the member a listen port unless it has one (from a connect, or set by the test): one
+    /// that is free on the test's machine now. What connects to it, and what it listens on from
+    /// its next start, use that port.
     pub(crate) fn ensure_listen_port(&self) {
         let index = self.overlay.index_of(self);
         let mut state = self.overlay.lock();

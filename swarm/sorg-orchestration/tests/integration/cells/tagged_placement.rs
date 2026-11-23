@@ -19,7 +19,7 @@ use test_framework::{
     runtime::Running,
     start_runtimes,
     swarm3::{
-        RunningRt, Swarm,
+        RegisterError, RunningRt, Swarm,
         cell::{self, Deployment},
     },
 };
@@ -39,9 +39,9 @@ const DUMMY_CELL: &str = "../../tests/fixtures/dummy_cell";
 
 /// Register the prebuilt `DUMMY_CELL` wasm as a class in `swarm`, for the tests that deploy
 /// through the sorg client.
-async fn register_dummy(swarm: &Swarm) -> Result<cell::Class, sorg_client::Error> {
+async fn register_dummy(swarm: &Swarm) -> Result<cell::Class, RegisterError> {
     swarm
-        .register(&cell::Wasm::from_file(prebuilt_cell_wasm(DUMMY_CELL)))
+        .register(&cell::Binaries::from_file(prebuilt_cell_wasm(DUMMY_CELL)))
         .await
 }
 
@@ -86,7 +86,8 @@ async fn single_tag_match() -> anyhow::Result<()> {
 
     assert_eq!(swarm.get_host_of(cell.sri()).await?, Some(gpu.get_zid()));
     let placed: Vec<String> = swarm
-        .get_placements()
+        .get_sorg()
+        .list_placements()
         .await?
         .iter()
         .map(|entry| entry.sri.to_string())
@@ -338,7 +339,9 @@ async fn standalone_single_tag_match() -> anyhow::Result<()> {
     let (swarm, [gpu, _cpu]) = gpu_cpu().await?;
     let class = register_dummy(&swarm).await?;
 
-    swarm.deploy(&class, to_sri(CELL_SRI), &[TAG_GPU]).await?;
+    swarm
+        .deploy(&class, to_sri(CELL_SRI), &[TAG_GPU], None)
+        .await?;
 
     assert_eq!(
         swarm.get_host_of(&to_sri(CELL_SRI).to_string()).await?,
@@ -358,7 +361,9 @@ async fn standalone_unplaceable() -> anyhow::Result<()> {
 
     // Act — load a standalone cell requiring a tag no runtime has
     let err = assert_err!(
-        swarm.deploy(&class, to_sri(CELL_SRI), &[TAG_FPGA]).await,
+        swarm
+            .deploy(&class, to_sri(CELL_SRI), &[TAG_FPGA], None)
+            .await,
         "standalone load should fail when no runtime has the required tag"
     );
 

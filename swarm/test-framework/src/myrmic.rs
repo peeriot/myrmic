@@ -29,6 +29,7 @@
 //! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
 use std::path::Path;
+use std::time::Duration;
 
 pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
@@ -96,6 +97,8 @@ pub struct Myrmic<B> {
     /// the myrmic binary, as the backend's commands find it on the target
     binary: String,
     attachment: overlay::Attachment,
+    /// how long each call waits for the runtimes to answer (see [`Self::timeout`])
+    timeout: Duration,
 }
 
 impl<B> Myrmic<B>
@@ -109,7 +112,21 @@ where
             backend,
             binary,
             attachment,
+            timeout: DEFAULT_CLI_TIMEOUT,
         }
+    }
+
+    /// The shim with every call waiting up to `timeout` for the runtimes to answer: the CLI's
+    /// `--timeout`, which bounds both finding the runtimes and each request the call makes, e.g. a
+    /// deploy's. [`DEFAULT_CLI_TIMEOUT`] by default.
+    ///
+    /// A deploy is answered once the runtime running the cell confirmed it, which the swarm's
+    /// orchestration waits for up to its own timeout (see [`StoppedRt::orchestration`]); a
+    /// call that should see the orchestration's own failure waits at least that long.
+    #[must_use]
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     /// where this shim's commands run
@@ -128,6 +145,7 @@ where
             persistent: false,
             telemetry: swarm_telemetry::TelemetryConfig::default(),
             execution: sorg_common::ExecConfig::default(),
+            orchestration: swarm::OrchestrationConfig::default(),
         }
     }
 
@@ -232,8 +250,9 @@ where
     /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
         let attachment = self.attachment.get_cli_args(&self.backend.get_host_id());
+        let timeout = timeout_arg(self.timeout);
         let output = self
-            .run_program(&self.binary, &attached(&attachment, args))
+            .run_program(&self.binary, &attached(&attachment, &timeout, args))
             .await;
         if output.success {
             Ok(output)
@@ -260,7 +279,8 @@ where
     /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
         let attachment = self.attachment.get_cli_args(&self.backend.get_host_id());
-        self.run_program_blocking(&self.binary, &attached(&attachment, args))
+        let timeout = timeout_arg(self.timeout);
+        self.run_program_blocking(&self.binary, &attached(&attachment, &timeout, args))
     }
 
     /// Blocking run of `program args` on the target for `Drop`, returning the raw output. A
@@ -313,17 +333,24 @@ where
     }
 }
 
-/// How long a `myrmic` call waits for a runtime to answer before it gives up (its `--timeout`).
-/// The CLI's own default, 500 ms, is too short for a swarm across a VPN: a fresh session, and a
-/// reply through a router at some 30 ms round trip, don't always fit in it. A runtime that answers
-/// sooner ends the wait sooner, so a fast swarm loses nothing.
-const CLI_TIMEOUT: &str = "5s";
+/// How long a `myrmic` call waits for the runtimes to answer before it gives up (its
+/// `--timeout`), unless the shim says otherwise ([`Myrmic::timeout`]). The CLI's own default,
+/// 500 ms, is too short for a swarm across a VPN: a fresh session, and a reply through a router at
+/// some 30 ms round trip, don't always fit in it. A runtime that answers sooner ends the wait
+/// sooner, so a fast swarm loses nothing.
+pub const DEFAULT_CLI_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `args` of a `myrmic` call, behind `attachment`: the shim's [`overlay::Attachment::get_cli_args`], by
-/// which the CLI finds the runtimes, and [`CLI_TIMEOUT`]
-fn attached<'a>(attachment: &'a [String; 2], args: &[&'a str]) -> Vec<&'a str> {
+/// `timeout` as the value of the CLI's `--timeout`
+fn timeout_arg(timeout: Duration) -> String {
+    format!("{}ms", timeout.as_millis())
+}
+
+/// `args` of a `myrmic` call, behind `attachment`, the shim's
+/// [`overlay::Attachment::get_cli_args`], by which the CLI finds the runtimes, and `timeout`, its
+/// `--timeout` (see [`timeout_arg`])
+fn attached<'a>(attachment: &'a [String; 2], timeout: &'a str, args: &[&'a str]) -> Vec<&'a str> {
     let mut attached: Vec<&str> = attachment.iter().map(String::as_str).collect();
-    attached.extend(["--timeout", CLI_TIMEOUT]);
+    attached.extend(["--timeout", timeout]);
     attached.extend(args);
     attached
 }
@@ -401,6 +428,7 @@ pub struct StoppedRt<B> {
     persistent: bool,
     telemetry: swarm_telemetry::TelemetryConfig,
     execution: sorg_common::ExecConfig,
+    orchestration: swarm::OrchestrationConfig,
 }
 
 impl<B> StoppedRt<B>
@@ -445,6 +473,17 @@ where
         self.execution = execution;
         self
     }
+
+    /// How the runtime's orchestration works, e.g. how long it waits for a runtime to confirm a
+    /// cell it was told to run; defaults to the runtime's own defaults. Any runtime of a swarm may
+    /// lead its orchestration, so a swarm that needs a setting gives it to every runtime.
+    ///
+    /// A client that should see the orchestration give up waits at least as long itself (see
+    /// [`Myrmic::timeout`] and [`crate::swarm3::Swarm::sorg_query_timeout`]).
+    pub fn orchestration(mut self, orchestration: swarm::OrchestrationConfig) -> Self {
+        self.orchestration = orchestration;
+        self
+    }
 }
 
 impl<B> runtime::Stopped for StoppedRt<B>
@@ -457,7 +496,7 @@ where
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
     /// `config` sets what the overlay tells the runtime (the group it scouts on, the runtimes it
-    /// connects to, the port it listens on), its telemetry and its execution settings
+    /// connects to, the port it listens on), its telemetry, execution and orchestration settings
     ///
     /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
     /// on it.
@@ -467,6 +506,7 @@ where
             "zenoh": self.ovl_member.get_zenoh_settings(),
             "telemetry": self.telemetry,
             "execution": self.execution,
+            "orchestration": self.orchestration,
         })
         .to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the

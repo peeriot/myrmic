@@ -55,8 +55,9 @@ impl DebugListener {
         let attachment = myrmic
             .attachment
             .get_cli_args(&myrmic.backend.get_host_id());
+        let timeout = super::timeout_arg(myrmic.timeout);
         let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", &myrmic.binary];
-        sh_args.extend(super::attached(&attachment, args));
+        sh_args.extend(super::attached(&attachment, &timeout, args));
         let mut command = myrmic.backend.command("sh", &sh_args);
         command.stdin(Stdio::null()).stdout(Stdio::piped());
         let invocation = format!("{command:?}");

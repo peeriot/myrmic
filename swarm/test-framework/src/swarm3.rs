@@ -33,8 +33,9 @@
 //!   [`StoppedRt::start_without_check`] starts one without the check.
 //! - A running handle derefs to the runtime kind's own handle, for what only that kind can do
 //!   (`a.pause()`); a kind's own way to stop goes through [`RunningRt::stop_with`].
-//! - Cells deploy through the CLI ([`Swarm::get_myrmic`]), or, for many cells of one class or
-//!   several in one request, from a registered class ([`cell`], [`Swarm::register`]).
+//! - Cells deploy through the CLI ([`Swarm::get_myrmic`]), or, for many cells of one class,
+//!   several in one request, or AOTs the test built itself, from a registered class ([`cell`],
+//!   [`Swarm::register`]).
 //! - Which runtime a cell is on comes back as a zid ([`Swarm::get_host_of`]); a test compares it
 //!   with its handles' [`crate::runtime::Running::get_zid`].
 //!
@@ -66,6 +67,9 @@ use std::{
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use db_client::v1::models::{Scope, Subject};
+use sorg_common::{
+    CellConfig, CellDeployment, DeployRequest, DeployResponse, DeploymentError, RequirementTags,
+};
 use zenoh::config::ZenohId;
 
 pub use rt::{RunningRt, StoppedRt};
@@ -74,7 +78,7 @@ use crate::{
     myrmic::{self, Error, Myrmic},
     overlay::{self, Overlay},
     runtime::Stopped,
-    wait::Timeout,
+    wait::{Timeout, wait_for},
 };
 
 pub mod cell;
@@ -89,6 +93,21 @@ pub struct Swarm {
     session: zenoh::Session,
     client: Myrmic<myrmic::Local>,
 }
+
+/// Why [`Swarm::register`] failed.
+#[derive(Debug, thiserror::Error)]
+pub enum RegisterError {
+    /// the class registry refused the class, or couldn't be reached
+    #[error(transparent)]
+    Sorg(#[from] sorg_client::Error),
+    /// the registered class didn't become readable in time
+    #[error(transparent)]
+    Timeout(#[from] Timeout),
+}
+
+/// How long [`Swarm::register`] waits for its class to become readable. As the old harness's
+/// wait: a class registered under load on the rack took seconds to reach every node.
+const CLASS_VISIBLE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// What a swarm shares with its runtimes' handles.
 struct Shared {
@@ -221,11 +240,6 @@ impl Swarm {
         self.sorg.get_placement(&sri).await
     }
 
-    /// Every placement row, one per placed cell. Fails like [`Self::get_placement`].
-    pub async fn get_placements(&self) -> Result<Vec<PlacementEntry>, sorg_client::Error> {
-        self.sorg.list_placements().await
-    }
-
     /// The instance row of the cell `sri`, or `None` while it has none. Fails like
     /// [`Self::get_placement`], for the instance table.
     pub async fn get_instance(
@@ -246,10 +260,109 @@ impl Swarm {
         &self.sorg
     }
 
+    /// The swarm with its sorg client ([`Self::get_sorg`]) waiting up to `timeout` for each
+    /// answer; the sorg client's own default otherwise (15 s).
+    ///
+    /// A deploy is answered once the runtime running the cell confirmed it, which the swarm's
+    /// orchestration waits for up to its own timeout (see [`myrmic::StoppedRt::orchestration`]); a
+    /// request that should see the orchestration's own failure waits at least that long.
+    #[must_use]
+    pub fn sorg_query_timeout(mut self, timeout: Duration) -> Self {
+        let mut config = sorg_client::Config::default();
+        config.set_query_timeout(timeout);
+        self.sorg = sorg_client::Client::new_with_config(self.session.clone(), config);
+        self
+    }
+
     /// The CLI on the test's machine for the commands that act on the whole swarm, e.g.
     /// [`Myrmic::cell`] to deploy a cell. It starts no runtime unless the test has it start one.
     pub fn get_myrmic(&self) -> &Myrmic<myrmic::Local> {
         &self.client
+    }
+
+    /// The swarm with its CLI ([`Self::get_myrmic`]) waiting up to `timeout` in each call (see
+    /// [`Myrmic::timeout`]).
+    #[must_use]
+    pub fn cli_timeout(mut self, timeout: Duration) -> Self {
+        self.client = self.client.timeout(timeout);
+        self
+    }
+
+    /// Wait up to `timeout` until a runtime with all `tags` is placeable in the swarm: registered
+    /// with the orchestration, with a fresh liveness lease. For a runtime the test didn't add to
+    /// the swarm, e.g. an embedded one that joins by itself; the swarm's own runtimes are
+    /// placeable once their start returned.
+    pub async fn wait_for_runtime(&self, tags: &[&str], timeout: Duration) -> Result<(), Timeout> {
+        crate::clients::sorg::wait_for_exec_runtime(&self.session, tags, timeout).await
+    }
+
+    /// Register `binaries` as one class in the swarm's class registry, for cells to deploy from.
+    ///
+    /// Returns once the class is readable, so that a deploy right after finds it: the
+    /// registration and a deploy's read of the class are separate transactions, and the read may
+    /// otherwise land on a node the class hasn't reached yet.
+    pub async fn register(&self, binaries: &cell::Binaries) -> Result<cell::Class, RegisterError> {
+        let wasm = read_binary(&binaries.wasm).await;
+        let mut aots = vec![];
+        for (platform, path) in &binaries.aots {
+            aots.push((*platform, read_binary(path).await));
+        }
+        let hash = self.sorg.add_class(&binaries.name, wasm, aots).await?;
+        // a failing read ends the wait with its error
+        wait_for(
+            CLASS_VISIBLE_TIMEOUT,
+            &format!("class {} to be readable", binaries.name),
+            || async {
+                match self.sorg.get_class_info(hash).await {
+                    Ok(info) => info.map(|_| Ok(())),
+                    Err(err) => Some(Err(err)),
+                }
+            },
+        )
+        .await??;
+        Ok(cell::Class { hash })
+    }
+
+    /// Deploy a cell of `class` under `sri`, on a runtime that has `tags` (any runtime for none),
+    /// on its own: the standalone deploy, which places one cell at a time. `init` is handed to
+    /// the cell's init function (`#[myrmic_sdk::init]`), e.g. to seed its starting state; with
+    /// none, the function gets nothing.
+    pub async fn deploy(
+        &self,
+        class: &cell::Class,
+        sri: Sri,
+        tags: &[&str],
+        init: Option<&[u8]>,
+    ) -> Result<(), DeploymentError> {
+        self.sorg
+            .deploy_wasm_cell_with_arguments(
+                sri,
+                class.hash,
+                RequirementTags::new(tags.to_vec()),
+                init.map(<[u8]>::to_vec),
+                None,
+            )
+            .await
+    }
+
+    /// Deploy the cells of `deployments` in one request: the planner places them together.
+    pub async fn deploy_all(
+        &self,
+        deployments: &[cell::Deployment<'_>],
+    ) -> Result<DeployResponse, DeploymentError> {
+        let cells = deployments
+            .iter()
+            .map(|deployment| {
+                CellDeployment::new(
+                    deployment.sri,
+                    CellConfig::Wasm {
+                        class: deployment.class.hash,
+                    },
+                )
+                .with_tags(RequirementTags::new(deployment.tags.to_vec()))
+            })
+            .collect();
+        self.sorg.deploy_cells(DeployRequest::new(cells)).await
     }
 }
 
@@ -355,3 +468,11 @@ const CONNECTED_TIMEOUT: Duration =
 /// itself for the leader: two leaders both handle a deploy, and the second answers "already
 /// deployed". Nothing reports who considers itself leader, so this is a fixed wait.
 const LEADER_SETTLE_TIME: Duration = Duration::from_secs(1);
+
+/// The contents of the cell binary at `path`. Panics if it can't be read: the test built or named
+/// it.
+async fn read_binary(path: &std::path::Path) -> Vec<u8> {
+    tokio::fs::read(path)
+        .await
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+}

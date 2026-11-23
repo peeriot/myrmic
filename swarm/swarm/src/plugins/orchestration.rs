@@ -4,7 +4,7 @@ use tracing::debug;
 
 mod config;
 
-use self::config::Config;
+pub use self::config::Config;
 
 pub struct SorgOrchestrationPlugin;
 

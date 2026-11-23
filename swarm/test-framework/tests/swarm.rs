@@ -1,7 +1,11 @@
 //! Tests of [`test_framework::swarm3`] with CLI runtimes on the host. They need a built `myrmic`
 //! binary (see [`test_framework::resolve_binary!`]).
 
-use cell_protocol::replication::runtime_tag;
+use std::{num::NonZeroU16, time::Duration};
+
+use anyhow::Context;
+use cell_protocol::{ArtifactPlatform, ClassInfo, replication::runtime_tag};
+use claims::assert_err;
 use introspection_client::v1::Client;
 use test_framework::{
     World, host, in_process,
@@ -9,7 +13,7 @@ use test_framework::{
     overlay::Overlay,
     runtime::{Running, Stopped},
     start_runtimes,
-    swarm3::{RunningRt, Swarm},
+    swarm3::{RunningRt, Swarm, cell},
     wait::DEFAULT_TIMEOUT,
     wait_for,
 };
@@ -171,6 +175,117 @@ async fn a_connected_runtime_links_to_its_targets_whole_group() -> anyhow::Resul
     let connected = swarm.add(in_process::StoppedRt::new(to_target).orchestration());
     start_runtimes!(swarm; target, other, connected);
     Ok(())
+}
+
+/// A runtime set to listen on a port is reachable there from outside the overlay, the way an
+/// embedded runtime with the address built into its firmware dials it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_listens_on_the_port_set_for_it() -> anyhow::Result<()> {
+    let overlay = Overlay::new(&World::local());
+    let runtime = in_process::StoppedRt::new(&overlay.new_multicast_group());
+    let port = free_port()?;
+    overlay.set_listen_port(&runtime, port);
+    let runtime = runtime.start().await?;
+
+    let mut config = zenoh::Config::default();
+    for (key, value) in [
+        ("mode", r#""client""#.to_owned()),
+        ("connect/endpoints", format!(r#"["tcp/127.0.0.1:{port}"]"#)),
+        ("scouting/multicast/enabled", "false".to_owned()),
+    ] {
+        config
+            .insert_json5(key, &value)
+            .map_err(|err| anyhow::anyhow!("invalid zenoh config {key}: {err}"))?;
+    }
+    let outside = zenoh::open(config)
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to dial port {port}: {err}"))?;
+    let client = Client::new(outside).await;
+    wait_for(
+        DEFAULT_TIMEOUT,
+        "the runtime to answer on its port",
+        || async {
+            let statuses = client
+                .swarm_status()
+                .await
+                .expect("failed to query the swarm's status");
+            statuses
+                .iter()
+                .any(|status| status.id == runtime.get_zid())
+                .then_some(())
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// A class registered with an AOT carries it: the class registry lists the AOT under its
+/// platform.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_class_is_registered_with_its_aots() -> anyhow::Result<()> {
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let runtime = swarm.add(in_process::StoppedRt::new(&group).orchestration().db());
+    start_runtimes!(swarm; runtime);
+    let dir = tempfile::tempdir()?;
+    let wasm = dir.path().join("empty.wasm");
+    std::fs::write(&wasm, EMPTY_WASM_MODULE)?;
+    let aot = dir.path().join("empty.aot");
+    std::fs::write(&aot, [0xA0])?;
+
+    swarm
+        .register(&cell::Binaries::from_file(&wasm).aot(ArtifactPlatform::Riscv32imac, &aot))
+        .await?;
+
+    let sorg = swarm.get_sorg();
+    let class = sorg
+        .resolve_class_name("empty.wasm")
+        .await?
+        .context("the wasm's name is bound to the class")?;
+    let Some(ClassInfo::Wasm { aot, .. }) = sorg.get_class_info(class).await? else {
+        anyhow::bail!("the class is no wasm class");
+    };
+    assert!(aot.contains_key(&ArtifactPlatform::Riscv32imac));
+    Ok(())
+}
+
+/// the smallest valid wasm module: its header, no sections
+const EMPTY_WASM_MODULE: [u8; 8] = *b"\0asm\x01\0\0\0";
+
+/// Waiting for a runtime with the tags one of the swarm's runtimes has finds it.
+#[tokio::test(flavor = "multi_thread")]
+async fn waiting_for_a_runtime_finds_one_with_its_tags() -> anyhow::Result<()> {
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let runtime = swarm.add(swarm.get_myrmic().runtime().tags(&["gpu"]));
+    start_runtimes!(swarm; runtime);
+
+    swarm.wait_for_runtime(&["gpu"], DEFAULT_TIMEOUT).await?;
+    Ok(())
+}
+
+/// Waiting for a runtime with tags no runtime has gives up after its timeout.
+#[tokio::test(flavor = "multi_thread")]
+async fn waiting_for_a_runtime_none_matches_times_out() -> anyhow::Result<()> {
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let swarm = Swarm::new(&group).await;
+    let runtime = swarm.add(swarm.get_myrmic().runtime().tags(&["gpu"]));
+    start_runtimes!(swarm; runtime);
+
+    assert_err!(
+        swarm
+            .wait_for_runtime(&["fpga"], Duration::from_secs(1))
+            .await
+    );
+    Ok(())
+}
+
+/// a TCP port free on the test's machine right now
+fn free_port() -> std::io::Result<NonZeroU16> {
+    let port = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?
+        .local_addr()?
+        .port();
+    Ok(NonZeroU16::new(port).expect("the system picks no port 0"))
 }
 
 /// a fresh cell from `myrmic new`, against the SDK in this checkout: the git default pins the
