@@ -10,13 +10,13 @@ use crate::{
 /// may not be back.
 const CLEANUP_CONNECT_TIMEOUT: &str = "ConnectTimeout=5";
 
-/// [`MyrmicBackend`] that runs programs on an SSH host ([`host::Ssh`]), isolated: on state
+/// A [`MyrmicBackend`] that runs programs on an SSH host ([`host::Ssh`]), isolated: with state
 /// directories of their own there (see [`host::Ssh::myrmic_isolated`]).
 ///
-/// Every command shells out to the system `ssh` binary (`ssh <host> <program> <args>...`) rather
-/// than using an SSH client crate, like [`super::docker::Docker`] shells out to the system
-/// `docker` binary: [`MyrmicBackend::command`] is a plain process on the host, so the async and
-/// the blocking (Drop-guard) paths run the same invocation.
+/// Every command runs the system `ssh` binary (`ssh <host> <program> <args>...`) instead of using
+/// an SSH client crate, just as [`super::docker::Docker`] runs the system `docker` binary. So
+/// [`MyrmicBackend::command`] is a plain process on the test's machine, and the async path and the
+/// blocking path (in `Drop` guards) run the same command.
 #[derive(Clone)]
 pub struct Ssh {
     host: host::Ssh,
@@ -32,15 +32,16 @@ struct Isolation {
     /// `XDG_DATA_HOME` on the host (runtime identities, databases, logs), on its disk, so a
     /// runtime keeps its data across a reboot of the host
     data_dir: String,
-    /// `XDG_RUNTIME_DIR` on the host (the pid files `runtimes list` and `delete` read), on the
-    /// host's tmpfs like the default one: a reboot takes the pid files along with the processes
-    /// they name, so none outlives its process and names another one after the reboot
+    /// `XDG_RUNTIME_DIR` on the host, holding the pid files that `runtimes list` and `delete` read.
+    /// It is on the host's tmpfs, like the default one, so a reboot removes the pid files together
+    /// with the processes they name: no pid file outlives its process and names another process
+    /// after the reboot.
     run_dir: String,
 }
 
 impl Ssh {
     /// Run programs on `host` with state directories of their own, created on the host here. A
-    /// runtime started this way sees no runtime name, identity or data of any other.
+    /// runtime started this way sees no name, identity or data of any other runtime.
     pub(crate) fn isolated(host: host::Ssh) -> Self {
         // `mktemp` prints the directory it created
         let create = r#"mktemp -d "$HOME/myrmic-isolated.XXXXXX" && mktemp -d "${XDG_RUNTIME_DIR:?}/myrmic-isolated.XXXXXX""#;

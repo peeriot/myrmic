@@ -1,5 +1,5 @@
-//! The world a test's hosts live in ([`World`]) and its sets of hosts ([`host_set`]), re-exported
-//! from the crate root.
+//! The world a test's hosts live in ([`World`]) and its host sets ([`host_set`]). Both are
+//! re-exported from the crate root.
 
 use std::{
     num::NonZeroU16,
@@ -13,27 +13,27 @@ use crate::host;
 
 pub mod host_set;
 
-/// The world a test's hosts live in: the sets of hosts that can dial each other ([`host_set`]),
-/// all of them together. An [`crate::overlay::Overlay`] sits on a world and asks it whether one
-/// host can dial another, and how.
+/// The world a test's hosts live in: all its host sets, i.e. the groups of hosts that can dial
+/// each other ([`host_set`]). An [`crate::overlay::Overlay`] sits on a world and asks it whether
+/// one host can dial another, and how.
 ///
 /// ```ignore
 /// use test_framework::{World, docker, host_set, overlay::Overlay, world};
 ///
-/// let overlay = Overlay::new(&World::local());  // only the test's own machine
+/// let overlay = Overlay::new(&World::local()); // only the test's own machine
 ///
 /// let docker = host_set::Docker::new(&docker::Daemon::connect()).await;
-/// let world = world![docker];  // the docker network, with the test's machine on it
+/// let world = world![docker]; // the docker network, with the test's machine on it
 /// let overlay = Overlay::new(&world);
 /// ```
 ///
-/// A host may be in several host sets, so a route between two hosts may go through any set both
-/// are in, and a world answers by asking those. It answers nothing beyond that: routes go one hop
-/// (see [`host_set`]), so two hosts that share no set have no route, whatever sets lie between
-/// them.
+/// A host may be in several host sets, so a route between two hosts may go through any set that
+/// both are in. The world answers by asking those sets, and nothing beyond that: routes are one
+/// hop long (see [`host_set`]), so two hosts that share no set have no route, whatever sets lie
+/// between them.
 ///
-/// A world is shared: clones are the same world, and a host set added to it later (e.g. a tunnel
-/// that needs a port the overlay hands out first) is part of the answers from then on.
+/// A world is shared: clones are the same world. A host set added to it later is part of its
+/// answers from then on.
 #[derive(Clone, Default)]
 pub struct World {
     host_sets: Arc<Mutex<Vec<Arc<dyn ConnectedHostSet>>>>,
@@ -93,8 +93,9 @@ impl World {
             .find_map(|host_set| host_set.get_route(from, to, port))
     }
 
-    /// whether multicast gets between `a` and `b`, so what runs on them finds each other by
-    /// scouting: a host set both are in carries it, and one of them can dial the other through it
+    /// whether multicast gets between `a` and `b`, so that what runs on them finds each other by
+    /// scouting: a host set both are in carries multicast, and one of the hosts can dial the other
+    /// through it
     pub(crate) fn has_multicast_route(&self, a: &host::Id, b: &host::Id) -> bool {
         self.get_common_host_sets(a, b).iter().any(|host_set| {
             host_set.has_multicast()

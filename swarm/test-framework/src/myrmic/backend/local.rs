@@ -3,13 +3,13 @@ use std::sync::Arc;
 use super::MyrmicBackend;
 use crate::host;
 
-/// [`MyrmicBackend`] that runs programs on the test's machine, isolated: on state directories of
-/// their own (see [`crate::host::Local::myrmic_isolated`]).
+/// A [`MyrmicBackend`] that runs programs on the test's machine, isolated: with state directories
+/// of their own (see [`crate::host::Local::myrmic_isolated`]).
 #[derive(Clone)]
 pub struct Local {
     /// Holds `data/` (`XDG_DATA_HOME`: runtime identities, databases, logs) and `run/`
-    /// (`XDG_RUNTIME_DIR`: the pid files `runtimes list` and `delete` read). Shared by the clones,
-    /// so it lives as long as any runtime or cell handle that may still need it for cleanup.
+    /// (`XDG_RUNTIME_DIR`: the pid files that `runtimes list` and `delete` read). The clones share
+    /// it, so it lives as long as any runtime or cell handle that may still need it for cleanup.
     dir: Arc<tempfile::TempDir>,
 }
 

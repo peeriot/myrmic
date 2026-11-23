@@ -14,9 +14,9 @@ pub use self::{
     network::ManagedNetwork,
 };
 
-/// The docker daemon the framework talks to: a bollard client plus the endpoint it connects to,
-/// so the `docker` CLI can be pointed at the same daemon (on its own the CLI follows the active
-/// docker context, not the socket bollard picked).
+/// The docker daemon this crate talks to: a bollard client, and the endpoint it connects to, so the
+/// `docker` CLI can be pointed at the same daemon. On its own, the CLI uses the active docker
+/// context, not the socket that bollard picked.
 #[derive(Clone)]
 pub struct Daemon {
     client: Docker,
@@ -33,8 +33,8 @@ impl Deref for Daemon {
 }
 
 impl Daemon {
-    /// Connect to the docker daemon, honoring `DOCKER_HOST` and rootless
-    /// (`$XDG_RUNTIME_DIR/docker.sock`) setups before falling back to the system socket.
+    /// Connect to the docker daemon. Uses `DOCKER_HOST` if it is set, then a rootless docker's
+    /// socket (`$XDG_RUNTIME_DIR/docker.sock`) if there is one, and the system socket otherwise.
     pub fn connect() -> Self {
         let host = std::env::var("DOCKER_HOST")
             .ok()

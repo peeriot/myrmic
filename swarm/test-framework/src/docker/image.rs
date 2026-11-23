@@ -27,8 +27,8 @@ impl Image {
         }
     }
 
-    /// Build the image `tag` from `dockerfile` with an in-memory tar build context containing the
-    /// given `files` as `(host path, name in context)` pairs.
+    /// Build the image `tag` from `dockerfile`, with a build context in memory that holds `files`,
+    /// given as `(path on the test's machine, name in the context)` pairs.
     pub async fn build(
         docker: &Daemon,
         tag: impl Into<String>,

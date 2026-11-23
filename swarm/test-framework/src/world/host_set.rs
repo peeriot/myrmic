@@ -1,29 +1,28 @@
-//! The sets of hosts a test's hosts form: which hosts can dial each other, and how. Together, in
-//! a [`World`](super::World), they are all an [`crate::overlay::Overlay`] needs to know below the
-//! zenoh links it wants between the runtimes on them.
+//! Host sets: groups of a test's hosts that can dial each other, and how they dial. Together, in a
+//! [`World`](super::World), the host sets tell an [`crate::overlay::Overlay`] everything it needs
+//! to know about the network below the zenoh links it wants between its runtimes.
 //!
-//! A host set is not a LAN: it is a set of hosts that dial each other directly, whatever lies in
-//! between (switches, routers, a VPN). A host may be in several sets, and a set may carry
-//! multicast (a LAN, a docker network) or not (a routed network). Addresses and ports are no
-//! concern of the test: a set reads them from its hosts to tell how one dials another.
+//! A host set need not be a LAN. It is a set of hosts that dial each other directly, whatever
+//! lies in between (switches, routers, a VPN). A host may be in several sets. A set may carry
+//! multicast (a LAN, a docker network) or not (a routed network). A test never deals with
+//! addresses and ports: a set reads them from its hosts to find out how one host dials another.
 //!
-//! An overlay asks its world, and the world the sets both hosts are in, for every link it wants,
-//! whether a route from one host to the other exists, and for a connect, the route itself. The
-//! faults on the hosts that drop their traffic, their firewalls
-//! ([`host::Docker::isolate`], [`host::Docker::block`]), are no concern of a set: a route through
-//! it exists also while a firewall drops the traffic on it.
+//! For every link an overlay wants, it asks its world whether a route from one host to the other
+//! exists, and for a connect, what that route is. The world asks the sets both hosts are in.
+//! Firewalls are no concern of a set ([`host::Docker::isolate`], [`host::Docker::block`]): a route
+//! through a set exists even while a firewall drops the traffic on it.
 //!
 //! # Design notes
 //!
-//! A route is a zenoh endpoint, and a route from a host to itself is its loopback. Routes go one
-//! hop: a set has no route between two hosts that are not both in it, so a route that would
-//! cross a host in several sets doesn't exist. What gets from one host to another through a
-//! third is the overlay's business, through the zenoh routers on the way.
+//! A route is a zenoh endpoint. A route from a host to itself is its loopback. Routes are one hop
+//! long: a set has no route between two hosts unless both are in it, so there is no route that
+//! passes through a third host that is in several sets. Getting from one host to another through
+//! a third host is the overlay's business, through zenoh routers on the way.
 //!
-//! [`ConnectedHostSet::find_route`] is the one method a set implements, and only this crate can
-//! call it (its last parameter has a type no other crate can name): [`ConnectedHostSet::get_route`] and
-//! [`ConnectedHostSet::route_exists`] are the ones to call, and agree with each other because
-//! both come from it.
+//! [`ConnectedHostSet::find_route`] is the only method a set implements. Only this crate can call
+//! it, because its last parameter has a type no other crate can name. Callers use
+//! [`ConnectedHostSet::get_route`] and [`ConnectedHostSet::route_exists`] instead. The two always
+//! agree, because both are built on `find_route`.
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -52,10 +51,10 @@ pub trait ConnectedHostSet: Send + Sync {
     /// each other by scouting
     fn has_multicast(&self) -> bool;
 
-    /// How `from` dials `port` on `to` through this set, both hosts of it: `None` if it can't.
-    /// Port 0 stands for whatever port the system on `to` picks; the route then ends in `:0`, which
-    /// tells only that one exists. Implement it, but call [`Self::get_route`] or
-    /// [`Self::route_exists`].
+    /// How `from` dials `port` on `to` through this set, where both hosts are in it, or `None` if
+    /// it can't. Port 0 stands for whatever port the system on `to` picks; the route then ends in
+    /// `:0`, which only says that a route exists. Implement this method, but call
+    /// [`Self::get_route`] or [`Self::route_exists`].
     fn find_route(
         &self,
         from: &host::Id,
@@ -112,9 +111,9 @@ impl ConnectedHostSet for Local {
     }
 }
 
-/// How `from` dials `port` on `to` in the host set named `host_set`, whose hosts dial each other
-/// at their addresses on it: at `to`'s, or on the loopback if both are the same host. `from` must
-/// be in the set.
+/// How `from` dials `port` on `to` in the host set named `host_set`, whose hosts dial each other at
+/// their addresses on it: at `to`'s address, or on the loopback if both are the same host. `from`
+/// must be in the set.
 fn route_by_address(host_set: &str, from: &host::Id, to: &host::Id, port: u16) -> EndPoint {
     assert!(
         from.has_address(host_set),

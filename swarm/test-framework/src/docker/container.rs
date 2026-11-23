@@ -18,7 +18,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-/// a thin wrapper for interacting with a running docker container (address, networks, exec)
+/// A running docker container, for reading its address and networks and running commands in it.
 pub struct ConnectedContainer {
     docker: Daemon,
     container_id: String,
@@ -33,7 +33,7 @@ impl Deref for ConnectedContainer {
 }
 
 impl ConnectedContainer {
-    /// a [`ConnectedContainer`] is created by attaching to a `container_id`
+    /// The running container `container_id` on `docker`.
     pub fn attach(docker: Daemon, container_id: impl Into<String>) -> Self {
         Self {
             docker,
@@ -51,11 +51,11 @@ impl ConnectedContainer {
         &self.container_id
     }
 
-    /// return the IP of this container in the specified network
+    /// The IP address of this container on the network `network`.
     ///
-    /// This is the address docker handed out, read back from its inspect API. A test that
-    /// changes the address inside the container's network namespace keeps seeing the old
-    /// one here, so capture the address before such a change instead of asking afterwards.
+    /// This is the address docker handed out, read back from docker's inspect API. A test that
+    /// changes the address inside the container's network namespace keeps seeing the old address
+    /// here, so it has to read the address before such a change.
     pub async fn container_ip(&self, network: &str) -> String {
         let inspect = self
             .docker
@@ -74,8 +74,8 @@ impl ConnectedContainer {
             .unwrap()
     }
 
-    /// Run `cmd` in the container and capture its output. Panics when docker cannot run it:
-    /// broken test infrastructure, not a result.
+    /// Run `cmd` in the container and capture its output. Panics if docker can't run it: that means
+    /// the test infrastructure is broken, which is not a result.
     pub async fn exec(&self, cmd: &[&str]) -> CommandOutput {
         let exec = self
             .docker
@@ -121,7 +121,7 @@ impl ConnectedContainer {
         }
     }
 
-    /// connect container to a network
+    /// Connect the container to the network `network`.
     pub async fn connect_network(&self, network: &str) {
         self.docker
             .connect_network(
@@ -136,16 +136,16 @@ impl ConnectedContainer {
     }
 }
 
-/// a [`ManagedContainer`] is a docker container that was started by this framework and is
-/// force-removed when dropped (panic-safe cleanup)
+/// A docker container that this crate started. It is force-removed when dropped, so cleanup also
+/// happens when the test panics.
 ///
-/// Not `Clone`: exactly one value owns the container. Borrow it (it derefs to
-/// [`ConnectedContainer`]) to work with it, or share it in an `Arc`, e.g.
-/// a [`crate::host::Docker`].
+/// It isn't `Clone`: exactly one value owns the container. To work with the container, borrow it
+/// (it dereferences to [`ConnectedContainer`]), or share it in an `Arc`, as a
+/// [`crate::host::Docker`] does.
 pub struct ManagedContainer {
     container: ConnectedContainer,
-    /// Kept alive for the network it is attached to: fields drop after [`Drop::drop`], so the
-    /// network is released only once the container is removed.
+    /// Keeps the network the container is attached to alive. Fields are dropped after
+    /// [`Drop::drop`], so the network is only released once the container is removed.
     _network: Option<Arc<ManagedNetwork>>,
 }
 

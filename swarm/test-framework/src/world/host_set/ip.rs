@@ -14,9 +14,10 @@ use zenoh::config::EndPoint;
 use super::{ConnectedHostSet, route_by_address, sealed};
 use crate::host;
 
-/// A plain IP network of machines that exist on their own, e.g. the Raspberry Pis of the rack:
-/// each dials the others at its address on it, the one its SSH destination's name resolves to.
-/// [`Self::lan`] carries multicast, [`Self::routed`] doesn't. Clones are the same host set.
+/// A plain IP network of machines that exist on their own, e.g. the Raspberry Pis of the rack. Each
+/// machine is dialled at its address on the network: the address its SSH destination's name
+/// resolves to. [`Self::lan`] carries multicast, [`Self::routed`] doesn't. Clones are the same host
+/// set.
 #[derive(Clone)]
 pub struct Ip {
     shared: Arc<IpShared>,
@@ -40,8 +41,8 @@ impl Ip {
     }
 
     /// A routed network of the test's own machine and `hosts`, e.g. over a VPN: they dial each
-    /// other through routers, which multicast doesn't get through. The test's machine is there at
-    /// the address its system sends from to the hosts.
+    /// other through routers, and multicast doesn't get through those. The test's machine is on it
+    /// at the address from which its system sends to the hosts.
     pub fn routed(hosts: &[&host::Ssh]) -> Self {
         let ip = Self::new(false);
         let addresses: Vec<Ipv4Addr> = hosts

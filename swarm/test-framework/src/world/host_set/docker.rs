@@ -8,14 +8,14 @@ use zenoh::config::EndPoint;
 use super::{ConnectedHostSet, route_by_address, sealed};
 use crate::{docker, host, resolve_binary};
 
-/// A docker network of its own, whose hosts are containers ([`crate::host::Docker`]), and the
-/// test's own machine. Its hosts dial each other at their addresses on it, which a fault on a
-/// host can change ([`host::Docker::readdress`]), and it carries multicast.
+/// A docker network of its own. Its hosts are containers ([`crate::host::Docker`]) and the test's
+/// own machine. The hosts dial each other at their addresses on the network, which a fault can
+/// change ([`host::Docker::readdress`]), and the network carries multicast.
 ///
-/// The test reaches the network's hosts at their addresses on it. On a machine that runs the test
-/// directly, that machine is on every docker network. A test that runs in a container itself
-/// (e.g. a CI job container) is not, so it names that container in [`TEST_CONTAINER`], and the
-/// network attaches it.
+/// The test reaches the network's hosts at their addresses on it. When the test runs directly on a
+/// machine, that machine is on every docker network. When the test runs in a container itself (e.g.
+/// a CI job's container), it isn't. Then the test names its container in [`TEST_CONTAINER`], and
+/// the network attaches that container.
 #[derive(Clone)]
 pub struct Docker {
     shared: Arc<DockerShared>,
@@ -111,11 +111,12 @@ impl Drop for DockerShared {
     }
 }
 
-/// Build the image with the workspace's current binaries, unless the daemon already has it. Once
-/// per process: the networks of one test binary share it.
+/// Build the image with the workspace's current binaries, unless the daemon already has it. This
+/// happens once per process: all networks of one test binary share the image.
 ///
-/// It strips the binaries and tags the image with a hash of them and the Dockerfile, so an image
-/// is built once per build of the binaries and reused by every later run, in any process.
+/// The binaries are stripped, and the image is tagged with a hash of them and of the Dockerfile. So
+/// the image is built once per build of the binaries, and every later run reuses it, in any
+/// process.
 async fn ensure_image(daemon: &docker::Daemon) -> &'static docker::Image {
     static IMAGE: OnceCell<docker::Image> = OnceCell::const_new();
     IMAGE

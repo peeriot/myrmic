@@ -1,33 +1,35 @@
 //! The machines a test's runtimes run on: the test's own machine ([`Local`]), a docker container
-//! ([`Docker`]), a machine reached over SSH ([`Ssh`]). A host hands out the CLI shims that run on
-//! it ([`crate::myrmic::Myrmic`]), and through them the runtimes.
+//! ([`Docker`]), or a machine the test reaches over SSH ([`Ssh`]). A test gets the `myrmic` CLI
+//! of a host from the host ([`crate::myrmic::Myrmic`]), and starts runtimes through that CLI. A
+//! docker or SSH host can also run zenoh routers ([`Router`]). For an SSH machine, [`ssh`] has
+//! functions that wait until the machine is back after a reboot.
 //!
 //! # Using it
 //!
 //! ```ignore
-//! use test_framework::{docker, host, host_set, overlay::Overlay, world};
+//! use test_framework::{World, docker, host, host_set, overlay::Overlay, world};
 //!
 //! let group = Overlay::new(&World::local()).new_multicast_group();
-//! let myrmic = host::Local.myrmic_isolated(&group);  // the CLI on the test's machine
+//! let myrmic = host::Local.myrmic_isolated(&group); // the CLI on the test's machine
 //!
 //! let host_set = host_set::Docker::new(&docker::Daemon::connect()).await;
 //! let group = Overlay::new(&world![host_set]).new_multicast_group();
 //! let container = host_set.new_host().await;
-//! let remote = container.myrmic(&group);  // the CLI in a container
+//! let remote = container.myrmic(&group); // the CLI in a container
 //! ```
 //!
 //! # Design notes
 //!
-//! A host is not the same as a shim's backend ([`crate::myrmic::MyrmicBackend`]): the backend
-//! only knows how to run a command there, while a host is the machine: its identity ([`Id`]),
-//! the shims it carries (one per attachment or isolation), its faults and its address on each
-//! network it's on, which a fault can change ([`Docker::readdress`]).
+//! A host is more than a CLI backend ([`crate::myrmic::MyrmicBackend`]). A backend only knows how
+//! to run a command on the machine. A host is the machine itself: it has an identity ([`Id`]),
+//! the CLIs that run on it (one per attachment or isolation), its faults, and an address on each
+//! network it is on. A fault can change that address ([`Docker::readdress`]).
 //!
-//! A host's handle ([`Local`], [`Docker`], [`Ssh`]) owns it, and is what a test works with. Everything
-//! that refers to a host without owning it (an overlay's members, a host set) holds its [`Id`]:
-//! it doesn't keep the host alive, and reads through it what others need to know of the host:
-//! its firewall, the faults on it that drop its traffic, and its addresses. Addresses are no
-//! concern of a test: a host set reads them to tell how another host dials this one.
+//! A test works with a host's handle ([`Local`], [`Docker`], [`Ssh`]), and the handle owns the
+//! host. Everything else that refers to the host (an overlay's members, a host set) holds its
+//! [`Id`] instead. An id doesn't keep the host alive. Through it, others read what they need to
+//! know about the host: its firewall, the faults that drop its traffic, and its addresses. A test
+//! never deals with addresses: a host set reads them to find out how another host dials this one.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -36,7 +38,12 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, Weak},
 };
 
-pub use self::{docker::Docker, local::Local, router::Router, ssh::Ssh};
+pub use self::{
+    docker::{Block, Docker},
+    local::Local,
+    router::Router,
+    ssh::Ssh,
+};
 pub(crate) use self::{
     docker::{DOCKER_DATA_DIR, DOCKER_DATA_DIR_OPTIONS},
     local::{get_local_id, remove_local_address, set_local_address},
@@ -47,15 +54,16 @@ mod local;
 mod router;
 pub mod ssh;
 
-/// A host the test reaches from the outside, through a program that runs commands there
-/// (`docker exec`, `ssh`): what a [`Router`] runs on.
+/// A host the test reaches from outside, through a program that runs commands on it (`docker exec`,
+/// `ssh`). A [`Router`] runs on such a host.
 pub trait Remote {
     /// `program args` on this host, as a local process that runs it there
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command;
 }
 
-/// A host's identity, which stays while its address may change, held by what refers to the host
-/// without owning it. Two ids are equal iff they are of the same host.
+/// A host's identity. It stays the same while the host's address changes. Everything that refers to
+/// a host without owning it holds its id. Two ids are equal if and only if they belong to the same
+/// host.
 #[derive(Clone)]
 pub struct Id {
     /// what others need to know of the host, owned by its handles; its allocation is the host's
@@ -73,8 +81,9 @@ struct Shared {
     addresses: Mutex<HashMap<String, IpAddr>>,
 }
 
-/// The faults on a host that drop its traffic. Each is a set of rules on the host, which act on
-/// all its networks, but never on its traffic with itself.
+/// The faults on a host that drop its traffic. Each fault is a set of rules on the host. The rules
+/// act on all of the host's networks, but never on traffic between things that run on the host
+/// itself.
 #[derive(Clone, Default)]
 pub(crate) struct Firewall {
     /// whether it drops all traffic (see [`Docker::isolate`])
@@ -112,8 +121,8 @@ impl Id {
     }
 }
 
-/// Whether the hosts `a` and `b` let the traffic between them through their firewalls. A host's
-/// own traffic, between what runs on it, always gets through.
+/// Whether the firewalls of the hosts `a` and `b` let the traffic between them through. Traffic
+/// within one host always gets through.
 pub(crate) fn firewalls_let_through(a: &Id, b: &Id) -> bool {
     a == b || {
         let (a_firewall, b_firewall) = (a.get_firewall(), b.get_firewall());

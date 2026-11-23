@@ -82,3 +82,18 @@ async fn blocked_hosts_lose_their_link() -> anyhow::Result<()> {
     setup.swarm.wait_until_connected().await?;
     Ok(())
 }
+
+/// Two hosts that were blocked from each other link again once they are unblocked.
+#[tokio::test(flavor = "multi_thread")]
+async fn unblocked_hosts_link_again() -> anyhow::Result<()> {
+    let setup = DockerSwarm::new().await;
+    let (a_host, a) = setup.new_runtime().await;
+    let (b_host, b) = setup.new_runtime().await;
+    start_runtimes!(setup.swarm; a, b);
+    let block = a_host.block(&b_host).await;
+    setup.swarm.wait_until_connected().await?;
+
+    block.unblock().await;
+    setup.swarm.wait_until_connected().await?;
+    Ok(())
+}

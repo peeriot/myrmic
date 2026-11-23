@@ -1,7 +1,7 @@
-//! Machines the test reaches over SSH: a machine to run runtimes and routers on ([`Ssh`],
-//! exported as [`super::Ssh`]), and waits for a machine to be back after a reboot, which need no
-//! more of it than its SSH destination ([`wait_until_reachable`],
-//! [`wait_until_clock_synchronized`]).
+//! Machines the test reaches over SSH. [`Ssh`] (also exported as [`super::Ssh`]) is such a machine,
+//! for running runtimes and routers on it. [`wait_until_reachable`] and
+//! [`wait_until_clock_synchronized`] wait until a machine is back after a reboot; they only need
+//! the machine's SSH destination.
 
 use std::{
     net::IpAddr,
@@ -26,19 +26,21 @@ const CONNECT_TIMEOUT_SECS: &str = "5";
 /// How long a wait for a machine pauses between two attempts.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// A machine the test reaches over SSH, e.g. a Raspberry Pi of the rack. It exists on its own,
-/// before any host set: host sets take it in, and give it its address there. Clones are the same
-/// host.
+/// A machine the test reaches over SSH, e.g. a Raspberry Pi of the rack. It exists before it is in
+/// any host set; a host set takes it in and gives it its address there. Clones are the same host.
 ///
-/// Every SSH connection to it takes these options from the environment where set: the identity
-/// file (`SSH_IDENTITY_FILE`), the known hosts file (`SSH_KNOWN_HOSTS_FILE`, e.g. the one a CI
-/// setup prepared, rather than `ssh`'s default) and the host key policy
-/// (`SSH_STRICT_HOST_KEY_CHECKING`, e.g. `accept-new` in a CI job whose fresh container knows no
-/// host yet).
+/// Every SSH connection to the machine takes these options from the environment, where they are
+/// set:
+///
+/// - `SSH_IDENTITY_FILE`: the identity file;
+/// - `SSH_KNOWN_HOSTS_FILE`: the known hosts file, e.g. one that a CI setup prepared, instead of
+///   `ssh`'s default;
+/// - `SSH_STRICT_HOST_KEY_CHECKING`: the host key policy, e.g. `accept-new` in a CI job whose fresh
+///   container knows no hosts yet.
 #[derive(Clone)]
 pub struct Ssh {
-    /// SSH destination, e.g. `user@rack-node-1.example`: anything `ssh` accepts (host aliases from
-    /// `~/.ssh/config` included); it also names the host in messages
+    /// the SSH destination, e.g. `user@rack-node-1.example`: anything `ssh` accepts, including host
+    /// aliases from `~/.ssh/config`. It also names the host in messages.
     destination: Arc<str>,
     /// the directory the machine's `myrmic` and `zenoh-router` lie in (the test puts them there,
     /// see [`Self::upload`])
@@ -47,8 +49,8 @@ pub struct Ssh {
 }
 
 impl Ssh {
-    /// The machine at the SSH destination `destination`, with its `myrmic` and `zenoh-router` in
-    /// `bin_dir`, nothing in its firewall and in no host set yet.
+    /// The machine at the SSH destination `destination`, with its `myrmic` and `zenoh-router`
+    /// binaries in `bin_dir`. It starts with nothing in its firewall and in no host set.
     pub fn new(destination: impl Into<String>, bin_dir: impl Into<String>) -> Self {
         Self {
             destination: Arc::from(destination.into()),
@@ -78,8 +80,9 @@ impl Ssh {
     }
 
     /// The CLI on this machine, attached by `attachment`. Like [`super::Local::myrmic_isolated`],
-    /// it has state directories of its own, created on the machine here and removed there with the
-    /// last clone of the shim, so its runtimes see no name, identity or data of an earlier run.
+    /// it keeps its state in directories of its own. They are created on the machine here and
+    /// removed there with the last clone of the shim, so its runtimes see no name, identity or data
+    /// of an earlier run.
     pub fn myrmic_isolated(
         &self,
         attachment: impl Into<overlay::Attachment>,
@@ -91,20 +94,22 @@ impl Ssh {
         )
     }
 
-    /// A zenoh router on this machine, a new member of an overlay attached by `attachment`.
-    /// Returns once it listens, so a swarm can attach through it right away (see [`Router`]).
+    /// A zenoh router on this machine, as a new member of an overlay, attached by `attachment`.
+    /// Returns once the router listens, so a swarm can attach through it right away (see
+    /// [`Router`]).
     pub async fn router(&self, attachment: impl Into<overlay::Attachment>) -> Router<Self> {
         let member = attachment.into().add_member(self.get_id());
         let binary = format!("{}/zenoh-router", self.bin_dir);
         Router::start(self.clone(), &binary, member).await
     }
 
-    /// Copy the local binary `local` into the machine's binary directory (see [`Self::new`])
-    /// under its own name, and have it on the machine's disk before returning, so a test that cuts
-    /// the machine's power doesn't lose it. Copies nothing if the machine already has a file with
-    /// the same content there. Panics if it fails.
+    /// Copy the local binary `local` into the machine's binary directory (see [`Self::new`]), under
+    /// its own file name. Returns once the file is on the machine's disk, so a test that cuts the
+    /// machine's power doesn't lose it. If the machine already has a file with the same content
+    /// there, nothing is copied. Panics if the copy fails.
     ///
-    /// For several machines, upload to all at once, e.g. with `futures::future::join_all`.
+    /// To upload to several machines, run the uploads at the same time, e.g. with
+    /// `futures::future::join_all`.
     pub async fn upload(&self, local: &Path) {
         let hash = sha256_of(local);
         let name = local
@@ -197,9 +202,9 @@ impl Remote for Ssh {
     }
 }
 
-/// Wait until the machine at the SSH destination `destination` takes SSH connections, e.g. after
-/// it rebooted. Panics after `timeout`. Connects with the options from the environment a [`Ssh`]
-/// does.
+/// Wait until the machine at the SSH destination `destination` accepts SSH connections, e.g. after
+/// a reboot. Panics after `timeout`. Connects with the same options from the environment as an
+/// [`Ssh`].
 pub fn wait_until_reachable(destination: &str, timeout: Duration) {
     poll(
         destination,
@@ -212,7 +217,7 @@ pub fn wait_until_reachable(destination: &str, timeout: Duration) {
 
 /// Wait until the machine at the SSH destination `destination` has synchronized its wall clock
 /// (systemd's `NTPSynchronized`), e.g. after it booted without a clock that kept the time. Panics
-/// after `timeout`. Connects with the options from the environment a [`Ssh`] does.
+/// after `timeout`. Connects with the same options from the environment as an [`Ssh`].
 pub fn wait_until_clock_synchronized(destination: &str, timeout: Duration) {
     let show = [
         "timedatectl",
@@ -230,8 +235,9 @@ pub fn wait_until_clock_synchronized(destination: &str, timeout: Duration) {
     );
 }
 
-/// Run `words` on the machine at `destination` until `done` says its output is the awaited one.
-/// Panics after `timeout`, saying what the machine failed `to` do and showing the last output.
+/// Run `words` on the machine at `destination` again and again until `done` accepts the output.
+/// Panics after `timeout`; the message says what the machine failed `to` do and shows the last
+/// output.
 fn poll(
     destination: &str,
     words: &[&str],
@@ -275,8 +281,8 @@ fn ssh_command(destination: &str, options: &[&str], words: &[&str]) -> std::proc
 }
 
 /// `program` (`ssh` or `scp`, which take the same options) with the options from the environment
-/// every SSH connection shares (see [`Ssh`]). Each is read fresh on every call, so a test that
-/// sets one mid-run sees it take effect.
+/// that every SSH connection uses (see [`Ssh`]). The options are read on every call, so a test that
+/// sets one during its run sees the change.
 fn command_with_ssh_config(program: &str) -> std::process::Command {
     let mut command = std::process::Command::new(program);
     if let Some(identity_file) = get_env("SSH_IDENTITY_FILE") {
@@ -300,16 +306,15 @@ fn get_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// `words` (a program and its arguments) as one command line, each word quoted so the remote
+/// `words` (a program and its arguments) as one command line, with each word quoted so the remote
 /// shell can neither split nor expand it.
 ///
-/// `ssh` joins the command arguments it is handed with spaces and gives the
-/// result to a shell on the far side, which splits and expands it all over
-/// again — so passing them as separate argv entries quotes nothing. An app
-/// spec under a path with a space arrives as two arguments, and a `;`,
-/// backtick or `$(…)` in a tag or a command payload runs as a command on
-/// the rack node. [`crate::myrmic::Local`] is unaffected because it
-/// execs directly; SSH is the only path with a shell in it.
+/// `ssh` joins the command arguments it gets with spaces, and a shell on the remote machine splits
+/// and expands the result again. So passing them as separate arguments quotes nothing: an app spec
+/// under a path with a space would arrive as two arguments, and a `;`, a backtick or `$(…)` in a
+/// tag or a command payload would run as a command on the remote machine. [`crate::myrmic::Local`]
+/// doesn't have this problem because it runs the program directly; SSH is the only path with a
+/// shell in it.
 fn quoted_command_line(words: &[&str]) -> String {
     words
         .iter()

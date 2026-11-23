@@ -1,7 +1,7 @@
-//! A runtime a test controls, as two states that are each a type of their own: [`Stopped`] can
-//! only be started, [`Running`] can only be stopped. Each transition consumes the value it starts
-//! from and returns the other state, so calling one on a runtime in the wrong state does not
-//! compile.
+//! A runtime a test controls, as two states that are each a type of their own: a [`Stopped`]
+//! runtime can only be started, a [`Running`] one can only be stopped. Each transition consumes
+//! the value it starts from and returns the other state. So calling a transition on a runtime in
+//! the wrong state doesn't compile.
 //!
 //! What only some kinds of runtimes can do (kill, pause, ...) is a method of that kind's running
 //! type, not part of these traits.
@@ -9,12 +9,12 @@
 //! # Using a runtime
 //!
 //! A test gets a stopped runtime from whatever describes it, e.g.
-//! [`crate::myrmic::Myrmic::runtime`] for one started with `myrmic runtimes start`, and moves it
-//! through its states by rebinding:
+//! [`crate::myrmic::Myrmic::runtime`] for a runtime of `myrmic runtimes start`. It moves the
+//! runtime through its states by rebinding:
 //!
 //! ```ignore
 //! use test_framework::{
-//!     host, World,
+//!     World, host,
 //!     overlay::Overlay,
 //!     runtime::{Running, Stopped},
 //! };
@@ -28,60 +28,61 @@
 //! assert_eq!(rt.get_zid(), zid);
 //! ```
 //!
-//! - The transitions every kind has are trait methods: import the traits a test calls
-//!   ([`Stopped`] to start, [`Running`] to delete or read the zid). The others are the kind's own
-//!   methods (e.g. [`crate::myrmic::RunningRt::kill`]).
+//! - The transitions every kind has are trait methods, so a test imports the traits it calls:
+//!   [`Stopped`] to start, [`Running`] to delete or to read the zid. All other transitions are
+//!   methods of the kind (e.g. [`crate::myrmic::RunningRt::kill`]).
 //! - [`Stopped::start`] returns once the runtime is ready, i.e. once cells can be placed on it.
 //! - A stopped runtime is the same runtime it was while running: starting it again brings it back
-//!   under the same identity. With the CLI, the identity is the name: the same name gives the
-//!   same zid, and with `persistent` the same database. A kind's own stopped value can still be
-//!   changed before it starts again (e.g. switched to `persistent`), but giving it another name
-//!   makes it a different runtime. A swarm's stopped handle can't be changed: it keeps the kind's
-//!   value to itself, and the kinds' setters consume the value they change.
+//!   under the same identity. For a CLI runtime, the identity is its name. The same name gives
+//!   the same zid, and with `persistent` also the same database. A test can still change a kind's
+//!   stopped value before starting it again (e.g. switch it to `persistent`), but giving it
+//!   another name makes it a different runtime. A swarm's stopped handle can't be changed: it
+//!   doesn't hand out the kind's value, and the kinds' setters need to consume the value they
+//!   change.
 //! - Dropping a running runtime deletes it, best effort, so a failing test leaves nothing running.
-//!   Dropping a stopped runtime does nothing. A test deletes explicitly only when it asserts on
-//!   what happens after the delete.
-//! - A failed transition consumes the value too: the runtime's handle is gone with the error. A
-//!   test treats every such error as a failure (`.unwrap()`, `?`), so there is nothing to
+//!   Dropping a stopped runtime does nothing. A test only deletes a runtime explicitly when it
+//!   checks what happens after the delete.
+//! - A failed transition also consumes the value, so the handle is gone together with the error.
+//!   A test treats every such error as a failure (`.unwrap()`, `?`), so there is nothing to
 //!   continue with anyway.
-//! - Calling a method a kind doesn't have does not compile: a test names the concrete kinds it
-//!   uses, so there is nothing to check at run time.
+//! - Calling a method that a kind doesn't have doesn't compile. A test names the concrete kinds it
+//!   uses, so nothing needs to be checked at run time.
 //!
-//! These traits are not tied to swarms: a test with a single runtime uses them directly, and a
-//! swarm's handles implement them around the kind's own ones.
+//! These traits are not tied to swarms. A test with a single runtime uses them directly, and the
+//! handles of a swarm implement them by wrapping the handles of the kind.
 //!
 //! # Design notes
 //!
 //! Why two types instead of one handle with a running flag: every operation is only valid in one
-//! state, and a flag would turn each wrong-state call into a run-time assertion. With the states
-//! as types, the compiler rejects them. [`Running::get_zid`] is the clearest case: a runtime that
-//! was never started has no zid, so the getter exists only on the running state, and no caller
-//! has to handle its absence.
+//! of the states, and a flag would turn each call in the wrong state into a check at run time.
+//! With the states as types, the compiler rejects those calls. [`Running::get_zid`] is the
+//! clearest case: a runtime that was never started has no zid, so the getter only exists on the
+//! running state, and no caller has to handle a missing zid.
 //!
-//! Each implementation pairs exactly one stopped type with one running type, which the associated
-//! types [`Stopped::Running`] and [`Running::Stopped`] tie together, so a round trip always comes
-//! back to the type it started from.
+//! Each implementation pairs exactly one stopped type with one running type. The associated types
+//! [`Stopped::Running`] and [`Running::Stopped`] tie the two together, so a round trip always
+//! comes back to the type it started from.
 //!
-//! The traits hold only what every kind of runtime can do: start, delete, tell its zid and its
-//! overlay membership. Code generic over kinds needs no more: a swarm, for example, starts and
-//! stops its runtimes through these traits and hands the test the concrete handle for everything
-//! else (see [`crate::swarm::RunningRt::stop_with`]). Anything a kind may not be able to do is a
-//! method of that kind alone: a runtime whose node runs inside the test process
-//! ([`crate::in_process`]) cannot be ended abruptly (closing its zenoh session always says
-//! goodbye) or frozen (there is no process of its own to stop), so it has neither `kill` nor
-//! `pause`.
+//! The traits only hold what every kind of runtime can do: start, delete, and report its zid and
+//! its overlay membership. Code that is generic over the kinds needs no more. A swarm, for example,
+//! starts and stops its runtimes through these traits, and gives the test the concrete handle for
+//! everything else (see [`crate::swarm::RunningRt::stop_with`]). Anything that some kind may not
+//! be able to do is a method of the kinds that can. A runtime whose node runs inside the test
+//! process ([`crate::in_process`]), for example, can't be ended abruptly (closing its zenoh
+//! session always says goodbye) or frozen (it has no process of its own to stop), so it has
+//! neither `kill` nor `pause`.
 //!
-//! A stopped value holds everything starting needs, so a running value has to hold it as well, to
-//! hand it back when it stops. For the CLI, the stopped type is the set of `runtimes start`
-//! options itself ([`crate::myrmic::StoppedRt`]), and the running type keeps it next to the zid
-//! ([`crate::myrmic::RunningRt`]).
+//! A stopped value holds everything that starting needs. So a running value has to hold it as
+//! well, to return it when the runtime stops. For a CLI runtime, the stopped type is the set of
+//! `runtimes start` options ([`crate::myrmic::StoppedRt`]), and the running type keeps those
+//! options next to the zid ([`crate::myrmic::RunningRt`]).
 //!
-//! Handles are `Send + Sync`: tests hold them across awaits on a multi-threaded runtime, and a
-//! swarm's handles share its state with the swarm (see [`crate::swarm`]).
+//! Handles are `Send + Sync`: tests hold them across awaits on a multi-threaded runtime, and the
+//! handles of a swarm share its state with the swarm (see [`crate::swarm`]).
 //!
-//! Each kind reports failures in its own error type ([`Stopped::Error`], shared by both states of
-//! a kind): a CLI runtime fails with what the CLI said ([`crate::myrmic::Error`]), an in-process
-//! node with what its startup reported.
+//! Each kind reports failures in its own error type ([`Stopped::Error`], which both states of a
+//! kind share). A CLI runtime fails with what the CLI said ([`crate::myrmic::Error`]), an
+//! in-process node with what its startup reported.
 
 use std::future::Future;
 

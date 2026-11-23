@@ -42,11 +42,11 @@ pub(crate) fn remove_local_address(network: &str) {
 pub struct Local;
 
 impl Local {
-    /// The CLI on this machine, attached by `attachment`, running the locally built myrmic binary
-    /// (see [`crate::resolve_binary!`]). It has state directories of its own (runtime identities,
-    /// databases, pid files, logs), removed with the last clone of the shim: a runtime's identity
-    /// is its name within them, so tests that give their runtimes the same names can run in
-    /// parallel, and nothing piles up in the machine's own directories.
+    /// The CLI on this machine, attached by `attachment`, running the locally built `myrmic` binary
+    /// (see [`crate::resolve_binary!`]). The CLI keeps its state in directories of its own (runtime
+    /// identities, databases, pid files, logs), which are removed with the last clone of the shim.
+    /// A runtime's identity is its name within those directories. So tests that give their runtimes
+    /// the same names can run in parallel, and nothing piles up in the machine's own directories.
     pub fn myrmic_isolated(
         &self,
         attachment: impl Into<overlay::Attachment>,
@@ -55,8 +55,8 @@ impl Local {
     }
 
     /// Like [`Self::myrmic_isolated`], but on a group of its own, in an overlay of its own on
-    /// [`World::local`]: the CLI for a test whose runtimes all run on this machine and that never
-    /// needs the group itself.
+    /// [`World::local`]. For a test whose runtimes all run on this machine and that never needs the
+    /// group itself.
     pub fn myrmic_isolated_alone(&self) -> Myrmic<myrmic::Local> {
         let group = overlay::Overlay::new(&World::local()).new_multicast_group();
         self.myrmic_isolated(&group)

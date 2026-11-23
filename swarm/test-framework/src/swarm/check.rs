@@ -5,14 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use introspection_common::v1::NodeStatus;
 use zenoh::config::ZenohId;
 
-/// Why `statuses` do not show the swarm of `expected`, or `None` if they do: exactly the runtimes
-/// of `expected` answer, and each of them is linked to exactly the runtimes `expected` lists for
+/// Why `statuses` don't show the swarm of `expected`, or `None` if they do: exactly the runtimes of
+/// `expected` answer, and each of them is linked to exactly the runtimes that `expected` lists for
 /// it.
 ///
 /// The runtimes are the nodes that report no `participant`. CLI sessions report one, and the
-/// session that asks does not answer at all, so neither counts, also not among a runtime's links.
-/// A runtime's links are its peers and its routers alike: a node in zenoh's router mode is listed
-/// under routers, but is linked all the same.
+/// session that asks doesn't answer at all, so neither counts, not even among a runtime's links. A
+/// runtime's links are its peers and its routers alike: zenoh lists a node in router mode under
+/// routers, but it is linked all the same.
 pub(super) fn mismatch(
     statuses: &[NodeStatus],
     expected: &BTreeMap<ZenohId, BTreeSet<ZenohId>>,

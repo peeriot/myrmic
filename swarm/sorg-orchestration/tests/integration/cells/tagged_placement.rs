@@ -141,7 +141,7 @@ async fn untagged_cells_spread_across_nodes() -> anyhow::Result<()> {
     let class = register_dummy(&swarm).await?;
 
     // one request: the planner has to spread within a batch
-    swarm
+    let _cells = swarm
         .deploy_all(&[
             Deployment {
                 class: &class,
@@ -177,7 +177,7 @@ async fn untagged_spreads_off_tagged_node() -> anyhow::Result<()> {
     let (swarm, [gpu, cpu]) = gpu_cpu().await?;
     let class = register_dummy(&swarm).await?;
 
-    swarm
+    let _cells = swarm
         .deploy_all(&[
             Deployment {
                 class: &class,
@@ -339,7 +339,7 @@ async fn standalone_single_tag_match() -> anyhow::Result<()> {
     let (swarm, [gpu, _cpu]) = gpu_cpu().await?;
     let class = register_dummy(&swarm).await?;
 
-    swarm
+    let _cell = swarm
         .deploy(&class, to_sri(CELL_SRI), &[TAG_GPU], None)
         .await?;
 

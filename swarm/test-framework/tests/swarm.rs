@@ -68,7 +68,7 @@ async fn parallel_swarms_are_isolated() -> anyhow::Result<()> {
         Err(err) => panic!("the deploy failed without the CLI failing: {err}"),
         Ok(cell) => panic!(
             "a cell pinned to the other swarm's runtime was deployed: {}",
-            cell.output()
+            cell.output().expect("the CLI deployed it")
         ),
     };
     assert!(
@@ -305,7 +305,7 @@ async fn deploy_pinned(
 ) -> Result<String, Error> {
     let tag = runtime_tag(zid.into());
     let deployed = myrmic.cell(cell.as_path()).tags(&[&tag]).deploy().await?;
-    let output = deployed.output();
+    let output = deployed.output().expect("the CLI deployed it");
     Ok(output
         .lines()
         .find_map(|line| {

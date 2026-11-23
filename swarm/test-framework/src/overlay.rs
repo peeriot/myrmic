@@ -1,51 +1,53 @@
-//! The zenoh links a test's runtimes form among themselves: which runtimes scout on which
-//! multicast group, and which connect to which. An [`Overlay`] is the one place that knows this;
-//! runtimes read their zenoh settings from it when they start, and a swarm reads from it which
-//! links it expects.
+//! The zenoh links between a test's runtimes: which runtimes scout on which multicast group, and
+//! which runtime connects to which. An [`Overlay`] is the only place that knows this. Runtimes
+//! read their zenoh settings from it when they start, and a swarm reads from it which links to
+//! expect.
 //!
 //! # Using it
 //!
 //! ```ignore
-//! use test_framework::{host, in_process, overlay::Overlay, World};
+//! use test_framework::{World, host, in_process, overlay::Overlay};
 //!
 //! let overlay = Overlay::new(&World::local());
 //! let group = overlay.new_multicast_group();
-//! let a = in_process::StoppedRt::new(&group).router_mode();  // a node that scouts on `group`
+//! let a = in_process::StoppedRt::new(&group).router_mode(); // a node that scouts on `group`
 //! let myrmic = host::Local.myrmic_isolated(overlay.connect_to(&a));
-//! let b = myrmic.runtime();  // a CLI runtime whose one link is a connect to `a`
-//! let session = zenoh::open(group.get_zenoh_config()).await.unwrap();  // the test, on the group
+//! let b = myrmic.runtime(); // a CLI runtime whose only link is a connect to `a`
+//! let session = zenoh::open(group.get_zenoh_config()).await.unwrap(); // the test, on the group
 //! ```
 //!
-//! - An overlay sits on a world ([`crate::World`]), whose host sets decide whether one host can
-//!   dial another at all, and the hosts' firewalls decide whether the traffic gets through. A
-//!   link the overlay wants only exists where both let it.
-//! - A runtime becomes a member of the overlay when it is created, by an [`Attachment`]: on a
-//!   group, where it links to every other member of the group, or by a connect to another member
-//!   ([`Overlay::connect_to`]), which is then its only link. A test's session, its CLI and a
-//!   swarm attach the same way.
-//! - [`Overlay::new_multicast_group`] hands out a group no other overlay uses, so runtimes of
-//!   different overlays (e.g. of tests running in parallel) never see each other.
-//! - [`Overlay::set_group`] moves a member to another group, for a runtime that should come back
-//!   cut off from the rest; it takes effect at the member's next start.
-//! - [`Overlay::set_listen_port`] fixes the port a member listens on, for something outside the
-//!   overlay that dials a known address, e.g. an embedded runtime whose firmware has it built in.
-//! - Groups and members hold their overlay, so a test that only needs one of them need not keep
-//!   the overlay.
+//! - An overlay sits on a world ([`crate::World`]). The world's host sets decide whether one host
+//!   can dial another at all, and the hosts' firewalls decide whether the traffic gets through. A
+//!   link the overlay wants only exists where both allow it.
+//! - A runtime becomes a member of the overlay when it is created. How it attaches is an
+//!   [`Attachment`]: either on a group, where it links to every other member of the group, or by
+//!   a connect to another member ([`Overlay::connect_to`]), which is then its only link. A test's
+//!   session, its CLI and a swarm attach in the same two ways.
+//! - [`Overlay::new_multicast_group`] returns a group that no other overlay uses. So runtimes of
+//!   different overlays, e.g. of tests that run in parallel, never see each other.
+//! - [`Overlay::set_group`] moves a member to another group, e.g. so that a runtime comes back
+//!   cut off from the others. The move takes effect when the member starts the next time.
+//! - [`Overlay::set_listen_port`] sets the port a member listens on. This is for something
+//!   outside the overlay that dials a fixed address, e.g. an embedded runtime whose firmware has
+//!   the address built in.
+//! - Groups and members keep their overlay alive, so a test that only needs a group or a member
+//!   doesn't have to keep the overlay.
 //!
 //! # Design notes
 //!
-//! The overlay is the zenoh view of a test's setup, sitting on the world the hosts are in: a
-//! link between two runtimes exists if the overlay wants it, a route exists from the host of the
-//! one that dials to the other's, and their firewalls let the traffic through. Runtimes don't
-//! keep their group or connects themselves: they keep their membership, and ask the overlay for
-//! their settings at start, so the overlay is the only source of who links to whom. A member's
-//! host is part of that topology, so the overlay holds it too, by its id; the route of a connect
-//! to the member it asks the world for when it builds the connect, since a fault may have
-//! moved the host.
+//! Three things decide whether two runtimes are linked: the overlay must want the link, the
+//! world must have a route from the host of the dialing runtime to the host of the other, and
+//! the firewalls of both hosts must let the traffic through.
 //!
-//! What the overlay tells about links is what zenoh has, not what the settings ask for: a link
-//! the firewalls cut doesn't exist, while the settings keep the route to it, so the link comes
-//! back once the cut is lifted.
+//! Runtimes don't store their group or their connects themselves. They store their membership,
+//! and ask the overlay for their settings when they start, so the overlay is the only source of
+//! who links to whom. A member's host is part of that picture, so the overlay holds the host too,
+//! by its id. The route for a connect to a member is asked from the world each time a connect is
+//! built, because a fault may have moved the member's host.
+//!
+//! The links the overlay reports are the links zenoh actually has, not the ones the settings ask
+//! for. A link that a firewall cuts doesn't exist, but the settings keep the route to it, so the
+//! link comes back once the cut is lifted.
 
 use std::{
     collections::HashSet,
@@ -93,9 +95,9 @@ struct MemberState {
     connects: Vec<usize>,
     /// the port it listens on: set by the test, or a free one once a connect targets it
     listen_port: Option<NonZeroU16>,
-    /// The mode it runs in, `None` while it doesn't run: what its last start reported, until its
-    /// running handle went away (see [`Member::start_running`]). A router passes traffic on
-    /// between what is linked to it. The mode itself is the runtime's own setting.
+    /// The mode the member runs in, or `None` while it doesn't run: what its last start reported,
+    /// until its running handle went away (see [`Member::start_running`]). A router passes traffic
+    /// on between the members linked to it. The mode itself is a setting of the runtime.
     running: Option<WhatAmI>,
 }
 
@@ -109,8 +111,8 @@ impl MemberState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct GroupId(usize);
 
-/// A multicast group of an [`Overlay`]: the runtimes created on it scout on it, and so link to
-/// each other. Clones are the same group.
+/// A multicast group of an [`Overlay`]. The runtimes created on it scout on it, and so link to each
+/// other. Clones are the same group.
 #[derive(Clone)]
 pub struct MulticastGroup {
     overlay: Overlay,
@@ -126,7 +128,7 @@ pub enum Attachment {
     ConnectTo(Member),
 }
 
-/// A member of an [`Overlay`]: a runtime, as the overlay knows it (see
+/// A member of an [`Overlay`]: a runtime, as the overlay sees it (see
 /// [`crate::runtime::Stopped::get_overlay_member`]). Clones are the same member.
 #[derive(Clone)]
 pub struct Member {
@@ -158,9 +160,9 @@ impl Overlay {
         }
     }
 
-    /// Attaching by a connect to the member `target`: what attaches this way links to `target`
-    /// only. `target` listens for it from its next start on, so a runtime is connected to before
-    /// it starts.
+    /// An attachment by a connect to the member `target`: what attaches this way links to `target`
+    /// only. `target` listens for the connect from its next start on, so something can attach to a
+    /// runtime before the runtime starts.
     pub fn connect_to(&self, target: impl Into<Member>) -> Attachment {
         let target = target.into();
         assert!(
@@ -171,9 +173,9 @@ impl Overlay {
         Attachment::ConnectTo(target)
     }
 
-    /// Move the member `member` to `group`, one of this overlay's: from its next start on it
-    /// scouts there, e.g. on a group nobody else is on, to come back cut off from the rest. A
-    /// running member is not moved until it starts again.
+    /// Move the member `member` to `group`, a group of this overlay. From its next start on, the
+    /// member scouts on `group`, e.g. on a group nobody else is on, so that it comes back cut off
+    /// from the others. A running member only moves when it starts again.
     pub fn set_group(&self, member: impl Into<Member>, group: &MulticastGroup) {
         let member = member.into();
         assert!(
@@ -184,31 +186,31 @@ impl Overlay {
         self.lock().members[index].group = Some(group.id);
     }
 
-    /// Have the member `member` listen on `port`: from its next start on it listens there, and
-    /// what connects to it from its own next start on dials there. For something outside the
-    /// overlay that dials a known address, e.g. an embedded runtime whose firmware has it built
-    /// in; the overlay's own connects work with any port.
+    /// Make the member `member` listen on `port`. From its next start on it listens there, and the
+    /// members that connect to it dial that port from their own next start on. This is for
+    /// something outside the overlay that dials a fixed address, e.g. an embedded runtime whose
+    /// firmware has the address built in; the overlay's own connects work with any port.
     pub fn set_listen_port(&self, member: impl Into<Member>, port: NonZeroU16) {
         let index = self.index_of(&member.into());
         self.lock().members[index].listen_port = Some(port);
     }
 
-    /// Whether the members `a` and `b` are linked: directly, by a shared group or a connect, or
-    /// by gossip, which links every peer of a component to every member of it the peer's host
-    /// can dial or be dialled from (see [`Self::links`]).
+    /// Whether the members `a` and `b` are linked: directly, by a shared group or a connect, or by
+    /// gossip. Gossip links every peer of a component to every member of that component that the
+    /// peer's host can dial or be dialled from (see [`Self::links`]).
     pub(crate) fn are_linked(&self, a: &Member, b: &Member) -> bool {
         let (a, b) = (self.index_of(a), self.index_of(b));
         self.links(&self.lock(), a, b)
     }
 
-    /// Whether what attaches by `attachment` hears from the member `member`: a graph search from
-    /// what it is linked to, on through the members that pass traffic on.
+    /// Whether what attaches by `attachment` hears from the member `member`. This is a graph search
+    /// that starts from what the attachment is linked to and continues through the members that
+    /// pass traffic on.
     ///
-    /// On a group, the session is a peer on the test's machine: gossip links it to every member
-    /// of the group's component that its machine and that member's can dial one way or the
-    /// other. By a connect, it is a client of the
-    /// target only, and the target passes traffic on for it, as a peer does for its clients. From
-    /// there on, only routers pass traffic on.
+    /// On a group, the test's session is a peer on the test's machine. Gossip links it to every
+    /// member of the group's component whose host the test's machine can dial or be dialled from.
+    /// By a connect, the session is a client of the target only, and the target passes traffic on
+    /// for it, as every peer does for its clients. Beyond the target, only routers pass traffic on.
     pub(crate) fn is_reachable_by(&self, attachment: &Attachment, member: &Member) -> bool {
         let wanted = self.index_of(member);
         let state = self.lock();
@@ -247,11 +249,11 @@ impl Overlay {
         reached.contains(&wanted)
     }
 
-    /// Whether the members at `a` and `b` are linked. Directly ([`Self::is_direct_link`]), or by
-    /// gossip: zenoh's peers tell each other about their links, and a peer connects to every peer
-    /// and router it learns of. So within a component (the members joined by direct links), every
-    /// pair is linked of which one host can dial the other, but two routers, which connect to
-    /// nobody on their own.
+    /// Whether the members at `a` and `b` are linked: directly ([`Self::is_direct_link`]) or by
+    /// gossip. Zenoh peers tell each other about their links, and a peer connects to every peer and
+    /// router it learns of. So within a component (the members joined by direct links), two members
+    /// are linked if the host of one can dial the host of the other. Two routers are the exception:
+    /// routers never connect to anything on their own.
     fn links(&self, state: &State, a: usize, b: usize) -> bool {
         let (member_a, member_b) = (&state.members[a], &state.members[b]);
         let both_routers = member_a.is_router() && member_b.is_router();
@@ -264,10 +266,10 @@ impl Overlay {
                     && self.dial_either_way(&member_a.host, &member_b.host)))
     }
 
-    /// Whether the members at `a` and `b`, both running, form a link of their own, without
-    /// gossip: a connect from one to the other that it can dial, or a shared group (but not as
-    /// two routers, which don't connect to what they find there) where multicast gets between
-    /// their hosts.
+    /// Whether the members at `a` and `b`, both running, form a link of their own, without gossip.
+    /// That is either a connect from one to the other that its host can dial, or a shared group
+    /// where multicast gets between their hosts. Two routers don't link on a shared group, because
+    /// routers don't connect to what they find there.
     fn is_direct_link(&self, state: &State, a: usize, b: usize) -> bool {
         let (member_a, member_b) = (&state.members[a], &state.members[b]);
         let both_running = member_a.running.is_some() && member_b.running.is_some();
@@ -310,15 +312,15 @@ impl Overlay {
         Arc::ptr_eq(&member.overlay.shared, &self.shared)
     }
 
-    /// Whether traffic from `from` to `port` on `to` gets through: a route exists in the world,
-    /// and the hosts' firewalls let it through. Port 0 stands for whatever port the system on
-    /// `to` picks.
+    /// Whether traffic from `from` to `port` on `to` gets through: the world has a route, and the
+    /// firewalls of both hosts let the traffic through. Port 0 stands for whatever port the system
+    /// on `to` picks.
     fn route_exists(&self, from: &host::Id, to: &host::Id, port: u16) -> bool {
         self.shared.world.route_exists(from, to, port) && host::firewalls_let_through(from, to)
     }
 
     /// whether what runs on the hosts `a` and `b` finds each other by scouting: multicast gets
-    /// between them, and their firewalls let it through
+    /// between the hosts, and their firewalls let it through
     fn scouts(&self, a: &host::Id, b: &host::Id) -> bool {
         self.shared.world.has_multicast_route(a, b) && host::firewalls_let_through(a, b)
     }
@@ -329,9 +331,9 @@ impl Overlay {
         self.route_exists(a, b, 0) || self.route_exists(b, a, 0)
     }
 
-    /// How `dialler` dials `target`, a connect's target, which has a listen port. The route is
-    /// there also while a firewall drops the traffic on it, so a connect gets through once that
-    /// stops.
+    /// How `dialler` dials `target`, the target of a connect, which has a listen port. The route
+    /// exists even while a firewall drops the traffic on it, so the connect gets through once the
+    /// firewall stops dropping it.
     fn get_endpoint(&self, dialler: &host::Id, target: &MemberState) -> EndPoint {
         self.shared
             .world
@@ -392,9 +394,10 @@ impl Member {
             .get_endpoint(dialler, &self.overlay.lock().members[index])
     }
 
-    /// Report that the member runs now, in `mode`: what a runtime's start calls once it is up.
-    /// The member counts as running until the returned guard goes, which the runtime's running
-    /// handle holds, so however the handle goes, the overlay learns the member stopped.
+    /// Report that the member now runs in `mode`; a runtime's start calls this once the runtime is
+    /// up. The member counts as running until the returned guard is dropped. The runtime's running
+    /// handle holds the guard, so however the handle goes away, the overlay learns that the member
+    /// stopped.
     pub(crate) fn start_running(&self, mode: WhatAmI) -> RunningGuard {
         let index = self.overlay.index_of(self);
         let mut state = self.overlay.lock();
@@ -409,9 +412,9 @@ impl Member {
         }
     }
 
-    /// Give the member a listen port unless it has one (from a connect, or set by the test): one
-    /// that is free on the test's machine now. What connects to it, and what it listens on from
-    /// its next start, use that port.
+    /// Give the member a listen port unless it already has one (from a connect, or set by the
+    /// test): a port that is free on the test's machine right now. What connects to the member, and
+    /// what the member listens on from its next start, use that port.
     pub(crate) fn ensure_listen_port(&self) {
         let index = self.overlay.index_of(self);
         let mut state = self.overlay.lock();
@@ -421,9 +424,9 @@ impl Member {
         }
     }
 
-    /// The `zenoh` section of this member's config, as of now: the group it scouts on
-    /// (multicast scouting off for one attached by a connect), the members it connects to, and
-    /// the port it listens on (any free one if no connect targets it).
+    /// The `zenoh` section of this member's config, as of now: the group it scouts on (with
+    /// multicast scouting off for a member attached by a connect), the members it connects to, and
+    /// the port it listens on (any free port if no connect targets it).
     pub(crate) fn get_zenoh_settings(&self) -> serde_json::Value {
         let index = self.overlay.index_of(self);
         let state = self.overlay.lock();
@@ -596,7 +599,7 @@ fn get_listen_port(member: &MemberState) -> NonZeroU16 {
         .expect("a connect's target has a listen port from the connect on")
 }
 
-/// A TCP port free on the test's machine right now. Another process may take it before the
+/// A TCP port that is free on the test's machine right now. Another process may take it before the
 /// member listens on it; the member's start then fails.
 fn free_port() -> NonZeroU16 {
     let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -606,9 +609,9 @@ fn free_port() -> NonZeroU16 {
     NonZeroU16::new(port).expect("the system picks no port 0")
 }
 
-/// A multicast group no other overlay uses: the address from this process's pid
-/// (administratively scoped 239.0.0.0/8; its low 24 bits cover every Linux pid), the port from a
-/// per-process counter. The counter starts above 7446, the port of sorg-tests' per-process group
+/// A multicast group that no other overlay uses. The address comes from this process's pid (in the
+/// administratively scoped 239.0.0.0/8, whose low 24 bits cover every Linux pid), and the port from
+/// a counter per process. The counter starts above 7446, the port of sorg-tests' group per process
 /// on the same address (`sorg_tests::scope_test_multicast`), which in-process tests in the same
 /// binary use.
 fn isolated_multicast_group() -> String {

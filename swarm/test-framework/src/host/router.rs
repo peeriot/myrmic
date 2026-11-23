@@ -6,13 +6,14 @@ use zenoh::config::WhatAmI;
 use super::Remote;
 use crate::{overlay, run_cleanup};
 
-/// A standalone zenoh router on a host, a member of an overlay that is no runtime: nothing starts
-/// or stops it but its creation (e.g. [`super::Docker::router`]) and its drop, and no swarm
-/// counts it among its runtimes. A swarm attaches through one by a connect to it
-/// (`overlay.connect_to(&router)`), so faults on the runtimes never cut the test off.
+/// A standalone zenoh router on a host. It is a member of an overlay, but not a runtime: it starts
+/// when it is created (e.g. by [`super::Docker::router`]) and stops when it is dropped, and no
+/// swarm counts it among its runtimes. A swarm can attach through a router by a connect to it
+/// (`overlay.connect_to(&router)`). Then faults on the runtimes never cut the test off from the
+/// swarm.
 ///
-/// It runs the `zenoh-router` binary with the overlay's settings for its member: the group it
-/// scouts on, and a port of its own it listens on for what connects to it.
+/// It runs the `zenoh-router` binary with the overlay's settings for it: the group it scouts on,
+/// and a port of its own on which it listens for connects.
 pub struct Router<H: Remote> {
     member: overlay::Member,
     /// the host it runs on

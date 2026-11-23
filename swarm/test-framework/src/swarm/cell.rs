@@ -1,18 +1,22 @@
-//! Cells for a swarm's runtimes, deployed through its sorg client: a cell's binaries
-//! ([`Binaries`]: its wasm, built or pre-built, and AOT compilations of it for embedded runtimes)
-//! are registered once as a class ([`Class`]), and any number of cells are deployed from it, each
-//! under an SRI of its own ([`Swarm::deploy`], [`Swarm::deploy_all`]). The [`Swarm`] methods that
-//! do so are in its own module; they read the fields here, which is why those are visible to it.
+//! Cells deployed through a swarm's sorg client. A cell's binaries ([`Binaries`]) are its wasm,
+//! built from a crate or read from a file, and optionally AOT compilations of that wasm for
+//! embedded runtimes. A test registers the binaries once as a class ([`Class`]) and then deploys
+//! any number of cells from it, each under an SRI of its own ([`Swarm::deploy`],
+//! [`Swarm::deploy_all`]). Those [`Swarm`] methods live in the swarm's module and read the fields
+//! of the types here, which is why the fields are visible to it.
 //!
 //! ```ignore
-//! let binaries = cell::Binaries::from_file(prebuilt_cell_wasm(DUMMY_CELL));
+//! let binaries = cell::Binaries::build("cells/counter").await;
 //! let class = swarm.register(&binaries).await?;
-//! swarm.deploy(&class, Sri::from_target("a")?, &["gpu"], None).await?;
+//! for i in 0..100 {
+//!     let sri = cell_protocol::Sri::of_path(&format!("counter/{i}"))?;
+//!     swarm.deploy(&class, sri, &["gpu"], None).await?;
+//! }
 //! ```
 //!
-//! For one cell from a crate or wasm file, the CLI does all three steps in one call
-//! ([`crate::myrmic::Myrmic::cell`]); these are for what it can't: many cells of one class,
-//! several cells in one request, and AOTs the test built itself.
+//! To deploy one cell from a crate or a wasm file, the CLI builds, registers and deploys it in
+//! one call ([`crate::myrmic::Myrmic::cell`]). The types here are for what the CLI can't do: many
+//! cells of one class, several cells in one request, and AOT compilations the test built itself.
 
 use std::path::{Path, PathBuf};
 
@@ -21,16 +25,16 @@ use cell_protocol::{ArtifactPlatform, BlobHash, Sri};
 #[cfg(doc)]
 use super::Swarm;
 
-/// A cell's binaries, registered as one class: its wasm, under the class name of the wasm file's
-/// name (e.g. `my_cell.wasm`), and the AOT compilations of that wasm a runtime of an embedded
-/// platform runs instead (none unless added with [`Self::aot`]).
+/// A cell's binaries, registered as one class: its wasm, and the AOT compilations of that wasm that
+/// runtimes of embedded platforms run instead (none until added with [`Self::aot`]). The class is
+/// named after the wasm file (e.g. `my_cell.wasm`).
 pub struct Binaries {
     pub(super) name: String,
     pub(super) wasm: PathBuf,
     pub(super) aots: Vec<(ArtifactPlatform, PathBuf)>,
 }
 
-/// A class a swarm's class registry has (see [`Swarm::register`]): cells deploy from it.
+/// A class in a swarm's class registry (see [`Swarm::register`]). Cells are deployed from it.
 #[derive(Clone, Copy)]
 pub struct Class {
     pub(super) hash: BlobHash,
@@ -77,8 +81,8 @@ impl Binaries {
         }
     }
 
-    /// The binaries with the AOT compilation of their wasm at `path` for `platform`, e.g. what
-    /// `myrmic_build::build` produced for an embedded target alongside the wasm.
+    /// Add the AOT compilation of the wasm for `platform`, at `path`, e.g. what
+    /// `myrmic_build::build` produced for an embedded target next to the wasm.
     #[must_use]
     pub fn aot(mut self, platform: ArtifactPlatform, path: impl AsRef<Path>) -> Self {
         self.aots.push((platform, path.as_ref().to_owned()));

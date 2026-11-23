@@ -4,7 +4,8 @@
 //! guarantee.
 //!
 //! Its one argument is the `zenoh` section of its config as JSON, as the overlay gives it to every
-//! member: the group it scouts on, the port it listens on, the members it connects to. It prints `ready` on stdout once it listens, and runs until it is killed.
+//! member: the group it scouts on, the port it listens on, the members it connects to. It prints
+//! `ready` on stdout once it listens, and runs until it is killed.
 
 use zenoh::Wait;
 

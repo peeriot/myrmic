@@ -1,57 +1,62 @@
-//! A swarm of runtimes for tests: the runtimes a test added to it, checked to be linked as their
-//! overlay says, and operated as a whole.
+//! A swarm of runtimes for tests: the runtimes a test added to it, which the swarm checks are
+//! linked the way their overlay says, and the tools to operate them as a whole.
 //!
 //! # Using it
 //!
 //! ```ignore
 //! use test_framework::{
-//!     World, in_process, overlay::Overlay, runtime::Stopped, start_runtimes, swarm::Swarm,
+//!     World, in_process,
+//!     overlay::Overlay,
+//!     runtime::{Running, Stopped},
+//!     start_runtimes,
+//!     swarm::Swarm,
 //! };
 //!
 //! let group = Overlay::new(&World::local()).new_multicast_group();
 //! let swarm = Swarm::new(&group).await;
-//! let a = swarm.add(swarm.get_myrmic().runtime().tags(&["gpu"]));  // a CLI runtime
+//! let a = swarm.add(swarm.get_myrmic().runtime().tags(&["gpu"])); // a CLI runtime
 //! let b = swarm.add(in_process::StoppedRt::new(&group).orchestration().db());
-//! start_runtimes!(swarm; a, b);  // both running, the swarm connected
-//! let b = b.stop_with(|rt| rt.delete()).await?;  // stopped
-//! let b = b.start().await?;  // running again; returns once the swarm is connected again
+//! start_runtimes!(swarm; a, b); // both run, and the swarm is connected
+//! let b = b.stop_with(|rt| rt.delete()).await?; // stopped
+//! let b = b.start().await?; // running again; returns once the swarm is connected again
 //! ```
 //!
-//! - A test builds the runtimes itself, of any kind and attached to one overlay, and hands each
-//!   to [`Swarm::add`], which returns the swarm's handle for it ([`StoppedRt`]). The swarm knows
-//!   exactly the runtimes added to it.
+//! - A test creates the runtimes itself. They can be of any kind, but must be members of the same
+//!   overlay. The test hands each one to [`Swarm::add`], which returns the swarm's handle for it
+//!   ([`StoppedRt`]). The swarm knows exactly the runtimes added to it.
 //! - [`Swarm::new`] takes the way the test attaches to the overlay
-//!   ([`crate::overlay::Attachment`]): the test's session, its CLI ([`Swarm::get_myrmic`]) and its
-//!   clients ([`Swarm::get_sorg`]) attach that way, on a group or by a connect (e.g. to a router).
-//!   The status query of the connectivity check goes out on that session too, so only the
-//!   runtimes it reaches can answer.
-//! - Starting a handle returns once the swarm is connected: exactly the running runtimes the
-//!   session reaches answer the status query, each linked to exactly the runtimes the overlay
-//!   links it to. A running runtime the session doesn't reach (e.g. one moved to a group of its
-//!   own with [`crate::overlay::Overlay::set_group`]) is expected to stay silent.
-//!   [`crate::start_runtimes!`] starts several side by side and checks once;
+//!   ([`crate::overlay::Attachment`]): on a group, or by a connect, e.g. to a router. The test's
+//!   zenoh session, its CLI ([`Swarm::get_myrmic`]) and its sorg client ([`Swarm::get_sorg`])
+//!   all attach this way. The connectivity check sends its status query on that session too, so
+//!   only the runtimes the session reaches can answer.
+//! - Starting a runtime returns once the swarm is connected: exactly the running runtimes that the
+//!   session reaches answer the status query, and each of them is linked to exactly the runtimes
+//!   the overlay links it to. A running runtime that the session doesn't reach (e.g. one moved to
+//!   a group of its own with [`crate::overlay::Overlay::set_group`]) is expected not to answer.
+//!   [`crate::start_runtimes!`] starts several runtimes side by side and checks once.
 //!   [`StoppedRt::start_without_check`] starts one without the check.
-//! - A running handle derefs to the runtime kind's own handle, for what only that kind can do
-//!   (`a.pause()`); a kind's own way to stop goes through [`RunningRt::stop_with`].
-//! - Cells deploy through the CLI ([`Swarm::get_myrmic`]), or, for many cells of one class,
-//!   several in one request, or AOTs the test built itself, from a registered class ([`cell`],
-//!   [`Swarm::register`]).
-//! - Which runtime a cell is on comes back as a zid ([`Swarm::get_host_of`]); a test compares it
-//!   with its handles' [`crate::runtime::Running::get_zid`].
+//! - A running handle dereferences to the handle of the runtime's own kind, for what only that
+//!   kind can do (`a.pause()`). To stop a runtime in a way only its kind supports, a test uses
+//!   [`RunningRt::stop_with`].
+//! - A test usually deploys cells through the CLI ([`Swarm::get_myrmic`]). For many cells of one
+//!   class, for several cells in one request, or for AOT compilations the test built itself, it
+//!   registers a class and deploys from it instead ([`cell`], [`Swarm::register`]).
+//! - The runtime a cell runs on is reported as a zid ([`Swarm::get_host_of`]). A test compares it
+//!   with the zids of its handles ([`crate::runtime::Running::get_zid`]).
 //!
 //! # Design notes
 //!
-//! The swarm does not own its runtimes: the test does, so that a runtime's state is its handle's
-//! type, and a swarm can hold runtimes of different kinds. The swarm keeps one entry per runtime
-//! (`RuntimeEntry`) with what does not change with the state (overlay membership, zid) and
-//! whether the test has the runtime running. That flag is the test's intent, set by a start and
-//! cleared when the running handle goes away; the connectivity check compares it with the
-//! runtimes that actually answer, which is what catches a runtime that died without the test
-//! stopping it. How the handles keep that flag is in the handles' module (`rt`, re-exported
-//! here).
+//! The test owns the runtimes, not the swarm. That way a runtime's state is the type of its
+//! handle, and one swarm can hold runtimes of different kinds. The swarm keeps one entry per
+//! runtime (`RuntimeEntry`). The entry holds what doesn't change with the state (overlay
+//! membership, zid), and a flag for whether the test has the runtime running. The flag is the
+//! test's intent: a start sets it, and it is cleared when the running handle goes away. The
+//! connectivity check compares the flags with the runtimes that actually answer. That is how it
+//! catches a runtime that died without the test stopping it. The handles' module (`rt`, whose
+//! types are re-exported here) explains how the handles keep the flag.
 //!
-//! The links the check expects come from the overlay, not from the swarm: the overlay is the one
-//! place that says which runtime links to which (see [`crate::overlay`]).
+//! The links the check expects come from the overlay, not from the swarm, because the overlay is
+//! the only place that says which runtime links to which (see [`crate::overlay`]).
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -65,19 +70,18 @@ use std::{
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
 use db_client::v1::models::Subject;
 use sorg_common::{
-    CellConfig, CellDeployment, DeployRequest, DeployResponse, DeploymentError, ExecRuntimeInfo,
-    RequirementTags, exec_registry::list_registered_execs, node_lease,
-    supervision::SupervisionTiming,
+    CellConfig, CellDeployment, DeployRequest, DeploymentError, ExecRuntimeInfo, RequirementTags,
+    exec_registry::list_registered_execs, node_lease, supervision::SupervisionTiming,
 };
 use zenoh::config::ZenohId;
 
 /// the scope a [`DbHandle`] reads and writes in
 pub use db_client::v1::models::Scope;
-pub use db_handle::DbHandle;
+pub use db_handle::{DbError, DbHandle};
 pub use rt::{RunningRt, StoppedRt};
 
 use crate::{
-    myrmic::{self, Error, Myrmic},
+    myrmic::{self, Error, Myrmic, cell::DeployedCell},
     overlay::{self, Overlay},
     runtime::Stopped,
     wait::{Timeout, wait_for},
@@ -109,8 +113,8 @@ pub enum RegisterError {
     Timeout(#[from] Timeout),
 }
 
-/// How long [`Swarm::register`] waits for its class to become readable. As the old harness's
-/// wait: a class registered under load on the rack took seconds to reach every node.
+/// How long [`Swarm::register`] waits for its class to become readable: a class registered under
+/// load on the rack takes seconds to reach every node.
 const CLASS_VISIBLE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// What a swarm shares with its runtimes' handles.
@@ -155,8 +159,8 @@ impl Swarm {
         }
     }
 
-    /// Make the stopped runtime `rt`, a member of the swarm's overlay, a runtime of the swarm; the
-    /// returned handle is the one the test starts and stops it with from now on.
+    /// Add the stopped runtime `rt` to the swarm. `rt` must be a member of the swarm's overlay.
+    /// From now on, the test starts and stops the runtime with the returned handle.
     pub fn add<S: Stopped>(&self, rt: S) -> StoppedRt<S> {
         let member = rt.get_overlay_member().clone();
         assert!(
@@ -179,25 +183,25 @@ impl Swarm {
         StoppedRt::new(rt, entry, self.shared.clone())
     }
 
-    /// Wait until exactly the runtimes the test has running answer the status query, each linked
-    /// to exactly the runtimes the overlay links it to. Starting a runtime already does this; a
-    /// test calls it after something else that disconnects and reconnects runtimes.
+    /// Wait until exactly the runtimes the test has running answer the status query, and each of
+    /// them is linked to exactly the runtimes the overlay links it to. Starting a runtime already
+    /// does this. A test calls it after something else disconnected and reconnected runtimes.
     pub async fn wait_until_connected(&self) -> Result<(), Error> {
         self.shared.wait_until_connected().await
     }
 
-    /// Why the swarm is not connected right now, or `None` if it is (see
-    /// [`Self::wait_until_connected`]). One query, no waiting, so a test can check that the swarm
-    /// stays connected.
+    /// Why the swarm isn't connected right now, or `None` if it is (see
+    /// [`Self::wait_until_connected`]). It sends one query and doesn't wait, so a test can use it
+    /// to check that the swarm stays connected.
     pub async fn get_connection_mismatch(&self) -> Option<String> {
         self.shared.get_mismatch().await
     }
 
-    /// The zid of the runtime the cell `sri` is placed on, or `None` while it has no placement or
-    /// its placement names no host yet. Fails like [`Self::get_placement`].
+    /// The zid of the runtime the cell `sri` is placed on, or `None` while the cell has no
+    /// placement or its placement names no host yet. Fails like [`Self::get_placement`].
     ///
-    /// A killed runtime keeps its placements until the swarm has declared it dead, so during a
-    /// failover this still names the killed runtime for a while.
+    /// A killed runtime keeps its placements until the swarm has declared it dead. So during a
+    /// failover, this still names the killed runtime for a while.
     pub async fn get_host_of(&self, sri: &str) -> Result<Option<ZenohId>, sorg_client::Error> {
         let host = self
             .get_placement(sri)
@@ -212,9 +216,9 @@ impl Swarm {
         }))
     }
 
-    /// The zid of the runtime holding the db scope `scope`; for a cell's data (`scope_of_cell`) it
-    /// need not be the cell's host. Call it only while no replication entry covers the scope:
-    /// until then it has exactly one holder.
+    /// The zid of the runtime that holds the db scope `scope`. For a cell's data (`scope_of_cell`),
+    /// this need not be the cell's host. Only call it while no replication entry covers the scope:
+    /// until then, the scope has exactly one holder.
     pub async fn get_scope_holder(&self, scope: &Scope) -> ZenohId {
         let holders =
             db_client::replica_v1::Client::new(&self.session, &Subject::Scope(scope.clone()))
@@ -234,9 +238,9 @@ impl Swarm {
 
     /// The placement row of the cell `sri`, or `None` while it has none.
     ///
-    /// Fails while the runtime holding the swarm's placement table is unreachable, until the
-    /// swarm has moved the table (up to a minute after a runtime is lost, see the operating
-    /// guide). A test that reads it while runtimes are lost or cut off retries.
+    /// Fails while the runtime that holds the swarm's placement table is unreachable, until the
+    /// swarm has moved the table (up to a minute after a runtime is lost, see the operating guide).
+    /// A test that reads it while runtimes are lost or cut off has to retry.
     pub async fn get_placement(
         &self,
         sri: &str,
@@ -271,12 +275,13 @@ impl Swarm {
         &self.sorg
     }
 
-    /// The swarm with its sorg client ([`Self::get_sorg`]) waiting up to `timeout` for each
-    /// answer; the sorg client's own default otherwise (15 s).
+    /// The swarm with its sorg client ([`Self::get_sorg`]) waiting up to `timeout` for each answer;
+    /// otherwise the sorg client's own default (15 s) applies.
     ///
-    /// A deploy is answered once the runtime running the cell confirmed it, which the swarm's
-    /// orchestration waits for up to its own timeout (see [`myrmic::StoppedRt::orchestration`]); a
-    /// request that should see the orchestration's own failure waits at least that long.
+    /// A deploy is answered once the runtime that runs the cell has confirmed it, and the swarm's
+    /// orchestration waits for that up to its own timeout (see
+    /// [`myrmic::StoppedRt::orchestration`]). A request that should see the orchestration give up
+    /// has to wait at least that long.
     #[must_use]
     pub fn sorg_query_timeout(mut self, timeout: Duration) -> Self {
         let mut config = sorg_client::Config::default();
@@ -285,8 +290,9 @@ impl Swarm {
         self
     }
 
-    /// The CLI on the test's machine for the commands that act on the whole swarm, e.g.
-    /// [`Myrmic::cell`] to deploy a cell. It starts no runtime unless the test has it start one.
+    /// The CLI on the test's machine, for the commands that act on the whole swarm, e.g.
+    /// [`Myrmic::cell`] to deploy a cell. It starts no runtime unless the test uses it to start
+    /// one.
     pub fn get_myrmic(&self) -> &Myrmic<myrmic::Local> {
         &self.client
     }
@@ -299,19 +305,20 @@ impl Swarm {
         self
     }
 
-    /// Wait up to `timeout` until a runtime with all `tags` is placeable in the swarm: registered
-    /// with the orchestration, with a fresh liveness lease. For a runtime the test didn't add to
-    /// the swarm, e.g. an embedded one that joins by itself; the swarm's own runtimes are
-    /// placeable once their start returned.
+    /// Wait up to `timeout` until a runtime with all of `tags` can take cells: it is registered
+    /// with the orchestration and its liveness lease is fresh. This is for a runtime the test
+    /// didn't add to the swarm, e.g. an embedded runtime that joins on its own. The swarm's own
+    /// runtimes can take cells as soon as their start has returned.
     pub async fn wait_for_runtime(&self, tags: &[&str], timeout: Duration) -> Result<(), Timeout> {
         wait_for_exec_runtime(&self.session, tags, timeout).await
     }
 
-    /// Register `binaries` as one class in the swarm's class registry, for cells to deploy from.
+    /// Register `binaries` as one class in the swarm's class registry, for cells to be deployed
+    /// from.
     ///
-    /// Returns once the class is readable, so that a deploy right after finds it: the
-    /// registration and a deploy's read of the class are separate transactions, and the read may
-    /// otherwise land on a node the class hasn't reached yet.
+    /// Returns once the class is readable, so that a deploy right afterwards finds it. The
+    /// registration and a deploy's read of the class are separate transactions, and without the
+    /// wait the read could land on a node the class hasn't reached yet.
     pub async fn register(&self, binaries: &cell::Binaries) -> Result<cell::Class, RegisterError> {
         let wasm = read_binary(&binaries.wasm).await;
         let mut aots = vec![];
@@ -334,17 +341,20 @@ impl Swarm {
         Ok(cell::Class { hash })
     }
 
-    /// Deploy a cell of `class` under `sri`, on a runtime that has `tags` (any runtime for none),
-    /// on its own: the standalone deploy, which places one cell at a time. `init` is handed to
-    /// the cell's init function (`#[myrmic_sdk::init]`), e.g. to seed its starting state; with
-    /// none, the function gets nothing.
+    /// Deploy a cell of `class` under `sri` on a runtime that has `tags` (on any runtime if there
+    /// are none). This is the standalone deploy, which places one cell at a time. `init` is passed
+    /// to the cell's init function (`#[myrmic_sdk::init]`), e.g. to set its starting state; with
+    /// `None`, the function gets nothing.
+    ///
+    /// Dropping the returned handle deletes the cell through the swarm's CLI
+    /// ([`Self::get_myrmic`]).
     pub async fn deploy(
         &self,
         class: &cell::Class,
         sri: Sri,
         tags: &[&str],
         init: Option<&[u8]>,
-    ) -> Result<(), DeploymentError> {
+    ) -> Result<DeployedCell<myrmic::Local>, DeploymentError> {
         self.sorg
             .deploy_wasm_cell_with_arguments(
                 sri,
@@ -353,14 +363,21 @@ impl Swarm {
                 init.map(<[u8]>::to_vec),
                 None,
             )
-            .await
+            .await?;
+        Ok(DeployedCell::new(
+            self.client.clone(),
+            sri.to_string(),
+            None,
+        ))
     }
 
-    /// Deploy the cells of `deployments` in one request: the planner places them together.
+    /// Deploy the cells of `deployments` in one request: the planner places them together. Returns
+    /// a handle for each cell, in the order of `deployments`; dropping one deletes its cell, as
+    /// with [`Self::deploy`].
     pub async fn deploy_all(
         &self,
         deployments: &[cell::Deployment<'_>],
-    ) -> Result<DeployResponse, DeploymentError> {
+    ) -> Result<Vec<DeployedCell<myrmic::Local>>, DeploymentError> {
         let cells = deployments
             .iter()
             .map(|deployment| {
@@ -373,7 +390,13 @@ impl Swarm {
                 .with_tags(RequirementTags::new(deployment.tags.to_vec()))
             })
             .collect();
-        self.sorg.deploy_cells(DeployRequest::new(cells)).await
+        self.sorg.deploy_cells(DeployRequest::new(cells)).await?;
+        Ok(deployments
+            .iter()
+            .map(|deployment| {
+                DeployedCell::new(self.client.clone(), deployment.sri.to_string(), None)
+            })
+            .collect())
     }
 }
 
@@ -388,10 +411,10 @@ impl Shared {
             .collect()
     }
 
-    /// The runtimes the test has running and the swarm's session reaches, each with those of them
-    /// the overlay links it to: what a connected swarm's status shows. A running runtime the
-    /// session can't reach (e.g. one moved to a group of its own) can't answer, so it isn't
-    /// expected to.
+    /// The runtimes that the test has running and the swarm's session reaches, each with those of
+    /// them that the overlay links it to. This is what the status of a connected swarm shows. A
+    /// running runtime that the session can't reach (e.g. one moved to a group of its own) can't
+    /// answer, so it isn't expected to.
     fn expected_links(&self) -> BTreeMap<ZenohId, BTreeSet<ZenohId>> {
         let entries = self.entries.lock().expect("not poisoned");
         let running: Vec<&RuntimeEntry> = entries
@@ -421,8 +444,8 @@ impl Shared {
     }
 
     /// Why the swarm's status doesn't match [`Self::expected_links`] right now, or `None` if it
-    /// does. A status query that fails is a mismatch too, not an error: while links settle after a
-    /// fault (e.g. a cut link that zenoh hasn't dropped yet), a query can time out.
+    /// does. A failed status query also counts as a mismatch, not as an error: while links settle
+    /// after a fault (e.g. a cut link that zenoh hasn't dropped yet), a query can time out.
     async fn get_mismatch(&self) -> Option<String> {
         match self.introspection.swarm_status().await {
             Ok(statuses) => check::mismatch(&statuses, &self.expected_links()),
@@ -430,12 +453,12 @@ impl Shared {
         }
     }
 
-    /// Wait until the swarm's status matches [`Self::expected_links`], then
+    /// Wait until the swarm's status matches [`Self::expected_links`], then wait
     /// [`LEADER_SETTLE_TIME`]. Fails with the last mismatch after [`CONNECTED_TIMEOUT`].
     ///
-    /// The expected links are read anew on every poll: another runtime of the swarm may start or
-    /// stop while this one waits (e.g. two handles started side by side), and a snapshot taken
-    /// before would count it as foreign, or as missing.
+    /// The expected links are read again on every poll, because another runtime of the swarm may
+    /// start or stop during the wait (e.g. two handles started side by side). A snapshot taken
+    /// before would count that runtime as foreign, or as missing.
     async fn wait_until_connected(&self) -> Result<(), Error> {
         let mut last_mismatch = String::new();
         let polled = tokio::time::timeout(CONNECTED_TIMEOUT, async {
@@ -469,15 +492,16 @@ impl RuntimeEntry {
 }
 
 /// How long the swarm may take to match its expected links: the default wait, plus zenoh's link
-/// lease (its default, 10 s) for a link a fault cut. A silent link only drops once its lease
-/// runs out, so a runtime keeps listing a peer that a fault cut it from for that long.
+/// lease (10 s by default) for a link that a fault cut. A silent link only drops once its lease
+/// runs out, so a runtime keeps listing a peer it was cut off from for that long.
 const CONNECTED_TIMEOUT: Duration =
     Duration::from_secs(crate::wait::DEFAULT_TIMEOUT.as_secs() + 10);
 
-/// How long the orchestrators get to agree on a leader once the swarm is connected. Each one
-/// learns of the others from join events, and until it has, one that knows no lower zid takes
-/// itself for the leader: two leaders both handle a deploy, and the second answers "already
-/// deployed". Nothing reports who considers itself leader, so this is a fixed wait.
+/// How long the orchestrators get to agree on a leader once the swarm is connected. Each
+/// orchestrator learns of the others from join events. Until it has, an orchestrator that knows of
+/// no lower zid considers itself the leader, and two leaders both handle a deploy, so the second
+/// one answers "already deployed". Nothing reports which orchestrator considers itself the leader,
+/// so this is a fixed wait.
 const LEADER_SETTLE_TIME: Duration = Duration::from_secs(1);
 
 async fn wait_for_exec_runtime(
@@ -515,11 +539,11 @@ fn runtime_has_tags(info: &ExecRuntimeInfo, tags: &[&str]) -> bool {
         .all(|t| info.capabilities().tags().iter().any(|c| c.as_ref() == *t))
 }
 
-/// The runtimes whose liveness lease is fresh enough that placement would keep them,
-/// applying the same staleness rule as `drop_stale_execs` in the orchestrator: a node is
-/// fresh while the silence since its last renewal (`seq`, wall-clock millis) stays within its
-/// declared `ttl_ms` plus the cluster margin. A `seq` ahead of the reader's clock (skew)
-/// counts as fresh, and a node with no lease row is simply absent from the set.
+/// The runtimes whose liveness lease is fresh enough for placement to keep them. This applies the
+/// same staleness rule as `drop_stale_execs` in the orchestrator: a node is fresh while the time
+/// since its last renewal (`seq`, wall-clock milliseconds) stays within its declared `ttl_ms` plus
+/// the cluster margin. A `seq` ahead of the reader's clock (clock skew) counts as fresh. A node
+/// without a lease row is not in the set.
 async fn fresh_lease_ids(session: &zenoh::Session) -> Result<HashSet<RuntimeId>, ()> {
     let leases = node_lease::list_leases(session).await.map_err(|_| ())?;
     let now_ms = u64::try_from(

@@ -1,32 +1,32 @@
-//! Shim around the myrmic CLI (runtimes, deploys, telemetry) running on the host, on a remote
-//! host over SSH, or inside a docker container.
+//! A wrapper around the `myrmic` CLI, also called the shim. It runs the CLI on the test's machine,
+//! on a remote machine over SSH, or inside a docker container, for runtimes, deploys and
+//! telemetry.
 //!
 //! The CLI does two different jobs for a test, and this module has a type for each:
 //!
-//! - [`Myrmic`] operates a swarm: it deploys cells and apps, sends commands, reads status and
-//!   telemetry. It is the same whether or not it ever starts a runtime itself; a shim that only
-//!   operates a swarm is common (e.g. [`crate::swarm::Swarm::get_myrmic`]).
-//! - [`StoppedRt`] and [`RunningRt`] are one runtime started with `myrmic runtimes start`, in
-//!   its two states (see [`crate::runtime`] for how a test moves it between them). They come from
-//!   [`Myrmic::runtime`], whose options (name, tags, `persistent`) the stopped state carries, so
-//!   starting it again starts the same runtime. Which other runtimes it links to is not an option
-//!   of its own: it is a member of an [`crate::overlay::Overlay`], which tells it at start.
+//! - [`Myrmic`] operates a swarm: it deploys cells and apps, sends commands, and reads status and
+//!   telemetry. It works the same whether or not it ever starts a runtime itself. Many shims only
+//!   operate a swarm, e.g. [`crate::swarm::Swarm::get_myrmic`].
+//! - [`StoppedRt`] and [`RunningRt`] are the two states of one runtime started with
+//!   `myrmic runtimes start` (see [`crate::runtime`] for how a test moves it between them). A test
+//!   gets one from [`Myrmic::runtime`]. The stopped state holds the runtime's options (name, tags,
+//!   `persistent`), so starting it again starts the same runtime. Which other runtimes it links
+//!   to is not one of its options: the runtime is a member of an [`crate::overlay::Overlay`], which
+//!   tells it when it starts.
 //!
-//! Both happen to go through the CLI, which is why a runtime handle holds a clone of the
-//! [`Myrmic`] that created it: starting and stopping are `runtimes start` and `runtimes delete`
-//! on the same shim, so on the same machine and in the same isolation.
+//! Both jobs go through the CLI. That is why a runtime handle holds a clone of the [`Myrmic`] that
+//! created it: starting and stopping are `runtimes start` and `runtimes delete` on the same shim,
+//! so they run on the same machine and in the same isolation.
 //!
 //! # Design notes
 //!
-//! The two jobs used to be one type: a shim started a runtime and the same shim was asked to
-//! kill or restart it. They are separate because a runtime a test controls need not be a CLI
-//! runtime (e.g. a node running inside the test process), while every swarm a test operates is
-//! operated through the CLI. The runtime side is
-//! therefore expressed as the [`crate::runtime`] traits, which [`StoppedRt`] and
-//! [`RunningRt`] implement, and [`Myrmic`] stays the operator.
+//! The two jobs are separate types because a runtime a test controls need not be a CLI runtime
+//! (e.g. a node running inside the test process), while every swarm is operated through the CLI.
+//! So the runtime side is expressed as the [`crate::runtime`] traits, which [`StoppedRt`] and
+//! [`RunningRt`] implement, and [`Myrmic`] is the operator.
 //!
-//! [`MyrmicBackend`] requires `Send + Sync` because the runtime handles' transitions return `Send`
-//! futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
+//! [`MyrmicBackend`] requires `Send + Sync` because the transitions of the runtime handles return
+//! `Send` futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
 use std::path::Path;
 use std::time::Duration;
@@ -76,19 +76,20 @@ pub enum Error {
     Timeout(#[from] Timeout),
 }
 
-/// A shim around the myrmic CLI. It knows the CLI's commands and runs them on any
-/// [`MyrmicBackend`]: on the host, on a remote host over SSH, or inside a container.
+/// A shim around the myrmic CLI. It knows the CLI's commands and runs them through any
+/// [`MyrmicBackend`]: on the test's machine, on a remote machine over SSH, or inside a container.
 ///
 /// Every operation returns a [`Result`]; a test `.unwrap()`s or `.expect(..)`s what it assumes to
-/// succeed. A command that cannot be started at all (binary, `ssh` or `docker` missing, host or
-/// daemon unreachable) is broken test infrastructure, not a result, and panics.
+/// succeed. A command that can't be started at all (the binary, `ssh` or `docker` is missing, the
+/// host or the docker daemon is unreachable) means the test infrastructure is broken, which is not
+/// a result, so it panics.
 ///
-/// A shim is attached to an [`crate::overlay::Overlay`] one way ([`overlay::Attachment`]): every CLI call
-/// finds the runtimes that way (`--multicast-group` or `--connect`), and every runtime it starts
-/// attaches that way, so the two can't drift apart. Runtimes of one machine attached two ways
-/// come from two shims.
+/// A shim attaches to an [`crate::overlay::Overlay`] in one way ([`overlay::Attachment`]). Every
+/// CLI call finds the runtimes that way (`--multicast-group` or `--connect`), and every runtime the
+/// shim starts attaches that way, so the two can't drift apart. Runtimes on one machine that attach
+/// in two different ways need two shims.
 ///
-/// A shim comes from the host it runs on (see [`crate::host`]).
+/// A test gets a shim from the host it runs on (see [`crate::host`]).
 #[derive(Clone)]
 pub struct Myrmic<B> {
     backend: B,
@@ -103,8 +104,8 @@ impl<B> Myrmic<B>
 where
     B: MyrmicBackend,
 {
-    /// A shim that runs `binary` (the myrmic binary, as `backend`'s commands find it on the
-    /// target) through `backend`, attached by `attachment`; what a host hands out.
+    /// A shim that runs `binary` (the myrmic binary, as `backend`'s commands find it on the target)
+    /// through `backend`, attached by `attachment`. Hosts create shims with it.
     pub(crate) fn new(backend: B, binary: String, attachment: overlay::Attachment) -> Self {
         Self {
             backend,
@@ -114,13 +115,13 @@ where
         }
     }
 
-    /// The shim with every call waiting up to `timeout` for the runtimes to answer: the CLI's
-    /// `--timeout`, which bounds both finding the runtimes and each request the call makes, e.g. a
-    /// deploy's. [`DEFAULT_CLI_TIMEOUT`] by default.
+    /// The shim with every call waiting up to `timeout` for the runtimes to answer. This is the
+    /// CLI's `--timeout`, which limits both finding the runtimes and each request the call makes,
+    /// e.g. a deploy. [`DEFAULT_CLI_TIMEOUT`] by default.
     ///
-    /// A deploy is answered once the runtime running the cell confirmed it, which the swarm's
-    /// orchestration waits for up to its own timeout (see [`StoppedRt::orchestration`]); a
-    /// call that should see the orchestration's own failure waits at least that long.
+    /// A deploy is answered once the runtime that runs the cell has confirmed it, and the swarm's
+    /// orchestration waits for that up to its own timeout (see [`StoppedRt::orchestration`]). A
+    /// call that should see the orchestration give up has to wait at least that long.
     #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
@@ -132,8 +133,8 @@ where
         &self.backend
     }
 
-    /// A runtime on this shim, not started yet, as a new member of the shim's overlay that scouts
-    /// attached the way the shim is; start it with [`runtime::Stopped::start`].
+    /// A new runtime of this shim, not started yet. It is a new member of the shim's overlay and
+    /// attaches the same way as the shim. Start it with [`runtime::Stopped::start`].
     pub fn runtime(&self) -> StoppedRt<B> {
         StoppedRt {
             myrmic: self.clone(),
@@ -155,8 +156,8 @@ where
 
     /// run: myrmic runtimes delete `name`
     ///
-    /// Returns once the runtime has exited: the CLI waits for that. A runtime that is not running
-    /// fails with an [`Error::Cli`], like any other failed delete.
+    /// Returns once the runtime has exited; the CLI waits for that. Deleting a runtime that isn't
+    /// running fails with an [`Error::Cli`], like any other failed delete.
     pub async fn delete_runtime(&self, name: &str) -> Result<(), Error> {
         self.run(&["runtimes", "delete", name]).await?;
         Ok(())
@@ -177,9 +178,9 @@ where
 
     /// run: myrmic send `sri` `command` [`payload` --raw]
     ///
-    /// `payload` is delivered as-is, so the test encodes it in the handler's codec (e.g.
-    /// `serde_json::to_vec` for the JSON default). The CLI only hands the command over and prints
-    /// no response, so success carries no value.
+    /// `payload` is delivered as it is, so the test encodes it in the handler's codec (e.g.
+    /// `serde_json::to_vec` for the default JSON codec). The CLI only hands the command over and
+    /// prints no response, so a success carries no value.
     pub async fn send(
         &self,
         sri: &str,
@@ -208,9 +209,9 @@ where
         }
     }
 
-    /// run: myrmic deploy `app-spec.yml`; the SRIs are defined inside the app spec
+    /// run: myrmic deploy `app-spec.yml`; the app spec defines the SRIs
     ///
-    /// Returns once every cell the CLI reports as deployed shows up in `myrmic cells status`.
+    /// Returns once every cell that the CLI reports as deployed shows up in `myrmic cells status`.
     pub async fn deploy_app(&self, app_spec: impl AsRef<Path>) -> Result<DeployedApp<B>, Error> {
         let output = self.run(&["deploy", path_arg(app_spec.as_ref())]).await?;
         let name = deployed_app_name(&output.stderr);
@@ -236,7 +237,10 @@ where
         Ok(())
     }
 
-    /// describe a `myrmic telemetry debug --json`; finish with [`DebugListenerBuilder::start`]
+    /// Describe a `myrmic telemetry debug --json`; finish with [`DebugListenerBuilder::start`].
+    ///
+    /// The listener only gets the runtimes' log records while they are persisted, which takes a
+    /// retention set with [`Self::set_db_retention`] first.
     pub fn debug_listener(&self) -> DebugListenerBuilder<'_, B> {
         DebugListenerBuilder {
             myrmic: self,
@@ -261,8 +265,9 @@ where
         }
     }
 
-    /// Run `program args` on the target and capture its output. Panics when it cannot be
-    /// started, or its wrapper failed: broken test infrastructure, not a result.
+    /// Run `program args` on the target and capture its output. Panics if the program can't be
+    /// started or its wrapper failed: that means the test infrastructure is broken, which is not a
+    /// result.
     async fn run_program(&self, program: &str, args: &[&str]) -> CommandOutput {
         let command = self.backend.command(program, args);
         let invocation = format!("{command:?}");
@@ -281,9 +286,10 @@ where
         self.run_program_blocking(&self.binary, &attached(&attachment, &timeout, args))
     }
 
-    /// Blocking run of `program args` on the target for `Drop`, returning the raw output. A
-    /// command that cannot be started, or whose wrapper failed, is the error instead of a panic:
-    /// a panic during unwinding aborts the process and hides the original one.
+    /// Run `program args` on the target and block until it ends, for `Drop`; returns the raw
+    /// output. If the program can't be started or its wrapper failed, this returns an error instead
+    /// of panicking, because a panic during unwinding aborts the process and hides the original
+    /// panic.
     fn run_program_blocking(&self, program: &str, args: &[&str]) -> std::io::Result<CommandOutput> {
         let mut command = self.backend.command(program, args);
         let invocation = format!("{command:?}");
@@ -292,9 +298,9 @@ where
             .map_err(std::io::Error::other)
     }
 
-    /// `output`, with the invocation and exit code folded into a failed command's stderr (the
-    /// program's own message does not say which host or wrapper it came from), or that stderr as
-    /// the error when the wrapper failed rather than the program.
+    /// `output`, with the invocation and the exit code added to the stderr of a failed command,
+    /// because the program's own message doesn't say which host or wrapper it came from. If the
+    /// wrapper failed rather than the program, that stderr is the error.
     fn captured(
         &self,
         invocation: &str,
@@ -331,11 +337,11 @@ where
     }
 }
 
-/// How long a `myrmic` call waits for the runtimes to answer before it gives up (its
-/// `--timeout`), unless the shim says otherwise ([`Myrmic::timeout`]). The CLI's own default,
-/// 500 ms, is too short for a swarm across a VPN: a fresh session, and a reply through a router at
-/// some 30 ms round trip, don't always fit in it. A runtime that answers sooner ends the wait
-/// sooner, so a fast swarm loses nothing.
+/// How long a `myrmic` call waits for the runtimes to answer before it gives up (its `--timeout`),
+/// unless the shim sets another timeout ([`Myrmic::timeout`]). The CLI's own default, 500 ms, is
+/// too short for a swarm across a VPN: a fresh session plus a reply through a router at about 30 ms
+/// round trip don't always fit in it. A runtime that answers sooner ends the wait sooner, so a fast
+/// swarm loses nothing.
 pub const DEFAULT_CLI_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `timeout` as the value of the CLI's `--timeout`
@@ -343,9 +349,9 @@ fn timeout_arg(timeout: Duration) -> String {
     format!("{}ms", timeout.as_millis())
 }
 
-/// `args` of a `myrmic` call, behind `attachment`, the shim's
-/// [`overlay::Attachment::get_cli_args`], by which the CLI finds the runtimes, and `timeout`, its
-/// `--timeout` (see [`timeout_arg`])
+/// `args` of a `myrmic` call, preceded by `attachment` (the shim's
+/// [`overlay::Attachment::get_cli_args`], with which the CLI finds the runtimes) and `timeout` (its
+/// `--timeout`, see [`timeout_arg`])
 fn attached<'a>(attachment: &'a [String; 2], timeout: &'a str, args: &[&'a str]) -> Vec<&'a str> {
     let mut attached: Vec<&str> = attachment.iter().map(String::as_str).collect();
     attached.extend(["--timeout", timeout]);
@@ -410,12 +416,12 @@ fn started_runtime_zid(stderr: &str, name: &str) -> Option<zenoh::config::ZenohI
     })
 }
 
-/// A runtime of `myrmic runtimes start` that is not running, created by [`Myrmic::runtime`] or
-/// returned when a [`RunningRt`] stops. It holds what `runtimes start` is run with, so starting it
-/// again brings back the same runtime: same name, so same zid.
+/// A runtime of `myrmic runtimes start` that isn't running: created by [`Myrmic::runtime`], or
+/// returned when a [`RunningRt`] stops. It holds the options that `runtimes start` runs with, so
+/// starting it again brings back the same runtime: the same name, and so the same zid.
 ///
-/// Options are per runtime, not per [`Myrmic`]: one shim may start one runtime temporary and
-/// another persistent.
+/// The options belong to the runtime, not to the [`Myrmic`]: one shim can start a temporary runtime
+/// and a persistent one.
 #[derive(Clone)]
 pub struct StoppedRt<B> {
     myrmic: Myrmic<B>,
@@ -446,10 +452,10 @@ where
         self
     }
 
-    /// Whether the runtime keeps its database across restarts; defaults to `false`, i.e. `--tmp`
-    /// is passed. `--tmp` forces an in-memory database and overrides a configured `db.directory`,
-    /// so a case that restarts a runtime and expects its data back has to opt out. Temporary
-    /// runtimes also keep the database directories of random names from piling up under
+    /// Whether the runtime keeps its database across restarts; defaults to `false`, i.e. `--tmp` is
+    /// passed. `--tmp` forces an in-memory database and overrides a configured `db.directory`, so a
+    /// test that restarts a runtime and expects its data back has to turn it off. Temporary
+    /// runtimes also don't leave database directories with random names under
     /// `$XDG_DATA_HOME/myrmic`.
     pub fn persistent(mut self, persistent: bool) -> Self {
         self.persistent = persistent;
@@ -463,10 +469,10 @@ where
         self
     }
 
-    /// How the runtime runs its cells (mailbox batch size, event buffer size, fuel, ...);
-    /// defaults to the runtime's own defaults. Give the runtime its name and tags with
-    /// [`Self::name`] and [`Self::tags`], not here: the CLI replaces a name set here, and adds
-    /// tags set here to the runtime's.
+    /// How the runtime runs its cells (mailbox batch size, event buffer size, fuel, ...); defaults
+    /// to the runtime's own defaults. Set the runtime's name and tags with [`Self::name`] and
+    /// [`Self::tags`], not here: the CLI replaces a name set here, and adds tags set here to the
+    /// runtime's.
     pub fn execution(mut self, execution: sorg_common::ExecConfig) -> Self {
         self.execution = execution;
         self
@@ -474,9 +480,9 @@ where
 
     /// How the runtime's orchestration works, e.g. how long it waits for a runtime to confirm a
     /// cell it was told to run; defaults to the runtime's own defaults. Any runtime of a swarm may
-    /// lead its orchestration, so a swarm that needs a setting gives it to every runtime.
+    /// lead the orchestration, so a swarm that needs a setting gives it to every runtime.
     ///
-    /// A client that should see the orchestration give up waits at least as long itself (see
+    /// A client that should see the orchestration give up has to wait at least as long itself (see
     /// [`Myrmic::timeout`] and [`crate::swarm::Swarm::sorg_query_timeout`]).
     pub fn orchestration(mut self, orchestration: swarm::OrchestrationConfig) -> Self {
         self.orchestration = orchestration;
@@ -493,11 +499,11 @@ where
     type Running = RunningRt<B>;
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
-    /// `config` sets what the overlay tells the runtime (the group it scouts on, the runtimes it
-    /// connects to, the port it listens on), its telemetry, execution and orchestration settings
+    /// `config` holds what the overlay tells the runtime (the group it scouts on, the runtimes it
+    /// connects to, the port it listens on) and its telemetry, execution and orchestration settings
     ///
-    /// Returns once the runtime is ready: `runtimes start -d` returns only once cells can be placed
-    /// on it.
+    /// Returns once the runtime is ready: `runtimes start -d` only returns once cells can be placed
+    /// on the runtime.
     async fn start(self) -> Result<RunningRt<B>, Error> {
         // JSON is YAML, which `runtimes start` parses
         let config = serde_json::json!({
@@ -623,14 +629,18 @@ where
             .expect("myrmic accepted an SRN that cannot be converted to an SRI")
             .to_string();
         self.myrmic.wait_until_deployed(&sri, true).await?;
-        Ok(DeployedCell::new(self.myrmic.clone(), sri, output.stderr))
+        Ok(DeployedCell::new(
+            self.myrmic.clone(),
+            sri,
+            Some(output.stderr),
+        ))
     }
 }
 
-/// How long [`DebugListenerBuilder::start`] waits before returning. The CLI reports nothing once
+/// How long [`DebugListenerBuilder::start`] waits before it returns. The CLI doesn't report when
 /// its subscriptions are in place (it prints `starting debug stream` before it even opens its
-/// session), so the wait is a guess. Measured with [`crate::host::Local::myrmic_isolated`]: without it, a
-/// command sent right after the spawn was missed in most runs; with 5 s, none was.
+/// session), so the wait is a guess. Measured with [`crate::host::Local::myrmic_isolated`]: without
+/// the wait, most runs missed a command sent right after the start; with 5 s, none did.
 pub const DEBUG_LISTENER_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Options for one `myrmic telemetry debug --json`, created by [`Myrmic::debug_listener`].
@@ -651,8 +661,8 @@ where
     }
 
     /// `--level`: raise the cell log level on all connected nodes for as long as the listener
-    /// lives; dropping the listener has the CLI restore the previous filter. Defaults to leaving
-    /// the level alone.
+    /// lives. When the listener is dropped, the CLI restores the previous filter. By default the
+    /// level isn't changed.
     pub fn level(mut self, level: &str) -> Self {
         self.level = Some(level.to_owned());
         self
@@ -660,9 +670,9 @@ where
 
     /// run: myrmic telemetry debug --json [--id `id`] [--level `level`]
     ///
-    /// Returns after [`DEBUG_LISTENER_SETTLE`], so the listener sees what happens after the
-    /// return; start it before whatever it is meant to observe. The CLI keeps running for as long
-    /// as the returned listener lives.
+    /// Returns after [`DEBUG_LISTENER_SETTLE`], so the listener sees what happens after the return.
+    /// Start it before whatever it should observe. The CLI keeps running for as long as the
+    /// returned listener lives.
     pub async fn start(self) -> DebugListener {
         let mut args = vec!["telemetry", "debug", "--json"];
         if let Some(id) = &self.id {
@@ -677,11 +687,12 @@ where
     }
 }
 
-/// A running runtime, the outcome of `myrmic runtimes start` (see [`StoppedRt`]).
+/// A running runtime, started with `myrmic runtimes start` (see [`StoppedRt`]).
 ///
-/// Dropping a `RunningRt` deletes it best-effort (panic-safe cleanup), also after an explicit
-/// [`runtime::Running::delete`]: a runtime that is already gone counts as deleted. Delete it
-/// explicitly when the test asserts on the post-delete state.
+/// Dropping a `RunningRt` deletes the runtime, best effort, so cleanup also happens when the test
+/// panics. This also happens after an explicit [`runtime::Running::delete`]; a runtime that is
+/// already gone counts as deleted. Delete the runtime explicitly when the test checks what happens
+/// after the delete.
 pub struct RunningRt<B>
 where
     B: MyrmicBackend,
@@ -703,8 +714,8 @@ where
         &self.stopped.name
     }
 
-    /// End the runtime as on a crash or power loss: it neither says goodbye to the swarm nor
-    /// cleans up. Returns once it is gone.
+    /// End the runtime as a crash or a power loss would: it neither says goodbye to the swarm nor
+    /// cleans up. Returns once the runtime is gone.
     ///
     /// run: myrmic runtimes delete --signal kill
     pub async fn kill(self) -> Result<StoppedRt<B>, Error> {
@@ -715,18 +726,17 @@ where
         Ok(self.stopped.clone())
     }
 
-    /// Turn the handle of a runtime that is already gone, e.g. with its host's power, into a
-    /// stopped one, without contacting the runtime or its host (the host may still be down).
-    /// Starting the result starts the same runtime again.
+    /// Turn the handle of a runtime that is already gone, e.g. because its host lost power, into a
+    /// stopped one. Starting the result starts the same runtime again.
     ///
-    /// Dropping the running handle still runs `myrmic runtimes delete` on the target, which finds
-    /// nothing left to delete; call it once the target is reachable again.
+    /// Call it once the target is reachable again: it drops the running handle, and the drop runs
+    /// `myrmic runtimes delete` on the target, which then finds nothing left to delete.
     pub fn mark_lost(self) -> StoppedRt<B> {
         self.stopped.clone()
     }
 
-    /// Freeze the runtime, as a stalled machine would: it keeps its state and connections but
-    /// does nothing, timers and lease renewals included, until [`Self::resume`]. `SIGSTOP` to the
+    /// Freeze the runtime, as a stalled machine would: it keeps its state and connections, but does
+    /// nothing until [`Self::resume`], including timers and lease renewals. Sends `SIGSTOP` to the
     /// runtime's process.
     pub async fn pause(&self) -> Result<(), Error> {
         self.signal("-STOP").await

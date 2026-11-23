@@ -2,10 +2,11 @@ use crate::host::{self, Remote};
 
 use super::MyrmicBackend;
 
-/// [`MyrmicBackend`] that runs programs in a docker host's container.
+/// A [`MyrmicBackend`] that runs programs in the container of a docker host.
 ///
-/// It holds its host, which shares the container with its clones, so the container outlives every
-/// [`super::super::Myrmic`] and guard using it, and is removed when the last of them drops.
+/// It holds its host, whose clones share the container. So the container outlives every
+/// [`super::super::Myrmic`] and guard that uses it, and is removed when the last of them is
+/// dropped.
 #[derive(Clone)]
 pub struct Docker {
     host: host::Docker,

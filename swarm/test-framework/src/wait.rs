@@ -1,3 +1,6 @@
+//! Waiting for a state to show up, or to hold for a while: what a test checks in a swarm usually
+//! settles some time after what caused it.
+
 use std::time::Duration;
 
 /// Default timeout for state-observation polling (runtime listed, SRI deployed, …).
@@ -15,13 +18,13 @@ pub struct Timeout {
     pub timeout: Duration,
 }
 
-/// Poll `check` every [`DEFAULT_POLL_INTERVAL`] until it yields a value, and return that value.
-/// Fails with [`Timeout`], naming `what` was waited for, once `timeout` is up.
+/// Poll `check` every [`DEFAULT_POLL_INTERVAL`] until it returns a value, and return that value.
+/// Once `timeout` is up, fails with [`Timeout`], which names `what` was waited for.
 ///
-/// For a state that has to settle before a test can read it, e.g. a node showing up in a list:
-/// the check returns `Some` with what the test needs from that state, `None` while it is not
-/// there yet. A check that can fail ends the wait with its error by yielding it as the value
-/// (`Some(Err(err))`), so the caller gets `Result<Result<_, E>, Timeout>`.
+/// This is for a state that has to settle before a test can read it, e.g. a node showing up in a
+/// list. The check returns `Some` with what the test needs from that state, and `None` while the
+/// state isn't there yet. A check that can fail ends the wait with its error by returning the error
+/// as the value (`Some(Err(err))`), so the caller gets `Result<Result<_, E>, Timeout>`.
 pub async fn wait_for<T, F, Fut>(timeout: Duration, what: &str, mut check: F) -> Result<T, Timeout>
 where
     F: FnMut() -> Fut,
@@ -65,10 +68,10 @@ where
     .is_ok()
 }
 
-/// Run `check` again and again until `duration` has passed, for a state that must hold
-/// throughout, not just become true once: `check` asserts on it every time, and paces itself, by
-/// waiting for the next event it checks or by sleeping between polls. Ends with the first error
-/// `check` returns.
+/// Run `check` again and again until `duration` has passed, for a state that must hold the whole
+/// time, not just become true once. `check` asserts on the state every time, and sets its own pace,
+/// either by waiting for the next event it checks or by sleeping between polls. Ends with the first
+/// error that `check` returns.
 pub async fn check_throughout<E>(
     duration: Duration,
     mut check: impl AsyncFnMut() -> Result<(), E>,

@@ -5,16 +5,16 @@ use bollard::models::NetworkCreateRequest;
 use super::{ConnectedContainer, Daemon};
 use crate::run_cleanup;
 
-/// a docker network that was created by this framework and is removed when dropped
+/// A docker network that this crate created. It is removed when dropped.
 ///
-/// The [`ManagedContainer`](super::ManagedContainer)s attached to it hold it, so it
-/// outlives them.
+/// The [`ManagedContainer`](super::ManagedContainer)s attached to it keep it alive, so it outlives
+/// them.
 pub struct ManagedNetwork {
     docker: Daemon,
     name: String,
-    /// a running container this framework did not create (e.g. the one the test runs in),
-    /// attached at creation and detached before removal: docker refuses to remove a network
-    /// that has a container attached
+    /// a running container that this crate didn't create (e.g. the one the test runs in). It is
+    /// attached when the network is created and detached before the network is removed, because
+    /// docker refuses to remove a network that has a container attached.
     outsider: Option<String>,
 }
 
@@ -48,8 +48,9 @@ impl ManagedNetwork {
         &self.name
     }
 
-    /// The `IPv4` address the machine that created the network has on it: the outsider's if one
-    /// is attached (see [`Self::create`]), otherwise the docker host's, the network's gateway.
+    /// The `IPv4` address on this network of the machine that created it: the outsider's address if
+    /// one is attached (see [`Self::create`]), otherwise the address of the docker host, which is
+    /// the network's gateway.
     pub(crate) async fn get_creator_address(&self) -> IpAddr {
         let address = match &self.outsider {
             Some(outsider) => self
