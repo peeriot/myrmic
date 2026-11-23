@@ -22,51 +22,26 @@
 //!   node with only some plugins, a zid the test chooses, its log events in the test process.
 //! - **Several runtimes:** [`swarm3`]. A [`swarm3::Swarm`] holds the runtimes a test added to it,
 //!   of any kind, and each start of one waits until they are linked as their overlay says.
-//! - **Talking to a swarm's services directly:** [`clients`] (db, sorg), for what the CLI does
-//!   not cover.
+//! - **Talking to a swarm's services directly,** for what the CLI does not cover: its db
+//!   ([`swarm3::Swarm::get_db`]) and its sorg client ([`swarm3::Swarm::get_sorg`]).
 //! - **Waiting for something to become true:** [`wait`] ([`wait_for`] when the test needs a
 //!   value from the state it waits for, [`assert_eventually!`], [`wait_until`]).
 //! - **Finding the binaries under test:** [`resolve_binary!`] and [`binary`].
 //!
 //! Infrastructure, rarely used directly: [`docker`] (containers and networks, behind
-//! [`myrmic::Docker`]), [`ssh_utils`] (remote hosts, behind [`myrmic::Ssh`]), [`shelly`] (smart
-//! plugs that cut a host's power).
-//!
-//! # Older modules
-//!
-//! [`swarm`], [`scenario`], [`cell`], [`compose`], [`sidecar`] and [`rack`] are the previous way
-//! of spawning swarms; [`swarm3`] replaces them and takes over the name `swarm` once they are
-//! gone. [`latency`], [`metrics`], [`producers`] and [`telemetry_files`] serve the benchmarks and
-//! move into a crate of their own. New tests use neither.
+//! [`myrmic::Docker`]).
 
 pub mod binary;
-pub mod cell;
-pub mod clients;
-pub mod compose;
 pub mod docker;
 pub mod host;
 pub mod in_process;
-pub mod latency;
-pub mod metrics;
 pub mod myrmic;
 pub mod overlay;
-pub mod producers;
-pub mod rack;
 pub mod runtime;
-pub mod scenario;
-pub mod shelly;
-pub mod sidecar;
-pub mod ssh_utils;
-pub mod swarm;
 pub mod swarm3;
-pub mod telemetry_files;
 pub mod wait;
 mod world;
 
-use cell_protocol::Sri;
-use swarm_telemetry::db::opentelemetry_proto::tonic::{
-    common::v1::any_value::Value, trace::v1::Span,
-};
 pub use wait::{wait_for, wait_until};
 pub use world::*;
 
@@ -141,31 +116,6 @@ impl From<std::process::Output> for CommandOutput {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
-    }
-}
-
-pub trait SriAttribute {
-    fn sri(&self) -> Option<Sri>;
-}
-
-impl SriAttribute for Span {
-    fn sri(&self) -> Option<Sri> {
-        self.attributes.iter().find_map(|kv| {
-            let key = kv.key.as_str();
-            match key {
-                // TODO: on another feature branch we rename `module_id` to `sri`; for now support both,
-                // but remove `module_id` later
-                "sri" | "module_id" => {
-                    let sri_value = kv.value.as_ref()?.value.as_ref()?;
-                    if let Value::StringValue(sri) = sri_value {
-                        sri.parse().ok()
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        })
     }
 }
 

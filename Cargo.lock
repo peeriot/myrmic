@@ -10875,7 +10875,6 @@ name = "test-framework"
 version = "0.7.1"
 dependencies = [
  "anyhow",
- "axum 0.8.9",
  "bollard",
  "bytes",
  "cell-protocol",
@@ -10891,8 +10890,6 @@ dependencies = [
  "netlink-packet-route",
  "netlink-sys",
  "postcard",
- "rand 0.9.5",
- "reqwest 0.13.5",
  "rumqttc",
  "rumqttd",
  "serde",
@@ -10904,12 +10901,9 @@ dependencies = [
  "swarm-telemetry",
  "tar",
  "tempfile",
- "test-control-client",
- "test-control-common",
  "thiserror 2.0.21",
  "tokio",
  "tracing-subscriber",
- "tryhard",
  "uuid",
  "zenoh",
 ]

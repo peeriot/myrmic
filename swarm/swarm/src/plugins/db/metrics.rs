@@ -13,9 +13,8 @@
 //! `2s + rand(100..6000)ms`), while many, slow pulls mean the transfer itself
 //! is the cost.
 //!
-//! Node-level, so nothing here carries an `sri` — see
-//! `test_framework::metrics::ReplicationMetrics`, which aggregates them across
-//! the mesh rather than per cell.
+//! Node-level, so nothing here carries an `sri`: a reader aggregates them
+//! across the mesh rather than per cell.
 
 use std::sync::LazyLock;
 

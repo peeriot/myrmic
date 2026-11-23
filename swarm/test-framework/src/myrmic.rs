@@ -38,9 +38,7 @@ use myrmic_build::PlatformFamily;
 use sorg_common::RestartType;
 
 use crate::{
-    CommandOutput,
-    clients::sorg::SorgHandle,
-    host,
+    CommandOutput, host,
     myrmic::cell::{CellSpec, DeployedApp, DeployedCell, TargetTempDir},
     overlay, runtime,
     wait::{DEFAULT_TIMEOUT, Timeout, wait_for},
@@ -700,13 +698,6 @@ impl<B> RunningRt<B>
 where
     B: MyrmicBackend,
 {
-    /// Open a [`SorgHandle`] that waits for an exec runtime matching this
-    /// runtime's tags and scopes all deploys to those same tags.
-    pub async fn connect(&self, session: zenoh::Session) -> SorgHandle {
-        let tag_refs: Vec<&str> = self.stopped.tags.iter().map(String::as_str).collect();
-        SorgHandle::connect_with_tags(session, &tag_refs).await
-    }
-
     /// the runtime name passed to `myrmic runtimes start --name`
     pub fn get_name(&self) -> &str {
         &self.stopped.name

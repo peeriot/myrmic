@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-axum = { workspace = true }
 bollard = { workspace = true }
 bytes = { workspace = true }
 config = { workspace = true }
@@ -27,8 +26,6 @@ netlink-packet-core = { workspace = true }
 netlink-packet-route = { workspace = true }
 netlink-sys = { workspace = true }
 postcard = { workspace = true }
-rand = { workspace = true }
-reqwest = { version = "0.13.3", features = ["query", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -38,10 +35,7 @@ swarm = { workspace = true }
 swarm-telemetry = { workspace = true, features = ["export-db", "export-file"] }
 tar = { workspace = true }
 tempfile = { workspace = true }
-test-control-client = { workspace = true }
-test-control-common = { workspace = true }
 thiserror = { workspace = true }
-tryhard = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "sync", "rt"] }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }

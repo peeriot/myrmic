@@ -45,7 +45,7 @@ pub(crate) use self::{
 mod docker;
 mod local;
 mod router;
-mod ssh;
+pub mod ssh;
 
 /// A host the test reaches from the outside, through a program that runs commands there
 /// (`docker exec`, `ssh`): what a [`Router`] runs on.

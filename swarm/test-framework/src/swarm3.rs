@@ -53,25 +53,29 @@
 //! The links the check expects come from the overlay, not from the swarm: the overlay is the one
 //! place that says which runtime links to which (see [`crate::overlay`]).
 //!
-//! The name is temporary: this replaces [`crate::swarm`] and takes over its name once that is
-//! gone.
+//! The name is temporary: this module takes over the name `swarm` from the one it replaced.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use cell_protocol::{CellInstance, PlacementEntry, RuntimeId, Sri};
-use db_client::v1::models::{Scope, Subject};
+use db_client::v1::models::Subject;
 use sorg_common::{
-    CellConfig, CellDeployment, DeployRequest, DeployResponse, DeploymentError, RequirementTags,
+    CellConfig, CellDeployment, DeployRequest, DeployResponse, DeploymentError, ExecRuntimeInfo,
+    RequirementTags, exec_registry::list_registered_execs, node_lease,
+    supervision::SupervisionTiming,
 };
 use zenoh::config::ZenohId;
 
+/// the scope a [`DbHandle`] reads and writes in
+pub use db_client::v1::models::Scope;
+pub use db_handle::DbHandle;
 pub use rt::{RunningRt, StoppedRt};
 
 use crate::{
@@ -83,6 +87,7 @@ use crate::{
 
 pub mod cell;
 mod check;
+mod db_handle;
 mod rt;
 
 /// A swarm: the runtimes a test added to it, and what the test operates them with. See
@@ -90,6 +95,7 @@ mod rt;
 pub struct Swarm {
     shared: Arc<Shared>,
     sorg: sorg_client::Client,
+    db: DbHandle,
     session: zenoh::Session,
     client: Myrmic<myrmic::Local>,
 }
@@ -146,6 +152,7 @@ impl Swarm {
                 introspection: introspection_client::v1::Client::new(session.clone()).await,
             }),
             sorg: sorg_client::Client::new(session.clone()),
+            db: DbHandle::new(&session),
             session,
         }
     }
@@ -250,9 +257,15 @@ impl Swarm {
         Ok(sorg_common::instance_registry::get_instance(&self.session, &sri).await?)
     }
 
-    /// a zenoh session that is part of the swarm, e.g. for [`crate::clients::db::DbHandle`]
+    /// a zenoh session that is part of the swarm, e.g. for a client of a swarm service that
+    /// [`Self::get_db`] and [`Self::get_sorg`] don't cover
     pub fn get_session(&self) -> &zenoh::Session {
         &self.session
+    }
+
+    /// the swarm's db on [`Self::get_session`], e.g. to read or write a cell's data directly
+    pub fn get_db(&self) -> &DbHandle {
+        &self.db
     }
 
     /// a sorg client on [`Self::get_session`], e.g. to deploy several cells in one request
@@ -293,7 +306,7 @@ impl Swarm {
     /// the swarm, e.g. an embedded one that joins by itself; the swarm's own runtimes are
     /// placeable once their start returned.
     pub async fn wait_for_runtime(&self, tags: &[&str], timeout: Duration) -> Result<(), Timeout> {
-        crate::clients::sorg::wait_for_exec_runtime(&self.session, tags, timeout).await
+        wait_for_exec_runtime(&self.session, tags, timeout).await
     }
 
     /// Register `binaries` as one class in the swarm's class registry, for cells to deploy from.
@@ -469,10 +482,110 @@ const CONNECTED_TIMEOUT: Duration =
 /// deployed". Nothing reports who considers itself leader, so this is a fixed wait.
 const LEADER_SETTLE_TIME: Duration = Duration::from_secs(1);
 
+async fn wait_for_exec_runtime(
+    session: &zenoh::Session,
+    tags: &[&str],
+    timeout: Duration,
+) -> Result<(), Timeout> {
+    wait_for(
+        timeout,
+        &format!("an exec runtime with tags {tags:?} to be placeable"),
+        || async {
+            // `list_registered_execs` reads the same DB-backed exec registry the orchestrator
+            // itself reads before placing cells (see `sorg_common::exec_registry`). A runtime's
+            // own `TOPIC_EXEC_RUNTIMES` queryable is not equivalent: that queryable starts
+            // answering as soon as the exec runtime's queryables are registered, which happens
+            // *before* it registers itself in the DB-backed registry (see
+            // `sorg-execution/src/spawn.rs`) — racing ahead of that registration let a
+            // subsequent `load_cell` reach the orchestrator before it could see the runtime,
+            // failing with `NoRuntimesAvailable`.
+            // A failed read finds nothing this round: the registry and the leases are written
+            // while runtimes come up, so reads can miss them for a while.
+            let execs = list_registered_execs(session).await.ok()?;
+            let fresh = fresh_lease_ids(session).await.ok()?;
+            execs
+                .iter()
+                .any(|info| runtime_has_tags(info, tags) && fresh.contains(&info.id()))
+                .then_some(())
+        },
+    )
+    .await
+}
+
+fn runtime_has_tags(info: &ExecRuntimeInfo, tags: &[&str]) -> bool {
+    tags.iter()
+        .all(|t| info.capabilities().tags().iter().any(|c| c.as_ref() == *t))
+}
+
+/// The runtimes whose liveness lease is fresh enough that placement would keep them,
+/// applying the same staleness rule as `drop_stale_execs` in the orchestrator: a node is
+/// fresh while the silence since its last renewal (`seq`, wall-clock millis) stays within its
+/// declared `ttl_ms` plus the cluster margin. A `seq` ahead of the reader's clock (skew)
+/// counts as fresh, and a node with no lease row is simply absent from the set.
+async fn fresh_lease_ids(session: &zenoh::Session) -> Result<HashSet<RuntimeId>, ()> {
+    let leases = node_lease::list_leases(session).await.map_err(|_| ())?;
+    let now_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX);
+    let margin_ms =
+        u64::try_from(SupervisionTiming::default().margin.as_millis()).unwrap_or(u64::MAX);
+
+    let fresh = leases
+        .into_iter()
+        .filter(|(_, lease)| {
+            now_ms.saturating_sub(lease.seq) <= lease.ttl_ms.saturating_add(margin_ms)
+        })
+        .map(|(id, _)| id)
+        .collect();
+
+    Ok(fresh)
+}
+
 /// The contents of the cell binary at `path`. Panics if it can't be read: the test built or named
 /// it.
 async fn read_binary(path: &std::path::Path) -> Vec<u8> {
     tokio::fs::read(path)
         .await
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use cell_protocol::{CapabilityTag, ExecutionCapabilities};
+
+    use sorg_common::ExecRuntimeInfo;
+
+    use super::runtime_has_tags;
+
+    fn runtime_with_tags(tags: &[&str]) -> ExecRuntimeInfo {
+        let tags = tags.iter().map(|t| CapabilityTag::new(*t)).collect();
+        ExecRuntimeInfo::new(
+            zenoh::config::ZenohId::default(),
+            None,
+            ExecutionCapabilities::new(tags),
+        )
+    }
+
+    #[test]
+    fn no_required_tags_matches_any_runtime() {
+        assert!(runtime_has_tags(&runtime_with_tags(&[]), &[]));
+        assert!(runtime_has_tags(&runtime_with_tags(&["linux"]), &[]));
+    }
+
+    #[test]
+    fn matches_when_runtime_has_all_required_tags() {
+        assert!(runtime_has_tags(
+            &runtime_with_tags(&["linux", "gpu"]),
+            &["linux"]
+        ));
+    }
+
+    #[test]
+    fn does_not_match_when_a_required_tag_is_missing() {
+        assert!(!runtime_has_tags(&runtime_with_tags(&["linux"]), &["gpu"]));
+    }
 }
