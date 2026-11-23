@@ -245,7 +245,11 @@ async fn handle_command(state: &mut State, cmd: BleCommand) {
         BleCommand::Unsubscribe { id } => {
             if let Some(pos) = state.subs.iter().position(|sub| sub.id == id) {
                 let entry = state.subs.swap_remove(pos);
-                ble::char_unregister(&mut state.ctx, entry.characteristic).await;
+                // The CCCD is per characteristic, not per subscription: keep notifications on
+                // while another subscription to the same characteristic remains.
+                if !state.subs.iter().any(|sub| sub.handle == entry.handle) {
+                    ble::char_unregister(&mut state.ctx, entry.characteristic).await;
+                }
                 // The notification subscriber is shared across every characteristic;
                 // only drop it once the last subscription is gone.
                 if state.subs.is_empty() {
@@ -377,14 +381,26 @@ async fn subscribe(
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     };
-    if let Err(e) = ble::char_register_notif(&mut state.ctx, characteristic).await {
-        if matches!(e, Error::Disconnected) {
-            handle_remote_disconnect(state).await;
-        }
+    // Rejected before any side effect: undoing an accepted CCCD write could disable
+    // notifications that an existing subscription to the same characteristic still needs.
+    if state.subs.is_full() {
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
+    // The subscriber must exist before the CCCD write: the peripheral may notify as soon as the
+    // write is accepted, and the notification channel only delivers to existing subscribers.
+    // Anything that arrives before the `SubEntry` below is pushed waits in the subscriber's queue
+    // until the manager polls it in notification mode.
     if ble::ensure_notif_sub(&mut state.ctx).is_err() {
+        BLE_RESPONSE.signal(Err(Error::Generic));
+        return;
+    }
+    if let Err(e) = ble::char_register_notif(&mut state.ctx, characteristic).await {
+        if matches!(e, Error::Disconnected) {
+            handle_remote_disconnect(state).await;
+        } else if state.subs.is_empty() {
+            ble::clear_notif_sub(&mut state.ctx);
+        }
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
@@ -397,6 +413,7 @@ async fn subscribe(
         callback,
     };
     if state.subs.push(entry).is_err() {
+        // Unreachable: capacity was checked above and nothing in between adds entries.
         BLE_RESPONSE.signal(Err(Error::Generic));
         return;
     }
