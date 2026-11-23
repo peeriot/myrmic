@@ -66,9 +66,6 @@ swarm-cli
 swarm-gateway
 swarm-onboarding
 swarm-onboarding-request
-test-control
-test-control-client
-test-control-common
 test-framework
 zenoh-nano
 zenoh-traits

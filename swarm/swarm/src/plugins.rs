@@ -26,8 +26,6 @@ pub mod mqtt;
 pub mod onboarding;
 #[cfg(feature = "plugin-orchestration")]
 pub mod orchestration;
-#[cfg(feature = "plugin-test-control")]
-pub mod test_control;
 
 /// Everything a plugin is handed besides its own configuration: the session it
 /// speaks on, the runtime it spawns onto, and the signals that start and stop

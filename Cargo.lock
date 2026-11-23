@@ -10489,8 +10489,6 @@ dependencies = [
  "swarm-telemetry",
  "swarm-telemetry-embedded",
  "sysinfo",
- "test-control",
- "test-control-common",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -10832,42 +10830,6 @@ checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.6",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "test-control"
-version = "0.7.1"
-dependencies = [
- "futures",
- "serde",
- "serde_json",
- "test-control-common",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "zenoh",
-]
-
-[[package]]
-name = "test-control-client"
-version = "0.7.1"
-dependencies = [
- "sorg-tests",
- "test-control-common",
- "thiserror 2.0.21",
- "tokio",
- "zenoh",
-]
-
-[[package]]
-name = "test-control-common"
-version = "0.7.1"
-dependencies = [
- "introspection-client",
- "introspection-common",
- "serde",
- "sorg-common",
 ]
 
 [[package]]

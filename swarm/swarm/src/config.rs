@@ -43,11 +43,6 @@ pub struct PluginConfigs {
     pub onboarding: Option<
         <crate::plugins::onboarding::SwarmOnboardingPlugin as crate::plugins::MyrmicPlugin>::Config,
     >,
-    #[cfg(feature = "plugin-test-control")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_control: Option<
-        <crate::plugins::test_control::ZenohTestControlPlugin as crate::plugins::MyrmicPlugin>::Config,
-    >,
     #[cfg(feature = "plugin-embedded-log")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedded_log: Option<

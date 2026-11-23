@@ -212,12 +212,6 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
         );
         load_plugin!(
             started,
-            "plugin-test-control",
-            plugins::test_control::ZenohTestControlPlugin,
-            |p| p.test_control.clone(),
-        );
-        load_plugin!(
-            started,
             "plugin-embedded-log",
             plugins::embedded_log::EmbeddedLoggingPlugin,
             |p| p.embedded_log.clone(),

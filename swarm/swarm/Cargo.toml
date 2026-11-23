@@ -17,7 +17,6 @@ default = [
     "plugin-onboarding",
     "plugin-db",
     "plugin-mqtt",
-    "plugin-test-control",
     "plugin-embedded-log",
     "plugin-gateway"
 ]
@@ -53,11 +52,6 @@ plugin-introspection = [
     "dep:sysinfo",
     "dep:introspection-common",
     "dep:zenoh-keyexpr",
-    "dep:zenoh-util",
-]
-plugin-test-control = [
-    "dep:test-control",
-    "dep:test-control-common",
     "dep:zenoh-util",
 ]
 plugin-embedded-log = [
@@ -144,10 +138,6 @@ critical-section = { workspace = true, features = ["std"], optional = true }
 
 # plugin-gateway
 swarm-gateway = { workspace = true, optional = true }
-
-# plugin-test-control
-test-control = { workspace = true, optional = true }
-test-control-common = { workspace = true, optional = true }
 
 #zenoh-keyexpr = { workspace = true }
 zenoh-plugin-trait = { workspace = true }

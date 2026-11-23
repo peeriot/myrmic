@@ -73,8 +73,7 @@ local z = import "zenoh.libsonnet";
       },
     },
   }
-  + z.plugin("introspection", {})
-  + z.plugin("test_control", {}),
+  + z.plugin("introspection", {}),
 ]
 EOF
 
@@ -82,5 +81,4 @@ swarm_bin="$(select_swarm_bin "$repo_root")"
 export RUST_LOG="${RUST_LOG:-info,swarm=info,zenoh=info}"
 printf '%s\n' "Swarm mTLS laptop endpoint started with built-in queryables:"
 printf '%s\n' "  - @introspection/@v1/@node-status (no payload)"
-printf '%s\n' "  - @test/@ctl/@health, @test/@ctl/@stats, @test/@ctl/@introspection (via test_control payloads)"
 exec "$swarm_bin" spawn "$config_path"

@@ -33,9 +33,6 @@ members = [
     "swarm/zenoh-nano",
     "swarm/zenoh-traits",
     # Tests/Examples/etc
-    "swarm/test-control",
-    "swarm/test-control-client",
-    "swarm/test-control-common",
     "swarm/tutorials/sorg/code/common",
     "swarm/tutorials/sorg/code/publisher",
     "swarm/tutorials/sorg/code/subscriber",
@@ -110,9 +107,6 @@ default-members = [
     "swarm/zenoh-nano",
     "swarm/zenoh-traits",
     # Tests/Examples/etc
-    "swarm/test-control",
-    "swarm/test-control-client",
-    "swarm/test-control-common",
     "swarm/test-framework",
     # Signal layer: host-side codegen, runtimes and shims
     "sdk/signal-layer/signal-layer-core",
@@ -575,9 +569,6 @@ filestore-client = { path = "swarm/filestore-client" }
 introspection-client = { path = "swarm/introspection-client" }
 introspection-common = { path = "swarm/introspection-common" }
 
-test-control = { path = "swarm/test-control" }
-test-control-client = { path = "swarm/test-control-client" }
-test-control-common = { path = "swarm/test-control-common" }
 
 test-framework = { path = "swarm/test-framework" }
 
