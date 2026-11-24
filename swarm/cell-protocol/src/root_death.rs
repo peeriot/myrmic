@@ -8,7 +8,10 @@ use crate::{Gen, Sri};
 /// already restarted at a newer generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootDeath {
+    /// The root cell that died.
     pub sri: Sri,
+    /// The dead instance's generation.
     pub gen_id: Gen,
+    /// Why the root cell died.
     pub reason: LostReason,
 }
