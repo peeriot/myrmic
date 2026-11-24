@@ -9,13 +9,13 @@ requires:
     - transport: i2c
 
 outputs:
-  - name: x
+  - name: accel_x
     type: f32
     unit: g
-  - name: y
+  - name: accel_y
     type: f32
     unit: g
-  - name: z
+  - name: accel_z
     type: f32
     unit: g
 
