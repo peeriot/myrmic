@@ -12,7 +12,7 @@ use cell_protocol::node_tags::LiveTags;
 use swarm_api::DropNotifier;
 
 use crate::config::PluginConfigs;
-pub use config::SwarmConfig;
+pub use config::{SwarmConfig, apply_runtime_defaults};
 
 /// How long a swarm's plugins may take to report ready once its zenoh runtime started.
 pub const PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -90,6 +90,7 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
         plugins,
     } = config;
 
+    apply_runtime_defaults(&mut zenoh)?;
     zenoh
         .insert_json5("timestamping/enabled", "true")
         .expect("valid timestamping config");

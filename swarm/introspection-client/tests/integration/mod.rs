@@ -8,6 +8,7 @@ use introspection_common::v1::NodeStatus;
 use zenoh::config::ZenohId;
 
 mod membership;
+mod routing;
 mod status;
 
 /// How long [`wait_for`] keeps re-checking before it gives up.

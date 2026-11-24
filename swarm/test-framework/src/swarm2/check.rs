@@ -6,7 +6,7 @@ use introspection_common::v1::NodeStatus;
 use zenoh::config::ZenohId;
 
 /// Why `statuses` do not show the swarm of `expected`, or `None` if they do: exactly the runtimes
-/// of `expected` answer, and each of them is linked to all the others.
+/// of `expected` answer, and each of them is linked to all the others, as a peer or as a router.
 ///
 /// The runtimes are the nodes that report no `participant`. CLI sessions report one, and the
 /// session that asks does not answer at all, so neither counts, also not among a runtime's peers.
@@ -22,6 +22,7 @@ pub(super) fn mismatch(statuses: &[NodeStatus], expected: &BTreeSet<ZenohId>) ->
             let peers: BTreeSet<ZenohId> = status
                 .peers
                 .iter()
+                .chain(&status.routers)
                 .copied()
                 .filter(|peer| runtimes.contains(peer))
                 .collect();
@@ -97,6 +98,16 @@ mod tests {
             runtime("a2", &["a1", "f1"]),
             cli,
         ];
+        assert_eq!(mismatch(&statuses, &expected(&["a1", "a2"])), None);
+    }
+
+    #[test]
+    fn router_links_count_like_peer_links() {
+        let router = |id, routers: &[&str]| NodeStatus {
+            routers: routers.iter().map(|router| zid(router)).collect(),
+            ..runtime(id, &[])
+        };
+        let statuses = [router("a1", &["a2"]), router("a2", &["a1"])];
         assert_eq!(mismatch(&statuses, &expected(&["a1", "a2"])), None);
     }
 

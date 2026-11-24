@@ -33,7 +33,7 @@ async fn connect_and_listen_flags_join_runtimes_without_multicast() {
         .await
         .unwrap();
 
-    // peers don't relay queries, and gossip is off: only the listener answers this session
+    // runtimes are routers by default and gossip is off: the listener answers this session
     let config = Myrmic::local_connected(&endpoint).backend().zenoh_config();
     let session = zenoh::open(config).await.unwrap();
     let statuses = introspection_client::v1::Client::new(session)
@@ -46,7 +46,7 @@ async fn connect_and_listen_flags_join_runtimes_without_multicast() {
         .find(|status| status.id == listener.zid())
         .expect("the listener reported no status");
     assert!(
-        listener_status.peers.contains(&joiner.zid()),
+        listener_status.routers.contains(&joiner.zid()),
         "the joiner isn't linked to the listener: {statuses:?}"
     );
 }
