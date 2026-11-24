@@ -2,7 +2,7 @@
 
 //! The file exporter needs no zenoh session or db plugin — these tests drive
 //! the `OTel` providers against a [`FileExporter`] directly and read the files
-//! back the way `test-framework`'s fetcher does (JSON-lines of `ScopedEntry`).
+//! back the way a benchmark fetching them does (JSON-lines of `ScopedEntry`).
 
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry::trace::{Tracer, TracerProvider as _};

@@ -1,9 +1,8 @@
 //! File-backed telemetry export: every signal is written to local JSON-lines
 //! files instead of the shared db, for deployments where telemetry must not
 //! compete with the workload for the datalayer — a load benchmark most of all.
-//! The rack harness fetches the files over SSH after a pass
-//! (`test-framework`'s `telemetry_files`) and serves the same queries the
-//! db-backed tables used to answer.
+//! A benchmark on remote machines fetches the files over SSH after a pass and
+//! serves the same queries the db-backed tables answer.
 //!
 //! Layout under the configured directory (`telemetry.file_export_dir`):
 //! - [`FILE_TRACES`] / [`FILE_LOGS`] — append-only, one

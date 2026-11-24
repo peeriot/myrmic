@@ -52,6 +52,8 @@ impl fmt::Display for NameError {
     }
 }
 
+impl core::error::Error for NameError {}
+
 /// Validate a single SRN path segment (a local name) against the grammar
 /// `^[a-z0-9][a-z0-9._-]*$`.
 pub fn validate_segment(seg: &str) -> Result<(), NameError> {

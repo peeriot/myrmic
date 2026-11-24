@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use bollard::models::NetworkCreateRequest;
 
@@ -16,7 +17,13 @@ pub struct ManagedNetwork {
     /// attached when the network is created and detached before the network is removed, because
     /// docker refuses to remove a network that has a container attached.
     outsider: Option<String>,
+    /// the last octet [`Self::take_moved_host_octet`] hands out next
+    next_moved_host: AtomicU8,
 }
+
+/// The last octet of the first address [`ManagedNetwork::take_moved_host_octet`] hands out. It is
+/// far above the addresses docker hands out in order, so no container docker addressed has it.
+const FIRST_MOVED_HOST: u8 = 200;
 
 impl ManagedNetwork {
     /// create a bridge network named `name`, with the running container `outsider` attached
@@ -33,6 +40,7 @@ impl ManagedNetwork {
             docker,
             name: name.to_owned(),
             outsider: None,
+            next_moved_host: AtomicU8::new(FIRST_MOVED_HOST),
         };
         if let Some(outsider) = outsider {
             ConnectedContainer::attach(network.docker.clone(), outsider)
@@ -46,6 +54,18 @@ impl ManagedNetwork {
     /// the network's name
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The last octet of an address on this network for a host that moves, one that neither docker
+    /// nor an earlier call handed out.
+    pub(crate) fn take_moved_host_octet(&self) -> u8 {
+        let octet = self.next_moved_host.fetch_add(1, Ordering::Relaxed);
+        assert!(
+            octet < u8::MAX,
+            "network `{}` has no address left for a moved host",
+            self.name
+        );
+        octet
     }
 
     /// The `IPv4` address on this network of the machine that created it: the outsider's address if

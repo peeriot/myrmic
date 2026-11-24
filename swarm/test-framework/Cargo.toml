@@ -24,14 +24,13 @@ myrmic-build = { workspace = true }
 netlink-packet-core = { workspace = true }
 netlink-packet-route = { workspace = true }
 netlink-sys = { workspace = true }
-postcard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 sorg-client = { workspace = true }
 sorg-common = { workspace = true }
 swarm = { workspace = true }
-swarm-telemetry = { workspace = true, features = ["export-db", "export-file"] }
+swarm-telemetry = { workspace = true, features = ["export-db"] }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }

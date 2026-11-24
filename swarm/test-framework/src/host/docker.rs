@@ -56,10 +56,6 @@ const ISOLATE_RULES: &str = "add table inet isolate; \
     add rule inet isolate input iif lo accept; \
     add rule inet isolate output oif lo accept";
 
-/// The last octet of the address that [`Docker::readdress`] moves a host to. It is far above the
-/// addresses docker hands out in order, so no other container has it.
-const READDRESSED_HOST: u8 = 200;
-
 impl Docker {
     /// The container `container` on the docker network `network`, at the address `address` there,
     /// with nothing in its firewall. The container is removed once the last host or shim that uses
@@ -231,9 +227,8 @@ impl Docker {
         let IpAddr::V4(old) = old else {
             panic!("`{old}` is no IPv4 address")
         };
-        let [a, b, c, last] = old.octets();
-        assert_ne!(last, READDRESSED_HOST, "`{old}` was moved already");
-        let new = std::net::Ipv4Addr::new(a, b, c, READDRESSED_HOST);
+        let [a, b, c, _] = old.octets();
+        let new = std::net::Ipv4Addr::new(a, b, c, self.network.take_moved_host_octet());
         // Dropping the old address also drops the on-link route the default route needs, so that
         // one is captured first and put back; its words are split again on purpose, it is a whole
         // route specification.

@@ -80,10 +80,10 @@ pub(crate) fn force_flush_queries(
             return;
         };
 
-        // Which process failed matters as much as why: the force-flush caller fans out to every
-        // matching queryable (`QueryTarget::All`, see `test-framework`'s `force_flush_telemetry`),
-        // and an unlabeled error reply leaves "which host?" to per-node forensics on exactly the
-        // deployment where this process's own logs are discarded (daemonized rack runtimes).
+        // Which process failed matters as much as why: a force-flush query sent with
+        // `QueryTarget::All` fans out to every matching queryable, and an unlabeled error reply
+        // leaves "which host?" to per-node forensics on exactly the deployment where this
+        // process's own logs are discarded (daemonized rack runtimes).
         // /etc/hostname names the machine on those deployments; the session zid is the fallback
         // that always exists and is already how the DB keys per-host metrics.
         let host = std::fs::read_to_string("/etc/hostname")

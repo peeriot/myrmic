@@ -95,15 +95,15 @@ struct MemberState {
     connects: Vec<usize>,
     /// the port it listens on: set by the test, or a free one once a connect targets it
     listen_port: Option<NonZeroU16>,
-    /// The mode the member runs in, or `None` while it doesn't run: what its last start reported,
-    /// until its running handle went away (see [`Member::start_running`]). A router passes traffic
-    /// on between the members linked to it. The mode itself is a setting of the runtime.
-    running: Option<WhatAmI>,
+    /// The mode the member is up in, or `None` while it isn't up: what its last start reported,
+    /// until its running handle went away (see [`Member::come_up`]). A router passes traffic on
+    /// between the members linked to it. The mode itself is a setting of the runtime.
+    up: Option<WhatAmI>,
 }
 
 impl MemberState {
     fn is_router(&self) -> bool {
-        self.running == Some(WhatAmI::Router)
+        self.up == Some(WhatAmI::Router)
     }
 }
 
@@ -162,7 +162,8 @@ impl Overlay {
 
     /// An attachment by a connect to the member `target`: what attaches this way links to `target`
     /// only. `target` listens for the connect from its next start on, so something can attach to a
-    /// runtime before the runtime starts.
+    /// runtime before the runtime starts. Panics if `target` runs and doesn't listen yet (no
+    /// earlier connect targeted it before its start): it would listen only after a restart.
     pub fn connect_to(&self, target: impl Into<Member>) -> Attachment {
         let target = target.into();
         assert!(
@@ -175,7 +176,7 @@ impl Overlay {
 
     /// Move the member `member` to `group`, a group of this overlay. From its next start on, the
     /// member scouts on `group`, e.g. on a group nobody else is on, so that it comes back cut off
-    /// from the others. A running member only moves when it starts again.
+    /// from the others. A member that is up only moves when it starts again.
     pub fn set_group(&self, member: impl Into<Member>, group: &MulticastGroup) {
         let member = member.into();
         assert!(
@@ -217,10 +218,10 @@ impl Overlay {
         let (first, passes_on_for_session) = match attachment {
             Attachment::Group(group) => {
                 let local = host::get_local_id();
-                // linked directly: the running members on the group the session finds by scouting
+                // linked directly: the members up on the group that the session finds by scouting
                 let scouted = (0..state.members.len()).filter(|&index| {
                     let member = &state.members[index];
-                    member.running.is_some()
+                    member.up.is_some()
                         && member.group == Some(group.id)
                         && self.scouts(&local, &member.host)
                 });
@@ -269,24 +270,24 @@ impl Overlay {
         a != b
             && (self.is_direct_link(state, a, b)
                 || (!both_routers
-                    // first: only running members share a component, and only their hosts
+                    // first: only members that are up share a component, and only their hosts
                     // surely still exist
                     && self.get_component(state, [a]).contains(&b)
                     && self.dial_either_way(&member_a.host, &member_b.host)))
     }
 
-    /// Whether the members at `a` and `b`, both running, form a link of their own, without gossip.
+    /// Whether the members at `a` and `b`, both up, form a link of their own, without gossip.
     /// That is either a connect from one to the other that its host can dial, or a shared group
     /// where multicast gets between their hosts. Two routers don't link on a shared group, because
     /// routers don't connect to what they find there.
     fn is_direct_link(&self, state: &State, a: usize, b: usize) -> bool {
         let (member_a, member_b) = (&state.members[a], &state.members[b]);
-        let both_running = member_a.running.is_some() && member_b.running.is_some();
+        let both_up = member_a.up.is_some() && member_b.up.is_some();
         let both_routers = member_a.is_router() && member_b.is_router();
         let shared_group =
             member_a.group.is_some() && member_a.group == member_b.group && !both_routers;
-        // running first: only a running member's host surely still exists
-        both_running
+        // up first: only the host of a member that is up surely still exists
+        both_up
             && ((shared_group && self.scouts(&member_a.host, &member_b.host))
                 || (member_a.connects.contains(&b) && self.connect_dials(member_a, member_b))
                 || (member_b.connects.contains(&a) && self.connect_dials(member_b, member_a)))
@@ -319,6 +320,11 @@ impl Overlay {
     /// whether `member` is a member of this overlay
     pub(crate) fn has_member(&self, member: &Member) -> bool {
         Arc::ptr_eq(&member.overlay.shared, &self.shared)
+    }
+
+    /// whether `host` is in one of the host sets of the overlay's world
+    pub(crate) fn world_has_host(&self, host: &host::Id) -> bool {
+        self.shared.world.has_host(host)
     }
 
     /// Whether traffic from `from` to `port` on `to` gets through: the world has a route, and the
@@ -371,7 +377,7 @@ impl Overlay {
     /// a new member on the host `host`, scouting on `group` and connecting to `connects`
     fn add_member(&self, host: host::Id, group: Option<GroupId>, connects: Vec<usize>) -> Member {
         assert!(
-            self.shared.world.has_host(&host),
+            self.world_has_host(&host),
             "{host:?} is in none of the host sets of the overlay's world"
         );
         let mut state = self.lock();
@@ -380,7 +386,7 @@ impl Overlay {
             group,
             connects,
             listen_port: None,
-            running: None,
+            up: None,
         });
         Member {
             overlay: self.clone(),
@@ -403,20 +409,24 @@ impl Member {
             .get_endpoint(dialler, &self.overlay.lock().members[index])
     }
 
-    /// Report that the member now runs in `mode`; a runtime's start calls this once the runtime is
-    /// up. The member counts as running until the returned guard is dropped. The runtime's running
+    /// whether the member is up on the network: from its start until its running handle goes away
+    /// (see [`Self::come_up`])
+    pub(crate) fn is_up(&self) -> bool {
+        let index = self.overlay.index_of(self);
+        self.overlay.lock().members[index].up.is_some()
+    }
+
+    /// Report that the member is now up in `mode`; a runtime's start calls this once the runtime is
+    /// up. The member counts as up until the returned guard is dropped. The runtime's running
     /// handle holds the guard, so however the handle goes away, the overlay learns that the member
-    /// stopped.
-    pub(crate) fn start_running(&self, mode: WhatAmI) -> RunningGuard {
+    /// went down.
+    pub(crate) fn come_up(&self, mode: WhatAmI) -> UpGuard {
         let index = self.overlay.index_of(self);
         let mut state = self.overlay.lock();
         let member = &mut state.members[index];
-        assert!(
-            member.running.is_none(),
-            "{self:?} was started while it runs"
-        );
-        member.running = Some(mode);
-        RunningGuard {
+        assert!(member.up.is_none(), "{self:?} was started while it is up");
+        member.up = Some(mode);
+        UpGuard {
             member: self.clone(),
         }
     }
@@ -430,8 +440,8 @@ impl Member {
         let member = &mut state.members[index];
         if member.listen_port.is_none() {
             assert!(
-                member.running.is_none(),
-                "a running member got a listen port it doesn't listen on until its next start"
+                member.up.is_none(),
+                "a member that is up got a listen port it doesn't listen on until its next start"
             );
             member.listen_port = Some(free_port());
         }
@@ -467,16 +477,16 @@ impl Member {
     }
 }
 
-/// What records a member as running in its overlay, for as long as it exists (see
-/// [`Member::start_running`]).
-pub(crate) struct RunningGuard {
+/// What records a member as up in its overlay, for as long as it exists (see
+/// [`Member::come_up`]).
+pub(crate) struct UpGuard {
     member: Member,
 }
 
-impl Drop for RunningGuard {
+impl Drop for UpGuard {
     fn drop(&mut self) {
         let index = self.member.overlay.index_of(&self.member);
-        self.member.overlay.lock().members[index].running = None;
+        self.member.overlay.lock().members[index].up = None;
     }
 }
 

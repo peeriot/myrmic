@@ -261,9 +261,9 @@ where
     /// Run `myrmic <args>` as they are, for a command that doesn't look for runtimes over zenoh:
     /// `new`, and the commands about the runtimes on the shim's machine (`runtimes start`, `list`,
     /// `delete`), which find them by their pid files.
-    /// The shim's attachment would be wrong there: `runtimes start` writes it into the runtime's
-    /// config, over the links the overlay gave that runtime. An unsuccessful exit is
-    /// [`Error::Cli`].
+    /// The shim's attachment would be wrong there: `runtimes start` would write it into the
+    /// runtime's config, overriding the links the overlay gave that runtime. An unsuccessful exit
+    /// is [`Error::Cli`].
     async fn run_local(&self, args: &[&str]) -> Result<CommandOutput, Error> {
         let output = self.run_program(&self.binary, args).await;
         if output.success {
@@ -550,11 +550,11 @@ where
             );
         };
         // a CLI runtime is a zenoh peer
-        let ovl_running = self.ovl_member.start_running(zenoh::config::WhatAmI::Peer);
+        let ovl_up = self.ovl_member.come_up(zenoh::config::WhatAmI::Peer);
         Ok(RunningRt {
             stopped: self,
             zid,
-            _ovl_running: ovl_running,
+            _ovl_up: ovl_up,
         })
     }
 
@@ -715,7 +715,7 @@ where
     /// records the runtime as running in its overlay while it exists; dropped after the
     /// runtime's delete in [`Drop::drop`], and before `stopped`, whose backend may hold the last
     /// handle to the runtime's host, which the overlay reads while it counts the runtime running
-    _ovl_running: overlay::RunningGuard,
+    _ovl_up: overlay::UpGuard,
     /// what it was started from, handed back when it stops
     stopped: StoppedRt<B>,
     zid: zenoh::config::ZenohId,

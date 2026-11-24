@@ -54,8 +54,8 @@ pub struct PluginConfigs {
 mod tests {
     use super::SwarmConfig;
 
-    /// The rack harness writes a `zenoh` section into every host's config
-    /// (`test-framework`'s `upload_host_config`). `SwarmConfig` denies unknown
+    /// The test framework writes a `zenoh` section into every runtime's config
+    /// (`test-framework`'s `myrmic` module). `SwarmConfig` denies unknown
     /// fields, so a key that has drifted from zenoh's schema stops every
     /// runtime from starting — a whole rack run lost to a typo, with the
     /// failure surfacing only as hosts that never register. Pin the shape.

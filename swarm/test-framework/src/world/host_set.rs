@@ -63,13 +63,14 @@ pub trait ConnectedHostSet: Send + Sync {
         _: sealed::Token,
     ) -> Option<EndPoint>;
 
-    /// how `from` dials `port` on `to` through this set, both hosts of it: `None` if it can't
+    /// how `from` dials `port` on `to`, both hosts of this set, through the set: `None` if it
+    /// can't
     fn get_route(&self, from: &host::Id, to: &host::Id, port: NonZeroU16) -> Option<EndPoint> {
         self.find_route(from, to, port.get(), sealed::Token)
     }
 
-    /// whether `from` can dial `port` on `to` through this set, both hosts of it; port 0 stands
-    /// for whatever port the system on `to` picks
+    /// whether `from` can dial `port` on `to`, both hosts of this set, through the set; port 0
+    /// stands for whatever port the system on `to` picks
     fn route_exists(&self, from: &host::Id, to: &host::Id, port: u16) -> bool {
         self.find_route(from, to, port, sealed::Token).is_some()
     }

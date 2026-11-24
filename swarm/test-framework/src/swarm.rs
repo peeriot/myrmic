@@ -49,21 +49,17 @@
 //! The test owns the runtimes, not the swarm. That way a runtime's state is the type of its
 //! handle, and one swarm can hold runtimes of different kinds. The swarm keeps one entry per
 //! runtime (`RuntimeEntry`). The entry holds what doesn't change with the state (overlay
-//! membership, zid), and a flag for whether the test has the runtime running. The flag is the
-//! test's intent: a start sets it, and it is cleared when the running handle goes away. The
-//! connectivity check compares the flags with the runtimes that actually answer. That is how it
-//! catches a runtime that died without the test stopping it. The handles' module (`rt`, whose
-//! types are re-exported here) explains how the handles keep the flag.
+//! membership, zid). Whether the test has the runtime running is the overlay's record of whether
+//! its member is up: set by a start, cleared when the running handle goes away. It is the test's intent, and
+//! the connectivity check compares it with the runtimes that actually answer. That is how it
+//! catches a runtime that died without the test stopping it.
 //!
 //! The links the check expects come from the overlay, not from the swarm, because the overlay is
 //! the only place that says which runtime links to which (see [`crate::overlay`]).
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime},
 };
 
@@ -81,7 +77,7 @@ pub use db_handle::{DbError, DbHandle};
 pub use rt::{RunningRt, StoppedRt};
 
 use crate::{
-    myrmic::{self, Error, Myrmic, cell::DeployedCell},
+    myrmic::{self, Myrmic, cell::DeployedCell},
     overlay::{self, Overlay},
     runtime::Stopped,
     wait::{Timeout, wait_for},
@@ -132,16 +128,20 @@ struct RuntimeEntry {
     member: overlay::Member,
     /// set at the runtime's first start, the same on every later one
     zid: OnceLock<ZenohId>,
-    /// whether the test has the runtime running: set by a start, cleared when the running handle
-    /// goes away
-    running: AtomicBool,
 }
 
 impl Swarm {
     /// A swarm with no runtime yet, whose test session, CLI and clients attach to an overlay by
-    /// `attachment`.
+    /// `attachment`. The test's machine must be in the overlay's world: the swarm checks its
+    /// runtimes against what the test's session reaches from there.
     pub async fn new(attachment: impl Into<overlay::Attachment>) -> Self {
         let attachment = attachment.into();
+        assert!(
+            attachment
+                .get_overlay()
+                .world_has_host(&crate::host::get_local_id()),
+            "the test's machine is in none of the host sets of the overlay's world"
+        );
         let session = zenoh::open(attachment.get_zenoh_config())
             .await
             .expect("failed to open the test's zenoh session");
@@ -177,7 +177,6 @@ impl Swarm {
         let entry = Arc::new(RuntimeEntry {
             member,
             zid: OnceLock::new(),
-            running: AtomicBool::new(false),
         });
         entries.push(entry.clone());
         StoppedRt::new(rt, entry, self.shared.clone())
@@ -186,7 +185,7 @@ impl Swarm {
     /// Wait until exactly the runtimes the test has running answer the status query, and each of
     /// them is linked to exactly the runtimes the overlay links it to. Starting a runtime already
     /// does this. A test calls it after something else disconnected and reconnected runtimes.
-    pub async fn wait_until_connected(&self) -> Result<(), Error> {
+    pub async fn wait_until_connected(&self) -> Result<(), Timeout> {
         self.shared.wait_until_connected().await
     }
 
@@ -422,7 +421,7 @@ impl Shared {
         let running: Vec<&RuntimeEntry> = entries
             .iter()
             .filter(|entry| {
-                entry.running.load(Ordering::SeqCst)
+                entry.member.is_up()
                     && self
                         .overlay
                         .is_reachable_by(&self.attachment, &entry.member)
@@ -461,7 +460,7 @@ impl Shared {
     /// The expected links are read again on every poll, because another runtime of the swarm may
     /// start or stop during the wait (e.g. two handles started side by side). A snapshot taken
     /// before would count that runtime as foreign, or as missing.
-    async fn wait_until_connected(&self) -> Result<(), Error> {
+    async fn wait_until_connected(&self) -> Result<(), Timeout> {
         let mut last_mismatch = String::new();
         let polled = tokio::time::timeout(CONNECTED_TIMEOUT, async {
             loop {

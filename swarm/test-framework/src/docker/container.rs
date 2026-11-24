@@ -57,21 +57,21 @@ impl ConnectedContainer {
     /// changes the address inside the container's network namespace keeps seeing the old address
     /// here, so it has to read the address before such a change.
     pub async fn container_ip(&self, network: &str) -> String {
+        let id = &self.container_id;
         let inspect = self
             .docker
-            .inspect_container(&self.container_id, None)
+            .inspect_container(id, None)
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to inspect container {id}: {err}"));
         inspect
             .network_settings
-            .unwrap()
-            .networks
-            .unwrap()
+            .and_then(|settings| settings.networks)
+            .unwrap_or_else(|| panic!("docker reports no networks for container {id}"))
             .get(network)
-            .unwrap()
+            .unwrap_or_else(|| panic!("container {id} is not on network {network}"))
             .ip_address
             .clone()
-            .unwrap()
+            .unwrap_or_else(|| panic!("container {id} has no address on network {network}"))
     }
 
     /// Run `cmd` in the container and capture its output. Panics if docker can't run it: that means
@@ -132,7 +132,12 @@ impl ConnectedContainer {
                 },
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to connect container {} to network {network}: {err}",
+                    self.container_id
+                )
+            });
     }
 }
 
@@ -216,14 +221,13 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Create and start the container.
     pub(crate) async fn run(self) -> ManagedContainer {
-        let options = CreateContainerOptionsBuilder::default()
-            .name(self.name)
-            .build();
+        let name = self.name;
+        let options = CreateContainerOptionsBuilder::default().name(name).build();
         let created = self
             .docker
             .create_container(Some(options), self.create_body())
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to create container {name}: {err}"));
         // owned from here on, so a failure below still removes the container
         let managed = ManagedContainer {
             container: ConnectedContainer::attach(self.docker, created.id),
@@ -233,7 +237,7 @@ impl<'a> ContainerBuilder<'a> {
         managed
             .start_container(managed.id(), None::<StartContainerOptions>)
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to start container {name}: {err}"));
 
         managed
     }

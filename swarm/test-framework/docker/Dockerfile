@@ -1,5 +1,5 @@
-# Image for the containers of the docker swarm backend: runtimes, and the container running the
-# zenoh router.
+# Image for the hosts of `host_set::Docker`: the containers that runtimes and zenoh routers run
+# in.
 #
 # The binaries come from the host's build (stripped of debug info), so the base needs a glibc at
 # least as new as the build host's. Arch is rolling, and the upgrade below brings it to the newest

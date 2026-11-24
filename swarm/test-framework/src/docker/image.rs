@@ -43,7 +43,7 @@ impl Image {
             .build();
         let mut stream = docker.build_image(options, None, Some(body_full(Bytes::from(context))));
         while let Some(result) = stream.next().await {
-            let info = result.unwrap();
+            let info = result.unwrap_or_else(|err| panic!("docker build of {tag} failed: {err}"));
             if let Some(error) = info
                 .error_detail
                 .as_ref()
@@ -67,11 +67,14 @@ fn build_context(dockerfile: &Path, files: &[(&Path, &str)]) -> Vec<u8> {
     for (path, name) in files {
         append_file(&mut archive, path, name);
     }
-    archive.into_inner().unwrap()
+    archive
+        .into_inner()
+        .unwrap_or_else(|err| panic!("failed to finish the build context: {err}"))
 }
 
 fn append_file(archive: &mut tar::Builder<Vec<u8>>, path: &Path, name: &str) {
-    let data = std::fs::read(path).unwrap();
+    let data = std::fs::read(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     let mut header = tar::Header::new_ustar();
     header.set_size(
         data.len()
@@ -83,5 +86,5 @@ fn append_file(archive: &mut tar::Builder<Vec<u8>>, path: &Path, name: &str) {
     header.set_cksum();
     archive
         .append_data(&mut header, name, data.as_slice())
-        .unwrap();
+        .unwrap_or_else(|err| panic!("failed to add {name} to the build context: {err}"));
 }

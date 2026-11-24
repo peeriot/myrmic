@@ -170,7 +170,7 @@ impl runtime::Stopped for StoppedRt {
             .await?
             .kill_on_drop();
         Ok(RunningRt {
-            _ovl_running: self.ovl_member.start_running(self.mode),
+            _ovl_up: self.ovl_member.come_up(self.mode),
             stopped: self,
             node,
         })
@@ -188,7 +188,7 @@ pub struct RunningRt {
     stopped: StoppedRt,
     node: swarm::spawn::Spawned,
     /// records the node as running in its overlay while it exists
-    _ovl_running: overlay::RunningGuard,
+    _ovl_up: overlay::UpGuard,
 }
 
 impl RunningRt {

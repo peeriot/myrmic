@@ -96,7 +96,7 @@ fn newest_build(target: &Path, name: &str) -> Option<PathBuf> {
         .filter_map(|profile| {
             let binary = profile.path().join(name);
             match std::fs::metadata(&binary) {
-                Ok(metadata) => {
+                Ok(metadata) if metadata.is_file() => {
                     let modified = metadata.modified().unwrap_or_else(|e| {
                         panic!(
                             "the platform reports no mtime for {}: {e}",
@@ -105,6 +105,8 @@ fn newest_build(target: &Path, name: &str) -> Option<PathBuf> {
                     });
                     Some((modified, binary))
                 }
+                // rustdoc's output for a crate of that name (`target/doc/<name>`)
+                Ok(_) => None,
                 // a profile it wasn't built in, or no profile at all (a triple's directory)
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                 Err(e) => panic!("failed to stat {}: {e}", binary.display()),
@@ -146,6 +148,21 @@ mod tests {
         assert_eq!(
             resolve_in(target_dir, name, None, None),
             target.path().join("custom").join(name)
+        );
+    }
+
+    #[test]
+    fn rustdocs_directory_of_a_crate_of_that_name_is_no_build() {
+        let target = tempfile::tempdir().expect("failed to create a target directory");
+        let name = "resolve-test-doc";
+        build(target.path(), "debug", name, Duration::from_secs(600));
+        std::fs::create_dir_all(target.path().join("doc").join(name))
+            .expect("failed to create the doc directory");
+
+        let target_dir = target.path().to_str().expect("a temp path is UTF-8");
+        assert_eq!(
+            resolve_in(target_dir, name, None, None),
+            target.path().join("debug").join(name)
         );
     }
 

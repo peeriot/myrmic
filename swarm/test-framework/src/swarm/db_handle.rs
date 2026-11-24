@@ -14,7 +14,7 @@ use db_client::v1::models::Scope;
 /// scope, its value encoded with the cell's codec (postcard by default):
 ///
 /// ```ignore
-/// let n = swarm.get_db().get(cell_protocol::scope_of_cell(cell.sri()), "n").await?;
+/// let n = swarm.get_db().get(cell_protocol::scope_of_cell(cell.get_sri()), "n").await?;
 /// let n: Option<i32> = n.map(|bytes| postcard::from_bytes(&bytes)).transpose()?;
 /// ```
 pub struct DbHandle {

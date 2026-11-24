@@ -85,17 +85,17 @@ struct Shared {
 /// act on all of the host's networks, but never on traffic between things that run on the host
 /// itself.
 #[derive(Clone, Default)]
-pub(crate) struct Firewall {
+struct Firewall {
     /// whether it drops all traffic (see [`Docker::isolate`])
-    pub(crate) isolated: bool,
+    isolated: bool,
     /// the hosts it drops the traffic to and from (see [`Docker::block`])
-    pub(crate) blocked: HashSet<Id>,
+    blocked: HashSet<Id>,
 }
 
 impl Id {
     /// The host's firewall as it is now. The host must still exist: what refers to it must not
     /// outlive it.
-    pub(crate) fn get_firewall(&self) -> Firewall {
+    fn get_firewall(&self) -> Firewall {
         self.upgrade().lock_firewall().clone()
     }
 

@@ -18,7 +18,7 @@ pub struct Router<H: Remote> {
     /// records the router as running in its overlay while it exists; dropped after the router is
     /// killed in [`Drop::drop`], and before `host`, which may be the last handle to the host the
     /// overlay reads while it counts the router running
-    _running: overlay::RunningGuard,
+    _up: overlay::UpGuard,
     member: overlay::Member,
     /// the host it runs on
     host: H,
@@ -56,7 +56,7 @@ impl<H: Remote> Router<H> {
             panic!("the router didn't become ready: {ready:?}");
         }
         Self {
-            _running: member.start_running(WhatAmI::Router),
+            _up: member.come_up(WhatAmI::Router),
             member,
             host,
             pid,
