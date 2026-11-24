@@ -22,6 +22,8 @@ pub use exec_runtime::{CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, Ru
 pub mod generations;
 pub mod node_tags;
 pub mod replication;
+mod root_death;
+pub use root_death::RootDeath;
 pub mod supervision;
 mod watchdog;
 pub use watchdog::{WatchdogResetReason, WatchdogResetReport};
