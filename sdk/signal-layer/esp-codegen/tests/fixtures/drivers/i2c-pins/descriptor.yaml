@@ -1,0 +1,15 @@
+# Test-only driver: an I2C sensor with one output pin (`reset`) and one input
+# pin (`irq`). There is no crate behind it; the tests only read generated text.
+id: i2c-pins
+category: sensor-drivers
+description: Fixture driver declaring pins of both directions.
+requires:
+  buses:
+    - transport: i2c
+  optional_pins:
+    - { name: reset, direction: output }
+    - irq
+outputs:
+  - name: value
+    type: f32
+    unit: ""

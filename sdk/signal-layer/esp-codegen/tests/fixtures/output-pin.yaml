@@ -1,0 +1,15 @@
+# Source whose driver declares an output pin (`reset`) and an input pin (`irq`).
+pipeline:
+  id: golden-output-pin
+
+sources:
+  - id: probe
+    device: probe
+    config:
+      sample_interval_ms: 1000
+
+taps:
+  - name: value
+    kind: retained
+    type: f32
+    source: probe.value

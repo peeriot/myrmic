@@ -1,0 +1,22 @@
+# Board manifest for the output-direction pin test.
+id: golden-board-output-pin
+chip: esp32c6
+
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: 10
+      sda: 11
+    freq_khz: 400
+
+gpios:
+  general_purpose: [0, 1]
+
+devices:
+  - id: probe
+    driver: i2c-pins
+    bus: i2c0
+    pins:
+      reset: 22
+      irq: 23
