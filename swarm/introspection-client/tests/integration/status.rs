@@ -14,7 +14,9 @@ async fn empty() -> anyhow::Result<()> {
 
     // Arrange - client with a session on a multicast group nothing else is on
     let group = Overlay::new(&World::local()).new_multicast_group();
-    let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
+    let session = zenoh::open(group.get_zenoh_config())
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?;
     let client = Client::new(session).await;
 
     // Act - request swarm status
@@ -36,7 +38,12 @@ async fn one_node() -> anyhow::Result<()> {
         .db()
         .start()
         .await?;
-    let client = Client::new(zenoh::open(group.get_zenoh_config()).await.unwrap()).await;
+    let client = Client::new(
+        zenoh::open(group.get_zenoh_config())
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?,
+    )
+    .await;
 
     // Act - request swarm status
     let mut status = wait_for_swarm_status(&client, 1).await?;
@@ -83,7 +90,9 @@ async fn three_nodes() -> anyhow::Result<()> {
         .execution()
         .start()
         .await?;
-    let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
+    let session = zenoh::open(group.get_zenoh_config())
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?;
     let client = Client::new(session).await;
     let (peer_zid, router_zid, other_peer_zid) =
         (peer.get_zid(), router.get_zid(), other_peer.get_zid());

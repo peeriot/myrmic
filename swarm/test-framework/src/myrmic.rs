@@ -28,8 +28,7 @@
 //! [`MyrmicBackend`] requires `Send + Sync` because the transitions of the runtime handles return
 //! `Send` futures (see [`crate::runtime`]), and each handle holds a shim with its backend.
 
-use std::path::Path;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 pub use backend::{Docker, Local, MyrmicBackend, Ssh};
 use cell_protocol::Sri;
@@ -656,7 +655,7 @@ where
 /// its subscriptions are in place (it prints `starting debug stream` before it even opens its
 /// session), so the wait is a guess. Measured with [`crate::host::Local::myrmic_isolated`]: without
 /// the wait, most runs missed a command sent right after the start; with 5 s, none did.
-pub const DEBUG_LISTENER_SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+pub const DEBUG_LISTENER_SETTLE: Duration = Duration::from_secs(5);
 
 /// Options for one `myrmic telemetry debug --json`, created by [`Myrmic::debug_listener`].
 pub struct DebugListenerBuilder<'a, B> {

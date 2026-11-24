@@ -5,7 +5,7 @@ use super::MyrmicBackend;
 /// A [`MyrmicBackend`] that runs programs in the container of a docker host.
 ///
 /// It holds its host, whose clones share the container. So the container outlives every
-/// [`super::super::Myrmic`] and guard that uses it, and is removed when the last of them is
+/// [`crate::myrmic::Myrmic`] and guard that uses it, and is removed when the last of them is
 /// dropped.
 #[derive(Clone)]
 pub struct Docker {

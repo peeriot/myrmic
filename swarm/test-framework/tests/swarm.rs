@@ -23,7 +23,7 @@ use zenoh::config::ZenohId;
 type CliRt = RunningRt<myrmic::RunningRt<myrmic::Local>>;
 
 /// a swarm of three CLI runtimes on one group, started
-async fn three_runtimes() -> Result<(Swarm, [CliRt; 3]), Error> {
+async fn three_runtimes() -> anyhow::Result<(Swarm, [CliRt; 3])> {
     let group = Overlay::new(&World::local()).new_multicast_group();
     let swarm = Swarm::new(&group).await;
     let a = swarm.add(swarm.get_myrmic().runtime());
@@ -112,7 +112,12 @@ async fn a_runtime_moved_to_its_own_group_is_cut_off() -> anyhow::Result<()> {
 
     // `a` answers alone, linked to nobody: `b` is expected to stay silent
     swarm.wait_until_connected().await?;
-    let lone = Client::new(zenoh::open(alone.get_zenoh_config()).await.unwrap()).await;
+    let lone = Client::new(
+        zenoh::open(alone.get_zenoh_config())
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?,
+    )
+    .await;
     let status = wait_for(DEFAULT_TIMEOUT, "the cut-off runtime to answer", || async {
         lone.swarm_status()
             .await
@@ -290,10 +295,10 @@ fn free_port() -> std::io::Result<NonZeroU16> {
 
 /// a fresh cell from `myrmic new`, against the SDK in this checkout: the git default pins the
 /// revision the CLI was built from, which only exists once pushed to the myrmic remote
-async fn new_cell(myrmic: &Myrmic<myrmic::Local>) -> Result<CellSpec<myrmic::Local>, Error> {
+async fn new_cell(myrmic: &Myrmic<myrmic::Local>) -> anyhow::Result<CellSpec<myrmic::Local>> {
     let name = format!("Cell{}", uuid::Uuid::new_v4().simple());
     let sdk = concat!(env!("CARGO_MANIFEST_DIR"), "/../../sdk/myrmic-sdk");
-    myrmic.new_cell(&name, Some(sdk)).await
+    Ok(myrmic.new_cell(&name, Some(sdk)).await?)
 }
 
 /// Deploy `cell` pinned to the runtime `zid` by its runtime tag; returns the runtime `myrmic
@@ -302,7 +307,7 @@ async fn deploy_pinned(
     myrmic: &Myrmic<myrmic::Local>,
     cell: &CellSpec<myrmic::Local>,
     zid: ZenohId,
-) -> Result<String, Error> {
+) -> anyhow::Result<String> {
     let tag = runtime_tag(zid.into());
     let deployed = myrmic.cell(cell.as_path()).tags(&[&tag]).deploy().await?;
     let output = deployed.get_output().expect("the CLI deployed it");

@@ -1,5 +1,7 @@
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::{
+    net::IpAddr,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 use bollard::models::NetworkCreateRequest;
 
@@ -52,7 +54,7 @@ impl ManagedNetwork {
     }
 
     /// the network's name
-    pub fn name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         &self.name
     }
 
@@ -110,7 +112,7 @@ impl ManagedNetwork {
     }
 
     /// the prefix length of the network's `IPv4` subnet, e.g. 16 for `172.19.0.0/16`
-    pub async fn ipv4_prefix_len(&self) -> u8 {
+    pub async fn get_ipv4_prefix_len(&self) -> u8 {
         let inspect = self
             .docker
             .inspect_network(&self.name, None)

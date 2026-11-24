@@ -65,11 +65,11 @@ impl Docker {
         network: Arc<docker::ManagedNetwork>,
         address: IpAddr,
     ) -> Self {
-        let label = Arc::from(format!("container {}", container.id()));
+        let label = Arc::from(format!("container {}", container.get_id()));
         let shared = Arc::new(Shared::default());
         shared
             .lock_addresses()
-            .insert(network.name().to_owned(), address);
+            .insert(network.get_name().to_owned(), address);
         Self {
             container,
             network,
@@ -119,7 +119,7 @@ impl Docker {
         assert!(
             output.success,
             "failed to fill the disk of container {}: {}",
-            self.container.id(),
+            self.container.get_id(),
             output.stderr
         );
     }
@@ -130,7 +130,7 @@ impl Docker {
         assert!(
             output.success,
             "failed to free the disk of container {}: {}",
-            self.container.id(),
+            self.container.get_id(),
             output.stderr
         );
     }
@@ -150,7 +150,7 @@ impl Docker {
         assert!(
             output.success,
             "failed to skew the clock of container {}: {}",
-            self.container.id(),
+            self.container.get_id(),
             output.stderr
         );
         tokio::time::sleep(FAKETIME_PICKUP).await;
@@ -218,8 +218,8 @@ impl Docker {
             self.shared.lock_firewall().blocked.is_empty(),
             "a blocked host can't move: its blocks name its old address"
         );
-        let old = self.get_id().get_address(self.network.name());
-        let prefix = self.network.ipv4_prefix_len().await;
+        let old = self.get_id().get_address(self.network.get_name());
+        let prefix = self.network.get_ipv4_prefix_len().await;
         assert!(
             prefix <= 24,
             "the last octet alone must stay within the /{prefix} subnet"
@@ -248,14 +248,14 @@ impl Docker {
         );
         self.shared
             .lock_addresses()
-            .insert(self.network.name().to_owned(), IpAddr::V4(new));
+            .insert(self.network.get_name().to_owned(), IpAddr::V4(new));
     }
 
     /// Drop all traffic between this host and `peer`, in a table of this host's own for `peer`
     /// ([`get_block_table`]), so that [`Self::pass_traffic`] can remove exactly these rules.
     async fn drop_traffic(&self, peer: &Docker) {
         let table = get_block_table(peer);
-        let peer_address = peer.get_id().get_address(self.network.name());
+        let peer_address = peer.get_id().get_address(self.network.get_name());
         let rules = format!(
             "add table inet {table}; \
              add chain inet {table} input {{ type filter hook input priority 0; policy accept; }}; \
@@ -309,7 +309,7 @@ impl Block {
 
 /// the name of the nftables table in which a host drops the traffic of `peer`
 fn get_block_table(peer: &Docker) -> String {
-    format!("block_{}", peer.container.id())
+    format!("block_{}", peer.container.get_id())
 }
 
 impl Remote for Docker {
@@ -317,7 +317,7 @@ impl Remote for Docker {
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut command = self.container.docker_cli();
         command
-            .args(["exec", self.container.id(), program])
+            .args(["exec", self.container.get_id(), program])
             .args(args);
         command
     }

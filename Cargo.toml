@@ -569,7 +569,6 @@ filestore-client = { path = "swarm/filestore-client" }
 introspection-client = { path = "swarm/introspection-client" }
 introspection-common = { path = "swarm/introspection-common" }
 
-
 test-framework = { path = "swarm/test-framework" }
 
 swarm-telemetry = { path = "swarm/swarm-telemetry" }

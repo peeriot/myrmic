@@ -50,9 +50,9 @@
 //! handle, and one swarm can hold runtimes of different kinds. The swarm keeps one entry per
 //! runtime (`RuntimeEntry`). The entry holds what doesn't change with the state (overlay
 //! membership, zid). Whether the test has the runtime running is the overlay's record of whether
-//! its member is up: set by a start, cleared when the running handle goes away. It is the test's intent, and
-//! the connectivity check compares it with the runtimes that actually answer. That is how it
-//! catches a runtime that died without the test stopping it.
+//! its member is up: set by a start, cleared when the running handle goes away. It is the test's
+//! intent, and the connectivity check compares it with the runtimes that actually answer. That is
+//! how it catches a runtime that died without the test stopping it.
 //!
 //! The links the check expects come from the overlay, not from the swarm, because the overlay is
 //! the only place that says which runtime links to which (see [`crate::overlay`]).
@@ -169,7 +169,7 @@ impl Swarm {
         );
         let mut entries = self.shared.entries.lock().expect("not poisoned");
         // one runtime, one entry: a second handle of the same runtime (e.g. a clone of a CLI
-        // runtime's stopped handle) would get a second intent flag for it
+        // runtime's stopped handle) would make the swarm expect the runtime twice in the status
         assert!(
             entries.iter().all(|entry| entry.member != member),
             "{member:?} was added twice"

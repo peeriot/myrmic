@@ -56,7 +56,7 @@ impl Image {
     }
 
     /// the image's reference, e.g. `myrmic-swarm:0123456789abcdef`
-    pub fn tag(&self) -> &str {
+    pub fn get_tag(&self) -> &str {
         &self.tag
     }
 }

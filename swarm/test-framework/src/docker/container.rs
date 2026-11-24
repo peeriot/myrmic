@@ -47,7 +47,7 @@ impl ConnectedContainer {
     }
 
     /// the docker container id
-    pub fn id(&self) -> &str {
+    pub fn get_id(&self) -> &str {
         &self.container_id
     }
 
@@ -56,7 +56,7 @@ impl ConnectedContainer {
     /// This is the address docker handed out, read back from docker's inspect API. A test that
     /// changes the address inside the container's network namespace keeps seeing the old address
     /// here, so it has to read the address before such a change.
-    pub async fn container_ip(&self, network: &str) -> String {
+    pub async fn get_container_ip(&self, network: &str) -> String {
         let id = &self.container_id;
         let inspect = self
             .docker
@@ -235,7 +235,7 @@ impl<'a> ContainerBuilder<'a> {
         };
 
         managed
-            .start_container(managed.id(), None::<StartContainerOptions>)
+            .start_container(managed.get_id(), None::<StartContainerOptions>)
             .await
             .unwrap_or_else(|err| panic!("failed to start container {name}: {err}"));
 
@@ -261,7 +261,7 @@ impl<'a> ContainerBuilder<'a> {
         }
 
         ContainerCreateBody {
-            image: Some(self.image.tag().to_owned()),
+            image: Some(self.image.get_tag().to_owned()),
             cmd: (!self.command.is_empty()).then(|| {
                 self.command
                     .iter()
@@ -271,7 +271,7 @@ impl<'a> ContainerBuilder<'a> {
             env,
             networking_config: self.network.as_deref().map(|network| NetworkingConfig {
                 endpoints_config: Some(std::collections::HashMap::from([(
-                    network.name().to_owned(),
+                    network.get_name().to_owned(),
                     EndpointSettings::default(),
                 )])),
             }),
@@ -299,7 +299,7 @@ impl<'a> ContainerBuilder<'a> {
 impl Drop for ManagedContainer {
     fn drop(&mut self) {
         let mut rm = self.container.docker_cli();
-        rm.args(["rm", "-f", self.container.id()]);
+        rm.args(["rm", "-f", self.container.get_id()]);
         run_cleanup("ManagedContainer", rm);
     }
 }

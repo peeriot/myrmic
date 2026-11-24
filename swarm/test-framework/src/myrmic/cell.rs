@@ -56,7 +56,7 @@ where
 {
     /// Create a directory named `<prefix>.XXXXXX` in the target's temporary directory. A target
     /// without a working `mktemp` means the test infrastructure is broken, so a failure panics.
-    pub(crate) async fn create(myrmic: &Myrmic<B>, prefix: &str) -> Self {
+    pub(super) async fn create(myrmic: &Myrmic<B>, prefix: &str) -> Self {
         let template = format!("{prefix}.XXXXXX");
         let output = myrmic.run_program("mktemp", &["-d", "-t", &template]).await;
         assert!(
@@ -72,7 +72,7 @@ where
 
     /// Write `content` to the file `name` in this directory and return its path. A failure is
     /// broken test infrastructure and panics.
-    pub(crate) async fn write(&self, name: &str, content: &str) -> PathBuf {
+    pub(super) async fn write(&self, name: &str, content: &str) -> PathBuf {
         let path = self.path.join(name);
         let path_str = path
             .to_str()
@@ -243,7 +243,7 @@ impl<B> DeployedApp<B>
 where
     B: MyrmicBackend,
 {
-    pub(crate) fn new(myrmic: Myrmic<B>, name: String, sris: Vec<String>, output: String) -> Self {
+    pub(super) fn new(myrmic: Myrmic<B>, name: String, sris: Vec<String>, output: String) -> Self {
         Self {
             myrmic,
             name,

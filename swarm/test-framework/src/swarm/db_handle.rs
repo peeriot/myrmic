@@ -2,9 +2,10 @@
 //! ([`DbHandle`]). Every swarm has one ([`super::Swarm::get_db`]). A test without a
 //! [`super::Swarm`] creates one on its own zenoh session with [`DbHandle::new`].
 
-use db_client::Session;
-use db_client::v1::Client;
-use db_client::v1::models::Scope;
+use db_client::{
+    Session,
+    v1::{Client, models::Scope},
+};
 
 /// The swarm's db through a session that is part of the swarm; each call is a transaction of its
 /// own.
@@ -56,11 +57,6 @@ impl DbHandle {
             .map_err(DbError::Transaction)?
             .map_err(|err| DbError::Refused(err.message))?;
         Ok(())
-    }
-
-    /// Write the UTF-8 string `value` under `key` in `scope`.
-    pub async fn put_str(&self, scope: Scope, key: &str, value: &str) -> Result<(), DbError> {
-        self.put(scope, key, value.as_bytes().to_vec()).await
     }
 
     /// The raw bytes under `key` in `scope`, or `None` if there are none.

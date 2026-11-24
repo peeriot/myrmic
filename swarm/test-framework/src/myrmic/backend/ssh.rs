@@ -16,7 +16,6 @@ use crate::{
 /// run the same command.
 #[derive(Clone)]
 pub struct Ssh {
-    host: host::Ssh,
     /// shared by the clones, so its directories live as long as any runtime or cell handle that
     /// may still need them for cleanup
     isolation: Arc<Isolation>,
@@ -64,17 +63,16 @@ impl Ssh {
             .to_owned();
         Self {
             isolation: Arc::new(Isolation {
-                host: host.clone(),
+                host,
                 data_dir,
                 run_dir,
             }),
-            host,
         }
     }
 
     /// the host programs run on
     pub fn get_host(&self) -> &host::Ssh {
-        &self.host
+        &self.isolation.host
     }
 }
 
@@ -95,7 +93,7 @@ impl MyrmicBackend for Ssh {
         let runtime_dir = format!("XDG_RUNTIME_DIR={}", self.isolation.run_dir);
         let mut env_args = vec![data_home.as_str(), runtime_dir.as_str(), program];
         env_args.extend(args);
-        self.host.command("env", &env_args)
+        self.get_host().command("env", &env_args)
     }
 
     fn wrapper_exit_codes(&self) -> &'static [i32] {
@@ -105,6 +103,6 @@ impl MyrmicBackend for Ssh {
     }
 
     fn get_host_id(&self) -> host::Id {
-        self.host.get_id()
+        self.get_host().get_id()
     }
 }

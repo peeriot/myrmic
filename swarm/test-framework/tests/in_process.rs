@@ -21,7 +21,9 @@ async fn a_deleted_node_leaves_the_network() -> anyhow::Result<()> {
     let group = Overlay::new(&World::local()).new_multicast_group();
     let rt = StoppedRt::new(&group).orchestration().start().await?;
     let zid = rt.get_zid();
-    let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
+    let session = zenoh::open(group.get_zenoh_config())
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?;
     assert_eventually!(
         SEEN,
         sees(&session, zid).await,
@@ -43,7 +45,9 @@ async fn a_restarted_node_keeps_its_zid() -> anyhow::Result<()> {
     let group = Overlay::new(&World::local()).new_multicast_group();
     let rt = StoppedRt::new(&group).orchestration().start().await?;
     let zid = rt.get_zid();
-    let session = zenoh::open(group.get_zenoh_config()).await.unwrap();
+    let session = zenoh::open(group.get_zenoh_config())
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?;
 
     // kept alive until the check: dropping it would delete the node again
     let _restarted = rt.delete().await?.start().await?;

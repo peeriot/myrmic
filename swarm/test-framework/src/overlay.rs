@@ -403,7 +403,7 @@ impl Member {
 
     /// how `dialler` dials the member for a connect, e.g. with the CLI's `--connect`; it must be
     /// a connect's target
-    pub(crate) fn get_endpoint(&self, dialler: &host::Id) -> EndPoint {
+    fn get_endpoint(&self, dialler: &host::Id) -> EndPoint {
         let index = self.overlay.index_of(self);
         self.overlay
             .get_endpoint(dialler, &self.overlay.lock().members[index])

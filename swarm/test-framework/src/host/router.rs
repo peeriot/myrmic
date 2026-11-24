@@ -31,7 +31,7 @@ pub struct Router<H: Remote> {
 impl<H: Remote> Router<H> {
     /// Start the router `member` on `host`, running the `zenoh-router` binary at `binary` there;
     /// returns once it listens.
-    pub(crate) async fn start(host: H, binary: &str, member: overlay::Member) -> Self {
+    pub(super) async fn start(host: H, binary: &str, member: overlay::Member) -> Self {
         member.ensure_listen_port();
         let settings = member.get_zenoh_settings().to_string();
         // `echo $$` first: the router's pid on its host, which the drop kills

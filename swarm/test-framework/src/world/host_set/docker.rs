@@ -67,7 +67,7 @@ impl Docker {
             network,
             image,
         } = &*self.shared;
-        let name = format!("{}-{}", network.name(), uuid::Uuid::new_v4().simple());
+        let name = format!("{}-{}", network.get_name(), uuid::Uuid::new_v4().simple());
         // `NET_ADMIN` for the nftables rules of the faults
         let container = docker::ManagedContainer::builder(image, daemon.clone(), &name)
             .command(&["sleep", "infinity"])
@@ -77,7 +77,7 @@ impl Docker {
             .run()
             .await;
         let address = container
-            .container_ip(network.name())
+            .get_container_ip(network.get_name())
             .await
             .parse()
             .expect("docker reports a host's address as an IP address");
@@ -87,7 +87,7 @@ impl Docker {
 
 impl ConnectedHostSet for Docker {
     fn has_host(&self, host: &host::Id) -> bool {
-        host.has_address(self.shared.network.name())
+        host.has_address(self.shared.network.get_name())
     }
 
     fn has_multicast(&self) -> bool {
@@ -101,13 +101,18 @@ impl ConnectedHostSet for Docker {
         port: u16,
         _: sealed::Token,
     ) -> Option<EndPoint> {
-        Some(route_by_address(self.shared.network.name(), from, to, port))
+        Some(route_by_address(
+            self.shared.network.get_name(),
+            from,
+            to,
+            port,
+        ))
     }
 }
 
 impl Drop for DockerShared {
     fn drop(&mut self) {
-        host::remove_local_address(self.network.name());
+        host::remove_local_address(self.network.get_name());
     }
 }
 
