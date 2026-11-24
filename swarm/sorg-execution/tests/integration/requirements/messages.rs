@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use cell_protocol::Sri;
 use claims::assert_ok;
-use sorg_tests::{enable_test_logging, register_fixture_class, swarm_config};
+use sorg_tests::{EventQueue, enable_test_logging, register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
 
@@ -19,6 +19,11 @@ const MAIN_SRI: &str = "main_cell";
 const HELPER_SRI: &str = "helper_cell";
 const EVENT_COUNTER_READ: &str = "counter_read";
 
+// --- Scenario 3 constants ---
+/// How long cell B stays busy. Long enough to outlast an A round trip and the
+/// 10 ms gap in the parallelism test, so A's event can only come second if B blocks A.
+const BUSY_MS: u32 = 500;
+
 /// The cells publish `"{md.id}:{count}"`, and `md.id` renders as the cell's SRI
 /// (a UUID), not its human name. Derive the expected string from the same SRI
 /// the cell was deployed under so host and guest agree.
@@ -26,13 +31,25 @@ fn expected_event(cell_name: &str, count: u32) -> String {
     format!("{}:{}", Sri::from_target(cell_name).unwrap(), count)
 }
 
+/// Waits for the next event, named `step` in errors, and returns its payload as text.
+async fn receive_event(event_queue: &mut EventQueue, step: &str) -> Result<String, String> {
+    let received = tokio::time::timeout(Duration::from_secs(10), event_queue.receive())
+        .await
+        .map_err(|_| format!("timed out waiting for {step}"))?
+        .map_err(|e| format!("error receiving {step}: {e}"))?;
+
+    String::from_utf8(received).map_err(|e| format!("{step} payload is not utf-8: {e}"))
+}
+
 /// Requirement 1: Per-cell independent queuing (#376)
 ///
-/// Messages to different cells are queued and processed independently.
-/// Cell A (no delay) processes two messages before cell B (100ms delay)
-/// finishes its first.
+/// Messages to different cells are queued and processed independently. Steps are
+/// driven by received events; the only timing assumption is that B's `BUSY_MS`
+/// outlasts A's first two round trips. Cell A (no delay) then processes its second
+/// message while cell B is still busy with its first, and both cells keep queuing
+/// afterwards.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-pub async fn per_cell_independent_queuing() {
+pub async fn per_cell_independent_queuing() -> Result<(), String> {
     // Arrange — build the cell module and deploy two instances
     enable_test_logging("warn");
     let swarm = swarm_config!("requirements/messages/swarm.jsonnet");
@@ -54,31 +71,36 @@ pub async fn per_cell_independent_queuing() {
         .await;
 
     let payload_0 = postcard::to_allocvec(&0u32).unwrap();
-    let payload_100 = postcard::to_allocvec(&100u32).unwrap();
+    let payload_busy = postcard::to_allocvec(&BUSY_MS).unwrap();
 
-    // Act — send messages with staggered timing
-    // t=0: send to A(0) and B(100)
+    // Act - each step is driven by the event received before it
+    let mut received_events = Vec::new();
+
+    // A(0) answers at once while B is busy
     test_app
         .command_send(SRI_A, "process", Some(payload_0.clone()))
         .await;
     test_app
-        .command_send(SRI_B, "process", Some(payload_100.clone()))
+        .command_send(SRI_B, "process", Some(payload_busy.clone()))
         .await;
+    received_events.push(receive_event(&mut event_queue, "A:0").await?);
 
-    // t=10ms: send to A(0)
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    // A must not queue behind B's running handler (B is busy for `BUSY_MS`)
     test_app
         .command_send(SRI_A, "process", Some(payload_0.clone()))
         .await;
+    received_events.push(receive_event(&mut event_queue, "A:1").await?);
+    received_events.push(receive_event(&mut event_queue, "B:0").await?);
 
-    // t=250ms: send to A(0) and B(100)
-    tokio::time::sleep(Duration::from_millis(240)).await;
+    // Both cells accept further messages after their first round
     test_app
-        .command_send(SRI_A, "process", Some(payload_0.clone()))
+        .command_send(SRI_A, "process", Some(payload_0))
         .await;
     test_app
-        .command_send(SRI_B, "process", Some(payload_100.clone()))
+        .command_send(SRI_B, "process", Some(payload_busy))
         .await;
+    received_events.push(receive_event(&mut event_queue, "A:2").await?);
+    received_events.push(receive_event(&mut event_queue, "B:1").await?);
 
     // Assert — events arrive in order proving A and B are processed independently
     let expected = [
@@ -88,15 +110,9 @@ pub async fn per_cell_independent_queuing() {
         expected_event(SRI_A, 2),
         expected_event(SRI_B, 1),
     ];
-
-    let mut received_events = Vec::new();
-    for _ in 0..expected.len() {
-        let received = assert_ok!(event_queue.receive().await);
-        let received_str = String::from_utf8(received).expect("event payload should be utf-8");
-        dbg!(&received_str);
-        received_events.push(received_str);
-    }
     assert_eq!(received_events, expected);
+
+    Ok(())
 }
 
 /// Requirement 2: Sequential processing per cell (#376)
@@ -162,7 +178,7 @@ pub async fn sequential_processing_per_cell() {
 /// Requirement 3: Cross-cell parallelism (#376)
 ///
 /// A long-running handler in one cell does not prevent other cells from
-/// making progress. Cell B (50ms delay) receives a message first, then
+/// making progress. Cell B (`BUSY_MS` delay) receives a message first, then
 /// cell A (no delay) receives one 10ms later. A's event must arrive
 /// before B's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -188,11 +204,11 @@ pub async fn cross_cell_parallelism() {
         .await;
 
     let payload_0 = postcard::to_allocvec(&0u32).unwrap();
-    let payload_50 = postcard::to_allocvec(&50u32).unwrap();
+    let payload_busy = postcard::to_allocvec(&BUSY_MS).unwrap();
 
     // Act — send to B first, then to A after a short gap
     test_app
-        .command_send(SRI_B, "process", Some(payload_50))
+        .command_send(SRI_B, "process", Some(payload_busy))
         .await;
     tokio::time::sleep(Duration::from_millis(10)).await;
     test_app

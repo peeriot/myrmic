@@ -31,6 +31,9 @@ pub fn format_error(err: &anyhow::Error) -> String {
 /// context `Uuid::now_v7` uses internally. Because several inserts can share one
 /// transaction timestamp (a batch, or same-millisecond requests), the counter is
 /// what keeps their ids distinct and sortable rather than colliding.
+///
+/// Needs uuid >= 1.28.0: older `ContextV7` jumps about a second ahead when a
+/// timestamp from the previous second arrives, so ids stop rising.
 static EID_CONTEXT: std::sync::Mutex<uuid::ContextV7> =
     std::sync::Mutex::new(uuid::ContextV7::new());
 
@@ -39,11 +42,12 @@ static EID_CONTEXT: std::sync::Mutex<uuid::ContextV7> =
 /// wall-clock read.
 pub fn eid_from_ts(ts: uhlc::Timestamp) -> uuid::Uuid {
     let dur = ts.get_time().to_duration();
-    uuid::Uuid::new_v7(uuid::Timestamp::from_unix(
-        &EID_CONTEXT,
-        dur.as_secs(),
-        dur.subsec_nanos(),
-    ))
+
+    eid_from_parts(&EID_CONTEXT, dur.as_secs(), dur.subsec_nanos())
+}
+
+fn eid_from_parts(ctx: &std::sync::Mutex<uuid::ContextV7>, secs: u64, nanos: u32) -> uuid::Uuid {
+    uuid::Uuid::new_v7(uuid::Timestamp::from_unix(ctx, secs, nanos))
 }
 
 fn key_scope(scope: &Scope) -> db::domain::Scope<'_> {
@@ -668,6 +672,25 @@ fn sem_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ids minted across a second boundary with a slightly older clock reading
+    /// must still rise; uuid before 1.28 jumped ahead of the real time there.
+    #[test]
+    fn eids_rise_across_a_second_boundary() {
+        const BASE_SECS: u64 = 1_700_000_000;
+
+        let ctx = std::sync::Mutex::new(uuid::ContextV7::new());
+        let ids = [
+            eid_from_parts(&ctx, BASE_SECS, 6_000_000),
+            eid_from_parts(&ctx, BASE_SECS - 1, 975_000_000),
+            eid_from_parts(&ctx, BASE_SECS, 265_000_000),
+        ];
+
+        assert!(
+            ids.windows(2).all(|w| matches!(w, [a, b] if a < b)),
+            "{ids:?}"
+        );
+    }
 
     /// Every op kind that carries a key part, with that part `len` bytes long: at
     /// the bound each passes, one past it and at `u16::MAX` bytes (lsm-tree's key

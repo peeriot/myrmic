@@ -1,9 +1,11 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use claims::{assert_none, assert_ok};
 use sorg_tests::{register_fixture_class, swarm_config};
 
 use crate::integration::spawn_test_app_with_swarm;
+
+use super::mean_tick_gap_ms;
 
 const TIMER_INIT_SRI: &str = "timer_init_cell";
 const TIMER_CMD_SRI: &str = "timer_cmd_cell";
@@ -65,9 +67,9 @@ pub async fn timer_periodic_via_command() {
     assert!(!second.is_empty());
 }
 
-/// Cell creates a periodic timer. The gap between consecutive events respects the configured period.
+/// Cell creates a periodic timer. The mean gap between ticks, stamped in the cell, respects the configured period.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-pub async fn timer_respects_period() {
+pub async fn timer_respects_period() -> Result<(), String> {
     // Arrange - build and deploy the command-driven timer cell
     let swarm = swarm_config!("cells/macros/swarm.jsonnet");
     register_fixture_class(
@@ -92,16 +94,14 @@ pub async fn timer_respects_period() {
     // Discard the first event (timing of first tick may include setup overhead)
     assert_ok!(event_queue.receive().await);
 
-    // Measure gap between second and third events
-    let t0 = Instant::now();
-    assert_ok!(event_queue.receive().await);
-    let gap = t0.elapsed();
-
-    // Assert - gap should be close to 200ms (allow 100ms–400ms tolerance)
+    // Assert - mean gap over 5 periods, stamped in the cell, is close to 200ms
+    let gap_ms = mean_tick_gap_ms(&mut event_queue, 5).await?;
     assert!(
-        gap > Duration::from_millis(100) && gap < Duration::from_millis(400),
-        "expected gap ~200ms, got {gap:?}"
+        (100..=400).contains(&gap_ms),
+        "expected mean gap ~200ms, got {gap_ms}ms"
     );
+
+    Ok(())
 }
 
 /// Cell creates a delayed one-shot. Event is not emitted immediately, arrives after delay.

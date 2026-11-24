@@ -21,7 +21,6 @@ cell-protocol = { workspace = true, default-features = true }
 flume = { workspace = true }
 sorg-common = { path = "../sorg-common" }
 sorg-execution = { path = "../sorg-execution" }
-introspection-client = { path = "../introspection-client" }
 futures = { workspace = true }
 tryhard = { workspace = true }
 topo_sort = { workspace = true }

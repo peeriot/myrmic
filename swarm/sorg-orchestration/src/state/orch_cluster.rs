@@ -35,9 +35,7 @@ impl OrchCluster {
         }
 
         if zid < self.leader {
-            if zid == self.own_id {
-                debug!(orch_lead = "elected", node_id = %zid, "Node {zid} became leader");
-            } else if self.leader == self.own_id {
+            if self.leader == self.own_id {
                 debug!(orch_lead = "resigned", node_id = %self.own_id, "Node resigned leadership");
             }
             self.leader = zid;
@@ -70,6 +68,7 @@ impl OrchCluster {
         self.own_id == self.leader
     }
 
+    #[cfg(test)]
     pub(super) fn contains_member(&self, zid: ZenohId) -> bool {
         self.known_orchs.contains(&zid)
     }

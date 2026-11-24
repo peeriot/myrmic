@@ -233,7 +233,7 @@ async fn deploy_runtime_reports_failure() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn deploy_runtime_silent_times_out() {
     // Arrange — a mock embedded runtime that consumes commands but never confirms
-    let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
+    let swarm = swarm_config!("cells/embedded/swarm_silent.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::Silent).await;
     let class = test_app
@@ -516,7 +516,7 @@ async fn delete_embedded_cell() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn delete_runtime_silent_releases_rows() {
     // Arrange — deploy an embedded cell successfully
-    let swarm = swarm_config!("cells/embedded/swarm.jsonnet");
+    let swarm = swarm_config!("cells/embedded/swarm_silent.jsonnet");
     let test_app = spawn_test_app_with_swarm(swarm).await;
     let mock = MockEmbeddedExec::spawn(Platform::Esp32c6, DeployResponseMode::ConfirmSuccess).await;
     let class = test_app

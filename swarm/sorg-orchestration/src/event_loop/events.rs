@@ -11,9 +11,11 @@ pub enum Event {
     InfoQuery(Query),
     /// Sent from a a task processing event when it errors out
     ProcessError(Error),
-    /// Sent from the membership monitoring task; Represents a node leaving the swarm
+    /// Sent from the membership monitoring task; Represents an orchestrator's liveliness token
+    /// going away
     NodeLeaving(ZenohId),
-    /// Sent from the membership monitoring task; Represents a node hosting an orchestration plugin joining the swarm
+    /// Sent from the membership monitoring task; Represents an orchestrator's liveliness token
+    /// appearing
     OrchJoining(ZenohId),
     /// Query for deploying a cell onto an execution runtime
     CellDeployQuery(Query),
