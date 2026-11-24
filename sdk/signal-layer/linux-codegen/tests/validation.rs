@@ -456,6 +456,11 @@ fn ccs811_nint_is_generated_as_linux_input_pin() {
         "nint must reach the driver in:\n{}",
         output.main_rs
     );
+    assert!(
+        output.cargo_toml.contains("linux-gpio-shim"),
+        "pin types need the gpio shim dependency in:\n{}",
+        output.cargo_toml
+    );
 }
 
 /// A pin the driver does not declare is still rejected on Linux.

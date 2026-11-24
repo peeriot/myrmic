@@ -429,9 +429,8 @@ fn generate_cargo_toml(
 
     use pipeline_backend_api::manifest::BusTransport;
 
-    // The GPIO/PWM shim is needed when the manifest carries output devices
-    // (their pins are opened through it in `BoardPeripherals`) or SPI devices
-    // (their chip-select lines are).
+    // The GPIO/PWM shim opens the pins of output devices, the chip-selects of
+    // SPI devices and any named device pins.
     let has_output_devices = manifest.devices.iter().any(|d| {
         driver_schemas
             .get(&d.driver)
@@ -442,7 +441,8 @@ fn generate_cargo_toml(
         .buses
         .values()
         .any(|b| b.transport == BusTransport::Spi);
-    let gpio_shim_dep = if has_output_devices || has_spi_buses {
+    let has_device_pins = manifest.devices.iter().any(|d| !d.pins.is_empty());
+    let gpio_shim_dep = if has_output_devices || has_spi_buses || has_device_pins {
         "linux-gpio-shim       = { path = \"../../../swarm/signal-layer/linux-gpio-shim\" }\n"
     } else {
         ""
