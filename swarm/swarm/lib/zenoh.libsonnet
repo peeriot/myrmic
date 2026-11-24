@@ -46,10 +46,7 @@
   listen: {
     port(port):: z({
       listen: {
-        endpoints: {
-          router: ['tcp/[::]:' + port],
-          peer: ['tcp/[::]:0'],
-        },
+        endpoints: ['tcp/[::]:' + port],
       },
     }),
     endpoints(endpoints):: z({

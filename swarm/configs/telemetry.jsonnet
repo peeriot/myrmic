@@ -1,7 +1,7 @@
 local s = import 'swarm.libsonnet';
 local z = import 'zenoh.libsonnet';
 
-z.peer()
+z.router()
 + z.plugins.dev({
   db: {},
   orchestration: {},
