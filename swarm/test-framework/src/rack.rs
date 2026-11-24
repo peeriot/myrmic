@@ -14,7 +14,7 @@
 use std::io::Write as _;
 use std::path::Path;
 
-use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, Runtime, SshBinary, already_gone};
+use crate::myrmic::{Error, Myrmic, RUNTIME_GONE, Runtime, Ssh, already_gone};
 use crate::swarm::SwarmProcess;
 
 /// One remote host's role in the deployment: which myrmic runtime to start there, and under
@@ -151,7 +151,7 @@ pub async fn provision(
     // Concurrent, not sequential — same rationale as `upload_binary`: each host is an
     // independent SSH round trip (config upload + runtime start), so provisioning N hosts one
     // at a time pays N times the round-trip latency for no benefit.
-    let runtimes: Vec<Runtime<SshBinary>> =
+    let runtimes: Vec<Runtime<Ssh>> =
         futures::future::join_all(hosts.iter().map(|host| async move {
             let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
             let tag_refs: Vec<&str> = host.tags.iter().map(String::as_str).collect();
@@ -230,10 +230,10 @@ async fn wait_for_runtime_exit(host: &str, myrmic_path: &str) {
     loop {
         let mut command = tokio::process::Command::new("ssh");
         command.arg("-o").arg("BatchMode=yes");
-        if let Some(identity_file) = crate::ssh_identity_file() {
+        if let Some(identity_file) = crate::ssh_utils::ssh_identity_file() {
             command.arg("-i").arg(identity_file);
         }
-        if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+        if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
             command
                 .arg("-o")
                 .arg(format!("UserKnownHostsFile={known_hosts_file}"));
@@ -363,10 +363,10 @@ fn open_ssh_tunnel(hosts: &[HostSpec], zenoh_connect: &str) -> tokio::process::C
         .arg("BatchMode=yes")
         .arg("-L")
         .arg(format!("{local_port}:127.0.0.1:{remote_port}"));
-    if let Some(identity_file) = crate::ssh_identity_file() {
+    if let Some(identity_file) = crate::ssh_utils::ssh_identity_file() {
         command.arg("-i").arg(identity_file);
     }
-    if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
         command
             .arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
@@ -596,7 +596,7 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
     // cleaning up N hosts one at a time pays N times the round-trip latency for no benefit.
     futures::future::join_all(hosts.iter().map(|host| async move {
         let myrmic = Myrmic::ssh_at(host.host.clone(), myrmic_path);
-        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic/mod.rs`) already
+        // The common case: `SwarmProcess`'s `Runtime` drop-guard (`myrmic.rs`) already
         // deleted every runtime when the driver process exited normally, so `rack-ctl cleanup`
         // finding nothing left here — `myrmic runtimes delete`'s own "no runtime ... found"
         // message — isn't a failure, it's this backstop confirming there was nothing left to do.
@@ -623,12 +623,12 @@ pub async fn cleanup(hosts: &[HostSpec], myrmic_path: &str) {
 }
 
 async fn run_ssh(host: &str, args: &[&str]) {
-    let identity_file = crate::ssh_identity_file();
+    let identity_file = crate::ssh_utils::ssh_identity_file();
     let mut command = tokio::process::Command::new("ssh");
     if let Some(identity_file) = &identity_file {
         command.arg("-i").arg(identity_file);
     }
-    if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
         command
             .arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
@@ -670,11 +670,11 @@ async fn run_scp_impl(local: &Path, host: &str, remote_path: &str, preserve_mode
     if preserve_mode {
         cmd.arg("-p");
     }
-    let identity_file = crate::ssh_identity_file();
+    let identity_file = crate::ssh_utils::ssh_identity_file();
     if let Some(identity_file) = &identity_file {
         cmd.arg("-i").arg(identity_file);
     }
-    if let Some(known_hosts_file) = crate::ssh_known_hosts_file() {
+    if let Some(known_hosts_file) = crate::ssh_utils::ssh_known_hosts_file() {
         cmd.arg("-o")
             .arg(format!("UserKnownHostsFile={known_hosts_file}"));
     }

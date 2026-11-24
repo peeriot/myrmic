@@ -35,7 +35,7 @@ use std::{os::unix::fs::MetadataExt as _, path::PathBuf, sync::Arc, time::Durati
 use moving_average::{MovingAverageConfig, MovingAverageState};
 use signal_layer_core::ProcessingStep as _;
 use signal_layer_ipc::{StoreRead, TapStore};
-use signal_layer_types::{DriverHealth, HealthEvent};
+use signal_layer_types::{DriverHealth, HealthEvent, WireType as _};
 use tempfile::TempDir;
 use tokio::net::UnixListener;
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
@@ -125,6 +125,14 @@ impl TapStore for E2eStore {
 
     fn list_len(&self) -> u32 {
         2
+    }
+
+    fn type_id(&self, h: u32) -> Option<u32> {
+        match h {
+            1 => Some(f32::TYPE_ID),
+            2 => Some(HealthEvent::TYPE_ID),
+            _ => None,
+        }
     }
 
     fn list_entry(&self, index: u32) -> Option<(String, u8)> {
@@ -468,7 +476,11 @@ async fn abi_conformance_wasm_fixture_resolve_and_read_work() {
     let dir = TempDir::new().unwrap();
     let socket_path = dir.path().join("abi.sock");
     let listener = UnixListener::bind(&socket_path).expect("bind");
-    tokio::spawn(signal_layer_ipc::serve(listener, Arc::new(E2eStore::new())));
+    tokio::spawn(signal_layer_ipc::serve(
+        listener,
+        Arc::new(E2eStore::new()),
+        None,
+    ));
 
     let client = Arc::new(signal_layer_ipc::TapClient::new(socket_path));
     let (engine, linker, mut store) = build_wasmtime_env(client);
@@ -511,7 +523,11 @@ async fn abi_conformance_all_six_tap_functions_work() {
     let dir = TempDir::new().unwrap();
     let socket_path = dir.path().join("abi_all.sock");
     let listener = UnixListener::bind(&socket_path).expect("bind");
-    tokio::spawn(signal_layer_ipc::serve(listener, Arc::new(E2eStore::new())));
+    tokio::spawn(signal_layer_ipc::serve(
+        listener,
+        Arc::new(E2eStore::new()),
+        None,
+    ));
 
     let client = Arc::new(signal_layer_ipc::TapClient::new(socket_path));
     let (engine, linker, mut store) = build_wasmtime_env(client);

@@ -6,6 +6,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cell_protocol::{RuntimeId, Sri};
 
+/// Wall-clock budget for the orchestrator's self-issued restart deploy.
+pub const RESTART_DEPLOY_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Supervision timing knobs. v1 uses the defaults everywhere; runtime
 /// configuration is deferred until real mesh timings are known.
 #[derive(Debug, Clone, Copy)]
@@ -21,6 +24,14 @@ pub struct SupervisionTiming {
 }
 
 impl SupervisionTiming {
+    /// The timing every runtime uses.
+    pub const DEFAULT: Self = Self {
+        renew: Duration::from_secs(10),
+        ttl: Duration::from_secs(45),
+        margin: Duration::from_secs(15),
+        verify: Duration::from_secs(10),
+    };
+
     /// Db retention for lease renewal rows: superseded renewals are GC'd
     /// after this. Well past `ttl + margin` so the judge and hygiene always
     /// act before a dead node's last renewal is purged (5 min at defaults).
@@ -31,12 +42,7 @@ impl SupervisionTiming {
 
 impl Default for SupervisionTiming {
     fn default() -> Self {
-        Self {
-            renew: Duration::from_secs(10),
-            ttl: Duration::from_secs(45),
-            margin: Duration::from_secs(15),
-            verify: Duration::from_secs(10),
-        }
+        Self::DEFAULT
     }
 }
 
@@ -319,8 +325,8 @@ impl ClockSkewWatch {
 /// tick-based core in [`cell_protocol::supervision`] (the embedded host runs
 /// the same core on its SoC tick). Expiry is measured on the observer's own
 /// monotonic clock from the last seq *advance* it saw; wall clocks and row
-/// timestamps are never compared. First sight counts as an advance, so a
-/// cold-started observer errs late, never early.
+/// timestamps are never compared. First sight starts the staleness clock, so
+/// a cold-started observer errs late, never early.
 #[derive(Debug)]
 pub struct LeaseTracker {
     origin: Instant,
@@ -362,6 +368,11 @@ impl LeaseTracker {
         self.inner
             .stale_for(id, self.ms(now))
             .map(Duration::from_millis)
+    }
+
+    /// Whether the node's seq has moved since this observer first saw it.
+    pub fn has_advanced(&self, id: RuntimeId) -> bool {
+        self.inner.has_advanced(id)
     }
 
     /// The ttl an observed node declared in its last advancing lease.

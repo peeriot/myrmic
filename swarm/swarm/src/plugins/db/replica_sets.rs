@@ -9,12 +9,13 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use cell_protocol::generations::{GENERATIONS, newest_placements};
 use cell_protocol::node_tags::LiveTags;
 use cell_protocol::replication::{
     CUSTODY_TABLE, CustodyRow, REPLICATION_TABLE, ReplicaEntry, ReplicaSelector, custody_winner,
     replication_scope,
 };
-use cell_protocol::{PLACEMENT_TABLE, PlacementEntry, placement_scope};
+use cell_protocol::{PlacementEntry, placement_scope};
 use db_client::PolledTable;
 use db_commons::models;
 use db_commons::models::locate::HolderState;
@@ -62,7 +63,10 @@ pub async fn run(context: StoreContext, db: db_client::v1::Client, tags: LiveTag
                 REPLICATION_TABLE,
             ),
             (models::Subject::Scope(replication_scope()), CUSTODY_TABLE),
-            (models::Subject::Scope(placement_scope()), PLACEMENT_TABLE),
+            (
+                models::Subject::Scope(placement_scope()),
+                models::events::KEY_EVENTS,
+            ),
         ],
     )
     .await;
@@ -190,9 +194,12 @@ async fn custody_pass(
         match judge_custody(me, scope, configured_here, &ripe_configured, &provisionals) {
             CustodyAction::Hold => {
                 // Idempotent; this is what re-applies custody after a restart.
-                context
+                if let Err(err) = context
                     .start_replication(models::Subject::Scope(scope.clone()))
-                    .await;
+                    .await
+                {
+                    tracing::error!("unable to replicate {scope}: {err}");
+                }
             }
             CustodyAction::Convert => {
                 tracing::info!("configuration now carries {scope}; converting its custody");
@@ -205,7 +212,11 @@ async fn custody_pass(
                 context
                     .store
                     .stop_replication(&models::Subject::Scope(scope.clone()));
-                context.start_offload(scope.clone(), OffloadKind::Unwinding { target });
+                if let Err(err) =
+                    context.start_offload(scope.clone(), OffloadKind::Unwinding { target })
+                {
+                    tracing::error!("unable to offload {scope}: {err}");
+                }
             }
         }
     }
@@ -290,14 +301,11 @@ async fn read_placements(db: &db_client::v1::Client) -> anyhow::Result<Vec<Place
     let response = db
         .read_tx_in(placement_scope(), async move |client, tx_id| {
             client
-                .send(models::tb_list::Request {
+                .send(models::key_list::Request {
                     id: tx_id,
-                    op: models::tb_list::Op {
+                    op: models::key_list::Op {
                         scope: placement_scope(),
-                        table: String::from(PLACEMENT_TABLE),
-                        cursor: None,
-                        limit: None,
-                        order: None,
+                        prefix: String::from(GENERATIONS),
                     },
                 })
                 .await
@@ -306,7 +314,16 @@ async fn read_placements(db: &db_client::v1::Client) -> anyhow::Result<Vec<Place
         .map_err(|err| anyhow::anyhow!("unable to reach a node holding the placements: {err}"))?
         .map_err(|err| anyhow::anyhow!("unable to list the placements: {}", err.message))?;
 
-    Ok(decode_rows(&response, "placement"))
+    // Like `decode_row`: one malformed row shouldn't stall replication for the
+    // rest.
+    Ok(newest_placements(response.entries)
+        .into_iter()
+        .filter_map(|placement| {
+            placement
+                .inspect_err(|err| tracing::warn!("skipping placement row: {err}"))
+                .ok()
+        })
+        .collect())
 }
 
 fn selects_an_app(entries: &[ReplicaEntry]) -> bool {
@@ -443,7 +460,9 @@ async fn reconcile(
     for subject in desired.difference(active) {
         let (namespace, database, schema) = subject.as_keyexprs();
         tracing::info!("replicating {namespace}/{database}/{schema}");
-        context.start_replication(subject.clone()).await;
+        if let Err(err) = context.start_replication(subject.clone()).await {
+            tracing::error!("unable to replicate {namespace}/{database}/{schema}: {err}");
+        }
     }
 
     let dropped: Vec<models::Subject> = active.difference(&desired).cloned().collect();
@@ -468,7 +487,9 @@ async fn reconcile(
             } else {
                 OffloadKind::Hidden
             };
-            context.start_offload(scope, kind);
+            if let Err(err) = context.start_offload(scope.clone(), kind) {
+                tracing::error!("unable to offload {scope}: {err}");
+            }
         }
         for scope in context.store.offloading_scopes() {
             if dropped.iter().any(|subject| subject.contains(&scope)) {

@@ -8,6 +8,9 @@ pub const TAG_LINUX: &str = "linux";
 /// Capability tag advertised by a node that can drive a BLE peripheral.
 pub const TAG_BLE: &str = "ble";
 
+/// Capability tag advertised by a node that found PSRAM at boot.
+pub const TAG_PSRAM: &str = "psram";
+
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;

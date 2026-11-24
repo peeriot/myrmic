@@ -1,28 +1,30 @@
-//! Exclusive single-cell ownership of the signal layer (swarm#1340).
+//! Exclusive single-cell ownership of the signal layer.
 //!
-//! The first cell to call any signal-layer host function (tap or outlet)
-//! claims the whole SL for its `(Sri, Gen)` identity. Every SL call from any
-//! other cell is refused with [`SL_CLAIMED`] until the owner is destroyed and
-//! [`release`] frees the claim.
+//! The first cell to write an outlet claims the SL for its `(Sri, Gen)`
+//! identity. Outlet writes from any other cell are refused with [`SL_CLAIMED`]
+//! until the owner is destroyed and [`release`] frees the claim, or a strictly
+//! newer `Gen` of the owner's `Sri` takes it over. Taps and outlet lookups are
+//! not gated. Each refused identity is logged once per owner.
 //!
-//! This is a cell-host policy layered *above* the shared `TapClient`: because
-//! only the owner ever reaches the client, the single shared UDS connection
-//! (`ADR-FEAT-2026-SIG-002`) is untouched — no wire or SL-server change.
+//! This is a cell-host policy layered *above* the shared `TapClient`: only
+//! outlet writes are owner-only, and the single shared UDS connection is
+//! untouched - no wire or SL-server change.
 
 use std::sync::Mutex;
 
 use cell_protocol::{Gen, Sri};
 use myrmic_common::types::error::EACCES;
 
-/// Return code a non-owner receives from every signal-layer host function:
-/// the SL is claimed by another cell (POSIX `EACCES`). Distinct from the
-/// not-found / empty codes, so a cell can tell "refused" from "no such tap".
+/// Return code a non-owner receives from an outlet write: the SL is claimed by
+/// another cell (POSIX `EACCES`). Distinct from the not-found / empty codes,
+/// so a cell can tell "refused" from "no such outlet".
 pub(crate) const SL_CLAIMED: i32 = EACCES;
 
 /// Identity of the cell behind a host-function call, read from the Wasmtime
-/// store state so the signal-layer host functions can attribute a call.
+/// store state so the outlet-write gate can attribute a call.
 ///
-/// `pub` because it bounds the generic `S` of the public `link_*` functions.
+/// `pub` because it bounds the generic `S` of the public
+/// `link_outlet_functions`.
 /// A state that carries no cell identity (the `()` test stub) returns `None`,
 /// which disables claim enforcement — so host-function unit tests keep their
 /// single-caller behaviour without threading a real identity through.
@@ -38,8 +40,8 @@ impl CellIdentity for () {
 
 /// Gate a signal-layer host call for the caller's state: `Ok(())` if the cell
 /// owns the SL (or just claimed it, or the state carries no identity),
-/// `Err(SL_CLAIMED)` if another cell owns it. The single check point every
-/// tap/outlet host function calls first.
+/// `Err(SL_CLAIMED)` if another cell owns it. The check point of
+/// `outlet_write_retained`.
 pub(crate) fn gate<S: CellIdentity>(state: &S) -> Result<(), i32> {
     match state.sl_identity() {
         Some(id) if !claim_or_check(id) => Err(SL_CLAIMED),
@@ -47,24 +49,59 @@ pub(crate) fn gate<S: CellIdentity>(state: &S) -> Result<(), i32> {
     }
 }
 
-/// The signal layer's current owner, or `None` when unclaimed. One per node
-/// (this cell-host process serves every cell on the node).
-static OWNER: Mutex<Option<(Sri, Gen)>> = Mutex::new(None);
+/// The signal layer's claim state. One per node (this cell-host process
+/// serves every cell on the node).
+struct Claim {
+    /// Current owner, or `None` when unclaimed.
+    owner: Option<(Sri, Gen)>,
+    /// Identities already warned about under the current owner, so a cell that
+    /// retries every tick logs once, not forever.
+    // ponytail: only emptied on takeover or release, so it grows with the
+    // distinct refused identities under one long-lived owner; use a bounded
+    // set if that ever matters.
+    warned: Vec<(Sri, Gen)>,
+}
+
+static CLAIM: Mutex<Claim> = Mutex::new(Claim {
+    owner: None,
+    warned: Vec::new(),
+});
 
 /// Claim the SL for `who` if unclaimed, or confirm `who` already owns it.
+/// A strictly newer `Gen` of the owner's `Sri` takes the claim over.
 ///
-/// Returns `true` if `who` may use the signal layer (it just claimed it, or
-/// already held it), `false` if a *different* cell owns it.
+/// Returns `true` if `who` may write outlets, `false` if a different cell (or
+/// an older incarnation of the owner) holds the claim. The first refusal of
+/// each identity is logged.
 pub(crate) fn claim_or_check(who: (Sri, Gen)) -> bool {
-    let mut owner = OWNER
+    let mut claim = CLAIM
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match *owner {
+    match claim.owner {
         None => {
-            *owner = Some(who);
+            claim.owner = Some(who);
             true
         }
-        Some(current) => current == who,
+        Some(current) if current == who => true,
+        Some(current) if current.0 == who.0 && who.1 > current.1 => {
+            claim.owner = Some(who);
+            claim.warned.clear();
+            true
+        }
+        Some(current) => {
+            if !claim.warned.contains(&who) {
+                claim.warned.push(who);
+                tracing::warn!(
+                    owner_sri = %current.0,
+                    owner_gen = %current.1,
+                    caller_sri = %who.0,
+                    caller_gen = %who.1,
+                    "signal layer outlet write refused: claimed by another cell"
+                );
+            }
+
+            false
+        }
     }
 }
 
@@ -78,19 +115,22 @@ pub fn release_sl_claim(sri: Sri, gen_id: Gen) {
 /// non-owner's teardown never frees the owner's claim). Called from the cell
 /// teardown path.
 pub(crate) fn release(who: (Sri, Gen)) {
-    let mut owner = OWNER
+    let mut claim = CLAIM
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if *owner == Some(who) {
-        *owner = None;
+    if claim.owner == Some(who) {
+        claim.owner = None;
+        claim.warned.clear();
     }
 }
 
 #[cfg(test)]
 pub(crate) fn reset_for_test() {
-    *OWNER
+    let mut claim = CLAIM
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    claim.owner = None;
+    claim.warned.clear();
 }
 
 #[cfg(test)]
@@ -130,19 +170,38 @@ mod tests {
         release(a);
         assert!(claim_or_check(b), "next cell claims after release");
 
-        // A later incarnation of the same Sri is a distinct owner.
+        // A strictly newer Gen of the same Sri takes over; the old one is refused.
         reset_for_test();
         let old = id(1, 10);
         let new = id(1, 11);
         assert!(claim_or_check(old));
+        assert!(claim_or_check(new), "newer gen of same Sri takes over");
         assert!(
-            !claim_or_check(new),
-            "a new incarnation must not inherit the old one's held claim"
+            !claim_or_check(old),
+            "old incarnation refused after takeover"
         );
+
         release(old);
         assert!(
             claim_or_check(new),
-            "the new incarnation claims once the old frees it"
+            "old drop must not free the new owner's claim"
         );
+        assert!(!claim_or_check(old), "old still refused after its release");
+
+        assert!(
+            !claim_or_check(id(2, 99)),
+            "different Sri refused even with a newer gen"
+        );
+        assert!(
+            !claim_or_check(id(1, 9)),
+            "older gen of the owner's Sri does not take over"
+        );
+
+        // Each refused identity is recorded (warned) exactly once.
+        assert!(!claim_or_check(old));
+        let claim = CLAIM
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(claim.warned.iter().filter(|w| **w == old).count(), 1);
     }
 }

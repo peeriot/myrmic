@@ -46,7 +46,7 @@ zenoh-protocol        = { workspace = true }
 # local
 cell-protocol       = { workspace = true }
 signal-layer-core   = { workspace = true }
-db-client           = { workspace = true }
+db-client           = { workspace = true, features = ["nano"] }
 myrmic-common       = { workspace = true, features = ["alloc", "cells"] }
 wasm-runtime-macros = { workspace = true }
 wamr-rust-sdk       = { workspace = true, default-features = false, features = ["esp-hal", "aot", "xip"] }

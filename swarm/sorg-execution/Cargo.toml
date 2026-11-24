@@ -56,6 +56,7 @@ rustls = { version = "0.23.46", default-features = false, features = [
     "ring",
     "tls12",
 ] }
+webpki-roots = { workspace = true }
 
 tower-http = { workspace = true, features = ["trace", "fs", "cors"] }
 futures-util = { workspace = true }

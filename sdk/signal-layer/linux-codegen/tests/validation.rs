@@ -167,7 +167,7 @@ gpios:
 devices: []
 ";
     let manifest = parse_manifest(yaml).expect("parse manifest");
-    let errors = validate_linux_manifest(&manifest, Some(yaml));
+    let errors = validate_linux_manifest(&manifest);
     assert!(
         !errors.is_empty(),
         "expected errors for missing dev_path, got none"
@@ -187,7 +187,7 @@ fn spi_bus_without_dev_path_is_rejected() {
     let yaml = std::fs::read_to_string(fixtures_dir().join("spi-manifest.yaml"))
         .expect("reading spi-manifest.yaml");
     let manifest = parse_manifest(&yaml).expect("parse manifest");
-    let errors = validate_linux_manifest(&manifest, Some(&yaml));
+    let errors = validate_linux_manifest(&manifest);
     assert!(!errors.is_empty(), "expected dev_path rejection, got none");
     assert!(
         errors
@@ -203,7 +203,7 @@ fn spi_manifest_with_dev_path_passes() {
     let yaml = std::fs::read_to_string(fixtures_dir().join("linux-spi-manifest.yaml"))
         .expect("reading linux-spi-manifest.yaml");
     let manifest = parse_manifest(&yaml).expect("parse manifest");
-    let errors = validate_linux_manifest(&manifest, Some(&yaml));
+    let errors = validate_linux_manifest(&manifest);
     assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
 }
 

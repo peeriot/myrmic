@@ -21,11 +21,15 @@ impl Target {
     /// Translate the target into the corresponding `wamrc` CLI flags.
     pub fn to_wamrc_args(self) -> Vec<&'static str> {
         match self {
+            // `+unaligned-scalar-mem` lets LLVM emit word loads and stores for wasm accesses
+            // instead of splitting them into bytes (wasm alignment is only a hint). It is only
+            // correct on chips that perform misaligned scalar accesses in hardware: see the
+            // "Build & AOT tooling" section of `embedded/esp-hal/PORTING.md`.
             Self::ESP32C5 | Self::ESP32C6 | Self::ESP32C61 => vec![
                 "--target=riscv32",
                 "--target-abi=ilp32",
                 "--cpu=generic-rv32",
-                "--cpu-features=+i,+m,+a,+c",
+                "--cpu-features=+i,+m,+a,+c,+unaligned-scalar-mem",
             ],
         }
     }

@@ -14,7 +14,7 @@ use std::time::Duration;
 use cell_protocol::{PlacementKind, Sri};
 use sorg_common::{
     HttpBridgeApi, HttpBridgeRecord, MqttBridge, MqttBridgeDef, MqttBridgeRecord,
-    MqttBrokerAddress, MqttConnection, bail, custom_err,
+    MqttBrokerEndpoint, MqttConnection, custom_err, parse_mqtt_broker_url,
 };
 use sorg_execution::bridge::http::HttpBridgeHandle;
 use sorg_execution::bridge::mqtt::MqttBridgeHandle;
@@ -146,34 +146,16 @@ fn mqtt_bridge_def(sri: &Sri, bridge: MqttBridge) -> Result<MqttBridgeDef> {
         ingress,
     } = bridge;
 
-    let Some((scheme, rest)) = broker.split_once("://") else {
-        bail!("mqtt bridge '{sri}': broker '{broker}' has no scheme");
-    };
-
-    let default_port = match scheme {
-        "mqtt" => 1883,
-        "mqtts" => 8883,
-        other => bail!(
-            "mqtt bridge '{sri}': unsupported broker scheme '{other}', expected 'mqtt' or 'mqtts'"
-        ),
-    };
-
-    let (host, port) = match rest.rsplit_once(':') {
-        Some((host, port_str)) => {
-            let port = port_str
-                .parse::<u16>()
-                .map_err(|err| custom_err!("mqtt bridge '{sri}': invalid broker port: {err}"))?;
-            (host, port)
-        }
-        None => (rest, default_port),
-    };
+    let MqttBrokerEndpoint { address, port, tls } = parse_mqtt_broker_url(&broker)
+        .map_err(|err| err.with_validation_context(format!("mqtt bridge '{sri}'")))?;
 
     let connection = MqttConnection {
-        broker_address: MqttBrokerAddress::new(host)?,
+        broker_address: address,
         broker_port: port,
         keep_alive_period: Duration::from_secs(10),
         client_id: format!("mqtt-bridge-{sri}"),
         channel_cap: 16,
+        tls,
     };
 
     Ok(MqttBridgeDef {
@@ -186,7 +168,9 @@ fn mqtt_bridge_def(sri: &Sri, bridge: MqttBridge) -> Result<MqttBridgeDef> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sri, register_bridge_cell, terminate_bridge_cell};
+    use sorg_common::MqttBridge;
+
+    use super::{Sri, mqtt_bridge_def, register_bridge_cell, terminate_bridge_cell};
 
     #[tokio::test]
     async fn terminating_a_never_registered_sri_reports_no_live_bridge() {
@@ -208,5 +192,56 @@ mod tests {
             !terminate_bridge_cell(&sri),
             "a second termination of the same sri should find nothing, not panic"
         );
+    }
+
+    #[test]
+    fn a_bad_broker_url_error_names_the_bridge_once() {
+        let sri = Sri::from_target("unit-test-bridge-bad-url").unwrap();
+        let bridge = MqttBridge {
+            cell_name: String::new(),
+            broker: "mqtt://h:0".to_string(),
+            egress: vec![],
+            ingress: vec![],
+        };
+
+        let err = mqtt_bridge_def(&sri, bridge).expect_err("port 0 must be rejected");
+
+        assert_eq!(
+            err.to_string(),
+            format!("Validation Error: mqtt bridge '{sri}': broker url port must not be 0")
+        );
+    }
+
+    #[test]
+    fn broker_scheme_decides_tls() {
+        let sri = Sri::from_target("unit-test-bridge-tls-scheme").unwrap();
+        for (broker, host, tls, port) in [
+            ("mqtt://broker.example", "broker.example", false, 1883),
+            ("mqtts://broker.example", "broker.example", true, 8883),
+            ("mqtts://broker.example:1883", "broker.example", true, 1883),
+            ("MQTTS://broker.example", "broker.example", true, 8883),
+            ("mqtts://[::1]:8883", "::1", true, 8883),
+            ("mqtt://[fe80::1]", "fe80::1", false, 1883),
+        ] {
+            let def = mqtt_bridge_def(
+                &sri,
+                MqttBridge {
+                    cell_name: String::new(),
+                    broker: broker.to_string(),
+                    egress: vec![],
+                    ingress: vec![],
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                (
+                    def.connection.broker_address.as_ref(),
+                    def.connection.tls,
+                    def.connection.broker_port
+                ),
+                (host, tls, port),
+                "{broker}"
+            );
+        }
     }
 }

@@ -46,6 +46,39 @@ fn encode(user_key: &mut Vec<u8>, ts: u64, kind: KeyKind) {
     user_key.extend_from_slice(&(kind as u32).to_be_bytes());
 }
 
+/// Moves a snapshot entry from the scope it was taken in to `scope` (encoded
+/// as `target`). Keys carry the scope as their prefix; a path row's value is
+/// a blob id that carries it too.
+fn rescope_entry(
+    scope: Scope<'_>,
+    target: &[u8],
+    key: RawKey,
+    value: Option<Value>,
+) -> anyhow::Result<(RawKey, Option<Value>)> {
+    if key.starts_with(target) {
+        return Ok((key, value));
+    }
+
+    let mut decoder = skey::decoder(&key);
+    Scope::decode_from(&mut decoder).context("snapshot entry is not a scoped key")?;
+    let rest = &key[key.len() - decoder.remaining()..];
+
+    let value = match value {
+        Some(value) if Path::decode_exact(&key).is_ok() => {
+            let id = BlobId::decode_exact(&value).context("path row holds no blob id")?;
+            let id = Key::blob_id()
+                .namespace(scope.namespace)
+                .database(scope.database)
+                .schema(scope.schema)
+                .hash(id.hash);
+            Some(id.encode()?)
+        }
+        value => value,
+    };
+
+    Ok(([target, rest].concat(), value))
+}
+
 /// Tag byte for the version-index region. Data keys start with the scope
 /// alias's `@`, sync points with `#`; `^` keeps the index disjoint from both.
 const VERSION_INDEX_TAG: u8 = b'^';
@@ -53,6 +86,21 @@ const VERSION_INDEX_TAG: u8 = b'^';
 /// Flag row marking the version index as built, so opening an older database
 /// triggers a one-time backfill.
 pub(crate) const VERSION_INDEX_FLAG: &[u8] = b"!vidx1";
+
+/// Longest key lsm-tree takes; it panics on anything longer.
+const MAX_KEY_LEN: usize = u16::MAX as usize;
+
+/// Refuses a key lsm-tree would panic on (reads included), so an over-long
+/// name (or a peer's encoded key) fails the call instead of the process.
+fn check_key_len(key: &[u8]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        key.len() <= MAX_KEY_LEN,
+        "key of {} bytes exceeds the {MAX_KEY_LEN} byte limit",
+        key.len(),
+    );
+
+    Ok(())
+}
 
 /// Index row key: `^ ‖ ts.be ‖ <full data key>` (empty value). Every data row
 /// of a version lands in one contiguous range, so per-version operations
@@ -208,6 +256,7 @@ impl<M> Transaction<M> {
         V: serde::Serialize,
     {
         let key = key.encode().context("unable to encode key")?;
+        check_key_len(&key)?;
         let value = postcard::to_allocvec(value).context("unable to serialise value")?;
 
         self.insert_raw(&key, &value);
@@ -333,20 +382,27 @@ impl<M> Transaction<M> {
         let mark = key.len();
         {
             encode(&mut key, ts, KeyKind::Deletion);
+            let index_key = version_index_key(ts, &key);
+            // Before the take below: lsm-tree panics on a long key read too.
+            check_key_len(&index_key)?;
             let _drop = self.take_raw(key.as_slice())?;
-            self.delete_raw(&version_index_key(ts, &key));
+            self.delete_raw(&index_key);
         }
         key.truncate(mark);
 
-        self.insert_at_raw(key, value, ts);
-        Ok(())
+        self.insert_at_raw(key, value, ts)
     }
 
     /// Bypasses lookup check, only used by replication
-    fn insert_at_raw(&mut self, mut key: Vec<u8>, value: &[u8], ts: u64) {
+    fn insert_at_raw(&mut self, mut key: Vec<u8>, value: &[u8], ts: u64) -> anyhow::Result<()> {
         encode(&mut key, ts, KeyKind::Insertion);
-        self.insert_raw(&version_index_key(ts, &key), b"");
+        let index_key = version_index_key(ts, &key);
+        check_key_len(&index_key)?;
+
+        self.insert_raw(&index_key, b"");
         self.insert_raw(key.as_slice(), value);
+
+        Ok(())
     }
 
     fn put_at<'a, S>(&mut self, key: &S, value: &[u8], ts: u64) -> anyhow::Result<()>
@@ -358,9 +414,10 @@ impl<M> Transaction<M> {
         Ok(())
     }
 
-    fn erase_raw(&mut self, key: Vec<u8>) {
+    fn erase_raw(&mut self, key: Vec<u8>) -> anyhow::Result<()> {
         let (ts, _me) = self.split_ts();
-        self.erase_at_raw(key, ts);
+
+        self.erase_at_raw(key, ts)
     }
 
     fn erase<'a, S>(&mut self, key: &S) -> anyhow::Result<()>
@@ -368,14 +425,19 @@ impl<M> Transaction<M> {
         S: skey::StoreKey<'a>,
     {
         let key = key.encode()?;
-        self.erase_raw(key);
-        Ok(())
+
+        self.erase_raw(key)
     }
 
-    fn erase_at_raw(&mut self, mut key: Vec<u8>, ts: u64) {
+    fn erase_at_raw(&mut self, mut key: Vec<u8>, ts: u64) -> anyhow::Result<()> {
         encode(&mut key, ts, KeyKind::Deletion);
-        self.insert_raw(&version_index_key(ts, &key), b"");
+        let index_key = version_index_key(ts, &key);
+        check_key_len(&index_key)?;
+
+        self.insert_raw(&index_key, b"");
         self.insert_raw(key.as_slice(), b"");
+
+        Ok(())
     }
 
     fn erase_at<'a, S>(&mut self, key: &S, ts: u64) -> anyhow::Result<()>
@@ -383,8 +445,8 @@ impl<M> Transaction<M> {
         S: skey::StoreKey<'a>,
     {
         let key = key.encode()?;
-        self.erase_at_raw(key, ts);
-        Ok(())
+
+        self.erase_at_raw(key, ts)
     }
 
     #[expect(
@@ -403,6 +465,7 @@ impl<M> Transaction<M> {
     }
 
     fn get_from_raw(&self, key: &[u8], ts: u64) -> anyhow::Result<Option<(Slice, Slice)>> {
+        check_key_len(key)?;
         let it = self.prefix_of(key);
 
         for guard in it {
@@ -1060,9 +1123,9 @@ impl<M> Transaction<M> {
 
         for (key, value) in entries {
             if let Some(value) = value {
-                self.insert_at_raw(key.clone(), value, ts);
+                self.insert_at_raw(key.clone(), value, ts)?;
             } else {
-                self.erase_at_raw(key.clone(), ts);
+                self.erase_at_raw(key.clone(), ts)?;
             }
         }
 
@@ -1172,6 +1235,7 @@ impl<M> Transaction<M> {
         let (now, me) = self.split_ts();
 
         let scope = Key::new_scope(scope.namespace, scope.database, scope.schema);
+        let target = scope.encode().context("unable to encode scope")?;
         let sp = Key::sync_point().scope(scope);
 
         tracing::debug!("applying snapshot with {} chunk(s)", snapshot.len());
@@ -1210,6 +1274,7 @@ impl<M> Transaction<M> {
         // Re-insert each snapshot chunk at its original version, re-stamped with the
         // current epoch. The higher epoch makes peers re-pull the version.
         let epoch = now;
+        let mut restored = 0;
 
         for chunk in snapshot {
             // @TODO jezza - 15 June 2026: Double check that links up properly.
@@ -1224,6 +1289,14 @@ impl<M> Transaction<M> {
                 meta,
                 entries,
             } = chunk;
+
+            // Entries carry the scope they were taken in, so an override
+            // restore has to move them, not just the sync point.
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| rescope_entry(scope, &target, key, value))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            restored += entries.iter().filter(|(_, value)| value.is_some()).count();
 
             let last = self
                 .find_last_syncpoint_untracked(scope, Some(version))?
@@ -1246,6 +1319,12 @@ impl<M> Transaction<M> {
             );
 
             self.insert_changeset(point, meta, &entries)?;
+        }
+
+        // Fail closed: a restore that reports success must leave its rows
+        // under the requested scope.
+        if restored > 0 && self.prefix_of(&target).next().is_none() {
+            anyhow::bail!("restore left {scope} empty");
         }
 
         for id in deleted {
@@ -1303,25 +1382,30 @@ impl<M> Transaction<M> {
         // We want to remove the null encoding
         key.pop();
 
-        let mut out = vec![];
+        self.prefix_latest_untracked(&key)
+            .map(|user_key| Ok(String::from(UserKey::decode_exact(&user_key?)?.key)))
+            .collect()
+    }
 
-        let iter = self.prefix_of_untracked(&key);
-        for g in iter {
-            let key = g.key()?;
-            let (user_key, _ts, kind) = decode(&key)?;
-            match kind {
-                KeyKind::Insertion => (),
-                KeyKind::Deletion => {
-                    continue;
-                }
-            }
+    /// [`Self::key_prefix`] with each key's value.
+    pub fn key_list(
+        &mut self,
+        scope: Scope<'_>,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<(String, Value)>> {
+        let mut key = scope.only_kv().key(prefix).encode()?;
 
-            let user_key = UserKey::decode_exact(user_key)?;
+        // We want to remove the null encoding
+        key.pop();
 
-            out.push(String::from(user_key.key));
-        }
-
-        Ok(out)
+        let (lower, upper) = skey::prefix_to_range(&key);
+        self.range_latest_kv_untracked(lower, upper)
+            .map(|entry| {
+                let (user_key, value) = entry?;
+                let key = String::from(UserKey::decode_exact(&user_key)?.key);
+                Ok((key, value.to_vec()))
+            })
+            .collect()
     }
 
     pub fn tb_count(&mut self, table: Table<'_>) -> anyhow::Result<usize> {

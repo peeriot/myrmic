@@ -152,6 +152,11 @@ say. Note this one is a convention rather than a rule: unlike driver config, a s
 enforced, and a step declaring `hardware` would still be read from the pipeline. If you find
 yourself wanting it, that is a hint the value belongs to a driver instead.
 
+A numeric field can carry `min` and `max`, inclusive bounds the generator checks a pipeline's
+value and the field's own default against. Declare them wherever the step would otherwise clamp
+or misbehave, so a pipeline with `window: 300` fails to build instead of silently running with
+a different window.
+
 Write the description as if it will be the only thing a reader sees, because on the [steps reference](../../10_reference/04_signal-layer/04_steps.md) it is. Say what the step computes,
 what each config field does in behavioural terms, and what it emits when it has no answer yet.
 

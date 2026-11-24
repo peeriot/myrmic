@@ -133,8 +133,8 @@ buffer on every sample so no running accumulator can drift. Emits nothing at all
 window has filled: the first `window - 1` samples yield no value, and every sample after that
 yields the mean of the most recent `window`. It never emits a partial-window average or a
 placeholder, so anything downstream is simply not updated during the warm-up, and once filled
-it never returns to that state. `window` is silently clamped to 1..=64, so 0 becomes 1 (each
-sample passed through as its own average) and anything above 64 becomes 64.
+it never returns to that state. `window` must be within 1..=64; a pipeline outside that range
+fails to build.
 
 
 | | Name | Type |

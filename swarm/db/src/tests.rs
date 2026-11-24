@@ -137,6 +137,77 @@ async fn test_key_prefix() {
     }
 }
 
+/// The listing reflects each key's newest version: a key written twice is listed once, a
+/// deleted key not at all.
+#[tokio::test(flavor = "current_thread")]
+async fn test_key_prefix_lists_each_live_key_once() {
+    let store = open_tmp();
+
+    let scope = Scope::default();
+
+    for value in [b"1".as_slice(), b"2"] {
+        let mut tx = write(&store);
+        tx.key_put(scope.kv("k-overwritten"), value)
+            .expect("unable to insert");
+        tx.commit().expect("unable to commit");
+    }
+
+    {
+        let mut tx = write(&store);
+        tx.key_put(scope.kv("k-deleted"), b"1")
+            .expect("unable to insert");
+        tx.commit().expect("unable to commit");
+    }
+
+    {
+        let mut tx = write(&store);
+        tx.key_delete(scope.kv("k-deleted"))
+            .expect("unable to delete");
+        tx.commit().expect("unable to commit");
+    }
+
+    let mut tx = read(&store);
+
+    let keys = tx.key_prefix(scope, "k-").expect("unable to query db");
+    assert_eq!(keys, ["k-overwritten"]);
+}
+
+/// Each live key under the prefix once, with its newest value.
+#[tokio::test(flavor = "current_thread")]
+async fn test_key_list() {
+    let store = open_tmp();
+
+    let scope = Scope::default();
+
+    for value in [b"1".as_slice(), b"2"] {
+        let mut tx = write(&store);
+        tx.key_put(scope.kv("k-overwritten"), value)
+            .expect("unable to insert");
+        tx.commit().expect("unable to commit");
+    }
+
+    {
+        let mut tx = write(&store);
+        tx.key_put(scope.kv("k-deleted"), b"1")
+            .expect("unable to insert");
+        tx.key_put(scope.kv("other"), b"1")
+            .expect("unable to insert");
+        tx.commit().expect("unable to commit");
+    }
+
+    {
+        let mut tx = write(&store);
+        tx.key_delete(scope.kv("k-deleted"))
+            .expect("unable to delete");
+        tx.commit().expect("unable to commit");
+    }
+
+    let mut tx = read(&store);
+
+    let entries = tx.key_list(scope, "k-").expect("unable to query db");
+    assert_eq!(entries, [(String::from("k-overwritten"), b"2".to_vec())]);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn repro_concurrent_same_scope_disjoint_keys() {
     // Two transactions touch the SAME scope but DISJOINT keys (like two cells
@@ -1372,4 +1443,44 @@ async fn separator_characters_keep_scopes_disjoint() {
     for (i, scope) in scopes.iter().enumerate() {
         assert_eq!(tx.key_prefix(*scope, "").unwrap(), [i.to_string()]);
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_over_long_encoded_key_is_refused_not_a_panic() {
+    let store = open_tmp();
+    let scope = Scope::default();
+    let mut tx = write(&store);
+
+    // The longest row key lsm-tree takes is the version-index row: the data key
+    // plus a 12-byte version trailer, behind a 9-byte tag and version.
+    let overhead = scope.kv("").encode().expect("unable to encode").len() + 12 + 9;
+    let longest = "k".repeat(usize::from(u16::MAX) - overhead);
+    let too_long = "k".repeat(usize::from(u16::MAX) - overhead + 1);
+
+    tx.key_put(scope.kv(&longest), b"v")
+        .expect("a key at the limit is accepted");
+
+    assert!(tx.key_put(scope.kv(&too_long), b"v").is_err());
+    assert!(tx.key_delete(scope.kv(&too_long)).is_err());
+    assert!(
+        tx.key_put(scope.kv(&"k".repeat(usize::from(u16::MAX))), b"v")
+            .is_err()
+    );
+
+    // lsm-tree panics on a read past the cap too.
+    assert!(
+        tx.key_get(scope.kv(&"k".repeat(usize::from(u16::MAX))))
+            .is_err()
+    );
+
+    // The refused writes left the transaction usable and wrote nothing.
+    assert_eq!(
+        tx.key_get(scope.kv(&too_long)).expect("unable to read"),
+        None
+    );
+    tx.key_put(scope.kv("short"), b"v").expect("unable to put");
+    assert_eq!(
+        tx.key_get(scope.kv("short")).expect("unable to read"),
+        Some(b"v".to_vec())
+    );
 }

@@ -178,3 +178,38 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
         "${PACKAGE_ARGS[@]}"
 
 fi
+
+
+# Check the Linux Signal Layer e2e tests
+#
+# The crate is its own workspace, outside the root one, so none of the runs
+# above reach it. Unchecked, it stopped compiling against the IPC API it tests.
+# Host target only, like the SDK crates.
+if [ -z "$COMMAND_SUFFIX" ]; then
+    printf "\n\n--== Check Signal Layer E2E ==--\n\n"
+
+    E2E_MANIFEST="$SCRIPT_DIR/../../tests/integration/signal_layer_linux/Cargo.toml"
+
+    if [[ "$SKIP_CHECKS" != "true" ]]; then
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            fmt \
+            --manifest-path "$E2E_MANIFEST" \
+            -- \
+                --check
+
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            clippy \
+            --locked \
+            --manifest-path "$E2E_MANIFEST" \
+            --all-targets \
+            -- \
+                --deny "warnings"
+    fi
+
+    if [[ "$SKIP_TESTS" != "true" ]]; then
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            test \
+            --locked \
+            --manifest-path "$E2E_MANIFEST"
+    fi
+fi

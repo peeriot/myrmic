@@ -18,7 +18,7 @@ default = []
 tokio = { workspace = true }
 
 zenoh = { workspace = true, features = ["transport_tls"] }
-rustls = { workspace = true, features = ["ring"] }
+rustls = { workspace = true, features = ["ring", "std"] }
 zenoh_backend_traits = { workspace = true }
 swarm = { workspace = true }
 
@@ -49,6 +49,7 @@ log = { workspace = true }
 env_logger = { workspace = true }
 wiremock = { workspace = true }
 tempfile = { workspace = true }
+rcgen = { workspace = true }
 
 [dev-dependencies]
 zenoh = { workspace = true, default-features = true }
