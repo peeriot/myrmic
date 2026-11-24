@@ -55,9 +55,11 @@ impl DebugListener {
         let attachment = myrmic
             .attachment
             .get_cli_args(&myrmic.backend.get_host_id());
-        let timeout = super::timeout_arg(myrmic.timeout);
         let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", &myrmic.binary];
-        sh_args.extend(super::attached(&attachment, &timeout, args));
+        // No `--timeout`: the CLI's global one has the same name as `telemetry debug`'s own, so
+        // the stream would read it as how long to run, and end after it.
+        sh_args.extend(attachment.iter().map(String::as_str));
+        sh_args.extend(args);
         let mut command = myrmic.backend.command("sh", &sh_args);
         command.stdin(Stdio::null()).stdout(Stdio::piped());
         let invocation = format!("{command:?}");

@@ -117,7 +117,8 @@ where
 
     /// The shim with every call waiting up to `timeout` for the runtimes to answer. This is the
     /// CLI's `--timeout`, which limits both finding the runtimes and each request the call makes,
-    /// e.g. a deploy. [`DEFAULT_CLI_TIMEOUT`] by default.
+    /// e.g. a deploy. [`DEFAULT_CLI_TIMEOUT`] by default. A [`DebugListener`] doesn't get it:
+    /// `telemetry debug` would end its stream after it.
     ///
     /// A deploy is answered once the runtime that runs the cell has confirmed it, and the swarm's
     /// orchestration waits for that up to its own timeout (see [`StoppedRt::orchestration`]). A
@@ -150,7 +151,7 @@ where
 
     /// run: myrmic runtimes list
     pub async fn list_runtimes(&self) -> Result<Vec<String>, Error> {
-        let output = self.run(&["runtimes", "list"]).await?;
+        let output = self.run_local(&["runtimes", "list"]).await?;
         Ok(parse_runtime_list(&output.stdout))
     }
 
@@ -159,7 +160,7 @@ where
     /// Returns once the runtime has exited; the CLI waits for that. Deleting a runtime that isn't
     /// running fails with an [`Error::Cli`], like any other failed delete.
     pub async fn delete_runtime(&self, name: &str) -> Result<(), Error> {
-        self.run(&["runtimes", "delete", name]).await?;
+        self.run_local(&["runtimes", "delete", name]).await?;
         Ok(())
     }
 
@@ -172,7 +173,7 @@ where
             args.extend(["--sdk", sdk]);
         }
         args.extend(["--name", name, path_arg(cell.as_path())]);
-        self.run(&args).await?;
+        self.run_local(&args).await?;
         Ok(cell)
     }
 
@@ -249,13 +250,22 @@ where
         }
     }
 
-    /// Run `myrmic <args>`; an unsuccessful exit is [`Error::Cli`].
+    /// Run `myrmic <args>` for a command that looks for the runtimes over zenoh, which it finds
+    /// the way the shim is attached (see [`attached`]); an unsuccessful exit is [`Error::Cli`].
     async fn run(&self, args: &[&str]) -> Result<CommandOutput, Error> {
         let attachment = self.attachment.get_cli_args(&self.backend.get_host_id());
         let timeout = timeout_arg(self.timeout);
-        let output = self
-            .run_program(&self.binary, &attached(&attachment, &timeout, args))
-            .await;
+        self.run_local(&attached(&attachment, &timeout, args)).await
+    }
+
+    /// Run `myrmic <args>` as they are, for a command that doesn't look for runtimes over zenoh:
+    /// `new`, and the commands about the runtimes on the shim's machine (`runtimes start`, `list`,
+    /// `delete`), which find them by their pid files.
+    /// The shim's attachment would be wrong there: `runtimes start` writes it into the runtime's
+    /// config, over the links the overlay gave that runtime. An unsuccessful exit is
+    /// [`Error::Cli`].
+    async fn run_local(&self, args: &[&str]) -> Result<CommandOutput, Error> {
+        let output = self.run_program(&self.binary, args).await;
         if output.success {
             Ok(output)
         } else {
@@ -279,11 +289,16 @@ where
             .unwrap_or_else(|stderr| panic!("{stderr}"))
     }
 
-    /// Blocking run of `myrmic <args>` for `Drop` (see [`Self::run_program_blocking`]).
+    /// [`Self::run`], blocking, for `Drop` (see [`Self::run_program_blocking`])
     fn run_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
         let attachment = self.attachment.get_cli_args(&self.backend.get_host_id());
         let timeout = timeout_arg(self.timeout);
-        self.run_program_blocking(&self.binary, &attached(&attachment, &timeout, args))
+        self.run_local_blocking(&attached(&attachment, &timeout, args))
+    }
+
+    /// [`Self::run_local`], blocking, for `Drop` (see [`Self::run_program_blocking`])
+    fn run_local_blocking(&self, args: &[&str]) -> std::io::Result<CommandOutput> {
+        self.run_program_blocking(&self.binary, args)
     }
 
     /// Run `program args` on the target and block until it ends, for `Drop`; returns the raw
@@ -525,7 +540,7 @@ where
             args.extend(["--tag", tag]);
         }
         args.push(path_arg(&config_path));
-        let output = self.myrmic.run(&args).await?;
+        let output = self.myrmic.run_local(&args).await?;
         let Some(zid) = started_runtime_zid(&output.stderr, &self.name) else {
             // The daemon runs, but there is no RunningRt yet whose drop would delete it.
             let deleted = self.myrmic.delete_runtime(&self.name).await;
@@ -721,7 +736,7 @@ where
     pub async fn kill(self) -> Result<StoppedRt<B>, Error> {
         self.stopped
             .myrmic
-            .run(&["runtimes", "delete", "--signal", "kill", self.get_name()])
+            .run_local(&["runtimes", "delete", "--signal", "kill", self.get_name()])
             .await?;
         Ok(self.stopped.clone())
     }
@@ -752,7 +767,7 @@ where
     async fn signal(&self, signal: &str) -> Result<(), Error> {
         let name = self.get_name();
         let myrmic = &self.stopped.myrmic;
-        let output = myrmic.run(&["runtimes", "list", name]).await?;
+        let output = myrmic.run_local(&["runtimes", "list", name]).await?;
         // `<name>\trunning\tpid=<pid>`
         let pid = output
             .stdout
@@ -810,7 +825,7 @@ where
         match self
             .stopped
             .myrmic
-            .run_blocking(&["runtimes", "delete", name])
+            .run_local_blocking(&["runtimes", "delete", name])
         {
             Ok(output) if output.success || already_gone(&output.stderr, &RUNTIME_GONE) => {}
             Ok(output) => eprintln!(
