@@ -183,7 +183,7 @@ What holds today, and what the roadmap adds next.
 | Node loss | Lost nodes are detected and reported after about a minute; cells with a restart policy can be brought back on another qualifying node | The responsibility to run that cell moves to another node in seconds |
 | Cell state | One copy, survives a runtime restart; replication across nodes is explicit admin configuration, and unreplicated data is lost with its node | Quorum-held state and mailboxes: kill a node, keep the cell (Durability) |
 | Messaging | Tracked delivery to the node where the cell runs, plus best-effort delivery. Strict ordering per cell, none across cells. One transaction per command handler covering mailbox, state and outbound messages | Durable mailboxes |
-| Isolation | WebAssembly sandbox, cells only reach host functions they were granted | Time and throughput isolation |
+| Isolation | WebAssembly sandbox without WASI, private memory per cell; every cell on a node reaches the same host functions | Per-cell host-function, time and memory limits; throughput isolation |
 | Security | Assumes a trusted network; no cryptographic sender proof between nodes yet | Authenticated fabric, membership reconfiguration, upgrade semantics (Secure Swarm) |
 | APIs | Change without notice until the API freeze | Stable SDK and CLI |
 
