@@ -22,7 +22,7 @@ Callers use the SRI, not a network address, port, or Node name. Identity and loc
 
 Cell logic is written in Rust and compiled to WebAssembly.
 
-OS-based Nodes execute it with Wasmtime. MCU-based Nodes execute modules compiled ahead of time with WAMR. The Node exposes only the functions allowed by the Cell's Capabilities.
+OS-based Nodes execute it with Wasmtime. MCU-based Nodes execute modules compiled ahead of time with WAMR. Every Cell on a Node reaches the same set of host functions; Capabilities only steer placement and do not restrict them.
 
 ### Named handlers
 
