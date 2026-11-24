@@ -503,3 +503,29 @@ fn malformed_gpio_chip_on_sensor_with_pins_is_rejected() {
         "expected a GPIO chip path error, got: {errors:?}"
     );
 }
+
+/// An output pin boots low and the driver gets the typed pins; the generated
+/// crate depends on the gpio shim.
+#[test]
+fn output_sensor_pin_opens_low_and_shim_is_a_dependency() {
+    let output = generate_linux(
+        &fixtures_dir().join("linux-spi-pins-manifest.yaml"),
+        &fixtures_dir().join("linux-spi-pins.yaml"),
+        &fixtures_dir().join("drivers"),
+        &steps_root(),
+    )
+    .unwrap_or_else(|e| panic!("generation failed: {e:#}"));
+    let main_rs: String = output.main_rs.split_whitespace().collect();
+
+    assert!(
+        main_rs.contains("LinuxOutputPin::open(\"/dev/gpiochip1\",24u32,false,)"),
+        "reset must open low in:\n{}",
+        output.main_rs
+    );
+    assert!(
+        main_rs.contains("pubprobe1_irq:linux_gpio_shim::LinuxInputPin"),
+        "irq must be an input pin in:\n{}",
+        output.main_rs
+    );
+    assert!(output.cargo_toml.contains("linux-gpio-shim"));
+}
