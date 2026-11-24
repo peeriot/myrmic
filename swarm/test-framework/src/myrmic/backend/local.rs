@@ -74,7 +74,7 @@ impl Local {
         }
     }
 
-    /// A zenoh peer config that finds the swarm the way the CLI does, e.g. for a session to
+    /// A zenoh client config that finds the swarm the way the CLI does, e.g. for a session to
     /// create [`crate::clients::db::DbHandle`] or [`crate::clients::sorg::SorgHandle`] with.
     ///
     /// It only reaches runtimes this host reaches by scouting or the endpoint. A remote mesh
@@ -82,7 +82,7 @@ impl Local {
     pub fn zenoh_config(&self) -> zenoh::Config {
         let mut config = zenoh::Config::default();
         config
-            .set_mode(Some(zenoh::config::WhatAmI::Peer))
+            .set_mode(Some(zenoh::config::WhatAmI::Client))
             .expect("setting zenoh mode cannot fail");
         match &self.discovery {
             Discovery::Host => {}

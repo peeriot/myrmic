@@ -137,7 +137,7 @@ impl Ctx {
     pub async fn session(&self) -> anyhow::Result<zenoh::Session> {
         let mut zenoh_config = zenoh::Config::default();
         zenoh_config
-            .set_mode(Some(zenoh::config::WhatAmI::Peer))
+            .set_mode(Some(zenoh::config::WhatAmI::Client))
             .expect("setting mode cannot fail here");
 
         let (connect, multicast_group) = self.discovery()?;

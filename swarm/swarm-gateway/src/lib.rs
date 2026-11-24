@@ -1,6 +1,6 @@
 //! The myrmic socket gateway.
 //!
-//! A native process that joins the swarm as a peer and exposes a socket
+//! A native process that joins the swarm as a client and exposes a socket
 //! (HTTP / `WebSocket`) entrypoint into the network. External clients reach the
 //! swarm through it: static web assets are served straight out of the blob
 //! store, and a `WebSocket`/HTTP API maps requests onto cell commands and
