@@ -60,6 +60,9 @@ jobs:
           SKIP_CHECKS: "true"
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           NEXTEST_TEST_THREADS: "1"
+          # test-framework's docker tests attach this job's container to their networks, so
+          # the test can reach the containers it starts
+          MYRMIC_TEST_CONTAINER: ${{ job.container.id }}
 
   # License, advisory and source checks, the WASM host-interface doc-drift
   # check, and the coverage-check self-test.
@@ -98,6 +101,8 @@ jobs:
         env:
           CARGO_CHANNEL: "1.96.0"
           SKIP_CHECKS: "true"
+          # see the Tests job
+          MYRMIC_TEST_CONTAINER: ${{ job.container.id }}
 
   # Lints the WASM cell crates (drivers, steps, warehouse and fixture cells).
   wasm:
