@@ -15,7 +15,6 @@ config = { workspace = true }
 rumqttc = { workspace = true }
 rumqttd = { workspace = true }
 cell-protocol = { workspace = true, default-features = true }
-claims = { workspace = true }
 db-client = { workspace = true, features = ["zenoh", "replica"] }
 futures = { workspace = true }
 hex = { workspace = true }
@@ -40,6 +39,9 @@ tokio = { workspace = true, features = ["process", "net", "time", "sync", "rt"] 
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 zenoh = { workspace = true, features = ["transport_tcp", "unstable"] }
+
+[dev-dependencies]
+claims = { workspace = true }
 
 [lints]
 workspace = true

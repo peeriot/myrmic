@@ -15,6 +15,10 @@ use crate::{overlay, run_cleanup};
 /// It runs the `zenoh-router` binary with the overlay's settings for it: the group it scouts on,
 /// and a port of its own on which it listens for connects.
 pub struct Router<H: Remote> {
+    /// records the router as running in its overlay while it exists; dropped after the router is
+    /// killed in [`Drop::drop`], and before `host`, which may be the last handle to the host the
+    /// overlay reads while it counts the router running
+    _running: overlay::RunningGuard,
     member: overlay::Member,
     /// the host it runs on
     host: H,
@@ -22,9 +26,6 @@ pub struct Router<H: Remote> {
     pid: String,
     /// the local process (`docker exec`, `ssh`) the router runs in
     _process: tokio::process::Child,
-    /// records the router as running in its overlay while it exists; dropped after the router is
-    /// killed in [`Drop::drop`]
-    _running: overlay::RunningGuard,
 }
 
 impl<H: Remote> Router<H> {
@@ -45,12 +46,15 @@ impl<H: Remote> Router<H> {
             .spawn()
             .expect("failed to run the router's command");
         let mut lines = BufReader::new(process.stdout.take().expect("stdout is piped")).lines();
-        let pid = next_line(&mut lines, "the router's pid").await;
+        let pid = next_line(&mut lines, "the router's pid")
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
         let ready = next_line(&mut lines, "the router to be ready").await;
-        assert_eq!(
-            ready, "ready",
-            "the router said something else than `ready`"
-        );
+        if ready.as_deref() != Ok("ready") {
+            // there is no `Router` yet whose drop would end it
+            run_cleanup("Router", host.command("kill", &[&pid]));
+            panic!("the router didn't become ready: {ready:?}");
+        }
         Self {
             _running: member.start_running(WhatAmI::Router),
             member,
@@ -79,14 +83,16 @@ impl<H: Remote> Drop for Router<H> {
     }
 }
 
-/// the next line of `lines`, a process's output, which has to come within the default timeout
+/// The next line of `lines`, a process's output, which has to come within the default timeout; or
+/// why there is none, naming `what` the line was to tell.
 async fn next_line(
     lines: &mut Lines<BufReader<tokio::process::ChildStdout>>,
     what: &str,
-) -> String {
-    tokio::time::timeout(crate::wait::DEFAULT_TIMEOUT, lines.next_line())
-        .await
-        .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
-        .unwrap_or_else(|err| panic!("failed to read {what}: {err}"))
-        .unwrap_or_else(|| panic!("the process ended before {what}"))
+) -> Result<String, String> {
+    match tokio::time::timeout(crate::wait::DEFAULT_TIMEOUT, lines.next_line()).await {
+        Ok(Ok(Some(line))) => Ok(line),
+        Ok(Ok(None)) => Err(format!("the process ended before {what}")),
+        Ok(Err(err)) => Err(format!("failed to read {what}: {err}")),
+        Err(_) => Err(format!("timed out waiting for {what}")),
+    }
 }

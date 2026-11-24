@@ -54,14 +54,14 @@ const INFO_PREFIX: &str = "INFO  ";
 
 /// What `myrmic runtimes delete` prints when no runtime of that name is running: there is no pid
 /// file for it, or no pid directory at all.
-pub(crate) const RUNTIME_GONE: [&str; 2] = ["no runtime \"", "no runtimes at "];
+const RUNTIME_GONE: [&str; 2] = ["no runtime \"", "no runtimes at "];
 
 /// What `myrmic delete` prints when nothing by that name is deployed (any more).
-pub(crate) const DEPLOYMENT_GONE: [&str; 2] = ["nothing named '", "no deployed cell '"];
+const DEPLOYMENT_GONE: [&str; 2] = ["nothing named '", "no deployed cell '"];
 
 /// whether a delete's `stderr` says there was nothing left to delete, i.e. contains one of `texts`
 /// ([`RUNTIME_GONE`] or [`DEPLOYMENT_GONE`])
-pub(crate) fn already_gone(stderr: &str, texts: &[&str]) -> bool {
+fn already_gone(stderr: &str, texts: &[&str]) -> bool {
     texts.iter().any(|text| stderr.contains(text))
 }
 
@@ -712,12 +712,13 @@ pub struct RunningRt<B>
 where
     B: MyrmicBackend,
 {
+    /// records the runtime as running in its overlay while it exists; dropped after the
+    /// runtime's delete in [`Drop::drop`], and before `stopped`, whose backend may hold the last
+    /// handle to the runtime's host, which the overlay reads while it counts the runtime running
+    _ovl_running: overlay::RunningGuard,
     /// what it was started from, handed back when it stops
     stopped: StoppedRt<B>,
     zid: zenoh::config::ZenohId,
-    /// records the runtime as running in its overlay while it exists; dropped after the
-    /// runtime's delete in [`Drop::drop`]
-    _ovl_running: overlay::RunningGuard,
 }
 
 impl<B> RunningRt<B>

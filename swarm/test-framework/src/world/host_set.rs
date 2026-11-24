@@ -19,8 +19,8 @@
 //! passes through a third host that is in several sets. Getting from one host to another through
 //! a third host is the overlay's business, through zenoh routers on the way.
 //!
-//! [`ConnectedHostSet::find_route`] is the only method a set implements. Only this crate can call
-//! it, because its last parameter has a type no other crate can name. Callers use
+//! [`ConnectedHostSet::find_route`] is a method a set implements but only this crate can call,
+//! because its last parameter has a type no other crate can name. Callers use
 //! [`ConnectedHostSet::get_route`] and [`ConnectedHostSet::route_exists`] instead. The two always
 //! agree, because both are built on `find_route`.
 

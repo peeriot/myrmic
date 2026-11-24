@@ -544,17 +544,19 @@ fn runtime_has_tags(info: &ExecRuntimeInfo, tags: &[&str]) -> bool {
 /// since its last renewal (`seq`, wall-clock milliseconds) stays within its declared `ttl_ms` plus
 /// the cluster margin. A `seq` ahead of the reader's clock (clock skew) counts as fresh. A node
 /// without a lease row is not in the set.
-async fn fresh_lease_ids(session: &zenoh::Session) -> Result<HashSet<RuntimeId>, ()> {
-    let leases = node_lease::list_leases(session).await.map_err(|_| ())?;
+async fn fresh_lease_ids(
+    session: &zenoh::Session,
+) -> Result<HashSet<RuntimeId>, sorg_common::Error> {
+    let leases = node_lease::list_leases(session).await?;
     let now_ms = u64::try_from(
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
+            .expect("the clock is after the epoch")
             .as_millis(),
     )
-    .unwrap_or(u64::MAX);
-    let margin_ms =
-        u64::try_from(SupervisionTiming::default().margin.as_millis()).unwrap_or(u64::MAX);
+    .expect("the time in milliseconds fits in u64");
+    let margin_ms = u64::try_from(SupervisionTiming::default().margin.as_millis())
+        .expect("the cluster margin in milliseconds fits in u64");
 
     let fresh = leases
         .into_iter()

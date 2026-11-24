@@ -13,8 +13,8 @@ const CLEANUP_CONNECT_TIMEOUT: &str = "ConnectTimeout=5";
 /// A [`MyrmicBackend`] that runs programs on an SSH host ([`host::Ssh`]), isolated: with state
 /// directories of their own there (see [`host::Ssh::myrmic_isolated`]).
 ///
-/// Every command runs the system `ssh` binary (`ssh <host> <program> <args>...`) instead of using
-/// an SSH client crate, just as [`super::docker::Docker`] runs the system `docker` binary. So
+/// Every command runs the system `ssh` binary (`ssh <host> env XDG_DATA_HOME=.. XDG_RUNTIME_DIR=..
+/// <program> <args>...`, each word quoted) instead of using an SSH client crate, just as [`super::docker::Docker`] runs the system `docker` binary. So
 /// [`MyrmicBackend::command`] is a plain process on the test's machine, and the async path and the
 /// blocking path (in `Drop` guards) run the same command.
 #[derive(Clone)]

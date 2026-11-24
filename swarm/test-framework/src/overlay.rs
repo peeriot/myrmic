@@ -420,6 +420,10 @@ impl Member {
         let mut state = self.overlay.lock();
         let member = &mut state.members[index];
         if member.listen_port.is_none() {
+            assert!(
+                member.running.is_none(),
+                "a running member got a listen port it doesn't listen on until its next start"
+            );
             member.listen_port = Some(free_port());
         }
     }
