@@ -149,13 +149,13 @@ where
     }
 
     /// the SRI the cell was deployed under
-    pub fn sri(&self) -> &str {
+    pub fn get_sri(&self) -> &str {
         &self.sri
     }
 
     /// The diagnostic output (stderr) of the `myrmic deploy` that deployed the cell, or `None` if
     /// the cell was deployed through a swarm's sorg client.
-    pub fn output(&self) -> Option<&str> {
+    pub fn get_output(&self) -> Option<&str> {
         self.output.as_deref()
     }
 
@@ -253,21 +253,21 @@ where
     }
 
     /// the app name every cell of the app is grouped under
-    pub fn name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         &self.name
     }
 
     /// the SRIs of the app's cells and bridges, as `myrmic deploy` reported them
-    pub fn sris(&self) -> &[String] {
+    pub fn get_sris(&self) -> &[String] {
         &self.sris
     }
 
     /// the diagnostic output (stderr) of the `myrmic deploy` that deployed the app
-    pub fn output(&self) -> &str {
+    pub fn get_output(&self) -> &str {
         &self.output
     }
 
-    /// run: myrmic delete `name` --app; returns once none of [`Self::sris`] is in
+    /// run: myrmic delete `name` --app; returns once none of [`Self::get_sris`] is in
     /// `myrmic cells status` any more
     pub async fn delete(self) -> Result<(), Error> {
         self.myrmic.run(&["delete", &self.name, "--app"]).await?;

@@ -6,10 +6,6 @@ use crate::{
     run_cleanup,
 };
 
-/// How long the cleanup of an [`Isolation`] waits for its host to answer: one that lost power
-/// may not be back.
-const CLEANUP_CONNECT_TIMEOUT: &str = "ConnectTimeout=5";
-
 /// A [`MyrmicBackend`] that runs programs on an SSH host ([`host::Ssh`]), isolated: with state
 /// directories of their own there (see [`host::Ssh::myrmic_isolated`]).
 ///
@@ -83,18 +79,16 @@ impl Ssh {
 
 impl Drop for Isolation {
     fn drop(&mut self) {
-        let remove = self.host.ssh(
-            &["-o", "BatchMode=yes", "-o", CLEANUP_CONNECT_TIMEOUT],
-            &["rm", "-rf", "--", &self.data_dir, &self.run_dir],
-        );
+        let remove = self
+            .host
+            .ssh(&["rm", "-rf", "--", &self.data_dir, &self.run_dir]);
         run_cleanup("Isolation", remove);
     }
 }
 
 impl MyrmicBackend for Ssh {
-    /// `ssh [-i identity] [-o UserKnownHostsFile=..] <host> <quoted remote command>`, with the
-    /// isolation's state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, set by `env` on
-    /// the host
+    /// `ssh <options> <host> <quoted remote command>` (see [`host::Ssh`]), with the isolation's
+    /// state directories as `XDG_DATA_HOME` and `XDG_RUNTIME_DIR`, set by `env` on the host
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let data_home = format!("XDG_DATA_HOME={}", self.isolation.data_dir);
         let runtime_dir = format!("XDG_RUNTIME_DIR={}", self.isolation.run_dir);

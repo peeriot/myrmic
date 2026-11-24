@@ -84,7 +84,10 @@ async fn single_tag_match() -> anyhow::Result<()> {
         .deploy()
         .await?;
 
-    assert_eq!(swarm.get_host_of(cell.sri()).await?, Some(gpu.get_zid()));
+    assert_eq!(
+        swarm.get_host_of(cell.get_sri()).await?,
+        Some(gpu.get_zid())
+    );
     let placed: Vec<String> = swarm
         .get_sorg()
         .list_placements()
@@ -92,7 +95,11 @@ async fn single_tag_match() -> anyhow::Result<()> {
         .iter()
         .map(|entry| entry.sri.to_string())
         .collect();
-    assert_eq!(placed, [cell.sri()], "the deploy placed exactly this cell");
+    assert_eq!(
+        placed,
+        [cell.get_sri()],
+        "the deploy placed exactly this cell"
+    );
     Ok(())
 }
 
@@ -109,7 +116,7 @@ async fn multi_tag_and_match() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(
-        swarm.get_host_of(cell.sri()).await?,
+        swarm.get_host_of(cell.get_sri()).await?,
         Some(gpu_sensor.get_zid()),
         "the cell lands on the runtime with both tags, not the gpu-only one"
     );
@@ -128,7 +135,7 @@ async fn untagged_placeable_anywhere() -> anyhow::Result<()> {
         .await?;
 
     assert!(
-        swarm.get_host_of(cell.sri()).await?.is_some(),
+        swarm.get_host_of(cell.get_sri()).await?.is_some(),
         "the untagged cell is placed on one of the tagged runtimes"
     );
     Ok(())

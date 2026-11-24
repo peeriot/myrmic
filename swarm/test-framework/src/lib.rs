@@ -1,6 +1,3 @@
-#![allow(clippy::map_unwrap_or)]
-#![allow(clippy::unwrap_used)]
-
 //! Tools for end-to-end tests of myrmic. A test starts real runtimes on real machines, operates
 //! them through the `myrmic` CLI as a user would, and injects the faults a deployed swarm can
 //! meet: crashes, freezes, network splits, full disks and clock steps.

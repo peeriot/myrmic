@@ -216,14 +216,23 @@ impl Overlay {
         let state = self.lock();
         let (first, passes_on_for_session) = match attachment {
             Attachment::Group(group) => {
-                let on_group = (0..state.members.len()).filter(|&index| {
+                let local = host::get_local_id();
+                // linked directly: the running members on the group the session finds by scouting
+                let scouted = (0..state.members.len()).filter(|&index| {
                     let member = &state.members[index];
-                    member.running.is_some() && member.group == Some(group.id)
+                    member.running.is_some()
+                        && member.group == Some(group.id)
+                        && self.scouts(&local, &member.host)
                 });
+                // and by gossip, as any peer: every member of their component that the test's
+                // machine can dial or be dialled from
                 let first: Vec<usize> = self
-                    .get_component(&state, on_group)
+                    .get_component(&state, scouted)
                     .into_iter()
-                    .filter(|&index| self.scouts(&host::get_local_id(), &state.members[index].host))
+                    .filter(|&index| {
+                        let host = &state.members[index].host;
+                        self.scouts(&local, host) || self.dial_either_way(&local, host)
+                    })
                     .collect();
                 (first, None)
             }

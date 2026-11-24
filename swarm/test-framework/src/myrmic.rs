@@ -582,7 +582,7 @@ where
     B: MyrmicBackend,
 {
     /// `--name`, the SRN the cell is deployed under; defaults to a random `e2e-<uuid>` (see
-    /// [`DeployedCell::sri`])
+    /// [`DeployedCell::get_sri`])
     pub fn srn(mut self, srn: &str) -> Self {
         srn.clone_into(&mut self.srn);
         self

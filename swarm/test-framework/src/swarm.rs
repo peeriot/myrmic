@@ -198,7 +198,9 @@ impl Swarm {
     }
 
     /// The zid of the runtime the cell `sri` is placed on, or `None` while the cell has no
-    /// placement or its placement names no host yet. Fails like [`Self::get_placement`].
+    /// placement or its placement names no host yet. Fails like [`Self::get_placement`]. Panics
+    /// if that runtime isn't one the test added to the swarm, e.g. an embedded runtime that joined
+    /// by itself (see [`Self::wait_for_runtime`]).
     ///
     /// A killed runtime keeps its placements until the swarm has declared it dead. So during a
     /// failover, this still names the killed runtime for a while.

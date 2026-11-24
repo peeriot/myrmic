@@ -19,8 +19,8 @@ use crate::{
     overlay,
 };
 
-/// How long one attempt of a wait for a machine may take to connect: a machine that is still
-/// booting doesn't answer at all.
+/// How long any SSH connection may take to connect: a machine that is down, or still booting,
+/// doesn't answer at all, and a drop guard that tries to clean up on it shouldn't hang on it.
 const CONNECT_TIMEOUT_SECS: &str = "5";
 
 /// How long a wait for a machine pauses between two attempts.
@@ -37,6 +37,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 ///   `ssh`'s default;
 /// - `SSH_STRICT_HOST_KEY_CHECKING`: the host key policy, e.g. `accept-new` in a CI job whose fresh
 ///   container knows no hosts yet.
+///
+/// It also fails instead of asking for a password (`BatchMode`), and gives up after a few seconds
+/// on a machine that doesn't answer (`ConnectTimeout`), e.g. one whose power was cut.
 #[derive(Clone)]
 pub struct Ssh {
     /// the SSH destination, e.g. `user@rack-node-1.example`: anything `ssh` accepts, including host
@@ -120,16 +123,13 @@ impl Ssh {
 
         // `mkdir` first, so a missing directory doesn't fail the `scp` below
         let check = self
-            .run(self.ssh(
-                &["-o", "BatchMode=yes"],
-                &[
-                    "sh",
-                    "-c",
-                    r#"mkdir -p "$(dirname "$1")" && sha256sum "$1""#,
-                    "sh",
-                    &remote_path,
-                ],
-            ))
+            .run(self.ssh(&[
+                "sh",
+                "-c",
+                r#"mkdir -p "$(dirname "$1")" && sha256sum "$1""#,
+                "sh",
+                &remote_path,
+            ]))
             .await;
         // 255 is `ssh` itself failing; any other failure means there is no file to compare (the
         // first upload) or the `mkdir` failed, which the `scp` then reports
@@ -142,7 +142,7 @@ impl Ssh {
         );
         if !check.status.success() || !String::from_utf8_lossy(&check.stdout).starts_with(&hash) {
             let mut scp = command_with_ssh_config("scp");
-            scp.args(["-q", "-p", "-o", "BatchMode=yes"])
+            scp.args(["-q", "-p"])
                 .arg(local)
                 .arg(format!("{}:{remote_path}", self.destination));
             let copy = self.run(scp).await;
@@ -156,16 +156,13 @@ impl Ssh {
 
             // the file and, for a new one, its name in the directory
             let sync = self
-                .run(self.ssh(
-                    &["-o", "BatchMode=yes"],
-                    &[
-                        "sh",
-                        "-c",
-                        r#"sync -- "$1" "$(dirname "$1")""#,
-                        "sh",
-                        &remote_path,
-                    ],
-                ))
+                .run(self.ssh(&[
+                    "sh",
+                    "-c",
+                    r#"sync -- "$1" "$(dirname "$1")""#,
+                    "sh",
+                    &remote_path,
+                ]))
                 .await;
             assert!(
                 sync.status.success(),
@@ -176,10 +173,10 @@ impl Ssh {
         }
     }
 
-    /// `ssh <options> <destination> <words>`, the words quoted so the remote shell runs them as
-    /// they are
-    pub(crate) fn ssh(&self, options: &[&str], words: &[&str]) -> std::process::Command {
-        ssh_command(&self.destination, options, words)
+    /// `ssh <options> <destination> <words>`, with the options every SSH connection uses (see
+    /// [`Ssh`]), the words quoted so the remote shell runs them as they are
+    pub(crate) fn ssh(&self, words: &[&str]) -> std::process::Command {
+        ssh_command(&self.destination, words)
     }
 
     /// the output of `command`, a command for this machine, once it has finished
@@ -193,12 +190,12 @@ impl Ssh {
 }
 
 impl Remote for Ssh {
-    /// `ssh [-i identity] [-o UserKnownHostsFile=..] [-o StrictHostKeyChecking=..] <destination>
-    /// <quoted program args>`
+    /// `ssh <options> <destination> <quoted program args>`, with the options every SSH connection
+    /// uses (see [`Ssh`])
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         let mut words = vec![program];
         words.extend(args);
-        self.ssh(&[], &words)
+        self.ssh(&words)
     }
 }
 
@@ -245,15 +242,10 @@ fn poll(
     to: &str,
     done: impl Fn(&Output) -> bool,
 ) {
-    let connect_timeout = format!("ConnectTimeout={CONNECT_TIMEOUT_SECS}");
     let run = || {
-        ssh_command(
-            destination,
-            &["-o", "BatchMode=yes", "-o", &connect_timeout],
-            words,
-        )
-        .output()
-        .unwrap_or_else(|err| panic!("failed to run ssh: {err}"))
+        ssh_command(destination, words)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run ssh: {err}"))
     };
     let start = Instant::now();
     let mut output = run();
@@ -269,22 +261,23 @@ fn poll(
     }
 }
 
-/// `ssh <options> <destination> <words>`, with the options from the environment (see [`Ssh`]) and
-/// the words quoted so the remote shell runs them as they are
-fn ssh_command(destination: &str, options: &[&str], words: &[&str]) -> std::process::Command {
+/// `ssh <options> <destination> <words>`, with the options every SSH connection uses (see [`Ssh`])
+/// and the words quoted so the remote shell runs them as they are
+fn ssh_command(destination: &str, words: &[&str]) -> std::process::Command {
     let mut command = command_with_ssh_config("ssh");
-    command
-        .args(options)
-        .arg(destination)
-        .arg(quoted_command_line(words));
+    command.arg(destination).arg(quoted_command_line(words));
     command
 }
 
-/// `program` (`ssh` or `scp`, which take the same options) with the options from the environment
-/// that every SSH connection uses (see [`Ssh`]). The options are read on every call, so a test that
-/// sets one during its run sees the change.
+/// `program` (`ssh` or `scp`, which take the same options) with the options every SSH connection
+/// uses (see [`Ssh`]). Those from the environment are read on every call, so a test that sets one
+/// during its run sees the change.
 fn command_with_ssh_config(program: &str) -> std::process::Command {
     let mut command = std::process::Command::new(program);
+    // fail instead of asking for a password, and instead of waiting for an unreachable machine
+    command
+        .args(["-o", "BatchMode=yes", "-o"])
+        .arg(format!("ConnectTimeout={CONNECT_TIMEOUT_SECS}"));
     if let Some(identity_file) = get_env("SSH_IDENTITY_FILE") {
         command.arg("-i").arg(identity_file);
     }
