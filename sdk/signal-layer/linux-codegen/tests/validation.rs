@@ -429,3 +429,72 @@ fn malformed_pwm_chip_is_rejected() {
         "expected a PWM chip name error, got: {errors:?}"
     );
 }
+
+// ── Sensor extra pins ────────────────────────────────────────────────────────
+
+/// A driver's `input` pin is generated as a `LinuxInputPin` field and handed
+/// to the driver (ccs811's `nint`).
+#[test]
+fn ccs811_nint_is_generated_as_linux_input_pin() {
+    let output = generate_linux(
+        &fixtures_dir().join("linux-ccs811-manifest.yaml"),
+        &fixtures_dir().join("linux-ccs811.yaml"),
+        &drivers_root(),
+        &steps_root(),
+    )
+    .unwrap_or_else(|e| panic!("generation failed: {e:#}"));
+
+    assert!(
+        output
+            .main_rs
+            .contains("pub air_nint: linux_gpio_shim::LinuxInputPin"),
+        "missing nint input pin field in:\n{}",
+        output.main_rs
+    );
+    assert!(
+        output.main_rs.contains("nint: Some(nint)"),
+        "nint must reach the driver in:\n{}",
+        output.main_rs
+    );
+}
+
+/// A pin the driver does not declare is still rejected on Linux.
+#[test]
+fn undeclared_sensor_pin_is_rejected() {
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let manifest_path = scratch.path().join("manifest.yaml");
+    let manifest = std::fs::read_to_string(fixtures_dir().join("linux-ccs811-manifest.yaml"))
+        .expect("reading linux-ccs811-manifest.yaml")
+        .replace("nint: 17", "nint: 17\n      reset: 18");
+    std::fs::write(&manifest_path, manifest).expect("writing manifest");
+
+    let err = generate_linux(
+        &manifest_path,
+        &fixtures_dir().join("linux-ccs811.yaml"),
+        &drivers_root(),
+        &steps_root(),
+    )
+    .expect_err("undeclared pin must be rejected");
+
+    assert!(
+        format!("{err:#}").contains("pin `reset` is not declared"),
+        "unexpected error: {err:#}"
+    );
+}
+
+/// The `gpio_chip` check covers a sensor's extra pins, not just actuator pins.
+#[test]
+fn malformed_gpio_chip_on_sensor_with_pins_is_rejected() {
+    let yaml = std::fs::read_to_string(fixtures_dir().join("linux-spi-pins-manifest.yaml"))
+        .expect("reading linux-spi-pins-manifest.yaml")
+        .replace("/dev/gpiochip1", "/dev/gpio1");
+
+    let (manifest, errors) = linux_codegen::backend::validate_linux_manifest_from_yaml(&yaml);
+    manifest.expect("manifest should still parse");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.to_string().contains("invalid GPIO chip path")),
+        "expected a GPIO chip path error, got: {errors:?}"
+    );
+}

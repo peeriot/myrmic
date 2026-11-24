@@ -1,0 +1,22 @@
+# Linux manifest wiring the ccs811 interrupt line (`nint`) on GPIO chip 0.
+id: rpi-ccs811
+chip: linux
+
+buses:
+  i2c0:
+    transport: i2c
+    pins: {}
+    freq_khz: 400
+    dev_path: /dev/i2c-1
+
+gpios:
+  general_purpose: []
+
+devices:
+  - id: air
+    driver: ccs811
+    bus: i2c0
+    hardware:
+      i2c_addr: 0x5A
+    pins:
+      nint: 17

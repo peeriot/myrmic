@@ -9,7 +9,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use pipeline_backend_api::ChipBackend;
-use pipeline_backend_api::descriptor::{DriverSchema, OutputMode};
+use pipeline_backend_api::descriptor::{DriverSchema, OutputMode, PinDirection};
 use pipeline_backend_api::manifest::{BoardManifest, BusTransport};
 use pipeline_backend_api::scaffold;
 use pipeline_backend_api::validate_types::ValidationError;
@@ -121,6 +121,42 @@ impl ChipBackend for LinuxChipBackend {
                     .expect(#expect_msg);
             });
             field_inits.push(quote! { #cs_field, });
+        }
+
+        // Sensor extra pins: one `<id>_<pin>` field per manifest pin except
+        // the SPI `cs`, typed by the descriptor's direction; outputs boot low.
+        for device in &manifest.devices {
+            let Some(schema) = driver_schemas.get(&device.driver) else {
+                continue;
+            };
+            if schema.writes.is_some() {
+                continue;
+            }
+            let on_spi = manifest
+                .buses
+                .get(&device.bus)
+                .is_some_and(|b| b.transport == BusTransport::Spi);
+            let gpio_chip = device
+                .gpio_chip
+                .clone()
+                .unwrap_or_else(|| DEFAULT_GPIO_CHIP.to_string());
+            for (pin_name, &pin_num) in &device.pins {
+                if on_spi && pin_name == "cs" {
+                    continue;
+                }
+                let direction = schema.requires.pin_direction(pin_name);
+                let field = snake_ident(&format!("{}_{}", device.id, pin_name));
+                let line = u32::from(pin_num);
+                let expect_msg = format!("open {gpio_chip} line {line} ({}.{pin_name})", device.id);
+                let ty = self.sensor_pin_type(direction);
+                let open = match direction {
+                    PinDirection::Input => quote! { #ty::open(#gpio_chip, #line) },
+                    PinDirection::Output => quote! { #ty::open(#gpio_chip, #line, false) },
+                };
+                field_decls.push(quote! { pub #field: #ty, });
+                inits.push(quote! { let #field = #open.expect(#expect_msg); });
+                field_inits.push(quote! { #field, });
+            }
         }
 
         // Output devices (outlets): the driven pin as a GPIO line or a sysfs
@@ -269,6 +305,13 @@ impl ChipBackend for LinuxChipBackend {
 
     fn gpio_input_type(&self) -> TokenStream {
         quote! { linux_gpio_shim::LinuxInputPin }
+    }
+
+    fn sensor_pin_type(&self, direction: PinDirection) -> TokenStream {
+        match direction {
+            PinDirection::Input => self.gpio_input_type(),
+            PinDirection::Output => self.gpio_output_type(),
+        }
     }
 
     fn emit_pipeline_pins_macro(&self, _manifest: &BoardManifest) -> TokenStream {

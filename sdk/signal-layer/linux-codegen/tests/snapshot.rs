@@ -10,7 +10,7 @@
 //! UPDATE_GOLDEN=1 cargo test -p linux-codegen --test snapshot
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use linux_codegen::generate_linux;
 
@@ -32,6 +32,12 @@ fn drivers_root() -> PathBuf {
     repo_root().join("signal-modules/drivers")
 }
 
+/// Test-only driver descriptors (no crate behind them), for fixtures that need
+/// pin shapes no repo driver declares.
+fn fixture_drivers_root() -> PathBuf {
+    fixtures_dir().join("drivers")
+}
+
 fn steps_root() -> PathBuf {
     repo_root().join("signal-modules/steps")
 }
@@ -39,18 +45,18 @@ fn steps_root() -> PathBuf {
 /// Run the snapshot test for a given fixture (base name without extension)
 /// against a manifest fixture (base name without extension).
 fn check_snapshot_with_manifest(fixture: &str, manifest: &str) {
+    check_snapshot_with_drivers(fixture, manifest, &drivers_root());
+}
+
+/// Like [`check_snapshot_with_manifest`], loading driver descriptors from `drivers`.
+fn check_snapshot_with_drivers(fixture: &str, manifest: &str, drivers: &Path) {
     let pipeline_path = fixtures_dir().join(format!("{fixture}.yaml"));
     let manifest_path = fixtures_dir().join(format!("{manifest}.yaml"));
     let expected_main_rs_path = fixtures_dir().join(format!("{fixture}.expected.main.rs"));
     let expected_cargo_toml_path = fixtures_dir().join(format!("{fixture}.expected.Cargo.toml"));
 
-    let crate_output = generate_linux(
-        &manifest_path,
-        &pipeline_path,
-        &drivers_root(),
-        &steps_root(),
-    )
-    .unwrap_or_else(|e| panic!("generation failed for fixture `{fixture}`: {e:#}"));
+    let crate_output = generate_linux(&manifest_path, &pipeline_path, drivers, &steps_root())
+        .unwrap_or_else(|e| panic!("generation failed for fixture `{fixture}`: {e:#}"));
 
     if std::env::var("UPDATE_GOLDEN").is_ok() {
         std::fs::write(&expected_main_rs_path, &crate_output.main_rs)
@@ -138,6 +144,17 @@ fn snapshot_linux_outlets() {
 #[test]
 fn snapshot_linux_spi() {
     check_snapshot_with_manifest("linux-spi", "linux-spi-manifest");
+}
+
+/// SPI sensor with extra pins: `reset` becomes a `LinuxOutputPin`, `irq` a
+/// `LinuxInputPin`, both opened on the device's `gpio_chip` and handed to the driver.
+#[test]
+fn snapshot_linux_spi_pins() {
+    check_snapshot_with_drivers(
+        "linux-spi-pins",
+        "linux-spi-pins-manifest",
+        &fixture_drivers_root(),
+    );
 }
 
 /// Assert the generated main.rs contains one tokio task per source with the
