@@ -36,6 +36,7 @@ linux-i2c-shim
 bme280-driver
 bmp180-driver
 ads1115-driver
+adxl345-driver
 ccs811-driver
 veml7700-driver
 wsen-itds-driver

@@ -18,6 +18,7 @@ These produce values a pipeline can tap.
 | Driver | Reads over | Publishes | Extra pins |
 |---|---|---|---|
 | `ads1115` | I2C | `ain0` (f32, V), `ain1` (f32, V), `ain2` (f32, V), `ain3` (f32, V) | - |
+| `adxl345` | I2C | `accel_x` (f32, g), `accel_y` (f32, g), `accel_z` (f32, g) | - |
 | `bme280` | I2C | `temperature` (f32, °C), `pressure` (f32, hPa), `humidity` (f32, %RH) | - |
 | `bmp180` | I2C | `temperature` (f32, °C), `pressure` (f32, hPa) | - |
 | `ccs811` | I2C | `eco2` (f32, ppm), `tvoc` (f32, ppb) | `nint` |
@@ -68,6 +69,32 @@ Texas Instruments ADS1115 16-bit 4-channel ADC over I2C. Reads all four single-e
 | `fs_mv` | pipeline | `FullScale` | `Mv2048` |
 | `data_rate` | pipeline | `DataRate` | `Sps128` |
 | `sample_interval_ms` | pipeline | `u64` | `1000` |
+
+
+### `adxl345`
+
+Analog Devices ADXL345 3-axis digital accelerometer over I2C. Reports acceleration on the X,
+Y, and Z axes.
+
+
+**Requires** - bus: I2C
+
+
+**Publishes**
+
+
+| Name | Type | Unit |
+|---|---|---|
+| `accel_x` | `f32` | g |
+| `accel_y` | `f32` | g |
+| `accel_z` | `f32` | g |
+
+**Configuration**
+
+| Field | Where it is set | Type | Default |
+|---|---|---|---|
+| `i2c_addr` | board file | `u8` | `83` |
+| `sample_interval_ms` | pipeline | `u64` | `20` |
 
 
 ### `bme280`

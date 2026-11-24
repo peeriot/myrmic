@@ -45,6 +45,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "adxl345-driver"
+version = "0.7.1"
+dependencies = [
+ "embassy-time",
+ "embedded-hal-async",
+ "embedded-hal-mock",
+ "futures",
+ "log",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
