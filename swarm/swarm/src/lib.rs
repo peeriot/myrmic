@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout_at};
 use zenoh::Session;
 
 use cell_protocol::node_tags::LiveTags;
@@ -129,8 +129,6 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
         .as_ref()
         .map(|guard| guard.clone().force_flush_queryable(&session));
 
-    let mut started = vec![];
-
     let plugins = Arc::new(plugins);
 
     // Started before any plugin, so a plugin reading tags on its first pass
@@ -148,7 +146,7 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
     let tags = LiveTags::default();
 
     macro_rules! load_plugin {
-        ($feature:literal, $plugin:ty, |$conf:ident| $configured_body:expr $(,)?) => {
+        ($started:ident, $feature:literal, $plugin:ty, |$conf:ident| $configured_body:expr $(,)?) => {
             #[cfg(feature = $feature)]
             {
                 let init = init_plugin::<$plugin>(
@@ -160,7 +158,7 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
                     |$conf| $configured_body,
                 );
                 if let Some((task, ready)) = init {
-                    started.push((
+                    $started.push((
                         <$plugin as plugins::MyrmicPlugin>::DEFAULT_NAME,
                         ready,
                         task,
@@ -170,54 +168,64 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
         };
     }
 
-    load_plugin!("plugin-db", plugins::db::Plugin, |p| p.db.clone());
-    load_plugin!("plugin-mqtt", plugins::mqtt::Plugin, |p| p.mqtt.clone());
-    load_plugin!(
-        "plugin-orchestration",
-        plugins::orchestration::SorgOrchestrationPlugin,
-        |p| p.orchestration.clone(),
-    );
-    load_plugin!(
-        "plugin-execution",
-        plugins::execution::SorgExecutionPlugin,
-        |p| p.execution.clone()
-    );
-    load_plugin!("plugin-gateway", plugins::gateway::Plugin, |plugins| {
-        plugins.gateway.clone()
-    });
-    load_plugin!(
-        "plugin-introspection",
-        plugins::introspection::IntrospectionPlugin,
-        |p| Some(p.introspection.clone()),
-    );
-    load_plugin!(
-        "plugin-onboarding",
-        plugins::onboarding::SwarmOnboardingPlugin,
-        |p| p.onboarding.clone(),
-    );
-    load_plugin!(
-        "plugin-test-control",
-        plugins::test_control::ZenohTestControlPlugin,
-        |p| p.test_control.clone(),
-    );
-    load_plugin!(
-        "plugin-embedded-log",
-        plugins::embedded_log::EmbeddedLoggingPlugin,
-        |p| p.embedded_log.clone(),
-    );
+    #[cfg_attr(not(feature = "plugin-db"), allow(unused_mut))]
+    let mut first = vec![];
+    load_plugin!(first, "plugin-db", plugins::db::Plugin, |p| p.db.clone());
 
     runtime.start().await.expect("Failed to start runtime");
 
-    let startup = futures_util::future::try_join_all(
+    let rest = || {
+        let mut started = vec![];
+        load_plugin!(started, "plugin-mqtt", plugins::mqtt::Plugin, |p| p
+            .mqtt
+            .clone());
+        load_plugin!(
+            started,
+            "plugin-orchestration",
+            plugins::orchestration::SorgOrchestrationPlugin,
+            |p| p.orchestration.clone(),
+        );
+        load_plugin!(
+            started,
+            "plugin-execution",
+            plugins::execution::SorgExecutionPlugin,
+            |p| p.execution.clone()
+        );
+        load_plugin!(
+            started,
+            "plugin-gateway",
+            plugins::gateway::Plugin,
+            |plugins| { plugins.gateway.clone() }
+        );
+        load_plugin!(
+            started,
+            "plugin-introspection",
+            plugins::introspection::IntrospectionPlugin,
+            |p| Some(p.introspection.clone()),
+        );
+        load_plugin!(
+            started,
+            "plugin-onboarding",
+            plugins::onboarding::SwarmOnboardingPlugin,
+            |p| p.onboarding.clone(),
+        );
+        load_plugin!(
+            started,
+            "plugin-test-control",
+            plugins::test_control::ZenohTestControlPlugin,
+            |p| p.test_control.clone(),
+        );
+        load_plugin!(
+            started,
+            "plugin-embedded-log",
+            plugins::embedded_log::EmbeddedLoggingPlugin,
+            |p| p.embedded_log.clone(),
+        );
+
         started
-            .iter_mut()
-            .map(|(name, ready, task)| plugin_ready(name, ready.clone(), task)),
-    );
-    timeout(PLUGIN_STARTUP_TIMEOUT, startup)
-        .await
-        .with_context(|| {
-            format!("startup timed out [took longer than {PLUGIN_STARTUP_TIMEOUT:?}]")
-        })??;
+    };
+
+    let started = start_in_order(PLUGIN_STARTUP_TIMEOUT, first, rest).await?;
 
     let plugin_tasks = started
         .into_iter()
@@ -368,6 +376,57 @@ where
     Some((handle.spawn(fut), ready))
 }
 
+type Started = (
+    &'static str,
+    swarm_api::Ready,
+    JoinHandle<zenoh::Result<()>>,
+);
+
+/// Waits until every plugin in `started` is ready; fails as soon as one fails or `deadline`
+/// passes. A timeout names the plugins of this phase.
+async fn all_ready(
+    deadline: Instant,
+    budget: Duration,
+    started: &mut [Started],
+) -> anyhow::Result<()> {
+    let names = started
+        .iter()
+        .map(|(name, ..)| *name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ready = futures_util::future::try_join_all(
+        started
+            .iter_mut()
+            .map(|(name, ready, task)| plugin_ready(name, ready.clone(), task)),
+    );
+
+    timeout_at(deadline, ready)
+        .await
+        .with_context(|| {
+            format!("startup timed out waiting for [{names}] [took longer than {budget:?}]")
+        })?
+        .map(drop)
+}
+
+/// Waits for `first` to be ready, then spawns the plugins that depend on it and waits for those.
+/// Both phases share `budget`. The result lists `first` before the rest.
+async fn start_in_order<F>(
+    budget: Duration,
+    mut first: Vec<Started>,
+    rest: F,
+) -> anyhow::Result<Vec<Started>>
+where
+    F: FnOnce() -> Vec<Started>,
+{
+    let deadline = Instant::now() + budget;
+    all_ready(deadline, budget, &mut first).await?;
+    let mut rest = rest();
+    all_ready(deadline, budget, &mut rest).await?;
+    first.append(&mut rest);
+
+    Ok(first)
+}
+
 /// Resolves once the plugin signalled ready; fails if its task ends first.
 async fn plugin_ready(
     name: &str,
@@ -397,7 +456,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::plugin_ready;
+    use std::future::pending;
+    use std::pin::pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use futures_util::FutureExt as _;
+    use tokio::time::timeout;
+
+    use super::{Started, plugin_ready, start_in_order};
 
     #[tokio::test]
     async fn ready_then_ok_is_ready() {
@@ -419,7 +487,7 @@ mod tests {
         let signal = ready.clone();
         let mut handle = task(async move {
             signal.notify_one();
-            std::future::pending::<()>().await;
+            pending::<()>().await;
             Ok(())
         });
 
@@ -467,6 +535,110 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("plugin test failed to start"), "{message}");
         assert!(message.contains("boom"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn dependents_start_after_first_is_ready() {
+        let first_ready = swarm_api::Ready::default();
+        let first = vec![pending_plugin("first", first_ready.clone())];
+        let entered = Arc::new(AtomicBool::new(false));
+        let seen = entered.clone();
+        let rest = move || {
+            seen.store(true, Ordering::SeqCst);
+            let ready = swarm_api::Ready::default();
+            ready.notify_one();
+
+            vec![pending_plugin("rest", ready)]
+        };
+
+        let mut startup = pin!(start_in_order(BUDGET, first, rest));
+        assert!((&mut startup).now_or_never().is_none());
+        assert!(
+            !entered.load(Ordering::SeqCst),
+            "dependent started before the db was ready"
+        );
+
+        first_ready.notify_one();
+        let started = timeout(Duration::from_secs(1), startup)
+            .await
+            .expect("startup finishes once the first plugin is ready")
+            .expect("startup succeeds");
+        assert!(entered.load(Ordering::SeqCst));
+        assert_eq!(
+            started.iter().map(|(name, ..)| *name).collect::<Vec<_>>(),
+            ["first", "rest"]
+        );
+        abort_all(started);
+    }
+
+    #[tokio::test]
+    async fn no_first_plugin_starts_rest_at_once() {
+        let ready = swarm_api::Ready::default();
+        ready.notify_one();
+        let rest = move || vec![pending_plugin("rest", ready)];
+
+        let started = timeout(Duration::from_secs(1), start_in_order(BUDGET, vec![], rest))
+            .await
+            .expect("startup does not wait for a first plugin")
+            .expect("startup succeeds");
+        assert_eq!(started.len(), 1);
+        abort_all(started);
+    }
+
+    #[tokio::test]
+    async fn failing_first_plugin_stops_startup() {
+        let first = vec![(
+            "first",
+            swarm_api::Ready::default(),
+            task(async { Err("boom".into()) }),
+        )];
+        let entered = Arc::new(AtomicBool::new(false));
+        let seen = entered.clone();
+        let rest = move || {
+            seen.store(true, Ordering::SeqCst);
+            Vec::new()
+        };
+
+        let err = start_in_order(BUDGET, first, rest)
+            .await
+            .expect_err("startup fails with the first plugin");
+        assert!(
+            err.to_string()
+                .contains("plugin first failed to start: boom"),
+            "{err}"
+        );
+        assert!(!entered.load(Ordering::SeqCst), "dependents were started");
+    }
+
+    #[tokio::test]
+    async fn hanging_first_plugin_is_named_in_the_timeout() {
+        let first = vec![pending_plugin("first", swarm_api::Ready::default())];
+
+        let err = start_in_order(Duration::from_millis(50), first, Vec::new)
+            .await
+            .expect_err("startup times out");
+        assert!(
+            err.to_string()
+                .contains("startup timed out waiting for [first]"),
+            "{err}"
+        );
+    }
+
+    const BUDGET: Duration = Duration::from_secs(30);
+
+    fn pending_plugin(name: &'static str, ready: swarm_api::Ready) -> Started {
+        let handle = task(async {
+            pending::<()>().await;
+            Ok(())
+        });
+
+        (name, ready, handle)
+    }
+
+    fn abort_all(started: Vec<Started>) {
+        for (_, _, handle) in started {
+            handle.abort();
+        }
     }
 
     fn task<F>(fut: F) -> tokio::task::JoinHandle<zenoh::Result<()>>

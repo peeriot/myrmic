@@ -5,8 +5,8 @@ use sorg_common::{
     PoisonRcv, SorgPayload, bail, custom_err, poison_channel, set_up_queryable,
     supervision::LeaseTracker,
 };
-use tracing::{Level, debug, info, span, warn};
-use zenoh::Session;
+use tracing::{Instrument, Level, debug, info, span, warn};
+use zenoh::{Session, config::ZenohId};
 
 use crate::{
     Config, Result,
@@ -15,7 +15,7 @@ use crate::{
     membership::monitor_orch_nodes,
     queryables::Queryable,
     state::{State, StateUpdate},
-    topics::TOPIC_ORCH_STATE_UPDATE,
+    topics::{TOPIC_ORCH_STATE_UPDATE, topic_orch_liveliness},
 };
 
 /// Spawns a tokio task running the sorg orchestration. The task can be terminated using
@@ -28,12 +28,22 @@ pub async fn spawn(
 ) -> Result<()> {
     info!("spawning sorg-orchestration");
 
-    // the poison senders are not actively used, but will poison the other end when we leave the scope
-    let (_poison_snd_event_loop, poison_rcv_event_loop) = poison_channel();
-
     let node_id = session.info().zid().await;
     let node_span = span!(Level::INFO, "orch", node_id = %node_id);
-    let _enter = node_span.enter();
+    run(session, config, off_rcv, ready, node_id)
+        .instrument(node_span)
+        .await
+}
+
+async fn run(
+    session: Session,
+    config: Config,
+    off_rcv: flume::Receiver<()>,
+    ready: Arc<tokio::sync::Notify>,
+    node_id: ZenohId,
+) -> Result<()> {
+    // the poison senders are not actively used, but will poison the other end when we leave the scope
+    let (_poison_snd_event_loop, poison_rcv_event_loop) = poison_channel();
 
     let orch_state = init_state(&session);
 
@@ -42,11 +52,10 @@ pub async fn spawn(
     let state_update_handle = {
         let session = session.clone();
         let orch_state = orch_state.clone();
-        tokio::task::spawn(process_deployment_updates(
-            poison_rcv_state_update,
-            orch_state,
-            session,
-        ))
+        tokio::task::spawn(
+            process_deployment_updates(poison_rcv_state_update, orch_state, session)
+                .in_current_span(),
+        )
     };
 
     let lease_tracker = Arc::new(Mutex::new(LeaseTracker::new()));
@@ -66,7 +75,9 @@ pub async fn spawn(
     );
 
     // set up the handler for the leaving and joining of other nodes
-    monitor_orch_nodes(session.clone(), client.handle()).await?;
+    let handle_membership = monitor_orch_nodes(session.clone(), client.handle()).await?;
+    // the monitor has no poison channel; stop it on every exit path of `run`
+    let _abort_membership = AbortOnDrop(handle_membership.abort_handle());
 
     let (handle_capas, _poison_snd_capas) =
         set_up_queryable(session.clone(), client.handle(), Queryable::Capabilities);
@@ -76,6 +87,13 @@ pub async fn spawn(
         set_up_queryable(session.clone(), client.handle(), Queryable::CellUndeploy);
     let (handle_app_delete, _poison_snd_app_delete) =
         set_up_queryable(session.clone(), client.handle(), Queryable::AppDelete);
+
+    // the other orchs see us as a member only once we can answer their queries
+    let _orch_token = session
+        .liveliness()
+        .declare_token(topic_orch_liveliness(node_id))
+        .await
+        .map_err(|err| custom_err!("failed to declare orch liveliness token: {err}"))?;
 
     // wait a bit for evth to set up before signaling readiness
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -93,6 +111,13 @@ pub async fn spawn(
             match orch_result{
                 Ok(()) => bail!("event loop terminated without error"),
                 Err(err) => bail!("event loop terminated due to error: '{err}'")
+            }
+        }
+
+        membership_result = handle_membership => {
+            match membership_result {
+                Ok(()) => bail!("orch membership monitor terminated"),
+                Err(join_err) => bail!("orch membership monitor panicked or was canceled: {join_err}"),
             }
         }
 
@@ -160,4 +185,13 @@ async fn process_deployment_updates(
     }
     warn!("orch state update subscriber terminated");
     Ok(())
+}
+
+/// Aborts the task behind the handle when dropped.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }

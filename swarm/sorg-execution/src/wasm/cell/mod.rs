@@ -13,7 +13,7 @@ use opentelemetry::trace::SpanContext;
 use sorg_common::{PoisonSnd, SpawnLineage, bail, custom_err};
 use tokio::sync::oneshot::{Sender, channel};
 use uuid::Uuid;
-use wasmtime::{Engine, Instance, Module, Store};
+use wasmtime::{Instance, Module, Store};
 
 /// Splits a cell identity UUID into the `(hi, lo)` `i64` pair passed across the
 /// Wasm ABI. The guest recombines them into a `u128`. A `None` sender becomes
@@ -29,7 +29,7 @@ use crate::{
     wasm::{
         WasmEnvironment,
         cell::{cell_task::CellRuntime, state::CellState},
-        module_load::{load_module_cell, load_wasm_binary_from_class},
+        module_load::load_module,
     },
 };
 use myrmic_common::cells::{Command, Event};
@@ -141,7 +141,8 @@ pub(crate) async fn run_cell(
     mailbox_poll_interval: Duration,
     mailbox_batch_size: usize,
 ) -> Result<(PoisonSnd, tokio::task::JoinHandle<Result<()>>)> {
-    let event_handlers = event_handlers_from_cell_binary(&wasm_env.engine, session, class).await?;
+    let module = load_module(session, class, &wasm_env.engine).await?;
+    let event_handlers = event_handlers(&module);
 
     let (mut cell_state, msg_rcv, ready_rcv) = CellState::state_and_msg_rcv(
         sri,
@@ -165,14 +166,11 @@ pub(crate) async fn run_cell(
     store.set_fuel(wasm_env.runner_fuel)?;
     store.fuel_async_yield_interval(Some(wasm_env.fuel_yield_interval))?;
 
-    let instance = load_module_cell(
-        session,
-        class,
-        &wasm_env.engine,
-        &mut store,
-        &wasm_env.linker,
-    )
-    .await?;
+    let instance = wasm_env
+        .linker
+        .instantiate_async(&mut store, &module)
+        .await
+        .map_err(|err| custom_err!("failed to instantiate module: {err}"))?;
 
     call_cell_inits(
         &instance, &mut store, session, &sri, class, gen_id, &lineage, arguments,
@@ -303,22 +301,10 @@ async fn call_init(
     }
 }
 
-pub(crate) async fn event_handlers_from_cell_binary(
-    engine: &Engine,
-    session: &Session,
-    class: BlobHash,
-) -> Result<HashSet<String>> {
-    let binary = load_wasm_binary_from_class(session, class).await?;
-    let module = Module::from_binary(engine, &binary)?;
-
-    let mut event_handlers = HashSet::new();
-
-    for export in module.exports() {
-        let name = export.name();
-        if let Some(event_name) = name.strip_prefix("event_") {
-            event_handlers.insert(event_name.to_owned());
-        }
-    }
-
-    Ok(event_handlers)
+fn event_handlers(module: &Module) -> HashSet<String> {
+    module
+        .exports()
+        .filter_map(|export| export.name().strip_prefix("event_"))
+        .map(str::to_owned)
+        .collect()
 }

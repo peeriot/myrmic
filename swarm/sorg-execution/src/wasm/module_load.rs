@@ -4,33 +4,24 @@ use cell_protocol::{BlobHash, class_blob_id, class_registry_scope};
 use db_client::Session;
 use db_client::v1::{Client as DbClient, models::blob_resolve};
 use sorg_common::{bail, custom_err};
-use wasmtime::{Engine, ExternType, Instance, Linker, Module, Store};
+use wasmtime::{Engine, ExternType, Module};
 
-use crate::{Result, wasm::cell::state::CellState};
+use crate::Result;
 
-pub(crate) async fn load_module_cell(
+pub(crate) async fn load_module(
     session: &Session,
     class: BlobHash,
     engine: &Engine,
-    store: &mut Store<CellState>,
-    linker: &Linker<CellState>,
-) -> Result<Instance> {
+) -> Result<Module> {
     let binary = load_wasm_binary_from_class(session, class).await?;
 
     let module = Module::from_binary(engine, &binary)?;
     check_memory_export(&module, &class.to_hex())?;
 
-    let instance = linker
-        .instantiate_async(store, &module)
-        .await
-        .map_err(|err| custom_err!("failed to instantiate module: {err}"))?;
-    Ok(instance)
+    Ok(module)
 }
 
-pub(crate) async fn load_wasm_binary_from_class(
-    session: &Session,
-    class: BlobHash,
-) -> Result<Vec<u8>> {
+async fn load_wasm_binary_from_class(session: &Session, class: BlobHash) -> Result<Vec<u8>> {
     let db = DbClient::new(session);
 
     let response = db

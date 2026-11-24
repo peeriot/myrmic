@@ -12,9 +12,12 @@ fn init(_md: Metadata) -> Result<()> {
     Ok(())
 }
 
-/// Timer target. Publishes a `timer_tick` event on every fire.
+/// Timer target. Publishes a `timer_tick` event carrying the cell's `uptime()`
+/// in milliseconds, so tests can measure the period where it is generated.
 #[myrmic_sdk::cmd]
 fn tick(_md: Metadata) -> Result<()> {
-    publish("timer_tick", &JsonValue::from("tick"))?;
+    let uptime = myrmic_sdk::uptime().map_err(|_| "uptime failed")?;
+    let stamp_ms = u64::try_from(uptime.as_millis()).map_err(|_| "uptime overflow")?;
+    publish("timer_tick", &JsonValue::from(stamp_ms))?;
     Ok(())
 }
