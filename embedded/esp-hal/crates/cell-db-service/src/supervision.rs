@@ -15,9 +15,9 @@ use cell_protocol::supervision::{
     Evidence, FencingState, LeaseFacts, LeaseTracker, RowFacts, RowRead, Verdict, WatchedCell,
 };
 use cell_protocol::{
-    CellAttachment, CellInstance, Gen, MailboxCommand, NODE_LEASE_TABLE, NodeLease,
-    PlacementEntry, PlacementKind, ROOT_DEATH_TABLE, RootDeath, RuntimeId, Sri,
-    instance_registry_scope, node_lease_scope, placement_scope, root_death_scope,
+    CellAttachment, CellInstance, Gen, MailboxCommand, NODE_LEASE_TABLE, NodeLease, PlacementEntry,
+    PlacementKind, ROOT_DEATH_TABLE, RootDeath, RuntimeId, Sri, instance_registry_scope,
+    node_lease_scope, placement_scope, root_death_scope,
 };
 use db_client::v1::models as db_models;
 use db_client::v1::{Client, models::Scope};
