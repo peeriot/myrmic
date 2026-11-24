@@ -94,7 +94,8 @@ pub(crate) fn emit_sink_task(
     // `emit_board_peripherals`.
     let mut pin_params = TokenStream::new();
     let mut pin_args = TokenStream::new();
-    for pin_name in &driver_schema.requires.optional_pins {
+    for pin in &driver_schema.requires.optional_pins {
+        let pin_name = &pin.name;
         if !device.pins.contains_key(pin_name.as_str()) {
             bail!(
                 "outlet `{}`: device `{}` must wire the `{pin_name}` pin required by driver `{}`",
