@@ -336,7 +336,7 @@ impl DeviceCreds<'_> {
             }
         }
 
-        Ok((unwrap!(core::str::from_utf8(data)), buf))
+        Ok((unwrap!(core::str::from_utf8(data).ok()), buf))
     }
 }
 
@@ -432,7 +432,7 @@ impl core::fmt::Display for DeviceProfile<'_> {
 
 #[cfg(feature = "defmt")]
 impl defmt::Format for DeviceProfile<'_> {
-    fn format(&self, fmt: defmt::Formatter) {
+    fn format(&self, fmt: defmt::Formatter<'_>) {
         defmt::write!(fmt, "DeviceProfile(op_net_flags={:?})", self.op_net_flags);
     }
 }
@@ -497,6 +497,7 @@ impl<'a> SerdeObj<'a> for InstallerMeta<'a> {
 /// Generated and published by the device, and consumed by the installer
 /// so that the installer can track the progress of the onboarding process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct OnboardingStatus<'a> {
     /// A human-readable status message.
     status: &'a str,

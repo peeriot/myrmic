@@ -8,7 +8,14 @@ publish = false
 
 [features]
 default = ["log"]
-defmt = ["dep:defmt", "defmt-or-log/defmt", "zenoh-traits/defmt"]
+defmt = [
+    "dep:defmt",
+    "defmt-or-log/defmt",
+    "embassy-sync/defmt",
+    "embassy-time/defmt",
+    "embedded-io-async/defmt",
+    "zenoh-traits/defmt",
+]
 log = ["dep:log", "defmt-or-log/log", "zenoh-traits/log"]
 
 [dependencies]
