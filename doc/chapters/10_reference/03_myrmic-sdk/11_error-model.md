@@ -1,6 +1,6 @@
 # Errors
 
-A handler fails only when its code returns an error, either by propagating the error from a call that engages the runtime or by returning an error explicitly.
+A handler fails when its code returns an error, either by propagating the error from a call that engages the runtime or by returning an error explicitly. A handler that traps or panics does not fail: it crashes the cell. See [Trap or panic](#trap-or-panic).
 
 A failed call to the runtime returns `ApiError`, an enum, so the code can match a case and decide what to do.
 
@@ -81,6 +81,25 @@ Afterwards, what happens to the invocation depends on what it was:
 - **a scheduled invocation** - lost, and the schedule keeps running
 - **a monitor notification** - delivered again
 - **initialization** - the deployment fails with that error message, and the cell does not start
+
+### Trap or panic
+
+A trap or a panic in a command, event, scheduled or monitor handler is a crash, not a handler error. A panic ends in a trap, so the two behave the same. Running out of fuel is a trap too.
+
+The runtime rolls back what the handler did, as for a returned error, logs the crash at error level, and ends the cell's incarnation. The instance is discarded, because its memory may be corrupt, and its timers and event subscriptions end with it.
+
+What happens to the cell depends on how it was deployed:
+
+- **a root** - its [restart policy](../01_configuration/02_cell-and-application-configuration.md#restart) decides. Under `on-error` or `always` it is restarted, and its initialization handler runs again.
+- **a spawned cell** - it is not restarted. Its parent's [monitor handler](04_cell-lifecycle/03_cell-monitoring.md) is told that it crashed.
+
+What happens to the invocation depends on what it was:
+
+- **a command** - it stays in the mailbox and is delivered to the next incarnation at the same identity: the restarted root, a redeployed cell, or a child spawned again under the same name. A root with `never` and a spawned cell are not restarted, so the command waits for whatever is deployed there next. A command that crashes the cell every time is delivered again on every restart until the crash-loop bound gives up on the cell; there is no other limit yet.
+- **an event** - not delivered again, so the event is lost. A restarted cell reads only events published after it started, so events published while it was down are lost too.
+- **a scheduled invocation** - lost. Timers do not survive the crash; arm them again in the initialization handler.
+- **a monitor notification** - delivered again, like a command. A trap in the monitor handler crashes the parent as well.
+- **initialization** - the deployment fails, as for a returned error, and the cell does not start.
 
 ## API documentation
 

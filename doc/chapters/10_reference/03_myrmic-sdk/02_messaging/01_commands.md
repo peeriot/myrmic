@@ -52,7 +52,8 @@ The payload is decoded before the handler runs. A handler that declares no paylo
 Everything a command handler does commits atomically when it completes, including any command it sent, so nothing is visible outside until then. What happens depends on the outcome:
 
 - **The handler succeeds.** Its work commits and the command is done with.
-- **The handler fails or traps.** Nothing it did takes effect, and the command is delivered again.
+- **The handler fails.** Nothing it did takes effect, and the command is delivered again.
+- **The handler traps or panics.** The cell crashes: nothing the handler did takes effect, the cell's incarnation ends, and the command is delivered again to the next incarnation at the same identity. See [Trap or panic](../11_error-model.md#trap-or-panic).
 - **The cell has no handler for that name.** The command is discarded and logged on the node, and the sender is never told.
 
 ### Errors

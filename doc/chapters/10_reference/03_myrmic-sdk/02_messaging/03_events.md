@@ -55,7 +55,8 @@ The payload is decoded before the handler runs. A handler also receives the publ
 Everything an event handler does commits atomically when it completes, including any event it published, so nothing is visible outside until then. What happens depends on the outcome:
 
 - **The handler succeeds.** Its work commits.
-- **The handler fails or traps.** Nothing it did takes effect, but the event is not delivered again.
+- **The handler fails.** Nothing it did takes effect, but the event is not delivered again.
+- **The handler traps or panics.** The cell crashes: nothing the handler did takes effect, the event is not delivered again, and the cell's incarnation ends. See [Trap or panic](../11_error-model.md#trap-or-panic).
 
 ### Errors
 

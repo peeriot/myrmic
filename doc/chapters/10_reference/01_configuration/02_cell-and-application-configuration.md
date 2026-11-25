@@ -93,6 +93,8 @@ The policy name is one of:
 - `on-error` (also spelled `onerror`) - restart on an abnormal exit: a crash, a spawn failure, Node loss, or a non-zero stop code. A clean self-stop is terminal.
 - `always` - restart on any exit. Only an operator terminate or a cascade teardown is terminal.
 
+A crash is a trap or panic in one of the Cell's handlers, including a handler that runs out of fuel, or the Cell's task ending unexpectedly in the runtime. A handler that returns an error is not a crash: the Cell keeps running. The Command whose handler crashed the Cell stays in its Mailbox and is delivered again to the restarted Cell; a Command that crashes it every time is bounded only by the crash-loop bounds below. See [Trap or panic](../03_myrmic-sdk/11_error-model.md#trap-or-panic).
+
 Written as a bare string, the crash-loop bounds keep their defaults. Written as a mapping, the bounds can be tuned:
 
 - `type` - **Required.** The policy name.
