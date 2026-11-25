@@ -42,7 +42,7 @@ fn init(md: Metadata) -> myrmic_sdk::Result<()> {
 Serving assets is as easy as just uploading them to the blob-store, with a convenience function via (`myrmic_sdk::gateway::assets`). The cell can populate the store however it likes. (compiled in with
 `include_bytes!`, fetched from another cell, or written at runtime.)
 
-The lifetime of the routing configuration is tied to the cell that declared it. If the owning cell goes, the routing config does as well.
+The lifetime of the routing configuration is tied to the cell that declared it. If the owning cell goes, the routing config does as well. A cell lost without an undeploy can still be served for a short time (currently up to about 15 seconds), see [Gateway routes](../03_myrmic-sdk/06_external-systems/01_gateway-routes.md).
 
 By default, mounts are first-come. A cell may re-mount its own path freely, but mounting a path another cell holds will fail.
 

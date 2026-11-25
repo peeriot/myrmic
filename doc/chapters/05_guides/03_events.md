@@ -39,6 +39,26 @@ pub struct Metadata {
 }
 ```
 
+## Event names are swarm-wide
+
+An event name is global to the swarm. It is not scoped to the publishing cell, its class, or its application. Every cell with a handler for a name receives every event published under it, from any publisher. If two classes both publish `temperature_changed`, they feed the same handlers.
+
+So two different classes, or two copies of one application, must use distinct event names. Names may only contain ASCII letters, digits and `_`, so a `class.event` form is not possible. Until canonical per-class names arrive with cell definitions, prefix the event name with the class and `_`:
+
+```rust
+// In the thermometer class.
+#[myrmic_sdk::evt(name = "thermometer_temperature_changed")]
+fn on_temperature_changed(_md: myrmic_sdk::Metadata, value: f32) -> myrmic_sdk::Result {
+    // ...
+    Ok(())
+}
+
+// In the publisher.
+myrmic_sdk::publish("thermometer_temperature_changed", &22.5_f32)?;
+```
+
+A handler that must tell publishers apart can check `md.sender`. The event names a class handles are fixed at build time, so changing one means rebuilding the class. See also the [`name` note](../10_reference/01_configuration/02_cell-and-application-configuration.md#name) on running two copies of an application.
+
 ## Event payload
 
 An event may carry a payload - in that case, add a second argument to the handler to receive it:
