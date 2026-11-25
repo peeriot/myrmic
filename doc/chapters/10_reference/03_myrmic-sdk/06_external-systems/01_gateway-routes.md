@@ -58,7 +58,7 @@ fn go_offline(_md: Metadata) -> myrmic_sdk::Result {
 
 Registering and removing a route join the handler's transaction: they take effect when the handler returns successfully, and are rolled back if it fails.
 
-A path belongs to the cell that claimed it first. That cell can register it again, which replaces the old one. Another cell trying fails.
+A path belongs to the cell that claimed it first. That cell can register it again, which replaces the old one. Another cell trying fails. The path is swarm-wide, not per application, so a swarm holds one route per path. A second copy of an application must mount under a different path.
 
 On the **API** path:
 
@@ -70,7 +70,7 @@ On the **WebSocket** path, one connection carries both directions, and needs no 
 
 A command goes to the cell the client names, or to the cell that owns the route when none was named. An event goes to every cell that handles it.
 
-A route stops working when the cell that owns it is gone, whether it was undeployed or lost with its node.
+A route stops working when the cell that owns it is gone, whether it was undeployed or lost with its node. An undeploy removes the route promptly. When the cell disappears without an undeploy (its node was lost, a runtime restarted), a gateway may keep serving the route and its assets for a short time (currently up to about 15 seconds) before it returns not-found.
 
 ### Errors
 
@@ -81,11 +81,13 @@ Registering fails when:
 - another cell owns the path
 - the runtime cannot register it
 
+A failed registration in `init` fails the cell's deploy. In an application deploy, that rolls back the whole application.
+
 Removing fails when:
 
 - the path is invalid
 - the cell has no such route registered
-- the route is owned but another cell
+- the route is owned by another cell
 
 ### Limits
 
