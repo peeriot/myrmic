@@ -132,7 +132,7 @@ mod tests {
     use super::generate;
     use super::helpers::pascal_case;
     use crate::ChipBackend;
-    use crate::descriptor::{ConfigField, DriverSchema, Scope};
+    use crate::descriptor::{ConfigField, DriverSchema, OptionalPin, PinDirection, Scope};
     use crate::manifest::{BoardManifest, parse_manifest};
     use crate::pipeline::{
         Outlet, PipelineFile, PipelineInfo, Source, Tap, TapKind, TapStreamKind,
@@ -171,6 +171,12 @@ mod tests {
         }
         fn gpio_output_type(&self) -> TokenStream {
             quote!(MockOutput)
+        }
+        fn sensor_pin_type(&self, direction: PinDirection) -> TokenStream {
+            match direction {
+                PinDirection::Output => quote!(MockOutput),
+                PinDirection::Input => self.gpio_flex_type(),
+            }
         }
         fn pwm_channel_type(&self) -> TokenStream {
             quote!(MockPwm)
@@ -560,15 +566,16 @@ devices:
         .unwrap()
     }
 
+    fn input_pins(names: &[&str]) -> Vec<OptionalPin> {
+        names.iter().map(|name| OptionalPin::input(*name)).collect()
+    }
+
     fn ccs811_schema(optional_pins: &[&str]) -> DriverSchema {
         use crate::descriptor::Requires;
         DriverSchema {
             requires: Requires {
                 buses: vec![],
-                optional_pins: optional_pins
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
+                optional_pins: input_pins(optional_pins),
             },
             ..Default::default()
         }
@@ -689,6 +696,27 @@ devices:
             !output.contains("reset: MockFlex"),
             "task fn must NOT take unwired pin in:\n{output}"
         );
+    }
+
+    #[test]
+    fn sensor_pin_param_type_follows_declared_direction() {
+        let manifest = manifest_with_pin_device("    pins:\n      nint: 4\n      reset: 5");
+        let mut schema = ccs811_schema(&["nint", "reset"]);
+        schema.requires.optional_pins[1].direction = PinDirection::Output;
+        let mut schemas = IndexMap::new();
+        schemas.insert("ccs811".into(), schema);
+
+        let output = generate(
+            &manifest,
+            &ccs811_pipeline(),
+            &schemas,
+            &IndexMap::new(),
+            &MockBackend,
+        )
+        .unwrap();
+
+        assert!(output.contains("nint: MockFlex"), "in:\n{output}");
+        assert!(output.contains("reset: MockOutput"), "in:\n{output}");
     }
 
     #[test]
@@ -951,7 +979,7 @@ devices:
             config_schema: cs,
             requires: Requires {
                 buses: vec![],
-                optional_pins: vec!["out".into()],
+                optional_pins: input_pins(&["out"]),
             },
             writes: Some(DriverWrite {
                 command_type: "DigitalState".into(),
@@ -1184,7 +1212,7 @@ devices:
                 }],
                 requires: Requires {
                     buses: vec![],
-                    optional_pins: vec!["out".into(), "feedback".into()],
+                    optional_pins: input_pins(&["out", "feedback"]),
                 },
                 ..Default::default()
             },

@@ -1,5 +1,9 @@
+use std::fmt::{Formatter, Result as FmtResult};
+
 use indexmap::IndexMap;
-use serde::Deserialize;
+use serde::de::value::MapAccessDeserializer;
+use serde::de::{Error as DeError, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 
 use crate::manifest::BusTransport;
 
@@ -58,7 +62,95 @@ pub struct Requires {
     #[serde(default)]
     pub buses: Vec<RequiredBus>,
     #[serde(default)]
-    pub optional_pins: Vec<String>,
+    pub optional_pins: Vec<OptionalPin>,
+}
+
+impl Requires {
+    /// Direction the driver declares for the optional pin `name`; a pin the
+    /// descriptor does not list is an input.
+    #[must_use]
+    pub fn pin_direction(&self, name: &str) -> PinDirection {
+        self.optional_pins
+            .iter()
+            .find(|pin| pin.name == name)
+            .map_or_else(PinDirection::default, |pin| pin.direction)
+    }
+}
+
+/// Direction of an optional device pin, as seen from the driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PinDirection {
+    /// The driver reads the pin (e.g. an interrupt line).
+    #[default]
+    Input,
+    /// The driver drives the pin (e.g. a reset line).
+    Output,
+}
+
+/// An optional device pin declared by a driver descriptor.
+///
+/// Written either as a bare name (`nint`, direction `input`) or as a map
+/// (`{ name: reset, direction: output }`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptionalPin {
+    /// Pin name, as used in the manifest device `pins` map.
+    pub name: String,
+    /// Direction as seen from the driver.
+    pub direction: PinDirection,
+}
+
+impl OptionalPin {
+    /// An input pin called `name`.
+    pub fn input(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            direction: PinDirection::Input,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OptionalPin {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PinVisitor;
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Full {
+            name: String,
+            #[serde(default)]
+            direction: PinDirection,
+        }
+
+        impl<'de> Visitor<'de> for PinVisitor {
+            type Value = OptionalPin;
+
+            fn expecting(&self, f: &mut Formatter<'_>) -> FmtResult {
+                f.write_str("a pin name or a `{ name, direction }` map")
+            }
+
+            fn visit_str<E>(self, name: &str) -> Result<OptionalPin, E>
+            where
+                E: DeError,
+            {
+                Ok(OptionalPin::input(name))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<OptionalPin, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let Full { name, direction } = Full::deserialize(MapAccessDeserializer::new(map))?;
+
+                Ok(OptionalPin { name, direction })
+            }
+        }
+
+        deserializer.deserialize_any(PinVisitor)
+    }
 }
 
 /// Configuration field scope.
@@ -112,4 +204,59 @@ pub struct DriverSchema {
 /// Load a `DriverSchema` (or step schema) from a descriptor YAML string.
 pub fn load_schema_from_yaml(yaml: &str) -> Result<DriverSchema, serde_yaml::Error> {
     serde_yaml::from_str(yaml)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_string_is_an_input_pin() {
+        assert_eq!(
+            pins("requires: { optional_pins: [nint] }"),
+            [OptionalPin::input("nint")]
+        );
+    }
+
+    #[test]
+    fn map_form_carries_the_direction() {
+        let parsed = pins("requires: { optional_pins: [{ name: reset, direction: output }, irq] }");
+
+        assert_eq!(parsed[0].name, "reset");
+        assert_eq!(parsed[0].direction, PinDirection::Output);
+        assert_eq!(parsed[1].name, "irq");
+        assert_eq!(parsed[1].direction, PinDirection::Input);
+    }
+
+    #[test]
+    fn map_without_direction_defaults_to_input() {
+        let parsed = pins("requires: { optional_pins: [{ name: irq }] }");
+
+        assert_eq!(parsed[0].direction, PinDirection::Input);
+    }
+
+    #[test]
+    fn unknown_direction_is_a_named_error() {
+        let err = load_schema_from_yaml(
+            "requires: { optional_pins: [{ name: x, direction: sideways }] }",
+        )
+        .expect_err("bad direction must fail");
+
+        assert!(err.to_string().contains("sideways"), "{err}");
+    }
+
+    #[test]
+    fn map_without_name_is_rejected() {
+        let err = load_schema_from_yaml("requires: { optional_pins: [{ direction: input }] }")
+            .expect_err("name is required");
+
+        assert!(err.to_string().contains("missing field `name`"), "{err}");
+    }
+
+    fn pins(yaml: &str) -> Vec<OptionalPin> {
+        load_schema_from_yaml(yaml)
+            .expect("descriptor parses")
+            .requires
+            .optional_pins
+    }
 }

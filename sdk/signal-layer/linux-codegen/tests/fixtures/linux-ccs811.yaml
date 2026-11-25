@@ -1,0 +1,15 @@
+# ccs811 source on Linux with its `nint` line wired; checked by validation tests.
+pipeline:
+  id: linux-ccs811
+
+sources:
+  - id: air
+    device: air
+    config:
+      sample_interval_ms: 10000
+
+taps:
+  - name: eco2
+    kind: retained
+    type: f32
+    source: air.eco2

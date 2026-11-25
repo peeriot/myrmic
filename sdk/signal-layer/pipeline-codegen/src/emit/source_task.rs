@@ -6,7 +6,7 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use crate::ChipBackend;
-use crate::descriptor::{DriverSchema, OutputMode, Scope};
+use crate::descriptor::{DriverSchema, OptionalPin, OutputMode, Scope};
 use crate::manifest::{BoardManifest, BusConfig, BusTransport, DeviceEntry};
 use crate::pipeline::{PipelineFile, Source, TapKind};
 
@@ -102,42 +102,30 @@ pub(crate) fn emit_source_task(
     let interval_expr = backend.emit_interval(interval_ms);
     let now_millis_expr = backend.emit_now_millis();
 
-    // Optional pins: all declared by the driver descriptor, plus which ones the
-    // manifest wired up. The task function takes one Flex param per wired pin;
-    // the `<Driver>Pins` struct contains every declared pin as `Option<Flex>`.
-    let optional_pin_names: Vec<&str> = driver_schema
-        .requires
-        .optional_pins
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let wired_pin_names: Vec<&str> = optional_pin_names
-        .iter()
-        .copied()
-        .filter(|name| device.pins.contains_key(*name))
-        .collect();
+    // The task takes one param per wired pin, typed by its direction; the
+    // `<Driver>Pins` struct holds every declared pin as `Option<_>`.
+    let optional_pins = &driver_schema.requires.optional_pins;
 
+    let is_wired = |pin: &OptionalPin| device.pins.contains_key(pin.name.as_str());
     let mut extra_task_params = TokenStream::new();
-    for pin_name in &wired_pin_names {
-        let pin_ident = snake_ident(pin_name);
-        let flex_ty = backend.gpio_flex_type();
-        extra_task_params.extend(quote! { #pin_ident: #flex_ty, });
+    for pin in optional_pins.iter().filter(|pin| is_wired(pin)) {
+        let pin_ident = snake_ident(&pin.name);
+        let pin_ty = backend.sensor_pin_type(pin.direction);
+        extra_task_params.extend(quote! { #pin_ident: #pin_ty, });
     }
 
     // Infallible construction (no bus access). The fallible bring-up happens
     // via `driver.init(&mut bus)` inside the task loop, so a sensor that is
     // absent or failing at boot can be retried instead of killing the task.
-    let construct_expr = if wired_pin_names.is_empty() {
-        quote! { #drv_crate::#drv_type::new(&cfg) }
-    } else {
+    let construct_expr = if optional_pins.iter().any(is_wired) {
         let pins_type = Ident::new(
             &format!("{}Pins", pascal_case(&device.driver)),
             Span::call_site(),
         );
         let mut pin_fields = TokenStream::new();
-        for pin_name in &optional_pin_names {
-            let field_ident = snake_ident(pin_name);
-            if wired_pin_names.contains(pin_name) {
+        for pin in optional_pins {
+            let field_ident = snake_ident(&pin.name);
+            if is_wired(pin) {
                 pin_fields.extend(quote! { #field_ident: Some(#field_ident), });
             } else {
                 pin_fields.extend(quote! { #field_ident: None, });
@@ -149,6 +137,8 @@ pub(crate) fn emit_source_task(
                 #drv_crate::#pins_type { #pin_fields },
             )
         }
+    } else {
+        quote! { #drv_crate::#drv_type::new(&cfg) }
     };
 
     // Direct tap writes (taps whose source is "{source_id}.{field}").
@@ -261,7 +251,8 @@ pub(crate) fn emit_source_task(
 
         // Output pin(s) become task params with the proper output type
         // (digital `Output` or PWM channel), and are moved into the driver.
-        for pin_name in &oschema.requires.optional_pins {
+        for pin in &oschema.requires.optional_pins {
+            let pin_name = &pin.name;
             if !odevice.pins.contains_key(pin_name.as_str()) {
                 return Err(anyhow::anyhow!(
                     "outlet `{}`: device `{}` must wire the `{pin_name}` pin",
@@ -276,9 +267,14 @@ pub(crate) fn emit_source_task(
             };
             extra_task_params.extend(quote! { #pin_ident: #pin_ty, });
         }
-        let first_pin = oschema.requires.optional_pins.first().ok_or_else(|| {
-            anyhow::anyhow!("outlet `{}`: driver declares no output pin", outlet.name)
-        })?;
+        let first_pin = &oschema
+            .requires
+            .optional_pins
+            .first()
+            .ok_or_else(|| {
+                anyhow::anyhow!("outlet `{}`: driver declares no output pin", outlet.name)
+            })?
+            .name;
         let pin_arg = snake_ident(&format!("{}_{}", odevice.id, first_pin));
         let odev_id = &odevice.id;
         outlet_driver_inits.extend(quote! {

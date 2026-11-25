@@ -1,0 +1,17 @@
+# SPI sensor with a reset output and an irq input line.
+pipeline:
+  id: linux-spi-pins
+
+sources:
+  - id: probe1
+    device: probe1
+    config:
+      sample_interval_ms: 1000
+
+steps: []
+
+taps:
+  - name: value
+    kind: retained
+    type: f32
+    source: probe1.value

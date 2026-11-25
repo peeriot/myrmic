@@ -144,6 +144,13 @@ pins the board file will assign. `outputs` names what a sensor produces, and tho
 what a pipeline points a tap at. An actuator declares `writes` instead, which the next section
 covers.
 
+A sensor's `optional_pins` entries are inputs by default. To declare a pin the driver drives, such
+as a reset line, write it as a map: `{ name: reset, direction: output }`. A driver with pins of
+both directions gives its pins struct one generic per pin. On Linux an `output` pin is a
+`LinuxOutputPin` that starts low, so the driver sets its level in `init()`; an `input` pin is a
+`LinuxInputPin` whose `Wait` implementation polls the level every millisecond. On ESP32 both are
+a `Flex` pin.
+
 `config_schema` is where a driver states its knobs, and the `scope` on each one is load-bearing.
 `hardware` means the value is a fact about the wiring, so it belongs in the board file.
 `application` means it can change without touching a wire, so it belongs in the pipeline. Pick

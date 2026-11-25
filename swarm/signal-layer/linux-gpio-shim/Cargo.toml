@@ -14,10 +14,15 @@ path = "src/lib.rs"
 embedded-hal = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+embedded-hal-async = { workspace = true }
 linux-embedded-hal = { workspace = true, features = ["gpio_cdev"] }
+tokio              = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }
 
 [lints]
 workspace = true

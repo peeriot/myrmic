@@ -133,15 +133,22 @@ If the sensor has optional GPIO pins, follow ccs811 exactly:
   duplicate method body — the polling path is selected purely by the runtime
   `Option<P>` field rather than by the type.
 - `pub struct <Sensor>Pins<P> { pub <pin_name>: Option<P>, ... }`
-- `impl Default for <Sensor>Pins<P>`
-- `pub struct <Sensor><P = NoPin>` storing `Option<P>` per pin — the pin is moved in at
-  construction and **owned for the instance's lifetime**, so re-running `init` for recovery
-  never needs the pin re-passed.
+  - A driver that mixes directions takes one generic per pin (`<Sensor>Pins<I, O>`): the
+    generated code builds the struct as a literal, so each pin gets its own concrete type. On
+    Linux an `output` pin is a `LinuxOutputPin` (`embedded_hal::digital::OutputPin`, opened low,
+    so set its level in `init()`) and an `input` pin a `LinuxInputPin`, whose
+    `embedded_hal_async::digital::Wait` polls the level every millisecond. On ESP32 both are a
+    `Flex`.
+- `impl Default for <Sensor>Pins<P>` (with one generic per pin: `<Sensor>Pins<I, O>`)
+- `pub struct <Sensor><P = NoPin>` (with one generic per pin: `<Sensor><I = NoPin, O = NoPin>`)
+  storing `Option<P>` per pin - the pin is moved in at construction and **owned for the
+  instance's lifetime**, so re-running `init` for recovery never needs the pin re-passed.
 - `impl <Sensor><NoPin>` with `new()` (polling-only construction).
-- `impl<P: embedded_hal_async::digital::Wait> <Sensor><P>` with `new_with_pins()` (stores the
-  pins), a re-runnable `init(&mut self, bus)`, and a single `sample()` — when `Option<P>` is
-  `Some`, `wait_for_low()` is awaited first; when `None`, it falls straight through to a
-  STATUS-register poll.
+- `impl<P: embedded_hal_async::digital::Wait> <Sensor><P>` (with one generic per pin:
+  `impl<I: Wait, O: OutputPin> <Sensor><I, O>`, since an output pin cannot meet a `Wait` bound)
+  with `new_with_pins()` (stores the pins), a re-runnable `init(&mut self, bus)`, and a single
+  `sample()` - when the interrupt input pin is `Some`, `wait_for_low()` is awaited first; when
+  `None`, it falls straight through to a STATUS-register poll.
 
 ### 3. `descriptor.yaml`
 
@@ -155,7 +162,8 @@ requires:
     - transport: <i2c|spi>   # match the bus the driver uses
   # only include if the driver has optional GPIO pins:
   optional_pins:
-    - <pin_name>
+    - <pin_name>                                  # input (the default)
+    - { name: <pin_name>, direction: output }     # a pin the driver drives
 outputs:
   - name: <field_name>    # must match the Readings struct field name exactly
     type: f32

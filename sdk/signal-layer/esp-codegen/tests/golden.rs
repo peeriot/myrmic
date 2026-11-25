@@ -154,6 +154,31 @@ fn device_pin_flex_enables_input() {
     );
 }
 
+/// A sensor pin the driver declares as `output` is enabled as an output, while
+/// an `input` pin keeps the input buffer enabled.
+#[test]
+fn output_direction_pin_enables_output() {
+    let board = fixtures_dir().join("output-pin.board.yaml");
+    let pipeline = fixtures_dir().join("output-pin.yaml");
+    let drivers = fixtures_dir().join("drivers");
+
+    let src = esp_codegen::generate_esp32(&board, &pipeline, &drivers, &steps_root())
+        .unwrap_or_else(|e| panic!("generation failed: {e:#}"));
+
+    assert!(
+        src.contains("probe_reset.set_output_enable(true);"),
+        "output pin must enable its output in:\n{src}"
+    );
+    assert!(
+        !src.contains("probe_reset.set_input_enable"),
+        "output pin must not enable its input in:\n{src}"
+    );
+    assert!(
+        src.contains("probe_irq.set_input_enable(true);"),
+        "input pin must enable its input in:\n{src}"
+    );
+}
+
 /// Verify that the sensors-only expected output contains the tokens that
 /// Task 8/9 will move behind hooks — so this test guards those refactors.
 ///

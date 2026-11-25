@@ -1,0 +1,25 @@
+# Linux SPI manifest for the extra-pin snapshot: one device with a chip-select,
+# a reset output line and an irq input line (on a non-default GPIO chip).
+id: rpi-spi-pins
+chip: linux
+
+buses:
+  spi0:
+    transport: spi
+    pins: {}
+    freq_khz: 1000
+    mode: 0
+    dev_path: /dev/spidev0.0
+
+gpios:
+  general_purpose: []
+
+devices:
+  - id: probe1
+    driver: spi-pins
+    bus: spi0
+    gpio_chip: /dev/gpiochip1
+    pins:
+      cs: 25
+      reset: 24
+      irq: 23

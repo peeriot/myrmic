@@ -443,7 +443,12 @@ pub fn validate_pipeline_against_manifest(
                 if bus_is_spi && pin_name == "cs" {
                     continue;
                 }
-                if !schema.requires.optional_pins.iter().any(|n| n == pin_name) {
+                if !schema
+                    .requires
+                    .optional_pins
+                    .iter()
+                    .any(|p| p.name == *pin_name)
+                {
                     errors.push(ValidationError::new(format!(
                         "device `{}`: pin `{pin_name}` is not declared in driver `{}`'s \
                          `optional_pins`",
@@ -1545,11 +1550,11 @@ devices:
     }
 
     fn driver_schema_with_optional_pins(pins: &[&str]) -> DriverSchema {
-        use crate::descriptor::Requires;
+        use crate::descriptor::{OptionalPin, Requires};
         DriverSchema {
             requires: Requires {
                 buses: vec![],
-                optional_pins: pins.iter().map(std::string::ToString::to_string).collect(),
+                optional_pins: pins.iter().map(|name| OptionalPin::input(*name)).collect(),
             },
             ..Default::default()
         }
@@ -2820,7 +2825,7 @@ devices:
     }
 
     fn hybrid_schema() -> DriverSchema {
-        use crate::descriptor::{DriverOutput, DriverWrite, OutputMode, Requires};
+        use crate::descriptor::{DriverOutput, DriverWrite, OptionalPin, OutputMode, Requires};
         DriverSchema {
             writes: Some(DriverWrite {
                 command_type: "DigitalState".into(),
@@ -2833,7 +2838,7 @@ devices:
             }],
             requires: Requires {
                 buses: vec![],
-                optional_pins: vec!["out".into(), "feedback".into()],
+                optional_pins: ["out", "feedback"].map(OptionalPin::input).to_vec(),
             },
             ..Default::default()
         }

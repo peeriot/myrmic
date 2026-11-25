@@ -6338,8 +6338,10 @@ name = "linux-gpio-shim"
 version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "linux-embedded-hal",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
