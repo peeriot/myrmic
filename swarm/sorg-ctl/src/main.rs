@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
 async fn sorg_client() -> Result<Client> {
     let mut zenoh_config = Config::default();
     zenoh_config
-        .set_mode(Some(WhatAmI::Peer))
+        .set_mode(Some(WhatAmI::Client))
         .expect("setting mode cannot fail here");
 
     let session = zenoh::open(zenoh_config)

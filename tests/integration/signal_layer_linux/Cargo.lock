@@ -5183,8 +5183,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -5233,8 +5233,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-buffers"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "portable-atomic-util",
  "zenoh-collections",
@@ -5242,8 +5242,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-codec"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "rand 0.8.8",
  "spin 0.10.1",
@@ -5255,16 +5255,16 @@ dependencies = [
 
 [[package]]
 name = "zenoh-collections"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "ahash",
 ]
 
 [[package]]
 name = "zenoh-config"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "json5",
  "nonempty-collections",
@@ -5288,8 +5288,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-core"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "lazy_static",
  "tokio",
@@ -5299,8 +5299,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-crypto"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "aes",
  "hmac",
@@ -5312,8 +5312,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-keyexpr"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "ahash",
  "getrandom 0.2.17",
@@ -5330,8 +5330,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-link"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "zenoh-config",
  "zenoh-link-commons",
@@ -5341,8 +5341,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-link-commons"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "async-trait",
  "flume",
@@ -5364,8 +5364,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-macros"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5375,8 +5375,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-plugin-trait"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "git-version",
  "libloading",
@@ -5392,8 +5392,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-protocol"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "const_format",
  "portable-atomic",
@@ -5408,16 +5408,16 @@ dependencies = [
 
 [[package]]
 name = "zenoh-result"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "zenoh-runtime"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "lazy_static",
  "ron",
@@ -5430,8 +5430,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-sync"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "arc-swap",
  "event-listener",
@@ -5444,8 +5444,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-task"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "futures",
  "tokio",
@@ -5457,8 +5457,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-transport"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "async-trait",
  "crossbeam-utils",
@@ -5490,8 +5490,8 @@ dependencies = [
 
 [[package]]
 name = "zenoh-util"
-version = "1.10.1"
-source = "git+https://github.com/peeriot/zenoh.git?rev=cfff4940#cfff4940d30832308c453c2fcd7f86fe723a81b1"
+version = "1.10.2"
+source = "git+https://github.com/peeriot/zenoh.git?rev=4f0c4c110#4f0c4c1100c0614206d7b2aba3fba77b30f48cad"
 dependencies = [
  "async-trait",
  "const_format",

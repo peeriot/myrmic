@@ -114,6 +114,7 @@ pub fn handle(ctx: Ctx, cmd: Start) -> anyhow::Result<()> {
     );
 
     let mut config = read_config(path)?;
+    swarm::apply_runtime_defaults(&mut config.zenoh)?;
 
     // Set some myrmic defaults.
     config.plugins.orchestration = Some(config.plugins.orchestration.unwrap_or_default());
@@ -545,7 +546,7 @@ fn merge_endpoints(
         .map_err(|err| anyhow::anyhow!("unable to read the zenoh mode: {err}"))?;
     let mode: Option<String> =
         serde_json::from_str(&mode).context("unable to parse the zenoh mode")?;
-    let mode = mode.unwrap_or_else(|| "peer".to_owned());
+    let mode = mode.unwrap_or_else(|| "router".to_owned());
 
     let current = zenoh
         .get_json(key)
@@ -758,6 +759,7 @@ mod tests {
     #[test]
     fn a_mode_dependent_file_gets_the_flag_under_the_runtime_mode() {
         let mut config = zenoh::Config::default();
+        config.insert_json5("mode", r#""peer""#).expect("seed mode");
         config
             .insert_json5("connect/endpoints", r#"{ router: ["tcp/r:7447"] }"#)
             .expect("seed");
@@ -771,14 +773,18 @@ mod tests {
     #[test]
     fn a_listen_flag_joins_the_default_listeners_of_the_runtime_mode() {
         let mut config = zenoh::Config::default();
+        swarm::apply_runtime_defaults(&mut config).expect("defaults apply");
         let before = endpoints(&config, "listen/endpoints");
         apply_endpoints(&mut config, &[], &strings(&["tcp/0.0.0.0:7447"])).expect("merges");
         let after = endpoints(&config, "listen/endpoints");
-        // zenoh's default listen list is per mode; the flag joins the peer list.
-        let mut expected = before["peer"].as_array().expect("peer defaults").clone();
+        // zenoh's default listen list is per mode; the flag joins the router list.
+        let mut expected = before["router"]
+            .as_array()
+            .expect("router defaults")
+            .clone();
         expected.push(serde_json::json!("tcp/0.0.0.0:7447"));
-        assert_eq!(after["peer"], serde_json::Value::Array(expected));
-        assert_eq!(after["router"], before["router"]);
+        assert_eq!(after["router"], serde_json::Value::Array(expected));
+        assert_eq!(after["peer"], before["peer"]);
     }
 
     #[test]

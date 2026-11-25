@@ -22,6 +22,7 @@ tracing = { workspace = true }
 
 tokio = { workspace = true, features = ["macros"] }
 sorg-tests = { workspace = true }
+swarm = { workspace = true }
 claims = { workspace = true }
 
 [lints]

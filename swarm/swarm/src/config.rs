@@ -55,9 +55,160 @@ pub struct PluginConfigs {
     >,
 }
 
+/// Fills the zenoh settings a runtime needs to route across a non-clique
+/// topology, where a plain zenoh default would leave every node a peer.
+///
+/// Only values still at zenoh's default are touched, so an explicit setting
+/// always wins. An unset mode becomes `router`; a router then listens on an
+/// ephemeral port and multicast-autoconnects to every kind of node. Nothing
+/// else is changed when the mode is `peer` or `client`.
+///
+/// # Errors
+///
+/// Fails if zenoh rejects reading or writing one of the settings.
+pub fn apply_runtime_defaults(zenoh: &mut zenoh::Config) -> anyhow::Result<()> {
+    if read_json(zenoh, "mode")?.is_null() {
+        zenoh
+            .set_mode(Some(zenoh::config::WhatAmI::Router))
+            .map_err(|mode| anyhow::anyhow!("unable to set zenoh mode {mode:?}"))?;
+    }
+    if read_json(zenoh, "mode")? != serde_json::json!("router") {
+        return Ok(());
+    }
+
+    let defaults = zenoh::Config::default();
+    let routes = [
+        ("listen/endpoints", r#"["tcp/[::]:0"]"#),
+        (
+            "scouting/multicast/autoconnect",
+            r#"["router","peer","client"]"#,
+        ),
+    ];
+    for (key, value) in routes {
+        let mut current = read_json(zenoh, key)?;
+        // A plain list applies to every mode and is the user's own choice.
+        if current.is_array() {
+            continue;
+        }
+        // A missing router entry (e.g. only `peer` is set) is unset, not explicit.
+        let default = read_json(&defaults, key)?.get("router").cloned();
+        let router = current.get("router").filter(|router| !router.is_null());
+        if router.is_some() && router != default.as_ref() {
+            continue;
+        }
+        if current.is_null() {
+            current = serde_json::json!({});
+        }
+        current["router"] = serde_json::from_str(value)?;
+        set_json(zenoh, key, &current.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn read_json(zenoh: &zenoh::Config, key: &str) -> anyhow::Result<serde_json::Value> {
+    let json = zenoh
+        .get_json(key)
+        .map_err(|err| anyhow::anyhow!("unable to read zenoh {key}: {err}"))?;
+
+    serde_json::from_str(&json).map_err(|err| anyhow::anyhow!("unable to parse zenoh {key}: {err}"))
+}
+
+fn set_json(zenoh: &mut zenoh::Config, key: &str, value: &str) -> anyhow::Result<()> {
+    zenoh
+        .insert_json5(key, value)
+        .map_err(|err| anyhow::anyhow!("unable to set zenoh {key}: {err}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SwarmConfig;
+    use super::{SwarmConfig, apply_runtime_defaults};
+
+    #[test]
+    fn the_defaults_make_an_unset_mode_a_router() {
+        let mut zenoh = zenoh::Config::default();
+        apply_runtime_defaults(&mut zenoh).expect("defaults apply");
+
+        assert_eq!(json(&zenoh, "mode"), "router");
+        assert_eq!(
+            json(&zenoh, "listen/endpoints")["router"],
+            serde_json::json!(["tcp/[::]:0"])
+        );
+        assert_eq!(
+            json(&zenoh, "scouting/multicast/autoconnect")["router"],
+            serde_json::json!(["router", "peer", "client"])
+        );
+        assert_eq!(
+            json(&zenoh, "scouting/gossip/autoconnect"),
+            json(&zenoh::Config::default(), "scouting/gossip/autoconnect")
+        );
+    }
+
+    #[test]
+    fn an_explicit_peer_or_client_is_left_alone() {
+        for mode in ["peer", "client"] {
+            let mut zenoh = zenoh_from(&format!("zenoh:\n  mode: {mode}\n"));
+            let before = serde_json::to_value(&zenoh).expect("serializes");
+            apply_runtime_defaults(&mut zenoh).expect("defaults apply");
+
+            assert_eq!(serde_json::to_value(&zenoh).expect("serializes"), before);
+            assert_eq!(json(&zenoh, "mode"), mode);
+        }
+    }
+
+    #[test]
+    fn explicit_router_values_are_left_alone() {
+        let mut zenoh = zenoh_from(
+            "zenoh:\n  listen:\n    endpoints:\n      router:\n        - \"tcp/[::]:7448\"\n  \
+             scouting:\n    multicast:\n      autoconnect:\n        router: [\"router\"]\n",
+        );
+        apply_runtime_defaults(&mut zenoh).expect("defaults apply");
+
+        assert_eq!(
+            json(&zenoh, "listen/endpoints")["router"],
+            serde_json::json!(["tcp/[::]:7448"])
+        );
+        assert_eq!(
+            json(&zenoh, "scouting/multicast/autoconnect")["router"],
+            serde_json::json!(["router"])
+        );
+    }
+
+    #[test]
+    fn an_explicitly_empty_router_list_stays_empty() {
+        let mut zenoh = zenoh_from("zenoh:\n  listen:\n    endpoints:\n      router: []\n");
+        apply_runtime_defaults(&mut zenoh).expect("defaults apply");
+
+        assert_eq!(
+            json(&zenoh, "listen/endpoints")["router"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn a_peer_only_list_still_gets_a_router_listener() {
+        let mut zenoh =
+            zenoh_from("zenoh:\n  listen:\n    endpoints:\n      peer: [\"tcp/[::]:7447\"]\n");
+        apply_runtime_defaults(&mut zenoh).expect("defaults apply");
+
+        assert_eq!(
+            json(&zenoh, "listen/endpoints")["router"],
+            serde_json::json!(["tcp/[::]:0"])
+        );
+    }
+
+    #[test]
+    fn a_plain_list_is_left_alone() {
+        let mut zenoh =
+            zenoh_from("zenoh:\n  listen:\n    endpoints:\n      - \"tcp/[::]:7447\"\n");
+        apply_runtime_defaults(&mut zenoh).expect("defaults apply");
+
+        assert_eq!(json(&zenoh, "mode"), "router");
+        assert_eq!(
+            json(&zenoh, "listen/endpoints"),
+            serde_json::json!(["tcp/[::]:7447"])
+        );
+    }
 
     /// The rack harness writes a `zenoh` section into every host's config
     /// (`test-framework`'s `upload_host_config`). `SwarmConfig` denies unknown
@@ -74,11 +225,11 @@ mod tests {
         let yaml = "zenoh:\n\
                     \x20\x20listen:\n\
                     \x20\x20\x20\x20endpoints:\n\
-                    \x20\x20\x20\x20\x20\x20peer:\n\
-                    \x20\x20\x20\x20\x20\x20\x20\x20- \"tcp/[::]:7447\"\n";
+                    \x20\x20\x20\x20\x20\x20- \"tcp/[::]:7447\"\n";
 
-        let config: SwarmConfig =
+        let mut config: SwarmConfig =
             serde_yaml::from_str(yaml).expect("the rack's host config must deserialize");
+        apply_runtime_defaults(&mut config.zenoh).expect("defaults apply");
 
         // Round-trip rather than reach through zenoh's mode-dependent
         // accessors: what matters is that the endpoint survived rather than
@@ -88,6 +239,11 @@ mod tests {
         assert!(
             round_tripped.contains("tcp/[::]:7447"),
             "the listen endpoint must survive deserialization, got:\n{round_tripped}",
+        );
+        // A plain list applies in every mode, so the defaults must not add a router list.
+        assert_eq!(
+            json(&config.zenoh, "listen/endpoints"),
+            serde_json::json!(["tcp/[::]:7447"])
         );
     }
 
@@ -141,5 +297,15 @@ mod tests {
         }
 
         assert!(checked > 0, "no configs found in {}", dir.display());
+    }
+
+    fn zenoh_from(yaml: &str) -> zenoh::Config {
+        let config: SwarmConfig = serde_yaml::from_str(yaml).expect("config must deserialize");
+
+        config.zenoh
+    }
+
+    fn json(zenoh: &zenoh::Config, key: &str) -> serde_json::Value {
+        serde_json::from_str(&zenoh.get_json(key).expect("key must exist")).expect("valid json")
     }
 }

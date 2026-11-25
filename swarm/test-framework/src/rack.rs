@@ -572,7 +572,7 @@ async fn upload_host_config(
     if let Some(port) = listen_port {
         write!(
             yaml,
-            "zenoh:\n  listen:\n    endpoints:\n      peer:\n        - \"tcp/[::]:{port}\"\n"
+            "zenoh:\n  listen:\n    endpoints:\n      - \"tcp/[::]:{port}\"\n"
         )
         .expect("writing to a String cannot fail");
     }

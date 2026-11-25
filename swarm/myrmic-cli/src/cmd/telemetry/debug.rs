@@ -165,7 +165,7 @@ async fn raise_cell_log_level(
     session: &zenoh::Session,
     level: &str,
 ) -> anyhow::Result<String> {
-    // right after `Ctx::session`, this process's zenoh peer may not have finished discovering
+    // right after `Ctx::session`, this process's zenoh client may not have finished discovering
     // the other nodes on the network yet (scouting runs in the background and isn't complete
     // just because `zenoh::open` returned) — an empty reply set here doesn't necessarily mean no
     // node is out there, so retry for a bit before concluding that and giving up.

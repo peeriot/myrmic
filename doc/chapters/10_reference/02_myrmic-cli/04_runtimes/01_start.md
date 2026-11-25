@@ -34,7 +34,7 @@ Adds a capability tag to this runtime instance. Can be specified multiple times 
 
 `--connect ENDPOINT`
 
-A peer endpoint this runtime connects to, e.g. `tcp/10.0.0.5:7447`. Can be specified multiple times. Merged with `zenoh.connect.endpoints` from the configuration file; multicast discovery stays as the file configures it. A global flag, so it goes before `runtimes start`; unlike for the other commands, `DEFAULT_MYRMIC_CONNECT` does not apply to a runtime.
+An endpoint this runtime connects to, e.g. `tcp/10.0.0.5:7447`. Can be specified multiple times. Merged with `zenoh.connect.endpoints` from the configuration file; multicast discovery stays as the file configures it. A global flag, so it goes before `runtimes start`; unlike for the other commands, `DEFAULT_MYRMIC_CONNECT` does not apply to a runtime.
 
 `--listen ENDPOINT`
 
@@ -91,7 +91,7 @@ myrmic runtimes start ./my-runtime.yml
 myrmic runtimes start --tmp
 ```
 
-5. Start a runtime in a container that reaches its swarm through one peer:
+5. Start a runtime in a container that dials one swarm node and finds the rest through it:
 
 ```bash
 myrmic --connect tcp/10.0.0.5:7447 runtimes start --tag gate-nfc

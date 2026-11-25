@@ -80,7 +80,7 @@ pinned port and set the address at build time:
 zenoh:
   listen:
     endpoints:
-      peer: ["tcp/[::]:7447"]
+      - "tcp/[::]:7447"
 ```
 
 ```bash

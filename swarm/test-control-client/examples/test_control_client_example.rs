@@ -40,7 +40,7 @@ async fn main() {
 
     let mut z_config = Config::default();
     z_config
-        .set_mode(Some(WhatAmI::Peer))
+        .set_mode(Some(WhatAmI::Client))
         .expect("failed to set role");
     let session = zenoh::open(z_config)
         .await

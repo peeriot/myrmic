@@ -1,6 +1,6 @@
 local z = import "zenoh.libsonnet";
 
-z.peer()
+z.router()
 + z.plugins.load({
   orchestration: {},
   execution: {},

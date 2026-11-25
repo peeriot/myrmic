@@ -36,7 +36,7 @@ pub async fn handle(ctx: Ctx, cmd: Gateway) -> anyhow::Result<()> {
     let mut config = SwarmConfig::default();
     config
         .zenoh
-        .set_mode(Some(zenoh::config::WhatAmI::Peer))
+        .set_mode(Some(zenoh::config::WhatAmI::Client))
         .expect("setting mode cannot fail here");
     let (connect, multicast_group) = ctx.discovery()?;
     utils::apply_swarm_locator(&mut config.zenoh, &connect, multicast_group)?;
