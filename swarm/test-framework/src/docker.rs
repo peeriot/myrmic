@@ -8,6 +8,7 @@ mod container;
 mod image;
 mod network;
 
+pub(crate) use self::container::ContainerBuilder;
 pub use self::{
     container::{ConnectedContainer, ManagedContainer},
     image::Image,

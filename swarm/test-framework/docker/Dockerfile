@@ -5,11 +5,13 @@
 # least as new as the build host's. Arch is rolling, and the upgrade below brings it to the newest
 # at the time the layer is built.
 #
-# Needed besides the binaries: `sh`, `mktemp`, `rm` and `printf` for the myrmic shim, all in
-# `base`, `nft` for isolating a runtime, and libfaketime for skewing its clock.
+# Needed besides the binaries: `sh`, `mktemp`, `rm` and `printf` for the myrmic shim, and `ip` and
+# `tc` for moving a host and degrading its links, all in `base`; `nft` for blocking and counting a
+# host's traffic, `ethtool` for making its interface handle packets one by one, and libfaketime
+# for skewing its clock.
 FROM archlinux:base
 
-RUN pacman -Syu --noconfirm nftables libfaketime && pacman -Scc --noconfirm
+RUN pacman -Syu --noconfirm nftables ethtool libfaketime && pacman -Scc --noconfirm
 
 # Every process in a container reads its wall clock through libfaketime, at the offset from the
 # host's clock that FAKETIME_TIMESTAMP_FILE holds, in seconds. Docker can't move one container's

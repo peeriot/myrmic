@@ -22,10 +22,7 @@
 use std::time::{Duration, Instant};
 
 use super::handoff_timing::{Load, bench_scope, insert_rows};
-use super::{locate_eventually, node_id, start_node_on};
-use cell_protocol::replication::{
-    REPLICATION_TABLE, ReplicaEntry, ReplicaSelector, replication_scope, runtime_tag,
-};
+use super::{holding, locate_eventually, node_id, replicate_onto, start_node_on};
 use db_client::v1::Client;
 use db_commons::models::{self, NodeId, Scope, Subject, Version};
 
@@ -68,50 +65,6 @@ async fn start_mesh(n: usize) -> Vec<Node> {
         );
     }
     nodes
-}
-
-/// Configures `scope` onto exactly the nodes behind `sessions`.
-async fn replicate_onto(client: &Client, scope: &Scope, sessions: &[&zenoh::Session]) {
-    let selector = ReplicaSelector::Subject(Subject::Scope(scope.clone()));
-    let label = selector.to_string();
-    let tags = sessions
-        .iter()
-        .map(|session| runtime_tag(session.zid().into()))
-        .collect();
-    let entry = ReplicaEntry::new(selector, tags, &label);
-    let value = postcard::to_allocvec(&entry).expect("entry should serialise");
-
-    client
-        .write_tx_in(replication_scope(), async move |client, tx_id| {
-            client
-                .send(models::tb_insert::Request {
-                    id: tx_id,
-                    op: models::tb_insert::Op {
-                        scope: replication_scope(),
-                        table: REPLICATION_TABLE.into(),
-                        eid: Some(entry.key().into_bytes()),
-                        value,
-                    },
-                })
-                .await?
-                .map_err(|err| format!("insert failed: {}", err.message))?;
-            Ok(())
-        })
-        .await
-        .expect("unable to write the replication entry");
-}
-
-/// The nodes that hold `version` of `scope` right now.
-async fn holding(
-    replica: &db_client::replica_v1::Client,
-    scope: &Scope,
-    version: Version,
-) -> Vec<NodeId> {
-    replica
-        .locate(scope, Some(version))
-        .await
-        .map(|holders| holders.into_iter().map(|holder| holder.id).collect())
-        .unwrap_or_default()
 }
 
 /// When each of `nodes` first held `version`, polled from `started`; `None`

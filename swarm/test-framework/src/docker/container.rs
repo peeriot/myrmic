@@ -5,7 +5,8 @@ use bollard::{
     container::LogOutput,
     exec::{CreateExecOptions, StartExecResults},
     models::{
-        ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
+        ContainerCreateBody, ContainerUpdateBody, EndpointSettings, HostConfig, Mount, MountType,
+        NetworkConnectRequest, NetworkingConfig,
     },
     query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions},
 };
@@ -121,6 +122,25 @@ impl ConnectedContainer {
         }
     }
 
+    /// Limit the memory of everything in the container to `bytes`, without swap on top: once its
+    /// processes use more and the kernel can't reclaim any, it kills one of them.
+    pub async fn set_memory_limit(&self, bytes: u64) {
+        let bytes = i64::try_from(bytes).expect("a memory limit fits docker's i64");
+        let id = &self.container_id;
+        self.docker
+            .update_container(
+                id,
+                ContainerUpdateBody {
+                    memory: Some(bytes),
+                    // the limit of memory and swap together
+                    memory_swap: Some(bytes),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_or_else(|err| panic!("failed to limit the memory of container {id}: {err}"));
+    }
+
     /// Connect the container to the network `network`.
     pub async fn connect_network(&self, network: &str) {
         self.docker
@@ -177,6 +197,7 @@ impl ManagedContainer {
             command: &[],
             capabilities: &[],
             tmpfs: vec![],
+            volumes: vec![],
             network: None,
         }
     }
@@ -190,6 +211,7 @@ pub(crate) struct ContainerBuilder<'a> {
     command: &'a [&'a str],
     capabilities: &'a [&'a str],
     tmpfs: Vec<(&'a str, &'a str)>,
+    volumes: Vec<&'a str>,
     network: Option<Arc<ManagedNetwork>>,
 }
 
@@ -209,6 +231,13 @@ impl<'a> ContainerBuilder<'a> {
     /// a tmpfs mounted at `path`, with the mount `options` (e.g. `size=64m`)
     pub(crate) fn tmpfs(mut self, path: &'a str, options: &'a str) -> Self {
         self.tmpfs.push((path, options));
+        self
+    }
+
+    /// A docker volume of its own mounted at `path`: a directory on the docker host's disk, removed
+    /// together with the container.
+    pub(crate) fn volume(mut self, path: &'a str) -> Self {
+        self.volumes.push(path);
         self
     }
 
@@ -289,6 +318,17 @@ impl<'a> ContainerBuilder<'a> {
                         .map(|(path, options)| ((*path).to_owned(), (*options).to_owned()))
                         .collect(),
                 ),
+                // without a source, docker creates an anonymous volume for the container
+                mounts: Some(
+                    self.volumes
+                        .iter()
+                        .map(|path| Mount {
+                            target: Some((*path).to_owned()),
+                            typ: Some(MountType::VOLUME),
+                            ..Default::default()
+                        })
+                        .collect(),
+                ),
                 ..Default::default()
             }),
             ..Default::default()
@@ -299,7 +339,8 @@ impl<'a> ContainerBuilder<'a> {
 impl Drop for ManagedContainer {
     fn drop(&mut self) {
         let mut rm = self.container.docker_cli();
-        rm.args(["rm", "-f", self.container.get_id()]);
+        // `-v`: with its anonymous volumes ([`ContainerBuilder::volume`])
+        rm.args(["rm", "-f", "-v", self.container.get_id()]);
         run_cleanup("ManagedContainer", rm);
     }
 }

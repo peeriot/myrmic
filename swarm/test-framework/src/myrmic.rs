@@ -55,6 +55,10 @@ const INFO_PREFIX: &str = "INFO  ";
 /// file for it, or no pid directory at all.
 const RUNTIME_GONE: [&str; 2] = ["no runtime \"", "no runtimes at "];
 
+/// What `myrmic runtimes start` prints when the runtime's config has a `test_hooks` section, but
+/// `myrmic` was built without the `test-hooks` feature, which the section needs.
+const NO_TEST_HOOKS: &str = "unknown field `test_hooks`";
+
 /// What `myrmic delete` prints when nothing by that name is deployed (any more).
 const DEPLOYMENT_GONE: [&str; 2] = ["nothing named '", "no deployed cell '"];
 
@@ -145,6 +149,7 @@ where
             telemetry: swarm_telemetry::TelemetryConfig::default(),
             execution: sorg_common::ExecConfig::default(),
             orchestration: swarm::OrchestrationConfig::default(),
+            test_hooks: None,
         }
     }
 
@@ -447,6 +452,8 @@ pub struct StoppedRt<B> {
     telemetry: swarm_telemetry::TelemetryConfig,
     execution: sorg_common::ExecConfig,
     orchestration: swarm::OrchestrationConfig,
+    /// `None`: the config has no `test_hooks` section, so `myrmic` needs no `test-hooks` feature
+    test_hooks: Option<swarm::TestHooks>,
 }
 
 impl<B> StoppedRt<B>
@@ -502,6 +509,14 @@ where
         self.orchestration = orchestration;
         self
     }
+
+    /// How the runtime misbehaves on purpose, e.g. holds back the replication it receives; by
+    /// default it doesn't. Only a `myrmic` built with the `test-hooks` feature has these hooks, so
+    /// starting the runtime panics if the binary lacks them.
+    pub fn test_hooks(mut self, test_hooks: swarm::TestHooks) -> Self {
+        self.test_hooks = Some(test_hooks);
+        self
+    }
 }
 
 impl<B> runtime::Stopped for StoppedRt<B>
@@ -514,19 +529,24 @@ where
 
     /// run: myrmic runtimes start -d --name `name` [--tmp] [--tag `tag`...] `config`, where
     /// `config` holds what the overlay tells the runtime (the group it scouts on, the runtimes it
-    /// connects to, the port it listens on) and its telemetry, execution and orchestration settings
+    /// connects to, the port it listens on), its telemetry, execution and orchestration settings,
+    /// and its test hooks if it has any
     ///
     /// Returns once the runtime is ready: `runtimes start -d` only returns once cells can be placed
-    /// on the runtime.
+    /// on the runtime. Panics if the runtime has test hooks, but `myrmic` was built without them.
     async fn start(self) -> Result<RunningRt<B>, Error> {
         // JSON is YAML, which `runtimes start` parses
-        let config = serde_json::json!({
+        let mut config = serde_json::json!({
             "zenoh": self.ovl_member.get_zenoh_settings(),
             "telemetry": self.telemetry,
             "execution": self.execution,
             "orchestration": self.orchestration,
-        })
-        .to_string();
+        });
+        if let Some(test_hooks) = &self.test_hooks {
+            config["test_hooks"] =
+                serde_json::to_value(test_hooks).expect("the test hooks serialize to JSON");
+        }
+        let config = config.to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the
         // start returns
         let config_dir = TargetTempDir::create(&self.myrmic, "myrmic-runtime-config").await;
@@ -539,7 +559,18 @@ where
             args.extend(["--tag", tag]);
         }
         args.push(path_arg(&config_path));
-        let output = self.myrmic.run_local(&args).await?;
+        let output = match self.myrmic.run_local(&args).await {
+            Err(Error::Cli { stderr })
+                if self.test_hooks.is_some() && stderr.contains(NO_TEST_HOOKS) =>
+            {
+                panic!(
+                    "`{}` was built without the `test-hooks` feature, which the runtime's test hooks \
+                 need: build it with `cargo build --bin myrmic --features swarm/test-hooks`",
+                    self.myrmic.binary
+                )
+            }
+            result => result?,
+        };
         let Some(zid) = started_runtime_zid(&output.stderr, &self.name) else {
             // The daemon runs, but there is no RunningRt yet whose drop would delete it.
             let deleted = self.myrmic.delete_runtime(&self.name).await;
@@ -762,12 +793,52 @@ where
         self.signal("-CONT").await
     }
 
-    /// Send `signal` to the runtime's process on the target. Its pid comes from `myrmic runtimes
-    /// list`, so this works on every backend.
+    /// The most memory the runtime's process has held since it started, in bytes: the peak of its
+    /// resident set (`VmHWM` in `/proc/<pid>/status`). The pages of files it maps count, the
+    /// kernel's cache of the files it reads and writes doesn't.
+    pub async fn get_peak_memory(&self) -> Result<u64, Error> {
+        let pid = self.get_pid().await?;
+        let status_file = format!("/proc/{pid}/status");
+        let status = self
+            .stopped
+            .myrmic
+            .run_program("cat", &[&status_file])
+            .await;
+        assert!(
+            status.success,
+            "failed to read the status of `{}`: {}",
+            self.get_name(),
+            status.stderr
+        );
+        Ok(parse_peak_memory(&status.stdout))
+    }
+
+    /// Send `signal` to the runtime's process on the target.
     async fn signal(&self, signal: &str) -> Result<(), Error> {
+        let pid = self.get_pid().await?;
+        let killed = self
+            .stopped
+            .myrmic
+            .run_program("kill", &[signal, &pid])
+            .await;
+        assert!(
+            killed.success,
+            "failed to send {signal} to `{}`: {}",
+            self.get_name(),
+            killed.stderr
+        );
+        Ok(())
+    }
+
+    /// The pid of the runtime's process on the target. It comes from `myrmic runtimes list`, so
+    /// this works on every backend.
+    async fn get_pid(&self) -> Result<String, Error> {
         let name = self.get_name();
-        let myrmic = &self.stopped.myrmic;
-        let output = myrmic.run_local(&["runtimes", "list", name]).await?;
+        let output = self
+            .stopped
+            .myrmic
+            .run_local(&["runtimes", "list", name])
+            .await?;
         // `<name>\trunning\tpid=<pid>`
         let pid = output
             .stdout
@@ -779,19 +850,27 @@ where
                     output.stdout
                 )
             });
-        let killed = myrmic.run_program("kill", &[signal, pid]).await;
-        assert!(
-            killed.success,
-            "failed to send {signal} to `{name}`: {}",
-            killed.stderr
-        );
-        Ok(())
+        Ok(pid.to_owned())
     }
 }
 
-impl RunningRt<Docker> {
+/// the peak resident set in a process's `/proc/<pid>/status`, in bytes
+fn parse_peak_memory(status: &str) -> u64 {
+    // `VmHWM:\t  123456 kB`
+    let kib = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|value| value.trim().strip_suffix(" kB"))
+        .unwrap_or_else(|| panic!("a process's status has its peak resident set: {status}"));
+    let kib: u64 = kib
+        .parse()
+        .unwrap_or_else(|err| panic!("`VmHWM` is a number of kB, not `{kib}`: {err}"));
+    kib * 1024
+}
+
+impl<S> RunningRt<Docker<S>> {
     /// the host the runtime runs on, e.g. for its network's faults
-    pub fn get_host(&self) -> &host::Docker {
+    pub fn get_host(&self) -> &host::Docker<S> {
         self.stopped.myrmic.get_backend().get_host()
     }
 }

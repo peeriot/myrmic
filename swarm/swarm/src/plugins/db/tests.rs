@@ -14,6 +14,8 @@ use db_commons::models::{self, Scope, Subject};
 
 mod handoff_timing;
 mod partition;
+#[cfg(feature = "test-hooks")]
+mod replication_delay;
 mod replication_speed;
 
 const TABLE: &str = "letters";
@@ -86,34 +88,40 @@ fn node_id(session: &zenoh::Session) -> models::NodeId {
     id.to_le_bytes()
 }
 
-/// A plugin context for one node, tagged the way the host tags it at boot —
-/// tests pin replicas by runtime tag, which lives in that set.
+/// A plugin context for one node with the plugins' configs `plugins`, tagged
+/// the way the host tags it at boot — tests pin replicas by runtime tag, which
+/// lives in that set.
 fn ctx(
     session: &zenoh::Session,
     drop_rx: swarm_api::DropNotifier,
     ready: swarm_api::Ready,
+    plugins: crate::config::PluginConfigs,
 ) -> MyrmicCtx {
     let tags = LiveTags::new(crate::node_tags::effective_at_boot(session, &[]));
 
     MyrmicCtx::new(
         session.clone(),
         tokio::runtime::Handle::current(),
-        Default::default(),
+        std::sync::Arc::new(plugins),
         tags,
         drop_rx,
         ready,
     )
 }
 
-/// Runs the plugin's `main` as a task and returns once it signalled ready.
+/// Runs the plugin's `main` with the plugins' configs `plugins` as a task and
+/// returns once it signalled ready.
 async fn boot(
     session: &zenoh::Session,
     drop_rx: swarm_api::DropNotifier,
     config: super::config::Config,
+    plugins: crate::config::PluginConfigs,
 ) {
     let ready = swarm_api::Ready::default();
 
-    Plugin::run_until_ready(ctx(session, drop_rx, ready.clone()), ready, config).await;
+    let ctx = ctx(session, drop_rx, ready.clone(), plugins);
+
+    Plugin::run_until_ready(ctx, ready, config).await;
 }
 
 async fn start_node() -> (zenoh::Session, swarm_api::DropSender) {
@@ -129,7 +137,7 @@ async fn start_node_on(
 
     let (drop_tx, drop_rx) = flume::bounded(1);
 
-    boot(&session, drop_rx, config).await;
+    boot(&session, drop_rx, config, Default::default()).await;
 
     (session, drop_tx)
 }
@@ -152,7 +160,7 @@ async fn start_node_with_escalation(
         ..Default::default()
     };
 
-    boot(&session, drop_rx, config).await;
+    boot(&session, drop_rx, config, Default::default()).await;
 
     (session, drop_tx)
 }
@@ -367,6 +375,50 @@ async fn replicate(client: &Client, session: &zenoh::Session, subject: Subject) 
         .await
         .expect("send failed")
         .expect("commit failed");
+}
+
+/// Configures `scope` onto exactly the nodes behind `sessions`.
+async fn replicate_onto(client: &Client, scope: &Scope, sessions: &[&zenoh::Session]) {
+    let selector = ReplicaSelector::Subject(Subject::Scope(scope.clone()));
+    let label = selector.to_string();
+    let tags = sessions
+        .iter()
+        .map(|session| runtime_tag(session.zid().into()))
+        .collect();
+    let entry = ReplicaEntry::new(selector, tags, &label);
+    let value = postcard::to_allocvec(&entry).expect("entry should serialise");
+
+    client
+        .write_tx_in(replication_scope(), async move |client, tx_id| {
+            client
+                .send(models::tb_insert::Request {
+                    id: tx_id,
+                    op: models::tb_insert::Op {
+                        scope: replication_scope(),
+                        table: REPLICATION_TABLE.into(),
+                        eid: Some(entry.key().into_bytes()),
+                        value,
+                    },
+                })
+                .await?
+                .map_err(|err| format!("insert failed: {}", err.message))?;
+            Ok(())
+        })
+        .await
+        .expect("unable to write the replication entry");
+}
+
+/// The nodes that hold `version` of `scope` right now.
+async fn holding(
+    replica: &db_client::replica_v1::Client,
+    scope: &Scope,
+    version: models::Version,
+) -> Vec<models::NodeId> {
+    replica
+        .locate(scope, Some(version))
+        .await
+        .map(|holders| holders.into_iter().map(|holder| holder.id).collect())
+        .unwrap_or_default()
 }
 
 /// Polls locate until a holder of `scope` at `min_version` answers, so a test
@@ -1892,5 +1944,6 @@ fn store_context(session: &zenoh::Session) -> super::StoreContext {
         store,
         Duration::from_secs(60),
         Duration::from_secs(60),
+        None,
     )
 }

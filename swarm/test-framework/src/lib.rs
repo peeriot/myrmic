@@ -131,10 +131,22 @@
 //! - **Network split, at the next start:** [`overlay::Overlay::set_group`] moves a runtime of any
 //!   host to another group, e.g. one of its own, and takes effect when the runtime starts the next
 //!   time. Moving it back the same way undoes it.
+//! - **Bad link:** [`host::Docker::degrade`] delays, loses or slows down the traffic a docker
+//!   host sends to another, and [`host::Degraded::restore`] undoes that.
 //! - **Full disk:** [`host::Docker::fill_disk`] fills the disk of a docker host's runtimes, and
 //!   [`host::Docker::free_disk`] frees it.
+//! - **Little memory:** [`host::Docker::set_memory_limit`] limits a docker host's memory. A host
+//!   whose runtimes hold more data than fits in it keeps that data on a volume
+//!   ([`host_set::Docker::new_volume_host`]).
 //! - **Clock step:** [`host::Docker::skew_clock`] steps a docker host's clock, and
 //!   `skew_clock(0)` puts it back in step.
+//! - **Held back replication:** a CLI runtime whose test hooks (see [below](#test-hooks)) set a
+//!   [`replication_delay`](::swarm::TestHooks::replication_delay) lets its copies lag behind.
+//!
+//! # Measuring
+//!
+//! - [`host::Docker::count_traffic`] counts the bytes between two docker hosts.
+//! - [`myrmic::RunningRt::get_peak_memory`] reads the most memory a CLI runtime has held.
 //!
 //! # A swarm in docker
 //!
@@ -176,6 +188,23 @@
 //! its `zenoh-router`. [`resolve_binary!`] finds the most recent build, or the binary an
 //! environment variable points to. A test copies binaries to an SSH machine with
 //! [`host::Ssh::upload`].
+//!
+//! # Test hooks
+//!
+//! Some states a test needs can't be brought about from outside a runtime. A runtime's copy of a
+//! scope that lags behind the others is one: the other runtimes send their replication messages to
+//! all holders at once, so no fault on a host or a link holds back what one runtime receives,
+//! while the rest of its traffic flows. For such states, the runtime itself has test hooks: code
+//! that misbehaves on purpose when its config asks for it. They are the `test_hooks` section of a
+//! runtime's config ([`::swarm::TestHooks`]), which a test gives a CLI runtime with
+//! [`myrmic::StoppedRt::test_hooks`].
+//!
+//! The hooks are behind the `swarm` crate's `test-hooks` feature, one feature for all of them.
+//! Nothing in the workspace switches it on, so neither a release nor a plain `cargo build`
+//! contains them. A test that uses them needs a `myrmic` built with the feature:
+//! `cargo build --bin myrmic --features swarm/test-hooks`, as the test pipelines build it.
+//! Starting a runtime with test hooks on a `myrmic` without them panics with that command. A
+//! runtime without test hooks runs on either build.
 //!
 //! # Smaller pieces
 //!

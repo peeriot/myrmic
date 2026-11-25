@@ -60,28 +60,39 @@ impl Docker {
     }
 
     /// A new host on this network: a container of its own, which runs nothing until a shim or a
-    /// router runs something in it.
+    /// router runs something in it. Its runtimes keep their data on a small file system in memory,
+    /// which a test can fill ([`host::Tmpfs`]).
     pub async fn new_host(&self) -> host::Docker {
+        self.create_host().await
+    }
+
+    /// A new host on this network, like [`Self::new_host`], whose runtimes keep their data on a
+    /// docker volume instead, on the disk of the machine that runs docker ([`host::Volume`]): for
+    /// more data than fits in memory.
+    pub async fn new_volume_host(&self) -> host::Docker<host::Volume> {
+        self.create_host().await
+    }
+
+    /// A new host on this network, whose data directory its storage `S` sets up.
+    async fn create_host<S: host::Storage>(&self) -> host::Docker<S> {
         let DockerShared {
             daemon,
             network,
             image,
         } = &*self.shared;
         let name = format!("{}-{}", network.get_name(), uuid::Uuid::new_v4().simple());
-        // `NET_ADMIN` for the nftables rules of the faults
+        // `NET_ADMIN` for the nftables, traffic control and interface settings of the faults
         let container = docker::ManagedContainer::builder(image, daemon.clone(), &name)
             .command(&["sleep", "infinity"])
             .capabilities(&["NET_ADMIN"])
-            .tmpfs(host::DOCKER_DATA_DIR, host::DOCKER_DATA_DIR_OPTIONS)
-            .network(network.clone())
-            .run()
-            .await;
+            .network(network.clone());
+        let container = S::mount_data(container).run().await;
         let address = container
             .get_container_ip(network.get_name())
             .await
             .parse()
             .expect("docker reports a host's address as an IP address");
-        host::Docker::new(Arc::new(container), network.clone(), address)
+        host::Docker::new(Arc::new(container), network.clone(), address).await
     }
 }
 

@@ -48,6 +48,10 @@ pub struct PluginConfigs {
     pub embedded_log: Option<
         <crate::plugins::embedded_log::EmbeddedLoggingPlugin as crate::plugins::MyrmicPlugin>::Config,
     >,
+    /// Not a plugin's config, but kept here so the plugins it acts on can read it.
+    #[cfg(feature = "test-hooks")]
+    #[serde(default)]
+    pub test_hooks: crate::TestHooks,
 }
 
 #[cfg(test)]

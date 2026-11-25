@@ -7,24 +7,33 @@ use super::MyrmicBackend;
 /// It holds its host, whose clones share the container. So the container outlives every
 /// [`crate::myrmic::Myrmic`] and guard that uses it, and is removed when the last of them is
 /// dropped.
-#[derive(Clone)]
-pub struct Docker {
-    host: host::Docker,
+///
+/// `S` is the host's storage ([`host::Tmpfs`] or [`host::Volume`]).
+pub struct Docker<S = host::Tmpfs> {
+    host: host::Docker<S>,
 }
 
-impl Docker {
+impl<S> Docker<S> {
     /// run programs in `host`'s container
-    pub(crate) fn new(host: host::Docker) -> Self {
+    pub(crate) fn new(host: host::Docker<S>) -> Self {
         Self { host }
     }
 
     /// the host whose container programs run in
-    pub fn get_host(&self) -> &host::Docker {
+    pub fn get_host(&self) -> &host::Docker<S> {
         &self.host
     }
 }
 
-impl MyrmicBackend for Docker {
+impl<S> Clone for Docker<S> {
+    fn clone(&self) -> Self {
+        Self {
+            host: self.host.clone(),
+        }
+    }
+}
+
+impl<S> MyrmicBackend for Docker<S> {
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
         self.host.command(program, args)
     }

@@ -15,6 +15,7 @@ use crate::config::PluginConfigs;
 pub use config::SwarmConfig;
 #[cfg(feature = "plugin-orchestration")]
 pub use plugins::orchestration::Config as OrchestrationConfig;
+pub use test_hooks::TestHooks;
 
 /// How long a swarm's plugins may take to report ready once its zenoh runtime started.
 pub const PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,6 +27,7 @@ mod input;
 #[cfg(any(feature = "plugin-db", feature = "plugin-execution"))]
 mod node_tags;
 mod plugins;
+mod test_hooks;
 
 pub struct Swarm {
     config: SwarmConfig,

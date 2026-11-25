@@ -38,15 +38,15 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, Weak},
 };
 
+pub(crate) use self::{
+    docker::Storage,
+    local::{get_local_id, remove_local_address, set_local_address},
+};
 pub use self::{
-    docker::{Block, Docker},
+    docker::{Block, Degraded, Docker, Tmpfs, TrafficCounter, Volume},
     local::Local,
     router::Router,
     ssh::Ssh,
-};
-pub(crate) use self::{
-    docker::{DOCKER_DATA_DIR, DOCKER_DATA_DIR_OPTIONS},
-    local::{get_local_id, remove_local_address, set_local_address},
 };
 
 mod docker;
