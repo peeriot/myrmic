@@ -33,9 +33,9 @@ const BOOT_WAIT: Duration = Duration::from_secs(20);
 /// A restart takes up to two jittered supervision passes (10 s ±20 % each)
 /// plus the redeploy: the boot sweep defers to the exec's per-pass sweep when
 /// the db is not up yet, and that pass races the orchestrator's first one.
-const RESTART_WAIT: Duration = Duration::from_secs(60);
+pub(super) const RESTART_WAIT: Duration = Duration::from_secs(60);
 
-async fn eventually<F, Fut>(timeout: Duration, mut probe: F) -> bool
+pub(super) async fn eventually<F, Fut>(timeout: Duration, mut probe: F) -> bool
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
@@ -74,7 +74,7 @@ async fn lease_seq(session: &Session) -> Option<u64> {
         .max()
 }
 
-async fn placement_gen(session: &Session, sri: Sri) -> Option<Gen> {
+pub(super) async fn placement_gen(session: &Session, sri: Sri) -> Option<Gen> {
     list_placements(session)
         .await
         .ok()?

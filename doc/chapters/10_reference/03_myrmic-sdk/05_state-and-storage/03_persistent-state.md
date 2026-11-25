@@ -64,7 +64,7 @@ A handle fixes the value's type and its scope. Its key is the one every operatio
 
 The value is encoded and decoded whole, every time it crosses into the runtime. Changing a value in place is therefore a read, a change, and a write, not an in-database update.
 
-Every storage call a handler makes joins one transaction, which commits when the handler returns successfully and rolls back when it returns an error or traps.
+Every storage call a handler makes joins one transaction, which commits when the handler returns successfully and rolls back when it returns an error. A trap or panic rolls it back too, and crashes the cell; see [Trap or panic](../11_error-model.md#trap-or-panic).
 
 ### Errors
 

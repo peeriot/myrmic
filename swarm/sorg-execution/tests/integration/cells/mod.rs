@@ -1,4 +1,5 @@
 mod events;
+mod handler_crash;
 mod init;
 mod macros;
 mod periodic;

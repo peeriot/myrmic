@@ -79,6 +79,8 @@ Restart policy for the root cells this deployment creates. One of:
 - `on-error` (also spelled `onerror`) - restart on an abnormal exit: a crash, a spawn failure, node loss, or a non-zero stop code. A clean self-stop is terminal.
 - `always` - restart on any exit. Only an operator terminate or a cascade teardown is terminal.
 
+A crash is a trap or panic in one of the cell's handlers, including a handler that runs out of fuel, or the cell's task ending unexpectedly in the runtime. A handler that returns an error is not a crash: the cell keeps running. The command whose handler crashed the cell stays in its mailbox and is delivered again to the restarted cell; a command that crashes it every time is bounded only by the crash-loop bounds. See [Trap or panic](../03_myrmic-sdk/11_error-model.md#trap-or-panic).
+
 The crash-loop bounds keep their defaults (at most 5 restarts per 60s, 1s apart). To tune them, declare [`restart`](../01_configuration/02_cell-and-application-configuration.md#restart) per instance in the app spec instead.
 
 Only roots are restarted - a cell spawned by another cell recovers through its parent's cell-lost handler, not this policy.

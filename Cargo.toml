@@ -177,6 +177,8 @@ default-members = [
     "tests/fixtures/cell-cb-sender-logic",
     "tests/fixtures/cell-counter-delay-logic",
     "tests/fixtures/cell-counter-logic",
+    "tests/fixtures/cell-crash-logic",
+    "tests/fixtures/cell-crash-parent",
     "tests/fixtures/cell-docs-counter",
     "tests/fixtures/cell-event-pub-logic",
     "tests/fixtures/cell-failing-init-logic",
