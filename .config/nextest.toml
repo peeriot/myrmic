@@ -30,12 +30,12 @@ filter = 'package(sorg-execution) & kind(test)'
 platform = 'cfg(unix)'
 slow-timeout = { period = "15s", terminate-after = 6 }
 
-# The single-node restart tests boot a runtime twice and wait out up to two
+# The single-node restart and handler-crash tests wait out up to two
 # jittered supervision passes (10s ±20%) for the restart; the budget sits above
 # the tests' own waits so a slow run fails with their message. First match
 # wins, so this sits before the package-wide budget.
 [[profile.default.overrides]]
-filter = 'package(sorg-orchestration) & kind(test) & test(/single_node_restart/)'
+filter = 'package(sorg-orchestration) & kind(test) & test(/single_node_restart|handler_crash/)'
 platform = 'cfg(unix)'
 slow-timeout = { period = "30s", terminate-after = 6 }
 

@@ -100,6 +100,7 @@ cell-cb-receiver-logic
 cell-cb-sender-logic
 cell-counter-delay-logic
 cell-counter-logic
+cell-crash-logic
 cell-docs-counter
 cell-event-pub-logic
 cell-failing-init-logic

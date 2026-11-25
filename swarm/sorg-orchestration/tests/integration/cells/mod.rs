@@ -1,6 +1,7 @@
 mod bridge;
 mod embedded;
 mod gateway;
+mod handler_crash;
 mod lifecycle;
 mod placement_routing;
 mod restart;
