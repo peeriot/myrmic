@@ -7,6 +7,8 @@ use trouble_host::l2cap::{L2capChannel, L2capChannelConfig};
 use trouble_host::prelude::DefaultPacketPool;
 use trouble_host::{PacketPool, Stack};
 
+use crate::FormatOrDebug;
+
 /// PSM (Protocol/Service Multiplexer) for Swarm's mTLS L2CAP channels.
 pub const SWARM_TLS_PSM: u16 = 0x00F0;
 
@@ -91,6 +93,7 @@ where
 impl<C, P> Read for L2capStream<'_, '_, C, P>
 where
     C: Controller,
+    C::Error: FormatOrDebug,
     P: PacketPool,
 {
     /// Read bytes from the L2CAP channel.
@@ -135,6 +138,7 @@ where
 impl<C, P> Write for L2capStream<'_, '_, C, P>
 where
     C: Controller,
+    C::Error: FormatOrDebug,
     P: PacketPool,
 {
     /// Write bytes to the L2CAP channel as a single SDU.
