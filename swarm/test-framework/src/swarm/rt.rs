@@ -1,0 +1,185 @@
+//! The handles of a swarm's runtimes. [`StoppedRt`] and [`RunningRt`] are the two states of one
+//! runtime of a [`Swarm`], as [`crate::runtime`] describes them. Each wraps the handle of the
+//! runtime's own kind.
+//!
+//! # Using them
+//!
+//! [`Swarm::add`] takes a stopped runtime of any kind and returns the swarm's stopped handle for
+//! it. A test moves the handle through its states by rebinding it. Starting it returns once the
+//! swarm, including this runtime, is connected again. [`StoppedRt::start_without_check`] starts
+//! it without that check, and [`crate::start_runtimes!`] starts several side by side and checks
+//! once.
+//!
+//! A running handle dereferences to the running handle of the runtime's kind. So everything that
+//! doesn't stop the runtime is called on the kind's handle directly (`a.pause()`). To stop the
+//! runtime in a way only its kind supports, a test uses [`RunningRt::stop_with`]
+//! (`let b = b.stop_with(|rt| rt.kill()).await?;`).
+//!
+//! # Design notes
+//!
+//! The handles wrap the kind's own handles so that a start waits until the swarm is connected, and
+//! so that the swarm learns each runtime's zid. Which runtimes the test has running is not the
+//! swarm's record but the overlay's: the kind's running handle holds the guard that keeps its
+//! member counted as up ([`overlay::Member::come_up`]).
+//!
+//! Every transition that consumes a running runtime ends with the runtime stopped. So one generic
+//! [`RunningRt::stop_with`] covers all of them, whatever the kind can do, and the swarm needs to
+//! know nothing about the kinds beyond the [`crate::runtime`] traits. `stop_with` lends out the
+//! kind's handle only for the length of the transition and wraps the stopped handle it gets back,
+//! so the runtime stays the swarm's. A method that doesn't consume the handle (e.g. `resume`) is
+//! reached through `Deref`, so it doesn't wait for the swarm. A test that needs the swarm
+//! connected again afterwards calls [`Swarm::wait_until_connected`].
+
+use std::{future::Future, ops::Deref, sync::Arc};
+
+use zenoh::config::ZenohId;
+
+#[cfg(doc)]
+use super::Swarm;
+use super::{RuntimeEntry, Shared};
+use crate::{
+    overlay,
+    runtime::{Running, Stopped},
+    wait::Timeout,
+};
+
+/// A runtime of a [`Swarm`] that is not running: never started yet, or stopped. It holds the
+/// stopped handle of the runtime's own kind `S`.
+pub struct StoppedRt<S> {
+    inner: S,
+    entry: Arc<RuntimeEntry>,
+    shared: Arc<Shared>,
+}
+
+impl<S> StoppedRt<S>
+where
+    S: Stopped,
+{
+    /// the swarm's handle for `inner`, recorded in the swarm as `entry`
+    pub(super) fn new(inner: S, entry: Arc<RuntimeEntry>, shared: Arc<Shared>) -> Self {
+        Self {
+            inner,
+            entry,
+            shared,
+        }
+    }
+
+    /// Start the runtime, without waiting until the swarm is connected.
+    /// Returns once the runtime is ready, as its kind's start does, but without any of the swarm's
+    /// guarantees about what it is linked to.
+    pub async fn start_without_check(self) -> Result<RunningRt<S::Running>, S::Error> {
+        let StoppedRt {
+            inner,
+            entry,
+            shared,
+        } = self;
+        let inner = inner.start().await?;
+        let zid = *entry.zid.get_or_init(|| inner.get_zid());
+        assert_eq!(
+            zid,
+            inner.get_zid(),
+            "{:?} came back under a different zid",
+            entry.member
+        );
+        Ok(RunningRt {
+            inner,
+            entry,
+            shared,
+        })
+    }
+}
+
+impl<S> Stopped for StoppedRt<S>
+where
+    S: Stopped<Error: From<Timeout>>,
+{
+    type Error = S::Error;
+
+    type Running = RunningRt<S::Running>;
+
+    /// Returns once the swarm, with this runtime, is connected again.
+    async fn start(self) -> Result<RunningRt<S::Running>, S::Error> {
+        let running = self.start_without_check().await?;
+        running.shared.wait_until_connected().await?;
+        Ok(running)
+    }
+
+    fn get_overlay_member(&self) -> &overlay::Member {
+        self.inner.get_overlay_member()
+    }
+}
+
+/// A running runtime of a [`Swarm`]. It wraps the running handle of the runtime's own kind `R`, and
+/// dereferences to it. Dropping it drops that handle, which deletes the runtime.
+pub struct RunningRt<R> {
+    inner: R,
+    entry: Arc<RuntimeEntry>,
+    shared: Arc<Shared>,
+}
+
+impl<R> RunningRt<R>
+where
+    R: Running,
+{
+    /// Stop the runtime with `stop`, which gets the kind's running handle and returns its stopped
+    /// one, e.g. `rt.stop_with(|rt| rt.kill())`, or for a runtime that went away on its own,
+    /// `rt.stop_with(|rt| std::future::ready(Ok(rt.mark_lost())))`. Returns once `stop` has
+    /// returned; it doesn't wait for the rest of the swarm to notice.
+    pub async fn stop_with<F, Fut>(self, stop: F) -> Result<StoppedRt<R::Stopped>, R::Error>
+    where
+        F: FnOnce(R) -> Fut,
+        Fut: Future<Output = Result<R::Stopped, R::Error>>,
+    {
+        let RunningRt {
+            inner,
+            entry,
+            shared,
+        } = self;
+        let stopped = stop(inner).await?;
+        Ok(StoppedRt {
+            inner: stopped,
+            entry,
+            shared,
+        })
+    }
+}
+
+impl<R> Running for RunningRt<R>
+where
+    R: Running<Error: From<Timeout>>,
+{
+    type Error = R::Error;
+
+    type Stopped = StoppedRt<R::Stopped>;
+
+    fn get_zid(&self) -> ZenohId {
+        self.inner.get_zid()
+    }
+
+    async fn delete(self) -> Result<StoppedRt<R::Stopped>, R::Error> {
+        self.stop_with(|rt| rt.delete()).await
+    }
+}
+
+impl<R> Deref for RunningRt<R> {
+    type Target = R;
+
+    fn deref(&self) -> &R {
+        &self.inner
+    }
+}
+
+/// Start the stopped runtimes `a`, `b`, ... of `swarm` side by side, rebind each name to its
+/// running handle, and wait once until the swarm, with all of them, is connected. Returns the first
+/// error with `?`. The runtimes may be of different kinds.
+///
+/// Starting them one by one would check the swarm after each start, against a set of runtimes that
+/// is still growing.
+#[macro_export]
+macro_rules! start_runtimes {
+    ($swarm:expr; $($runtime:ident),+ $(,)?) => {
+        let ($($runtime,)+) = $crate::__futures::join!($($runtime.start_without_check()),+);
+        $(let $runtime = $runtime?;)+
+        $swarm.wait_until_connected().await?;
+    };
+}

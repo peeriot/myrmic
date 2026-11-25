@@ -41,6 +41,8 @@ impl crate::plugins::MyrmicPlugin for Plugin {
             store: store_config,
             load_from,
             tags: _,
+            #[cfg(feature = "test-hooks")]
+            replication_delay,
         } = config;
 
         let session = ctx.session().clone();
@@ -71,6 +73,11 @@ impl crate::plugins::MyrmicPlugin for Plugin {
             tx_idle_timeout,
             escalation_timeout,
         );
+        #[cfg(feature = "test-hooks")]
+        let context = StoreContext {
+            replication_delay,
+            ..context
+        };
 
         let liveliness = handle.spawn({
             let context = context.clone();
@@ -127,22 +134,7 @@ impl crate::plugins::MyrmicPlugin for Plugin {
             }
         });
 
-        let query = db_commons::topics::format_query(session.zid());
-
-        let queryable = session
-            .declare_queryable(query)
-            .callback({
-                let handle = handle.clone();
-                let context = context.clone();
-
-                move |query| {
-                    let fut = handler::handle_query(context.clone(), query);
-
-                    handle.spawn(fut);
-                }
-            })
-            .await
-            .expect("Unable to setup queryable");
+        let queryable = context.declare_query().await;
 
         ctx.notify_ready();
 
@@ -242,6 +234,10 @@ struct StoreContext {
     store: db::store::fjall::Store<TxEvents>,
     tx_idle_timeout: Duration,
     escalation_timeout: Duration,
+    /// How long to hold back what replication brings in before handling it; see
+    /// [`Config::replication_delay`].
+    #[cfg(feature = "test-hooks")]
+    replication_delay: Option<Duration>,
     /// The running offloaders' signals, keyed by scope.
     offload_signals: Arc<Mutex<HashMap<models::Scope, Arc<DrainSignals>>>>,
     /// "A commit just landed here" signals of the running single-scope
@@ -281,6 +277,8 @@ impl StoreContext {
             store,
             tx_idle_timeout,
             escalation_timeout,
+            #[cfg(feature = "test-hooks")]
+            replication_delay: None,
             offload_signals: Arc::default(),
             replica_nudges: Arc::default(),
         }
@@ -421,6 +419,8 @@ impl StoreContext {
         let subject = models::Subject::Scope(scope.clone());
         let transport =
             replication::ZenohTransport::new(&self.session, &subject, &self.store, "offload")?;
+        #[cfg(feature = "test-hooks")]
+        let transport = transport.replication_delay(self.replication_delay);
 
         let replica_client = transport.client.clone();
 
@@ -449,9 +449,10 @@ impl StoreContext {
                     );
                 }) else {
                     // drive_offload never ran, so this stop is no retirement:
-                    // no custody row is touched, nothing is released.
-                    forget_drain_signals(&context, &scope, &signals);
+                    // no custody row is touched, nothing is released. The
+                    // signals go last: once they are gone, the drain is gone.
                     repl.confirm_shutdown();
+                    forget_drain_signals(&context, &scope, &signals);
 
                     return;
                 };
@@ -472,6 +473,24 @@ impl StoreContext {
         });
 
         Ok(())
+    }
+
+    /// Declares this node's query queryable: answers the database requests
+    /// clients send to this node (transactions, peeks, info).
+    async fn declare_query(&self) -> Queryable<()> {
+        let query = db_commons::topics::format_query(self.session.zid());
+        let handle = self.handle.clone();
+        let context = self.clone();
+
+        self.session
+            .declare_queryable(query)
+            .callback(move |query| {
+                let fut = handler::handle_query(context.clone(), query);
+
+                handle.spawn(fut);
+            })
+            .await
+            .expect("Unable to setup queryable")
     }
 
     /// Declares the direct catch-up queryable on `ke`: answers pull pages and
@@ -690,6 +709,8 @@ impl StoreContext {
         // registers anything.
         let transport =
             replication::ZenohTransport::new(&self.session, &subject, &self.store, "replica")?;
+        #[cfg(feature = "test-hooks")]
+        let transport = transport.replication_delay(self.replication_delay);
 
         let replica_client = transport.client.clone();
         let repl_subject = subject.clone();
@@ -838,34 +859,83 @@ impl StoreContext {
             .await?;
 
         let sub = client
-            .subscribe(on_replica_message(repl.clone(), self.handle.clone()))
+            .subscribe(self.on_replica_message(repl.clone()))
             .await?;
 
         Ok((sync_queryable, sub))
     }
+
+    /// The callback of a replica subscription: hands each message to `repl`.
+    /// A test may hold back what replication brings in
+    /// ([`Config::replication_delay`]): then an announce or a changeset is
+    /// handed over only that long after it arrived, as if it arrived that
+    /// late, as `repl` takes the time it is handed a message as its receipt
+    /// time.
+    fn on_replica_message(
+        &self,
+        repl: Replicator,
+    ) -> impl Fn(uhlc::ID, models::ReplicaMessage, usize) + Send + Sync + 'static {
+        let handle = self.handle.clone();
+        let subject = metrics::get_subject_label(repl.get_subject());
+        #[cfg(feature = "test-hooks")]
+        let delay = self.replication_delay;
+        move |sender, msg, bytes| {
+            let kind = msg.name();
+            metrics::record_msg_recv(kind, bytes, subject.clone());
+
+            // Only what brings data in is held back. A probe or a changeset
+            // request asks this node to serve others, which goes on without
+            // delay.
+            #[cfg(feature = "test-hooks")]
+            let delay = match &msg {
+                models::ReplicaMessage::Announce(_) | models::ReplicaMessage::ChangeSet(_) => delay,
+                models::ReplicaMessage::Probe(_) | models::ReplicaMessage::ChangeSetReq(_) => None,
+            };
+            #[cfg(feature = "test-hooks")]
+            if let Some(delay) = delay {
+                let repl = repl.clone();
+                handle.spawn(async move {
+                    tokio::time::sleep(delay).await;
+                    let queued_at = std::time::Instant::now();
+                    let fut = repl.handle_message(sender, msg);
+                    handle_recorded(kind, queued_at, fut).await;
+                });
+            } else {
+                spawn_handling(&repl, &handle, kind, sender, msg);
+            }
+            #[cfg(not(feature = "test-hooks"))]
+            spawn_handling(&repl, &handle, kind, sender, msg);
+        }
+    }
 }
 
-/// The callback of a replica subscription: hands each message to `repl`.
-fn on_replica_message(
-    repl: Replicator,
-    handle: Handle,
-) -> impl Fn(uhlc::ID, models::ReplicaMessage, usize) + Send + Sync + 'static {
-    move |sender, msg, bytes| {
-        let kind = msg.name();
-        metrics::record_msg_recv(kind, bytes);
+/// Hand the replica message `msg` of kind `kind` from `sender` to `repl` now,
+/// in a task on `handle`.
+fn spawn_handling(
+    repl: &Replicator,
+    handle: &Handle,
+    kind: &'static str,
+    sender: uhlc::ID,
+    msg: models::ReplicaMessage,
+) {
+    // Taken before the spawn, so the gap to the task actually running is
+    // measured rather than assumed.
+    let queued_at = std::time::Instant::now();
+    let fut = repl.clone().handle_message(sender, msg);
+    handle.spawn(handle_recorded(kind, queued_at, fut));
+}
 
-        // Taken before the spawn, so the gap to the task actually running is
-        // measured rather than assumed.
-        let queued_at = std::time::Instant::now();
-        let fut = repl.clone().handle_message(sender, msg);
-
-        handle.spawn(async move {
-            let queued = queued_at.elapsed();
-            let started = std::time::Instant::now();
-            fut.await;
-            metrics::record_handled(kind, queued, started.elapsed());
-        });
-    }
+/// Run `fut`, the handling of a replica message of kind `kind` that was queued at `queued_at`, and
+/// record how long it waited and took.
+async fn handle_recorded(
+    kind: &'static str,
+    queued_at: std::time::Instant,
+    fut: impl Future<Output = ()>,
+) {
+    let queued = queued_at.elapsed();
+    let started = std::time::Instant::now();
+    fut.await;
+    metrics::record_handled(kind, queued, started.elapsed());
 }
 
 /// How often to run a direct, page-limited coverage check against a live

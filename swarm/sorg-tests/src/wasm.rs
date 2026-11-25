@@ -43,7 +43,7 @@ pub async fn register_fixture(binary_path: impl Into<PathBuf>, db_swarm: &Spawne
 /// (`sorg-tests/build-cell-fixtures.sh`) built for the cell crate at
 /// `logic_crate_path`. Tests never run cargo themselves: every build contends
 /// for the same target dir lock, which made fixture builds dominate test time.
-fn prebuilt_cell_wasm(logic_crate_path: impl Into<PathBuf>) -> PathBuf {
+pub fn prebuilt_cell_wasm(logic_crate_path: impl Into<PathBuf>) -> PathBuf {
     let crate_dir = logic_crate_path.into();
     let crate_dir = crate_dir
         .canonicalize()

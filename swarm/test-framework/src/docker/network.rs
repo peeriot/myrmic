@@ -1,23 +1,35 @@
+use std::{
+    net::IpAddr,
+    sync::atomic::{AtomicU8, Ordering},
+};
+
 use bollard::models::NetworkCreateRequest;
 
-use crate::docker::{DockerDaemon, container::ConnectedContainer, run_cleanup};
+use super::{ConnectedContainer, Daemon};
+use crate::run_cleanup;
 
-/// a docker network that was created by this framework and is removed when dropped
+/// A docker network that this crate created. It is removed when dropped.
 ///
-/// The [`ManagedContainer`](super::container::ManagedContainer)s attached to it hold it, so it
-/// outlives them.
+/// The [`ManagedContainer`](super::ManagedContainer)s attached to it keep it alive, so it outlives
+/// them.
 pub struct ManagedNetwork {
-    docker: DockerDaemon,
+    docker: Daemon,
     name: String,
-    /// a running container this framework did not create (e.g. the one the test runs in),
-    /// attached at creation and detached before removal: docker refuses to remove a network
-    /// that has a container attached
+    /// a running container that this crate didn't create (e.g. the one the test runs in). It is
+    /// attached when the network is created and detached before the network is removed, because
+    /// docker refuses to remove a network that has a container attached.
     outsider: Option<String>,
+    /// the last octet [`Self::take_moved_host_octet`] hands out next
+    next_moved_host: AtomicU8,
 }
+
+/// The last octet of the first address [`ManagedNetwork::take_moved_host_octet`] hands out. It is
+/// far above the addresses docker hands out in order, so no container docker addressed has it.
+const FIRST_MOVED_HOST: u8 = 200;
 
 impl ManagedNetwork {
     /// create a bridge network named `name`, with the running container `outsider` attached
-    pub(crate) async fn create(docker: DockerDaemon, name: &str, outsider: Option<&str>) -> Self {
+    pub(crate) async fn create(docker: Daemon, name: &str, outsider: Option<&str>) -> Self {
         docker
             .create_network(NetworkCreateRequest {
                 name: name.to_owned(),
@@ -30,6 +42,7 @@ impl ManagedNetwork {
             docker,
             name: name.to_owned(),
             outsider: None,
+            next_moved_host: AtomicU8::new(FIRST_MOVED_HOST),
         };
         if let Some(outsider) = outsider {
             ConnectedContainer::attach(network.docker.clone(), outsider)
@@ -41,12 +54,65 @@ impl ManagedNetwork {
     }
 
     /// the network's name
-    pub fn name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         &self.name
     }
 
+    /// The last octet of an address on this network for a host that moves, one that neither docker
+    /// nor an earlier call handed out.
+    pub(crate) fn take_moved_host_octet(&self) -> u8 {
+        let octet = self.next_moved_host.fetch_add(1, Ordering::Relaxed);
+        assert!(
+            octet < u8::MAX,
+            "network `{}` has no address left for a moved host",
+            self.name
+        );
+        octet
+    }
+
+    /// The `IPv4` address on this network of the machine that created it: the outsider's address if
+    /// one is attached (see [`Self::create`]), otherwise the address of the docker host, which is
+    /// the network's gateway.
+    pub(crate) async fn get_creator_address(&self) -> IpAddr {
+        let address = match &self.outsider {
+            Some(outsider) => self
+                .docker
+                .inspect_container(outsider, None)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("failed to inspect docker container `{outsider}`: {err}")
+                })
+                .network_settings
+                .and_then(|settings| settings.networks)
+                .and_then(|mut networks| networks.remove(&self.name))
+                .and_then(|endpoint| endpoint.ip_address)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "docker gave `{outsider}` no address on network `{}`",
+                        self.name
+                    )
+                }),
+            None => self
+                .docker
+                .inspect_network(&self.name, None)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("failed to inspect docker network `{}`: {err}", self.name)
+                })
+                .ipam
+                .and_then(|ipam| ipam.config)
+                .into_iter()
+                .flatten()
+                .find_map(|config| config.gateway.filter(|gateway| gateway.contains('.')))
+                .unwrap_or_else(|| panic!("docker network `{}` has no IPv4 gateway", self.name)),
+        };
+        address.parse().unwrap_or_else(|err| {
+            panic!("docker gave the address `{address}`, which is none: {err}")
+        })
+    }
+
     /// the prefix length of the network's `IPv4` subnet, e.g. 16 for `172.19.0.0/16`
-    pub async fn ipv4_prefix_len(&self) -> u8 {
+    pub async fn get_ipv4_prefix_len(&self) -> u8 {
         let inspect = self
             .docker
             .inspect_network(&self.name, None)

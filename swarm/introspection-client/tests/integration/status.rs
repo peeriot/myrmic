@@ -1,35 +1,52 @@
-use std::str::FromStr;
-
+use introspection_client::v1::Client;
 use sorg_tests::enable_test_logging;
-use sorg_tests::swarm_config;
-use zenoh::config::ZenohId;
+use test_framework::{
+    World, in_process,
+    overlay::Overlay,
+    runtime::{Running, Stopped},
+};
 
-use crate::integration::{assert_plugin_configured, test_client, wait_for_swarm_status};
+use crate::integration::{assert_plugin_configured, wait_for_swarm_status};
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn empty() {
+#[tokio::test(flavor = "multi_thread")]
+async fn empty() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
-    // Arrange - client with test session
-    let client = test_client().await;
+    // Arrange - client with a session on a multicast group nothing else is on
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let session = zenoh::open(group.get_zenoh_config())
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?;
+    let client = Client::new(session).await;
 
     // Act - request swarm status
-    let status = client.swarm_status().await.unwrap();
+    let status = client.swarm_status().await?;
 
     // Assert that we don't have any swarm nodes around
     assert!(status.is_empty());
+    Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn one_node() {
+#[tokio::test(flavor = "multi_thread")]
+async fn one_node() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange - one swarm node and a client
-    let _swarm_handle = swarm_config!("one_node.jsonnet");
-    let client = test_client().await;
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let node = in_process::StoppedRt::new(&group)
+        .orchestration()
+        .db()
+        .start()
+        .await?;
+    let client = Client::new(
+        zenoh::open(group.get_zenoh_config())
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?,
+    )
+    .await;
 
     // Act - request swarm status
-    let mut status = wait_for_swarm_status(&client, 1).await;
+    let mut status = wait_for_swarm_status(&client, 1).await?;
 
     // Assert - We expect
     // - one status in the response
@@ -39,7 +56,7 @@ async fn one_node() {
     assert_eq!(1, status.len());
     let node_status = status.swap_remove(0);
 
-    assert_eq!(expected_id(), node_status.id);
+    assert_eq!(node.get_zid(), node_status.id);
     assert!(node_status.peers.is_empty());
     assert!(node_status.routers.is_empty());
 
@@ -49,29 +66,48 @@ async fn one_node() {
 
     assert_plugin_configured(plugins, "introspection");
     assert_plugin_configured(plugins, "orchestration");
+    Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn three_nodes() {
+#[tokio::test(flavor = "multi_thread")]
+async fn three_nodes() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
-    // Arrange - one swarm node and a client
-    let _swarm_handle_one = swarm_config!("three_nodes_a.jsonnet");
-    let _swarm_handle_two = swarm_config!("three_nodes_b.jsonnet");
-    let _swarm_handle_three = swarm_config!("three_nodes_c.jsonnet");
-    let client = test_client().await;
+    // Arrange - two peers and a router on one group, and a client
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let peer = in_process::StoppedRt::new(&group)
+        .orchestration()
+        .db()
+        .start()
+        .await?;
+    let router = in_process::StoppedRt::new(&group)
+        .router_mode()
+        .execution()
+        .orchestration()
+        .start()
+        .await?;
+    let other_peer = in_process::StoppedRt::new(&group)
+        .execution()
+        .start()
+        .await?;
+    let session = zenoh::open(group.get_zenoh_config())
+        .await
+        .map_err(|err| anyhow::anyhow!("failed to open a zenoh session: {err}"))?;
+    let client = Client::new(session).await;
+    let (peer_zid, router_zid, other_peer_zid) =
+        (peer.get_zid(), router.get_zid(), other_peer.get_zid());
 
     // Act - request swarm status
-    let status = wait_for_swarm_status(&client, 3).await;
+    let status = wait_for_swarm_status(&client, 3).await?;
 
     // Assert
     assert_eq!(3, status.len());
     for node_stat in status {
-        if node_stat.id == expected_id() {
+        if node_stat.id == peer_zid {
             assert_eq!(1, node_stat.peers.len());
-            assert!(node_stat.peers.contains(&expected_id_other_peer()));
+            assert!(node_stat.peers.contains(&other_peer_zid));
             assert_eq!(1, node_stat.routers.len());
-            assert!(node_stat.routers.contains(&expected_id_router()));
+            assert!(node_stat.routers.contains(&router_zid));
 
             // check the plugin config
             let plugins = &node_stat.plugins;
@@ -79,10 +115,10 @@ async fn three_nodes() {
 
             assert_plugin_configured(plugins, "introspection");
             assert_plugin_configured(plugins, "orchestration");
-        } else if node_stat.id == expected_id_router() {
+        } else if node_stat.id == router_zid {
             assert_eq!(2, node_stat.peers.len());
-            assert!(node_stat.peers.contains(&expected_id_other_peer()));
-            assert!(node_stat.peers.contains(&expected_id()));
+            assert!(node_stat.peers.contains(&other_peer_zid));
+            assert!(node_stat.peers.contains(&peer_zid));
 
             // check the plugin configa
             let plugins = &node_stat.plugins;
@@ -90,11 +126,11 @@ async fn three_nodes() {
             assert_plugin_configured(plugins, "introspection");
             assert_plugin_configured(plugins, "orchestration");
             assert_plugin_configured(plugins, "execution");
-        } else if node_stat.id == expected_id_other_peer() {
+        } else if node_stat.id == other_peer_zid {
             assert_eq!(1, node_stat.peers.len());
-            assert!(node_stat.peers.contains(&expected_id()));
+            assert!(node_stat.peers.contains(&peer_zid));
             assert_eq!(1, node_stat.routers.len());
-            assert!(node_stat.routers.contains(&expected_id_router()));
+            assert!(node_stat.routers.contains(&router_zid));
 
             // check the plugin config
             let plugins = &node_stat.plugins;
@@ -105,22 +141,27 @@ async fn three_nodes() {
             panic!("unexpected node id")
         }
     }
+    Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn own_status() {
+#[tokio::test(flavor = "multi_thread")]
+async fn own_status() -> anyhow::Result<()> {
     enable_test_logging("debug");
 
     // Arrange - one swarm node; client shares the node's session
-    let swarm_handle = swarm_config!("one_node.jsonnet");
-    let session = swarm_handle.session();
-    let client = introspection_client::v1::Client::new(session.clone()).await;
+    let group = Overlay::new(&World::local()).new_multicast_group();
+    let node = in_process::StoppedRt::new(&group)
+        .orchestration()
+        .db()
+        .start()
+        .await?;
+    let client = Client::new(node.get_session().clone()).await;
 
     // Act - request own node status
-    let status = client.own_status().await.unwrap();
+    let status = client.own_status().await?;
 
     // Assert - we get back our own node with the expected plugins
-    assert_eq!(expected_id(), status.id);
+    assert_eq!(node.get_zid(), status.id);
     assert!(status.peers.is_empty());
     assert!(status.routers.is_empty());
 
@@ -129,15 +170,5 @@ async fn own_status() {
     assert_plugin_configured(plugins, "introspection");
     assert_plugin_configured(plugins, "orchestration");
     assert_plugin_configured(plugins, "db");
-}
-
-fn expected_id() -> ZenohId {
-    ZenohId::from_str("9a28d1a01a04f41e7b9e0ff3bab594a2").unwrap()
-}
-
-fn expected_id_router() -> ZenohId {
-    ZenohId::from_str("8a28d1a01a04f41e7b9e0ff3bab594a2").unwrap()
-}
-fn expected_id_other_peer() -> ZenohId {
-    ZenohId::from_str("7a28d1a01a04f41e7b9e0ff3bab594a2").unwrap()
+    Ok(())
 }

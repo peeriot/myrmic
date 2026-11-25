@@ -3541,26 +3541,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum-map"
-version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4532960034c15ba2f55e9eee631040ecc473c32e6c4b200828c759840f13a06"
-dependencies = [
- "enum-map-derive",
-]
-
-[[package]]
-name = "enum-map-derive"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7127272f64b3e098f7d81f350d672081b879bff896d219c42370dc858b1af9ff"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
 name = "enum-ordinalize"
 version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5742,11 +5722,11 @@ name = "introspection-client"
 version = "0.7.1"
 dependencies = [
  "anyhow",
- "claims",
  "futures",
  "introspection-common",
  "serde_json",
  "sorg-tests",
+ "test-framework",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -6827,7 +6807,6 @@ dependencies = [
  "swarm-telemetry",
  "tar",
  "tempfile",
- "test-framework",
  "textus",
  "tokio",
  "toml 0.8.23",
@@ -6949,6 +6928,36 @@ name = "nb"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
+
+[[package]]
+name = "netlink-packet-core"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d6e2daf9a8c2e21302714706860a0e6be02e03d17294ecc66b354ea7d4059dd"
+
+[[package]]
+name = "netlink-packet-route"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3c407d8e95c0128ee5729728482a369f3ba9a0d9ba8335c20949a8d8989cf6b"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "log",
+ "netlink-packet-core",
+ "zerocopy",
+]
+
+[[package]]
+name = "netlink-sys"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c99d38e00b420df49e940fe0826e667c3dad82ac68eb4c2bbf754c1c14a83a10"
+dependencies = [
+ "bytes",
+ "libc",
+ "log",
+]
 
 [[package]]
 name = "nix"
@@ -10017,6 +10026,7 @@ dependencies = [
 name = "sorg-execution"
 version = "0.7.1"
 dependencies = [
+ "anyhow",
  "axum 0.8.9",
  "axum-server",
  "bincode",
@@ -10051,6 +10061,7 @@ dependencies = [
  "sorg-tests",
  "swarm-telemetry",
  "tempfile",
+ "test-framework",
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
@@ -10069,6 +10080,7 @@ dependencies = [
 name = "sorg-orchestration"
 version = "0.7.1"
 dependencies = [
+ "anyhow",
  "cell-protocol",
  "claims",
  "db-commons",
@@ -10084,6 +10096,7 @@ dependencies = [
  "sorg-execution",
  "sorg-tests",
  "tempfile",
+ "test-framework",
  "thiserror 2.0.21",
  "tokio",
  "topo_sort",
@@ -10477,8 +10490,6 @@ dependencies = [
  "swarm-telemetry",
  "swarm-telemetry-embedded",
  "sysinfo",
- "test-control",
- "test-control-common",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -10823,61 +10834,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-control"
-version = "0.7.1"
-dependencies = [
- "futures",
- "serde",
- "serde_json",
- "test-control-common",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "zenoh",
-]
-
-[[package]]
-name = "test-control-client"
-version = "0.7.1"
-dependencies = [
- "sorg-tests",
- "test-control-common",
- "thiserror 2.0.21",
- "tokio",
- "zenoh",
-]
-
-[[package]]
-name = "test-control-common"
-version = "0.7.1"
-dependencies = [
- "introspection-client",
- "introspection-common",
- "serde",
- "sorg-common",
-]
-
-[[package]]
 name = "test-framework"
 version = "0.7.1"
 dependencies = [
- "axum 0.8.9",
+ "anyhow",
  "bollard",
  "bytes",
  "cell-protocol",
  "claims",
  "config 0.15.27",
  "db-client",
- "enum-map",
  "futures",
  "hex",
  "introspection-client",
  "introspection-common",
  "myrmic-build",
- "postcard",
- "rand 0.9.5",
- "reqwest 0.13.5",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
  "rumqttc",
  "rumqttd",
  "serde",
@@ -10889,11 +10863,9 @@ dependencies = [
  "swarm-telemetry",
  "tar",
  "tempfile",
- "test-control-client",
- "test-control-common",
  "thiserror 2.0.21",
  "tokio",
- "tryhard",
+ "tracing-subscriber",
  "uuid",
  "zenoh",
 ]

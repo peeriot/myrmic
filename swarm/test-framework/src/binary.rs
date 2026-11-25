@@ -1,25 +1,26 @@
-//! Resolving of locally built binaries (see also [`crate::resolve_binary!`]).
+//! Finding the locally built binaries (see also [`crate::resolve_binary!`]).
 
 use std::path::{Path, PathBuf};
 
 /// The target directory of the workspace this crate is built in, wherever it is used from.
 ///
-/// Only right while this crate is a path dependency inside that workspace: as a git dependency,
-/// its sources lie in cargo's checkout cache, where nothing is built, and only the environment
-/// variables of [`resolve`] find a binary.
+/// This is only right while this crate is a path dependency inside that workspace. As a git
+/// dependency, its sources are in cargo's checkout cache, where nothing is built, so only the
+/// environment variables of [`resolve`] can find a binary.
 const TARGET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target");
 
-/// Resolve a binary with `name` built for `triple` (`None`: the host) in the workspace's target
-/// directory, while allowing to completely override the resolving via an environment variable.
+/// Find the binary `name` built for `triple` (`None`: the test's machine) in the workspace's target
+/// directory, unless an environment variable names the binary.
 ///
-/// The variable is `{NAME}_BINARY` for the host and `{NAME}_{TRIPLE}_BINARY` for a triple, upper
-/// case with dashes mapped to underscores: `test-cli` → `TEST_CLI_BINARY`, `myrmic` for
-/// `aarch64-unknown-linux-gnu` → `MYRMIC_AARCH64_UNKNOWN_LINUX_GNU_BINARY`.
+/// The variable is `{NAME}_BINARY` for the test's machine and `{NAME}_{TRIPLE}_BINARY` for a
+/// triple, upper case, with dashes replaced by underscores: `zenoh-router` → `ZENOH_ROUTER_BINARY`,
+/// `myrmic` for `aarch64-unknown-linux-gnu` → `MYRMIC_AARCH64_UNKNOWN_LINUX_GNU_BINARY`.
 ///
-/// Without it, the binary is looked for under the target directory, or `<triple>` in it for a
-/// triple (where cargo puts a `--target` build): in the directory of `profile`, or without one,
-/// the most recently modified one of every profile's directory, so a stale build of one profile
-/// doesn't shadow a fresh one of another. Panics if there is none.
+/// Without the variable, the binary is looked for in the target directory, or for a triple in its
+/// `<triple>` directory (where cargo puts a `--target` build). With `profile`, it is looked for in
+/// that profile's directory. Without one, the most recently modified binary of all profiles'
+/// directories is taken, so an old build of one profile doesn't hide a new build of another. Panics
+/// if there is none.
 pub fn resolve(name: &str, triple: Option<&str>, profile: Option<&str>) -> PathBuf {
     resolve_in(TARGET_DIR, name, triple, profile)
 }
@@ -95,7 +96,7 @@ fn newest_build(target: &Path, name: &str) -> Option<PathBuf> {
         .filter_map(|profile| {
             let binary = profile.path().join(name);
             match std::fs::metadata(&binary) {
-                Ok(metadata) => {
+                Ok(metadata) if metadata.is_file() => {
                     let modified = metadata.modified().unwrap_or_else(|e| {
                         panic!(
                             "the platform reports no mtime for {}: {e}",
@@ -104,6 +105,8 @@ fn newest_build(target: &Path, name: &str) -> Option<PathBuf> {
                     });
                     Some((modified, binary))
                 }
+                // rustdoc's output for a crate of that name (`target/doc/<name>`)
+                Ok(_) => None,
                 // a profile it wasn't built in, or no profile at all (a triple's directory)
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                 Err(e) => panic!("failed to stat {}: {e}", binary.display()),
@@ -115,8 +118,10 @@ fn newest_build(target: &Path, name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::time::{Duration, SystemTime};
+    use std::{
+        fs::File,
+        time::{Duration, SystemTime},
+    };
 
     use super::resolve_in;
 
@@ -143,6 +148,21 @@ mod tests {
         assert_eq!(
             resolve_in(target_dir, name, None, None),
             target.path().join("custom").join(name)
+        );
+    }
+
+    #[test]
+    fn rustdocs_directory_of_a_crate_of_that_name_is_no_build() {
+        let target = tempfile::tempdir().expect("failed to create a target directory");
+        let name = "resolve-test-doc";
+        build(target.path(), "debug", name, Duration::from_secs(600));
+        std::fs::create_dir_all(target.path().join("doc").join(name))
+            .expect("failed to create the doc directory");
+
+        let target_dir = target.path().to_str().expect("a temp path is UTF-8");
+        assert_eq!(
+            resolve_in(target_dir, name, None, None),
+            target.path().join("debug").join(name)
         );
     }
 

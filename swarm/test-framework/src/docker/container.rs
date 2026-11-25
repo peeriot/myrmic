@@ -1,25 +1,27 @@
-use std::ops::Deref;
-use std::path::Path;
-use std::sync::Arc;
+use std::{ops::Deref, path::Path, sync::Arc};
 
 use bollard::{
     Docker,
     container::LogOutput,
     exec::{CreateExecOptions, StartExecResults},
     models::{
-        ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
+        ContainerCreateBody, ContainerUpdateBody, EndpointSettings, HostConfig, Mount, MountType,
+        NetworkConnectRequest, NetworkingConfig,
     },
     query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions},
 };
 use futures::StreamExt;
 
-use crate::CommandOutput;
-use crate::docker::{DockerDaemon, image::Image, network::ManagedNetwork, run_cleanup};
+use crate::{
+    CommandOutput,
+    docker::{Daemon, Image, ManagedNetwork},
+    run_cleanup,
+};
 
 #[derive(Clone)]
-/// a thin wrapper for interacting with a running docker container (address, networks, exec)
+/// A running docker container, for reading its address and networks and running commands in it.
 pub struct ConnectedContainer {
-    docker: DockerDaemon,
+    docker: Daemon,
     container_id: String,
 }
 
@@ -32,8 +34,8 @@ impl Deref for ConnectedContainer {
 }
 
 impl ConnectedContainer {
-    /// a [`ConnectedContainer`] is created by attaching to a `container_id`
-    pub fn attach(docker: DockerDaemon, container_id: impl Into<String>) -> Self {
+    /// The running container `container_id` on `docker`.
+    pub fn attach(docker: Daemon, container_id: impl Into<String>) -> Self {
         Self {
             docker,
             container_id: container_id.into(),
@@ -46,35 +48,35 @@ impl ConnectedContainer {
     }
 
     /// the docker container id
-    pub fn id(&self) -> &str {
+    pub fn get_id(&self) -> &str {
         &self.container_id
     }
 
-    /// return the IP of this container in the specified network
+    /// The IP address of this container on the network `network`.
     ///
-    /// This is the address docker handed out, read back from its inspect API. A test that
-    /// changes the address inside the container's network namespace keeps seeing the old
-    /// one here, so capture the address before such a change instead of asking afterwards.
-    pub async fn container_ip(&self, network: &str) -> String {
+    /// This is the address docker handed out, read back from docker's inspect API. A test that
+    /// changes the address inside the container's network namespace keeps seeing the old address
+    /// here, so it has to read the address before such a change.
+    pub async fn get_container_ip(&self, network: &str) -> String {
+        let id = &self.container_id;
         let inspect = self
             .docker
-            .inspect_container(&self.container_id, None)
+            .inspect_container(id, None)
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to inspect container {id}: {err}"));
         inspect
             .network_settings
-            .unwrap()
-            .networks
-            .unwrap()
+            .and_then(|settings| settings.networks)
+            .unwrap_or_else(|| panic!("docker reports no networks for container {id}"))
             .get(network)
-            .unwrap()
+            .unwrap_or_else(|| panic!("container {id} is not on network {network}"))
             .ip_address
             .clone()
-            .unwrap()
+            .unwrap_or_else(|| panic!("container {id} has no address on network {network}"))
     }
 
-    /// Run `cmd` in the container and capture its output. Panics when docker cannot run it:
-    /// broken test infrastructure, not a result.
+    /// Run `cmd` in the container and capture its output. Panics if docker can't run it: that means
+    /// the test infrastructure is broken, which is not a result.
     pub async fn exec(&self, cmd: &[&str]) -> CommandOutput {
         let exec = self
             .docker
@@ -120,7 +122,26 @@ impl ConnectedContainer {
         }
     }
 
-    /// connect container to a network
+    /// Limit the memory of everything in the container to `bytes`, without swap on top: once its
+    /// processes use more and the kernel can't reclaim any, it kills one of them.
+    pub async fn set_memory_limit(&self, bytes: u64) {
+        let bytes = i64::try_from(bytes).expect("a memory limit fits docker's i64");
+        let id = &self.container_id;
+        self.docker
+            .update_container(
+                id,
+                ContainerUpdateBody {
+                    memory: Some(bytes),
+                    // the limit of memory and swap together
+                    memory_swap: Some(bytes),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_or_else(|err| panic!("failed to limit the memory of container {id}: {err}"));
+    }
+
+    /// Connect the container to the network `network`.
     pub async fn connect_network(&self, network: &str) {
         self.docker
             .connect_network(
@@ -131,20 +152,25 @@ impl ConnectedContainer {
                 },
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to connect container {} to network {network}: {err}",
+                    self.container_id
+                )
+            });
     }
 }
 
-/// a [`ManagedContainer`] is a docker container that was started by this framework and is
-/// force-removed when dropped (panic-safe cleanup)
+/// A docker container that this crate started. It is force-removed when dropped, so cleanup also
+/// happens when the test panics.
 ///
-/// Not `Clone`: exactly one value owns the container. Borrow it (it derefs to
-/// [`ConnectedContainer`]) to work with it, or share it in an `Arc`, e.g.
-/// `Myrmic::attach(Arc::new(container))`.
+/// It isn't `Clone`: exactly one value owns the container. To work with the container, borrow it
+/// (it dereferences to [`ConnectedContainer`]), or share it in an `Arc`, as a
+/// [`crate::host::Docker`] does.
 pub struct ManagedContainer {
     container: ConnectedContainer,
-    /// Kept alive for the network it is attached to: fields drop after [`Drop::drop`], so the
-    /// network is released only once the container is removed.
+    /// Keeps the network the container is attached to alive. Fields are dropped after
+    /// [`Drop::drop`], so the network is only released once the container is removed.
     _network: Option<Arc<ManagedNetwork>>,
 }
 
@@ -161,7 +187,7 @@ impl ManagedContainer {
     /// [`ContainerBuilder::run`]
     pub(crate) fn builder<'a>(
         image: &'a Image,
-        docker: DockerDaemon,
+        docker: Daemon,
         name: &'a str,
     ) -> ContainerBuilder<'a> {
         ContainerBuilder {
@@ -171,6 +197,7 @@ impl ManagedContainer {
             command: &[],
             capabilities: &[],
             tmpfs: vec![],
+            volumes: vec![],
             network: None,
         }
     }
@@ -179,11 +206,12 @@ impl ManagedContainer {
 /// Options for one docker container, created by [`ManagedContainer::builder`].
 pub(crate) struct ContainerBuilder<'a> {
     image: &'a Image,
-    docker: DockerDaemon,
+    docker: Daemon,
     name: &'a str,
     command: &'a [&'a str],
     capabilities: &'a [&'a str],
     tmpfs: Vec<(&'a str, &'a str)>,
+    volumes: Vec<&'a str>,
     network: Option<Arc<ManagedNetwork>>,
 }
 
@@ -206,6 +234,13 @@ impl<'a> ContainerBuilder<'a> {
         self
     }
 
+    /// A docker volume of its own mounted at `path`: a directory on the docker host's disk, removed
+    /// together with the container.
+    pub(crate) fn volume(mut self, path: &'a str) -> Self {
+        self.volumes.push(path);
+        self
+    }
+
     /// the network the container is attached to; it stays alive at least as long as the
     /// container
     pub(crate) fn network(mut self, network: Arc<ManagedNetwork>) -> Self {
@@ -215,14 +250,13 @@ impl<'a> ContainerBuilder<'a> {
 
     /// Create and start the container.
     pub(crate) async fn run(self) -> ManagedContainer {
-        let options = CreateContainerOptionsBuilder::default()
-            .name(self.name)
-            .build();
+        let name = self.name;
+        let options = CreateContainerOptionsBuilder::default().name(name).build();
         let created = self
             .docker
             .create_container(Some(options), self.create_body())
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to create container {name}: {err}"));
         // owned from here on, so a failure below still removes the container
         let managed = ManagedContainer {
             container: ConnectedContainer::attach(self.docker, created.id),
@@ -230,9 +264,9 @@ impl<'a> ContainerBuilder<'a> {
         };
 
         managed
-            .start_container(managed.id(), None::<StartContainerOptions>)
+            .start_container(managed.get_id(), None::<StartContainerOptions>)
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to start container {name}: {err}"));
 
         managed
     }
@@ -256,7 +290,7 @@ impl<'a> ContainerBuilder<'a> {
         }
 
         ContainerCreateBody {
-            image: Some(self.image.tag().to_owned()),
+            image: Some(self.image.get_tag().to_owned()),
             cmd: (!self.command.is_empty()).then(|| {
                 self.command
                     .iter()
@@ -266,7 +300,7 @@ impl<'a> ContainerBuilder<'a> {
             env,
             networking_config: self.network.as_deref().map(|network| NetworkingConfig {
                 endpoints_config: Some(std::collections::HashMap::from([(
-                    network.name().to_owned(),
+                    network.get_name().to_owned(),
                     EndpointSettings::default(),
                 )])),
             }),
@@ -284,6 +318,17 @@ impl<'a> ContainerBuilder<'a> {
                         .map(|(path, options)| ((*path).to_owned(), (*options).to_owned()))
                         .collect(),
                 ),
+                // without a source, docker creates an anonymous volume for the container
+                mounts: Some(
+                    self.volumes
+                        .iter()
+                        .map(|path| Mount {
+                            target: Some((*path).to_owned()),
+                            typ: Some(MountType::VOLUME),
+                            ..Default::default()
+                        })
+                        .collect(),
+                ),
                 ..Default::default()
             }),
             ..Default::default()
@@ -294,7 +339,8 @@ impl<'a> ContainerBuilder<'a> {
 impl Drop for ManagedContainer {
     fn drop(&mut self) {
         let mut rm = self.container.docker_cli();
-        rm.args(["rm", "-f", self.container.id()]);
+        // `-v`: with its anonymous volumes ([`ContainerBuilder::volume`])
+        rm.args(["rm", "-f", "-v", self.container.get_id()]);
         run_cleanup("ManagedContainer", rm);
     }
 }

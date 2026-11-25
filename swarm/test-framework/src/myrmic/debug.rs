@@ -1,21 +1,24 @@
 //! Streaming `myrmic telemetry debug --json` on any [`MyrmicBackend`].
 
-use std::process::Stdio;
-use std::time::Duration;
+use std::{process::Stdio, time::Duration};
 
 use serde::Deserialize as _;
-use swarm_telemetry::db::opentelemetry_proto::tonic::logs::v1::LogRecord;
-use swarm_telemetry::debug::{DebugCommand, DebugEvent};
-use tokio::io::{AsyncBufReadExt, BufReader, Lines};
-use tokio::process::ChildStdout;
+use swarm_telemetry::{
+    db::opentelemetry_proto::tonic::logs::v1::LogRecord,
+    debug::{DebugCommand, DebugEvent},
+};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader, Lines},
+    process::ChildStdout,
+};
 
 use super::{Myrmic, MyrmicBackend};
 
 /// A running `myrmic telemetry debug`, read line by line.
 ///
-/// Dropping it interrupts the CLI with `SIGINT`, not `SIGKILL`: only on Ctrl-C does the CLI put
-/// back a log filter it raised for `--level` on the mesh's nodes. The drop then waits for the CLI
-/// to exit.
+/// Dropping it interrupts the CLI with `SIGINT`, not `SIGKILL`: the CLI only restores a log filter
+/// it raised for `--level` on the nodes when it gets Ctrl-C. The drop then waits for the CLI to
+/// exit.
 pub struct DebugListener {
     // Declared before `process`, so it drops (closing the pipe) between the interrupt and the
     // wait; see the `Drop` impl.
@@ -43,14 +46,20 @@ pub struct DebugLog {
 }
 
 impl DebugListener {
-    /// Start `myrmic <args>` on the target with its stdout piped here.
+    /// Start `myrmic <args>` on the target, with its stdout piped to the test.
     ///
-    /// `sh` prints its own PID and then execs the CLI in its place, so that PID is the CLI's.
-    /// On a remote target it is the only handle that reaches the CLI: stopping the local `ssh` or
-    /// `docker exec` would leave it running.
+    /// `sh` prints its own pid and then execs the CLI in its place, so that pid is the CLI's. On a
+    /// remote target, the pid is the only way to reach the CLI: stopping the local `ssh` or `docker
+    /// exec` would leave the CLI running.
     pub(super) async fn spawn<B: MyrmicBackend>(myrmic: &Myrmic<B>, args: &[&str]) -> Self {
+        let attachment = myrmic
+            .attachment
+            .get_cli_args(&myrmic.backend.get_host_id());
         let mut sh_args = vec!["-c", "echo $$; exec \"$@\"", "sh", &myrmic.binary];
-        sh_args.extend_from_slice(args);
+        // No `--timeout`: the CLI's global one has the same name as `telemetry debug`'s own, so
+        // the stream would read it as how long to run, and end after it.
+        sh_args.extend(attachment.iter().map(String::as_str));
+        sh_args.extend(args);
         let mut command = myrmic.backend.command("sh", &sh_args);
         command.stdin(Stdio::null()).stdout(Stdio::piped());
         let invocation = format!("{command:?}");
@@ -120,8 +129,8 @@ impl DebugListener {
     }
 
     /// The entries the CLI has printed so far, as far as they can be read without waiting. Entries
-    /// the CLI still holds back (it batches them, see `myrmic telemetry debug`) are not among them;
-    /// a line that was only partly printed is kept for the next call.
+    /// the CLI still holds back (it prints them in batches, see `myrmic telemetry debug`) are not
+    /// included. A line that was only partly printed is kept for the next call.
     pub async fn buffered_entries(&mut self) -> Vec<DebugEntry> {
         let mut entries = vec![];
         while let Some(entry) = self.next_entry_timeout(Duration::ZERO).await {
@@ -144,8 +153,8 @@ impl Drop for DebugListener {
     }
 }
 
-/// The local end of a CLI started by [`DebugListener::spawn`]: the CLI itself for the local
-/// backend, the `ssh`/`docker exec` wrapper around it otherwise. Waits for it on drop.
+/// The local end of a CLI started by [`DebugListener::spawn`]: the CLI itself with the local
+/// backend, otherwise the `ssh` or `docker exec` wrapper around it. Waits for it on drop.
 struct CliProcess {
     child: std::process::Child,
     /// sends `SIGINT` to the CLI on the target

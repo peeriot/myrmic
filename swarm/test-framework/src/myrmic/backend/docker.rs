@@ -1,37 +1,41 @@
-use std::sync::Arc;
-
-use crate::docker::container::{ConnectedContainer, ManagedContainer};
+use crate::host::{self, Remote};
 
 use super::MyrmicBackend;
 
-/// [`MyrmicBackend`] that runs programs inside a docker container.
+/// A [`MyrmicBackend`] that runs programs in the container of a docker host.
 ///
-/// It shares ownership of the container with its clones, so the container outlives every
-/// [`super::super::Myrmic`] and guard using it, and is removed when the last of them drops.
-#[derive(Clone)]
-pub struct Docker {
-    container: Arc<ManagedContainer>,
+/// It holds its host, whose clones share the container. So the container outlives every
+/// [`crate::myrmic::Myrmic`] and guard that uses it, and is removed when the last of them is
+/// dropped.
+///
+/// `S` is the host's storage ([`host::Tmpfs`] or [`host::Volume`]).
+pub struct Docker<S = host::Tmpfs> {
+    host: host::Docker<S>,
 }
 
-impl Docker {
-    /// run programs inside `container`
-    pub fn attach(container: Arc<ManagedContainer>) -> Self {
-        Self { container }
+impl<S> Docker<S> {
+    /// run programs in `host`'s container
+    pub(crate) fn new(host: host::Docker<S>) -> Self {
+        Self { host }
     }
 
-    /// the container programs are executed in
-    pub fn container(&self) -> &ConnectedContainer {
-        &self.container
+    /// the host whose container programs run in
+    pub fn get_host(&self) -> &host::Docker<S> {
+        &self.host
     }
 }
 
-impl MyrmicBackend for Docker {
+impl<S> Clone for Docker<S> {
+    fn clone(&self) -> Self {
+        Self {
+            host: self.host.clone(),
+        }
+    }
+}
+
+impl<S> MyrmicBackend for Docker<S> {
     fn command(&self, program: &str, args: &[&str]) -> std::process::Command {
-        let mut command = self.container.docker_cli();
-        command
-            .args(["exec", self.container.id(), program])
-            .args(args);
-        command
+        self.host.command(program, args)
     }
 
     fn wrapper_exit_codes(&self) -> &'static [i32] {
@@ -40,7 +44,7 @@ impl MyrmicBackend for Docker {
         &[125, 126, 127]
     }
 
-    fn runtime_config(&self) -> Option<String> {
-        None
+    fn get_host_id(&self) -> host::Id {
+        self.host.get_id()
     }
 }

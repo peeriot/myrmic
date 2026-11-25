@@ -8,24 +8,22 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
-axum = { workspace = true }
+anyhow = { workspace = true }
 bollard = { workspace = true }
 bytes = { workspace = true }
 config = { workspace = true }
 rumqttc = { workspace = true }
 rumqttd = { workspace = true }
 cell-protocol = { workspace = true, default-features = true }
-claims = { workspace = true }
 db-client = { workspace = true, features = ["zenoh", "replica"] }
-enum-map = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 introspection-client = { workspace = true }
 introspection-common = { workspace = true }
 myrmic-build = { workspace = true }
-postcard = { workspace = true }
-rand = { workspace = true }
-reqwest = { version = "0.13.3", features = ["query", "json"] }
+netlink-packet-core = { workspace = true }
+netlink-packet-route = { workspace = true }
+netlink-sys = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -35,13 +33,14 @@ swarm = { workspace = true }
 swarm-telemetry = { workspace = true, features = ["export-db", "export-file"] }
 tar = { workspace = true }
 tempfile = { workspace = true }
-test-control-client = { workspace = true }
-test-control-common = { workspace = true }
 thiserror = { workspace = true }
-tryhard = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "sync", "rt"] }
+tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 zenoh = { workspace = true, features = ["transport_tcp", "unstable"] }
+
+[dev-dependencies]
+claims = { workspace = true }
 
 [lints]
 workspace = true

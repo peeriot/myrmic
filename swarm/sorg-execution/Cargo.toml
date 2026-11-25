@@ -80,6 +80,8 @@ zenoh-protocol = { workspace = true }
 
 sorg-tests = { workspace = true }
 sorg-client = { workspace = true }
+test-framework = { workspace = true }
+anyhow = { workspace = true }
 module-examples-common = { path = "../../tests/fixtures/module-examples-common" }
 myrmic-common = { workspace = true, features = [
     "cells",

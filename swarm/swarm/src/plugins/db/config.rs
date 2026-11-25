@@ -4,6 +4,7 @@ use std::{path::PathBuf, time::Duration};
 use crate::plugins::deserialize_optional_duration;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(flatten)]
     pub store: StoreConfig,
@@ -21,6 +22,23 @@ pub struct Config {
     /// without a restart, and a restart drops those changes for this list.
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Test hook: hold back everything replication brings into this node by
+    /// this long before handling it, as a humantime duration string (e.g.
+    /// "5s"): each announce and changeset it receives, and the first page of
+    /// each of its own catch-up pulls. So its copies lag behind the other
+    /// nodes' by about this long, while everything else between the nodes
+    /// travels without delay: requests, transactions, and what this node
+    /// serves the others' replication. The pacing of a pull of many pages
+    /// counts the wait too, so the second page may come up to this long late
+    /// once more.
+    ///
+    /// The other nodes broadcast their replication messages to every holder,
+    /// so the receiving node is the only place where one node's copy alone can
+    /// be held back. Only a build with the `test-hooks` feature knows the key.
+    #[cfg(feature = "test-hooks")]
+    #[serde(default, deserialize_with = "deserialize_optional_duration")]
+    pub replication_delay: Option<Duration>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,6 +56,7 @@ pub struct LoadSpec {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StoreConfig {
     /// If omitted, the data is stored completely in-memory, and lost after restart.
     #[serde(default)]

@@ -33,9 +33,6 @@ members = [
     "swarm/zenoh-nano",
     "swarm/zenoh-traits",
     # Tests/Examples/etc
-    "swarm/test-control",
-    "swarm/test-control-client",
-    "swarm/test-control-common",
     "swarm/tutorials/sorg/code/common",
     "swarm/tutorials/sorg/code/publisher",
     "swarm/tutorials/sorg/code/subscriber",
@@ -110,9 +107,6 @@ default-members = [
     "swarm/zenoh-nano",
     "swarm/zenoh-traits",
     # Tests/Examples/etc
-    "swarm/test-control",
-    "swarm/test-control-client",
-    "swarm/test-control-common",
     "swarm/test-framework",
     # Signal layer: host-side codegen, runtimes and shims
     "sdk/signal-layer/signal-layer-core",
@@ -295,6 +289,7 @@ implicit_hasher = "allow"
 cast_possible_truncation = "warn"
 uninlined_format_args = "allow"
 needless_continue = "allow"
+redundant_closure_for_method_calls = "allow"
 unused_async_trait_impl = "allow"
 
 # Zenoh does this via the dynamic plugins.
@@ -401,6 +396,9 @@ thiserror = { version = "2.0.12", default-features = false }
 bollard = "0.21"
 enum-map = "3.1"
 tar = "0.4"
+netlink-packet-core = "0.9"
+netlink-packet-route = "0.34"
+netlink-sys = "0.9"
 
 futures = { version = "0.3.31", default-features = false }
 futures-util = { version = "0.3.31", default-features = false }
@@ -570,10 +568,6 @@ filestore-client = { path = "swarm/filestore-client" }
 
 introspection-client = { path = "swarm/introspection-client" }
 introspection-common = { path = "swarm/introspection-common" }
-
-test-control = { path = "swarm/test-control" }
-test-control-client = { path = "swarm/test-control-client" }
-test-control-common = { path = "swarm/test-control-common" }
 
 test-framework = { path = "swarm/test-framework" }
 

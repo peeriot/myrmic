@@ -43,11 +43,6 @@ pub struct PluginConfigs {
     pub onboarding: Option<
         <crate::plugins::onboarding::SwarmOnboardingPlugin as crate::plugins::MyrmicPlugin>::Config,
     >,
-    #[cfg(feature = "plugin-test-control")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_control: Option<
-        <crate::plugins::test_control::ZenohTestControlPlugin as crate::plugins::MyrmicPlugin>::Config,
-    >,
     #[cfg(feature = "plugin-embedded-log")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedded_log: Option<
@@ -59,8 +54,8 @@ pub struct PluginConfigs {
 mod tests {
     use super::SwarmConfig;
 
-    /// The rack harness writes a `zenoh` section into every host's config
-    /// (`test-framework`'s `upload_host_config`). `SwarmConfig` denies unknown
+    /// The test framework writes a `zenoh` section into every runtime's config
+    /// (`test-framework`'s `myrmic` module). `SwarmConfig` denies unknown
     /// fields, so a key that has drifted from zenoh's schema stops every
     /// runtime from starting — a whole rack run lost to a typo, with the
     /// failure surfacing only as hosts that never register. Pin the shape.

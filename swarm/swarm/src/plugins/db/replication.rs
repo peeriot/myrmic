@@ -13,6 +13,10 @@ pub(crate) struct ZenohTransport {
     /// time it lands here. Boxed rather than holding the store, so the transport
     /// stays free of the store's metadata type parameter.
     now: std::sync::Arc<dyn Fn() -> db_commons::models::Version + Send + Sync>,
+    /// How long to hold back the first page of a pull before handing it on; see
+    /// `Config::replication_delay`.
+    #[cfg(feature = "test-hooks")]
+    replication_delay: Option<std::time::Duration>,
 }
 
 impl ZenohTransport {
@@ -39,7 +43,19 @@ impl ZenohTransport {
             client,
             role,
             now: std::sync::Arc::new(move || store.now()),
+            #[cfg(feature = "test-hooks")]
+            replication_delay: None,
         })
+    }
+
+    /// This transport, holding back the first page of each pull by
+    /// `replication_delay`.
+    #[cfg(feature = "test-hooks")]
+    pub fn replication_delay(self, replication_delay: Option<std::time::Duration>) -> Self {
+        Self {
+            replication_delay,
+            ..self
+        }
     }
 }
 
@@ -111,7 +127,16 @@ impl db::replication::ReplicaTransport for ZenohTransport {
     ) -> Option<db_commons::models::replication::sync::PullResponse> {
         let started = std::time::Instant::now();
         let namespace = req.scope.namespace.clone();
+        #[cfg(feature = "test-hooks")]
+        let first_page = req.after.is_none();
         let response = self.client.sync_pull(target, req).await;
+        // A held back pull's data arrives only now. Only its first page waits: the requester paces
+        // the later ones by how long the earlier took, so a wait on every page would add up to
+        // many times the delay.
+        #[cfg(feature = "test-hooks")]
+        if first_page && let Some(delay) = self.replication_delay {
+            tokio::time::sleep(delay).await;
+        }
 
         super::metrics::record_pull(
             self.role,

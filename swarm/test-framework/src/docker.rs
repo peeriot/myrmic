@@ -4,21 +4,28 @@ use std::ops::Deref;
 
 use bollard::Docker;
 
-pub mod container;
-pub mod image;
-pub mod network;
+mod container;
+mod image;
+mod network;
 
-/// The docker daemon the framework talks to: a bollard client plus the endpoint it connects to,
-/// so the `docker` CLI can be pointed at the same daemon (on its own the CLI follows the active
-/// docker context, not the socket bollard picked).
+pub(crate) use self::container::ContainerBuilder;
+pub use self::{
+    container::{ConnectedContainer, ManagedContainer},
+    image::Image,
+    network::ManagedNetwork,
+};
+
+/// The docker daemon this crate talks to: a bollard client, and the endpoint it connects to, so the
+/// `docker` CLI can be pointed at the same daemon. On its own, the CLI uses the active docker
+/// context, not the socket that bollard picked.
 #[derive(Clone)]
-pub struct DockerDaemon {
+pub struct Daemon {
     client: Docker,
     /// `DOCKER_HOST`-style URL, e.g. `unix:///var/run/docker.sock`
     host: String,
 }
 
-impl Deref for DockerDaemon {
+impl Deref for Daemon {
     type Target = Docker;
 
     fn deref(&self) -> &Self::Target {
@@ -26,9 +33,9 @@ impl Deref for DockerDaemon {
     }
 }
 
-impl DockerDaemon {
-    /// Connect to the docker daemon, honoring `DOCKER_HOST` and rootless
-    /// (`$XDG_RUNTIME_DIR/docker.sock`) setups before falling back to the system socket.
+impl Daemon {
+    /// Connect to the docker daemon. Uses `DOCKER_HOST` if it is set, then a rootless docker's
+    /// socket (`$XDG_RUNTIME_DIR/docker.sock`) if there is one, and the system socket otherwise.
     pub fn connect() -> Self {
         let host = std::env::var("DOCKER_HOST")
             .ok()
@@ -58,18 +65,4 @@ fn rootless_socket() -> Option<String> {
     std::path::Path::new(&path)
         .exists()
         .then(|| format!("unix://{path}"))
-}
-
-/// Run the docker `command` of the drop-guard `guard`. A failure is reported, not raised: a panic
-/// during unwinding aborts the process and hides the original one.
-fn run_cleanup(guard: &str, mut command: std::process::Command) {
-    let invocation = format!("{command:?}");
-    match command.output() {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => eprintln!(
-            "{guard} drop-guard: {invocation} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ),
-        Err(err) => eprintln!("{guard} drop-guard: failed to run {invocation}: {err}"),
-    }
 }

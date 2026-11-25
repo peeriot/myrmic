@@ -6,7 +6,7 @@ use bollard::{body_full, query_parameters::BuildImageOptionsBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 
-use crate::docker::DockerDaemon;
+use crate::docker::Daemon;
 
 /// A docker image the daemon has: only [`Self::find`] and [`Self::build`] create one.
 pub struct Image {
@@ -16,7 +16,7 @@ pub struct Image {
 
 impl Image {
     /// the image `tag`, or `None` if the daemon doesn't have it
-    pub async fn find(docker: &DockerDaemon, tag: impl Into<String>) -> Option<Self> {
+    pub async fn find(docker: &Daemon, tag: impl Into<String>) -> Option<Self> {
         let tag = tag.into();
         match docker.inspect_image(&tag).await {
             Ok(_) => Some(Self { tag }),
@@ -27,10 +27,10 @@ impl Image {
         }
     }
 
-    /// Build the image `tag` from `dockerfile` with an in-memory tar build context containing the
-    /// given `files` as `(host path, name in context)` pairs.
+    /// Build the image `tag` from `dockerfile`, with a build context in memory that holds `files`,
+    /// given as `(path on the test's machine, name in the context)` pairs.
     pub async fn build(
-        docker: &DockerDaemon,
+        docker: &Daemon,
         tag: impl Into<String>,
         dockerfile: &Path,
         files: &[(&Path, &str)],
@@ -43,7 +43,7 @@ impl Image {
             .build();
         let mut stream = docker.build_image(options, None, Some(body_full(Bytes::from(context))));
         while let Some(result) = stream.next().await {
-            let info = result.unwrap();
+            let info = result.unwrap_or_else(|err| panic!("docker build of {tag} failed: {err}"));
             if let Some(error) = info
                 .error_detail
                 .as_ref()
@@ -56,7 +56,7 @@ impl Image {
     }
 
     /// the image's reference, e.g. `myrmic-swarm:0123456789abcdef`
-    pub fn tag(&self) -> &str {
+    pub fn get_tag(&self) -> &str {
         &self.tag
     }
 }
@@ -67,11 +67,14 @@ fn build_context(dockerfile: &Path, files: &[(&Path, &str)]) -> Vec<u8> {
     for (path, name) in files {
         append_file(&mut archive, path, name);
     }
-    archive.into_inner().unwrap()
+    archive
+        .into_inner()
+        .unwrap_or_else(|err| panic!("failed to finish the build context: {err}"))
 }
 
 fn append_file(archive: &mut tar::Builder<Vec<u8>>, path: &Path, name: &str) {
-    let data = std::fs::read(path).unwrap();
+    let data = std::fs::read(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     let mut header = tar::Header::new_ustar();
     header.set_size(
         data.len()
@@ -83,5 +86,5 @@ fn append_file(archive: &mut tar::Builder<Vec<u8>>, path: &Path, name: &str) {
     header.set_cksum();
     archive
         .append_data(&mut header, name, data.as_slice())
-        .unwrap();
+        .unwrap_or_else(|err| panic!("failed to add {name} to the build context: {err}"));
 }

@@ -13,6 +13,8 @@ use swarm_api::DropNotifier;
 
 use crate::config::PluginConfigs;
 pub use config::SwarmConfig;
+#[cfg(feature = "plugin-orchestration")]
+pub use plugins::orchestration::Config as OrchestrationConfig;
 
 /// How long a swarm's plugins may take to report ready once its zenoh runtime started.
 pub const PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -211,12 +213,6 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
         );
         load_plugin!(
             started,
-            "plugin-test-control",
-            plugins::test_control::ZenohTestControlPlugin,
-            |p| p.test_control.clone(),
-        );
-        load_plugin!(
-            started,
             "plugin-embedded-log",
             plugins::embedded_log::EmbeddedLoggingPlugin,
             |p| p.embedded_log.clone(),
@@ -257,12 +253,11 @@ async fn spawn(config: SwarmConfig, drop_rx: DropNotifier) -> anyhow::Result<spa
 /// handling of `Constraint::Routed` re-elects the landing node as a *provisional* offloader on
 /// every single such transaction, rather than treating it as an established holder — which
 /// silently drops the data from any later, independently-routed read. A single local process hits
-/// this on every single telemetry write, since nothing else here ever claims the scope. A rack
-/// deployment's `myrmic replicate scope:tele -t <tag>` (test-framework's
-/// `configure_telemetry_replication`) runs after every host starts and overwrites this with one
-/// cluster-wide holder — this is just each node's own sane default until (if ever) something says
-/// otherwise, and it's what makes the very first telemetry write actually stick instead of racing
-/// its own provisional-election window.
+/// this on every single telemetry write, since nothing else here ever claims the scope. A
+/// deployment that runs `myrmic replicate scope:tele -t <tag>` after every host starts overwrites
+/// this with one cluster-wide holder — this is just each node's own sane default until (if ever)
+/// something says otherwise, and it's what makes the very first telemetry write actually stick
+/// instead of racing its own provisional-election window.
 #[cfg(feature = "plugin-db")]
 async fn self_register_tele_replication(session: &Session) {
     use cell_protocol::replication::{

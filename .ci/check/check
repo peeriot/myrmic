@@ -16,6 +16,15 @@ if [[ "$ALL_TARGETS" != "false" ]]; then
     ALL_TARGETS_FLAG="--all-targets"
 fi
 
+# The host runs build the runtime's test hooks in (`swarm`'s `test-hooks` feature, which nothing in
+# the workspace switches on), so that their code is linted, documented and tested, and the
+# `myrmic` the tests run has them. The embedded runs bring their own package lists, without
+# `swarm`.
+TEST_HOOKS_FLAG=""
+if [ -z "$COMMAND_SUFFIX" ]; then
+    TEST_HOOKS_FLAG="--features=swarm/test-hooks"
+fi
+
 OLD_PWD="$PWD"
 
 finish() {
@@ -63,8 +72,21 @@ if [[ "$SKIP_CHECKS" != "true" ]]; then
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
         clippy"$COMMAND_SUFFIX" \
         ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
+        ${TEST_HOOKS_FLAG:+$TEST_HOOKS_FLAG} \
         -- \
             --deny "warnings"
+
+    # The runs above build the test hooks in; this lints `swarm` as releases build it, without
+    # them. Only `swarm` is linted again.
+    if [ -n "$TEST_HOOKS_FLAG" ]; then
+        printf "\n\n--== Run Linter Without Test Hooks ==--\n\n"
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            clippy \
+            -p swarm \
+            ${ALL_TARGETS_FLAG:+$ALL_TARGETS_FLAG} \
+            -- \
+                --deny "warnings"
+    fi
 
 
     # Run cargo doc
@@ -73,6 +95,7 @@ if [[ "$SKIP_CHECKS" != "true" ]]; then
     RUSTDOCFLAGS="-D warnings" \
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
         doc"$COMMAND_SUFFIX" \
+        ${TEST_HOOKS_FLAG:+$TEST_HOOKS_FLAG} \
         --no-deps \
         --document-private-items
 fi
@@ -171,10 +194,12 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     # The tests in `sorg-tests` are integration tests that require the `swarm`
     # binary to be built, so we build it first before running the tests.
     printf "\n\n--== Build Swarm ==--\n\n"
-    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX" --bin swarm --bin myrmic
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} build"$COMMAND_SUFFIX" --bin swarm --bin myrmic \
+        ${TEST_HOOKS_FLAG:+$TEST_HOOKS_FLAG}
 
     printf "\n\n--== Run Unit Tests ==--\n\n"
     cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} citest"$COMMAND_SUFFIX" \
+        ${TEST_HOOKS_FLAG:+$TEST_HOOKS_FLAG} \
         "${PACKAGE_ARGS[@]}"
 
 fi
