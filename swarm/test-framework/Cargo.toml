@@ -30,7 +30,7 @@ sha2 = { workspace = true }
 sorg-client = { workspace = true }
 sorg-common = { workspace = true }
 swarm = { workspace = true }
-swarm-telemetry = { workspace = true, features = ["export-db"] }
+swarm-telemetry = { workspace = true, features = ["export-db", "export-file"] }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }

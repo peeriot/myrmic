@@ -883,9 +883,10 @@ fn on_replica_message(
     handle: Handle,
     delay: Option<Duration>,
 ) -> impl Fn(uhlc::ID, models::ReplicaMessage, usize) + Send + Sync + 'static {
+    let subject = metrics::get_subject_label(repl.get_subject());
     move |sender, msg, bytes| {
         let kind = msg.name();
-        metrics::record_msg_recv(kind, bytes);
+        metrics::record_msg_recv(kind, bytes, subject.clone());
 
         // Only what brings data in is held back: an announce, which tells of data this node then
         // pulls, and a changeset. A probe or a changeset request asks this node to serve others,

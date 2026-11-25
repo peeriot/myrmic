@@ -12,6 +12,8 @@ use test_framework::{
     overlay::{MulticastGroup, Overlay},
     start_runtimes,
     swarm::{self, Swarm},
+    telemetry,
+    wait::{DEFAULT_TIMEOUT, wait_for},
     world,
 };
 
@@ -336,6 +338,53 @@ async fn a_runtimes_peak_memory_is_read_from_its_process() -> anyhow::Result<()>
         (10 * MIB..512 * MIB).contains(&peak),
         "a running runtime held at most {peak} bytes"
     );
+    Ok(())
+}
+
+/// A runtime's counters are read from the telemetry files it exports: here, the replication
+/// messages it receives for the `sys` namespace, which every runtime replicates.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtimes_counters_are_read_from_its_telemetry_files() -> anyhow::Result<()> {
+    /// where the runtimes export their telemetry
+    const TELEMETRY_DIR: &str = "/tmp/myrmic-telemetry";
+
+    let setup = DockerSwarm::new().await;
+    let telemetry_config = swarm_telemetry::TelemetryConfig {
+        file_export_dir: Some(TELEMETRY_DIR.into()),
+        metrics: swarm_telemetry::config::metrics::Config {
+            export_interval_ms: Some(500),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let a_host = setup.host_set.new_host().await;
+    let a = setup.swarm.add(
+        a_host
+            .myrmic(&setup.group)
+            .runtime()
+            .telemetry(telemetry_config.clone()),
+    );
+    let b_host = setup.host_set.new_host().await;
+    let b = setup.swarm.add(
+        b_host
+            .myrmic(&setup.group)
+            .runtime()
+            .telemetry(telemetry_config),
+    );
+    start_runtimes!(setup.swarm; a, b);
+
+    let files = telemetry::Files::new(vec![a_host], TELEMETRY_DIR.to_owned());
+    wait_for(
+        DEFAULT_TIMEOUT,
+        "`a` to count replication messages for `sys`",
+        || async {
+            let received = files
+                .get_counter("repl_msgs_recv", &[("subject", "sys/*/*")])
+                .await;
+            (received > 0).then_some(received)
+        },
+    )
+    .await?;
     Ok(())
 }
 

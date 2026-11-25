@@ -147,6 +147,8 @@
 //!
 //! - [`host::Docker::count_traffic`] counts the bytes between two docker hosts.
 //! - [`myrmic::RunningRt::get_peak_memory`] reads the most memory a CLI runtime has held.
+//! - [`telemetry::Files`] reads the metrics and spans runtimes export to files, e.g. how many
+//!   replication messages a runtime received for a scope.
 //!
 //! # A swarm in docker
 //!
@@ -224,6 +226,7 @@ pub mod myrmic;
 pub mod overlay;
 pub mod runtime;
 pub mod swarm;
+pub mod telemetry;
 pub mod wait;
 mod world;
 

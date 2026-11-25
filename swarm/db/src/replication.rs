@@ -287,6 +287,11 @@ impl<T: ReplicaTransport, M: Send + Sync + 'static> Replicator<T, M> {
         (replicator, handle)
     }
 
+    /// the slice of the scope hierarchy this replicator replicates
+    pub fn get_subject(&self) -> &Subject {
+        &self.subject
+    }
+
     /// Confirms that this replicator is stopping. All tasks watching the
     /// handle's `stopped()` future will be notified.
     pub fn confirm_shutdown(&self) {

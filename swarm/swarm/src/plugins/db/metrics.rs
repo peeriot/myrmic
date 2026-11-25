@@ -100,13 +100,25 @@ pub(crate) fn record_msg_sent(kind: &'static str, bytes: usize) {
     METRICS.msg_bytes_sent.add(bytes as u64, &attrs);
 }
 
-/// One replica message received. An announce is broadcast to every replicating
-/// node, so this is not `msgs_sent` times one — read the two as volumes, not as
-/// a delivery ratio.
-pub(crate) fn record_msg_recv(kind: &'static str, bytes: usize) {
-    let attrs = [KeyValue::new("msg", kind), pid()];
+/// One replica message received by the replicator of `subject` (see
+/// [`get_subject_label`]). An announce is broadcast to every replicating node,
+/// so this is not `msgs_sent` times one — read the two as volumes, not as a
+/// delivery ratio.
+pub(crate) fn record_msg_recv(kind: &'static str, bytes: usize, subject: String) {
+    let attrs = [
+        KeyValue::new("msg", kind),
+        KeyValue::new("subject", subject),
+        pid(),
+    ];
     METRICS.msgs_recv.add(1, &attrs);
     METRICS.msg_bytes_recv.add(bytes as u64, &attrs);
+}
+
+/// How the metrics name a replication subject: its scope path, with `*` for
+/// the levels it spans, e.g. `sys/*/*` for the namespace `sys`.
+pub(crate) fn get_subject_label(subject: &models::Subject) -> String {
+    let (namespace, database, schema) = subject.as_keyexprs();
+    format!("{namespace}/{database}/{schema}")
 }
 
 /// The shape of one announce as published: how many scopes it covers, how many
