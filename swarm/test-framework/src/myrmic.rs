@@ -55,9 +55,9 @@ const INFO_PREFIX: &str = "INFO  ";
 /// file for it, or no pid directory at all.
 const RUNTIME_GONE: [&str; 2] = ["no runtime \"", "no runtimes at "];
 
-/// What `myrmic runtimes start` prints when the runtime's config has a `test_hooks` section, but
-/// `myrmic` was built without the `test-hooks` feature, which the section needs.
-const NO_TEST_HOOKS: &str = "unknown field `test_hooks`";
+/// The key in the db plugin's config of [`StoppedRt::replication_delay`], a test hook: only a
+/// `myrmic` built with the `test-hooks` feature knows it, and any other rejects the config.
+const REPLICATION_DELAY_KEY: &str = "replication_delay";
 
 /// What `myrmic delete` prints when nothing by that name is deployed (any more).
 const DEPLOYMENT_GONE: [&str; 2] = ["nothing named '", "no deployed cell '"];
@@ -149,7 +149,7 @@ where
             telemetry: swarm_telemetry::TelemetryConfig::default(),
             execution: sorg_common::ExecConfig::default(),
             orchestration: swarm::OrchestrationConfig::default(),
-            test_hooks: None,
+            replication_delay: None,
         }
     }
 
@@ -452,8 +452,8 @@ pub struct StoppedRt<B> {
     telemetry: swarm_telemetry::TelemetryConfig,
     execution: sorg_common::ExecConfig,
     orchestration: swarm::OrchestrationConfig,
-    /// `None`: the config has no `test_hooks` section, so `myrmic` needs no `test-hooks` feature
-    test_hooks: Option<swarm::TestHooks>,
+    /// `None`: the config doesn't name it, so `myrmic` needs no `test-hooks` feature
+    replication_delay: Option<Duration>,
 }
 
 impl<B> StoppedRt<B>
@@ -510,11 +510,14 @@ where
         self
     }
 
-    /// How the runtime misbehaves on purpose, e.g. holds back the replication it receives; by
-    /// default it doesn't. Only a `myrmic` built with the `test-hooks` feature has these hooks, so
-    /// starting the runtime panics if the binary lacks them.
-    pub fn test_hooks(mut self, test_hooks: swarm::TestHooks) -> Self {
-        self.test_hooks = Some(test_hooks);
+    /// Hold back everything replication brings into the runtime by `delay`, so that its copies
+    /// lag behind the other runtimes' while everything else travels without delay (see
+    /// `replication_delay` in the db plugin's config); by default it holds back nothing.
+    ///
+    /// A test hook: only a `myrmic` built with the `test-hooks` feature has it, so starting the
+    /// runtime panics if the binary lacks it (see the [crate docs](crate#test-hooks)).
+    pub fn replication_delay(mut self, delay: Duration) -> Self {
+        self.replication_delay = Some(delay);
         self
     }
 }
@@ -542,9 +545,10 @@ where
             "execution": self.execution,
             "orchestration": self.orchestration,
         });
-        if let Some(test_hooks) = &self.test_hooks {
-            config["test_hooks"] =
-                serde_json::to_value(test_hooks).expect("the test hooks serialize to JSON");
+        if let Some(delay) = self.replication_delay {
+            config["db"] = serde_json::json!({
+                (REPLICATION_DELAY_KEY): format!("{}us", delay.as_micros()),
+            });
         }
         let config = config.to_string();
         // `runtimes start` reads its config before it daemonizes, so the file may go once the
@@ -561,7 +565,8 @@ where
         args.push(path_arg(&config_path));
         let output = match self.myrmic.run_local(&args).await {
             Err(Error::Cli { stderr })
-                if self.test_hooks.is_some() && stderr.contains(NO_TEST_HOOKS) =>
+                if self.replication_delay.is_some()
+                    && stderr.contains(&format!("unknown field `{REPLICATION_DELAY_KEY}`")) =>
             {
                 panic!(
                     "`{}` was built without the `test-hooks` feature, which the runtime's test hooks \

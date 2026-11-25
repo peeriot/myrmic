@@ -66,10 +66,10 @@ telemetry-export-db = ["swarm-telemetry/export-db"]
 telemetry-export-otlp = ["swarm-telemetry/export-otlp"]
 
 # Test-only: everything the test framework needs a runtime to do on purpose, e.g. hold back the
-# replication it receives: the `test_hooks` config section (see `TestHooks`) and the code behind
-# it. Hooks in the crates below belong behind it too, so it stays the one switch. Nothing in the
-# workspace switches it on: the test pipelines build `myrmic` with `--features swarm/test-hooks`,
-# releases never do, and without it, a config naming the section is rejected.
+# replication it receives (the db plugin's `replication_delay`): the hooks' code and the config
+# keys that switch them on. Hooks in the crates below belong behind it too, so it stays the one
+# switch. Without it, a config naming a hook is rejected. Nothing in the workspace switches it on:
+# the test pipelines build `myrmic` with `--features swarm/test-hooks`, releases never do.
 test-hooks = ["plugin-db"]
 
 [dependencies]

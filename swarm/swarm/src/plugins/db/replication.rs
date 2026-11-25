@@ -14,7 +14,8 @@ pub(crate) struct ZenohTransport {
     /// stays free of the store's metadata type parameter.
     now: std::sync::Arc<dyn Fn() -> db_commons::models::Version + Send + Sync>,
     /// How long to hold back the first page of a pull before handing it on; see
-    /// `swarm::TestHooks::replication_delay`. `None` outside of tests.
+    /// `Config::replication_delay`.
+    #[cfg(feature = "test-hooks")]
     replication_delay: Option<std::time::Duration>,
 }
 
@@ -29,7 +30,6 @@ impl ZenohTransport {
         subject: &Subject,
         store: &db::store::fjall::Store<M>,
         role: &'static str,
-        replication_delay: Option<std::time::Duration>,
     ) -> ZResult<Self> {
         if let Subject::Scope(scope) = subject {
             scope.check().map_err(zenoh::Error::from)?;
@@ -43,8 +43,19 @@ impl ZenohTransport {
             client,
             role,
             now: std::sync::Arc::new(move || store.now()),
-            replication_delay,
+            #[cfg(feature = "test-hooks")]
+            replication_delay: None,
         })
+    }
+
+    /// This transport, holding back the first page of each pull by
+    /// `replication_delay`.
+    #[cfg(feature = "test-hooks")]
+    pub fn replication_delay(self, replication_delay: Option<std::time::Duration>) -> Self {
+        Self {
+            replication_delay,
+            ..self
+        }
     }
 }
 
@@ -116,11 +127,13 @@ impl db::replication::ReplicaTransport for ZenohTransport {
     ) -> Option<db_commons::models::replication::sync::PullResponse> {
         let started = std::time::Instant::now();
         let namespace = req.scope.namespace.clone();
+        #[cfg(feature = "test-hooks")]
         let first_page = req.after.is_none();
         let response = self.client.sync_pull(target, req).await;
         // A held back pull's data arrives only now. Only its first page waits: the requester paces
         // the later ones by how long the earlier took, so a wait on every page would add up to
         // many times the delay.
+        #[cfg(feature = "test-hooks")]
         if first_page && let Some(delay) = self.replication_delay {
             tokio::time::sleep(delay).await;
         }

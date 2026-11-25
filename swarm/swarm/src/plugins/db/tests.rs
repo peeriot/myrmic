@@ -88,40 +88,34 @@ fn node_id(session: &zenoh::Session) -> models::NodeId {
     id.to_le_bytes()
 }
 
-/// A plugin context for one node with the plugins' configs `plugins`, tagged
-/// the way the host tags it at boot — tests pin replicas by runtime tag, which
-/// lives in that set.
+/// A plugin context for one node, tagged the way the host tags it at boot —
+/// tests pin replicas by runtime tag, which lives in that set.
 fn ctx(
     session: &zenoh::Session,
     drop_rx: swarm_api::DropNotifier,
     ready: swarm_api::Ready,
-    plugins: crate::config::PluginConfigs,
 ) -> MyrmicCtx {
     let tags = LiveTags::new(crate::node_tags::effective_at_boot(session, &[]));
 
     MyrmicCtx::new(
         session.clone(),
         tokio::runtime::Handle::current(),
-        std::sync::Arc::new(plugins),
+        Default::default(),
         tags,
         drop_rx,
         ready,
     )
 }
 
-/// Runs the plugin's `main` with the plugins' configs `plugins` as a task and
-/// returns once it signalled ready.
+/// Runs the plugin's `main` as a task and returns once it signalled ready.
 async fn boot(
     session: &zenoh::Session,
     drop_rx: swarm_api::DropNotifier,
     config: super::config::Config,
-    plugins: crate::config::PluginConfigs,
 ) {
     let ready = swarm_api::Ready::default();
 
-    let ctx = ctx(session, drop_rx, ready.clone(), plugins);
-
-    Plugin::run_until_ready(ctx, ready, config).await;
+    Plugin::run_until_ready(ctx(session, drop_rx, ready.clone()), ready, config).await;
 }
 
 async fn start_node() -> (zenoh::Session, swarm_api::DropSender) {
@@ -137,7 +131,7 @@ async fn start_node_on(
 
     let (drop_tx, drop_rx) = flume::bounded(1);
 
-    boot(&session, drop_rx, config, Default::default()).await;
+    boot(&session, drop_rx, config).await;
 
     (session, drop_tx)
 }
@@ -160,7 +154,7 @@ async fn start_node_with_escalation(
         ..Default::default()
     };
 
-    boot(&session, drop_rx, config, Default::default()).await;
+    boot(&session, drop_rx, config).await;
 
     (session, drop_tx)
 }
@@ -1944,6 +1938,5 @@ fn store_context(session: &zenoh::Session) -> super::StoreContext {
         store,
         Duration::from_secs(60),
         Duration::from_secs(60),
-        None,
     )
 }

@@ -1,5 +1,5 @@
-//! The `replication_delay` test hook (`swarm::TestHooks`): a node that holds back what replication
-//! brings in.
+//! The `replication_delay` test hook (`Config::replication_delay`): a node that holds back what
+//! replication brings in.
 
 use std::time::{Duration, Instant};
 
@@ -51,13 +51,11 @@ async fn a_held_back_node_holds_a_commit_only_after_its_delay() -> anyhow::Resul
     })
     .await;
     let (_drop_held_back, drop_rx) = flume::bounded(1);
-    let plugins = crate::config::PluginConfigs {
-        test_hooks: crate::TestHooks {
-            replication_delay: DELAY,
-        },
+    let config = super::super::config::Config {
+        replication_delay: Some(DELAY),
         ..Default::default()
     };
-    boot(&held_back, drop_rx, Default::default(), plugins).await;
+    boot(&held_back, drop_rx, config).await;
 
     let client = Client::new(&writer);
     replicate_onto(&client, &scope(), &[&writer, &held_back]).await;

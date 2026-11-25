@@ -140,8 +140,8 @@
 //!   ([`host_set::Docker::new_volume_host`]).
 //! - **Clock step:** [`host::Docker::skew_clock`] steps a docker host's clock, and
 //!   `skew_clock(0)` puts it back in step.
-//! - **Held back replication:** a CLI runtime whose test hooks (see [below](#test-hooks)) set a
-//!   [`replication_delay`](::swarm::TestHooks::replication_delay) lets its copies lag behind.
+//! - **Held back replication:** [`myrmic::StoppedRt::replication_delay`] makes a CLI runtime's
+//!   copies lag behind the others', a test hook (see [below](#test-hooks)).
 //!
 //! # Measuring
 //!
@@ -197,16 +197,17 @@
 //! scope that lags behind the others is one: the other runtimes send their replication messages to
 //! all holders at once, so no fault on a host or a link holds back what one runtime receives,
 //! while the rest of its traffic flows. For such states, the runtime itself has test hooks: code
-//! that misbehaves on purpose when its config asks for it. They are the `test_hooks` section of a
-//! runtime's config ([`::swarm::TestHooks`]), which a test gives a CLI runtime with
-//! [`myrmic::StoppedRt::test_hooks`].
+//! that misbehaves on purpose when a key in its config asks for it. A test sets one on a CLI
+//! runtime with a method of [`myrmic::StoppedRt`] named after it, e.g.
+//! [`myrmic::StoppedRt::replication_delay`].
 //!
-//! The hooks are behind the `swarm` crate's `test-hooks` feature, one feature for all of them.
-//! Nothing in the workspace switches it on, so neither a release nor a plain `cargo build`
-//! contains them. A test that uses them needs a `myrmic` built with the feature:
-//! `cargo build --bin myrmic --features swarm/test-hooks`, as the test pipelines build it.
-//! Starting a runtime with test hooks on a `myrmic` without them panics with that command. A
-//! runtime without test hooks runs on either build.
+//! The hooks, their code and their config keys, are behind the `swarm` crate's `test-hooks`
+//! feature, one feature for all of them. Nothing in the workspace switches it on, so neither a
+//! release nor a plain `cargo build` contains any of them. A test that uses them needs a `myrmic`
+//! built with the feature: `cargo build --bin myrmic --features swarm/test-hooks`, as the test
+//! pipelines build it. A `myrmic` without the feature rejects a config that names a hook, and
+//! starting a runtime with a test hook on it panics with that command. A runtime without test
+//! hooks runs on either build.
 //!
 //! # Smaller pieces
 //!
