@@ -240,3 +240,50 @@ async fn handler_crash_never_root_stays_down_and_a_redeploy_gets_the_command() {
     );
 }
 
+// A panic in an event handler is a crash. Under `on-error` only an abnormal
+// death restarts a root, and on a live node with no spawn or stop that is
+// `Crashed`, so a second init proves the reason. The event is not delivered
+// again, so the restarted root stays up.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn handler_crash_event_handler_panic_crashes_the_root() {
+    // Arrange
+    let (test_app, client) = setup().await;
+    deploy_root(&client, RestartType::OnError).await;
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 1, HANDLE_WAIT).await,
+        "crash cell did not initialise"
+    );
+
+    // Act - an event whose handler panics
+    test_app.publish_cell_event("crash_evt", Vec::new()).await;
+
+    // Assert - the root crashed and was restarted
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 2, RESTART_WAIT).await,
+        "an event-handler panic did not crash and restart the root"
+    );
+}
+
+// A panic in a timer tick is a crash, observed the same way. Timers die with
+// the incarnation, so the restarted root does not tick again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn handler_crash_timer_handler_panic_crashes_the_root() {
+    // Arrange
+    let (test_app, client) = setup().await;
+    deploy_root(&client, RestartType::OnError).await;
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 1, HANDLE_WAIT).await,
+        "crash cell did not initialise"
+    );
+
+    // Act - arm a timer whose tick panics 100 ms later
+    test_app
+        .command_send(CRASH_SRI, "arm_panic_timer", None)
+        .await;
+
+    // Assert - the root crashed and was restarted
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 2, RESTART_WAIT).await,
+        "a timer-handler panic did not crash and restart the root"
+    );
+}

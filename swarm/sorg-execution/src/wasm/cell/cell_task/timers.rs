@@ -3,6 +3,7 @@ use tokio::sync::oneshot::Sender;
 use wasmtime::{Instance, Store};
 
 use crate::wasm::cell::CellTimerTick;
+use crate::wasm::cell::cell_task::{Outcome, log_crash};
 use crate::wasm::cell::state::CellState;
 
 struct TimerCompletionToken(Option<Sender<()>>);
@@ -15,14 +16,14 @@ impl Drop for TimerCompletionToken {
     }
 }
 
-/// Returns whether the handler ran to completion; a `false` rolls the tick's
-/// transaction back.
-pub(crate) async fn handle_timer_tick(
+/// Runs a timer tick's handler. A failed or trapped run rolls the tick's
+/// transaction back; a trapped one also ends the incarnation.
+pub(super) async fn handle_timer_tick(
     instance: &Instance,
     store: &mut Store<CellState>,
     sri: &Sri,
     tick: CellTimerTick,
-) -> bool {
+) -> Outcome {
     let CellTimerTick {
         timer_id,
         export_name,
@@ -33,7 +34,7 @@ pub(crate) async fn handle_timer_tick(
         tracing::trace!(
             "dropping stale tick for cancelled timer {timer_id} (export '{export_name}')"
         );
-        return true;
+        return Outcome::Succeeded;
     }
 
     // A timer tick is the cell invoking itself on a schedule, so the sender is
@@ -56,15 +57,15 @@ pub(crate) async fn handle_timer_tick(
     let exit_code = match func {
         Ok(func) => match func.call_async(&mut (*store), params).await {
             Ok(code) => code,
-            Err(err) => {
-                tracing::warn!("cell '{sri}' trap in timer tick '{export_name}': {err}");
-                return false;
+            Err(trap) => {
+                log_crash(sri, "timer", &export_name, &trap);
+                return Outcome::Trapped;
             }
         },
         Err(err) => {
             // Nothing ran, so there is nothing to undo.
             tracing::warn!("cell '{sri}' timer export '{export_name}' not found: {err}");
-            return true;
+            return Outcome::Succeeded;
         }
     };
 
@@ -74,8 +75,8 @@ pub(crate) async fn handle_timer_tick(
             .take_err_msg()
             .unwrap_or("Module error; No err msg stored".to_owned());
         tracing::warn!("cell '{sri}' error in timer tick '{export_name}': {err_msg}");
-        return false;
+        return Outcome::Failed;
     }
 
-    true
+    Outcome::Succeeded
 }

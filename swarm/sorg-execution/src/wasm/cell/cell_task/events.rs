@@ -2,17 +2,18 @@ use cell_protocol::Sri;
 use myrmic_common::cells::Event;
 use wasmtime::{Instance, Store};
 
+use crate::wasm::cell::cell_task::{Outcome, log_crash};
 use crate::wasm::cell::state::CellState;
 use crate::wasm::cell::{CellEvent, sri_parts};
 
-/// Returns whether the handler ran to completion; a `false` rolls the event's
-/// transaction back.
-pub(crate) async fn handle_event(
+/// Runs an event's handler. A failed or trapped run rolls the event's
+/// transaction back; a trapped one also ends the incarnation.
+pub(super) async fn handle_event(
     instance: &Instance,
     store: &mut Store<CellState>,
     sri: &Sri,
     event: CellEvent,
-) -> bool {
+) -> Outcome {
     let CellEvent {
         event,
         payload,
@@ -33,7 +34,7 @@ pub(crate) async fn handle_event(
 
     if let Err(err) = store.data_mut().store_arguments(payload) {
         tracing::error!("cell '{sri}' failed to store event arguments: {err}");
-        return false;
+        return Outcome::Failed;
     }
 
     let params = (id_hi, id_lo, sender_hi, sender_lo, n_bytes);
@@ -41,18 +42,15 @@ pub(crate) async fn handle_event(
         match instance.get_typed_func::<(i64, i64, i64, i64, i32), i32>(&mut (*store), &fn_name) {
             Ok(func) => match func.call_async(&mut (*store), params).await {
                 Ok(code) => code,
-                Err(err) => {
-                    tracing::warn!(
-                        "cell '{sri}' trap in event handler '{e}': {err}",
-                        e = event.as_ref()
-                    );
-                    return false;
+                Err(trap) => {
+                    log_crash(sri, "event", event.as_ref(), &trap);
+                    return Outcome::Trapped;
                 }
             },
             Err(err) => {
                 // Nothing ran, so there is nothing to undo.
                 tracing::warn!("cell '{sri}' event export '{fn_name}' not found: {err}");
-                return true;
+                return Outcome::Succeeded;
             }
         };
 
@@ -65,10 +63,10 @@ pub(crate) async fn handle_event(
             "cell '{sri}' error handling event '{e}': {stored_err_msg}",
             e = event.as_ref()
         );
-        return false;
+        return Outcome::Failed;
     }
 
-    true
+    Outcome::Succeeded
 }
 
 fn event_fn_name(event: &Event) -> String {

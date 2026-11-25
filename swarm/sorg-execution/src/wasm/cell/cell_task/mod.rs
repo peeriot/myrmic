@@ -206,10 +206,8 @@ async fn dispatch(
 ) -> Outcome {
     match message {
         CellMessage::Command(cmd) => handle_command(instance, store, sri, cmd).await,
-        CellMessage::Event(event) => Outcome::of(handle_event(instance, store, sri, event).await),
-        CellMessage::TimerTick(tick) => {
-            Outcome::of(handle_timer_tick(instance, store, sri, tick).await)
-        }
+        CellMessage::Event(event) => handle_event(instance, store, sri, event).await,
+        CellMessage::TimerTick(tick) => handle_timer_tick(instance, store, sri, tick).await,
         CellMessage::TimerFinished(tick) => {
             store.data_mut().remove_finished_timer(tick.timer_id);
             Outcome::Succeeded
