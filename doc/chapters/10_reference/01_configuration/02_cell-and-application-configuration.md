@@ -53,6 +53,8 @@ The YAML application specification file accepts the following top-level keys:
 ### `name`
 *(optional)* - Unique name used to identify the application in the swarm. Defaults to the spec file's parent directory name.
 
+The name groups the cells of an application for deploy and delete. It does not namespace cell names (SRNs), event names, or gateway mount paths, which are all swarm-wide. To run two copies of one application, give each instance a distinct `srn`, and build the classes with distinct [event names](../../05_guides/03_events.md#event-names-are-swarm-wide) and [mount paths](../03_myrmic-sdk/06_external-systems/01_gateway-routes.md).
+
 ### `classes`
 A list of buildable classes. Each entry has an `id` and is either a **cell** (built from a crate, key `build`) or a **bridge** (described by a spec file, key `spec` or its aliases `http` / `mqtt`). `build` and `spec` are mutually exclusive, and no other key is accepted: in particular `cell:` is rejected with a hint to use `build:`.
 
