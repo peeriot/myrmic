@@ -15,10 +15,17 @@ RUN pacman -Syu --noconfirm nftables libfaketime && pacman -Scc --noconfirm
 # host's clock that FAKETIME_TIMESTAMP_FILE holds, in seconds. Docker can't move one container's
 # wall clock otherwise: all containers share the host kernel's. The monotonic clock stays real, as
 # with a real clock step, and the file is read again at most a second after it changes.
+#
+# Without FAKETIME_DISABLE_SHM, the first process that loads libfaketime creates a semaphore and
+# shared memory in /dev/shm, its children inherit them, and the creator removes them when it exits.
+# A daemonized runtime outlives the `runtimes start` that created them, and libfaketime ends it
+# with status 1 at its next intercepted `stat` call. Nothing here needs that state: it serves
+# counters shared between processes (FAKETIME_START_AFTER_*), not the offset file.
 ENV LD_PRELOAD=/usr/lib/faketime/libfaketimeMT.so.1 \
     FAKETIME_TIMESTAMP_FILE=/etc/faketime \
     FAKETIME_DONT_FAKE_MONOTONIC=1 \
-    FAKETIME_CACHE_DURATION=1
+    FAKETIME_CACHE_DURATION=1 \
+    FAKETIME_DISABLE_SHM=1
 RUN echo +0 > /etc/faketime
 
 COPY myrmic zenoh-router /usr/local/bin/

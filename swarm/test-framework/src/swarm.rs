@@ -493,10 +493,12 @@ impl RuntimeEntry {
 }
 
 /// How long the swarm may take to match its expected links: the default wait, plus zenoh's link
-/// lease (10 s by default) for a link that a fault cut. A silent link only drops once its lease
-/// runs out, so a runtime keeps listing a peer it was cut off from for that long.
+/// lease (10 s by default) for a link that a fault cut, plus zenoh's query timeout (10 s by
+/// default). A silent link only drops once its lease runs out, so a runtime keeps listing a peer
+/// it was cut off from for that long. While the link is torn down, a status query can be routed to
+/// a replier that never answers, and then waits out the whole query timeout.
 const CONNECTED_TIMEOUT: Duration =
-    Duration::from_secs(crate::wait::DEFAULT_TIMEOUT.as_secs() + 10);
+    Duration::from_secs(crate::wait::DEFAULT_TIMEOUT.as_secs() + 10 + 10);
 
 /// How long the orchestrators get to agree on a leader once the swarm is connected. Each
 /// orchestrator learns of the others from join events. Until it has, an orchestrator that knows of

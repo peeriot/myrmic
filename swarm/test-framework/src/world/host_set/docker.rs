@@ -121,7 +121,9 @@ impl Drop for DockerShared {
 ///
 /// The binaries are stripped, and the image is tagged with a hash of them and of the Dockerfile. So
 /// the image is built once per build of the binaries, and every later run reuses it, in any
-/// process.
+/// process. Test processes that start side by side take turns on a lock file named after the tag:
+/// the first builds the image, the others then find it, instead of each building it again (and
+/// docker refusing all but one of the tags).
 async fn ensure_image(daemon: &docker::Daemon) -> &'static docker::Image {
     static IMAGE: OnceCell<docker::Image> = OnceCell::const_new();
     IMAGE
@@ -140,8 +142,22 @@ async fn ensure_image(daemon: &docker::Daemon) -> &'static docker::Image {
                         .unwrap_or_else(|err| panic!("failed to read {}: {err}", file.display())),
                 );
             }
-            let tag = format!("myrmic-swarm:{}", &hex::encode(hash.finalize())[..16]);
+            let hash = &hex::encode(hash.finalize())[..16];
+            let tag = format!("myrmic-swarm:{hash}");
 
+            let lock_path = std::env::temp_dir().join(format!("myrmic-swarm-{hash}.lock"));
+            // held until the image is there; waiting for it blocks the thread, for as long as
+            // another process builds
+            let _lock = tokio::task::spawn_blocking(move || {
+                let lock = std::fs::File::create(&lock_path).unwrap_or_else(|err| {
+                    panic!("failed to create {}: {err}", lock_path.display())
+                });
+                lock.lock()
+                    .unwrap_or_else(|err| panic!("failed to lock {}: {err}", lock_path.display()));
+                lock
+            })
+            .await
+            .unwrap_or_else(|err| std::panic::resume_unwind(err.into_panic()));
             match docker::Image::find(daemon, &tag).await {
                 Some(image) => image,
                 None => {

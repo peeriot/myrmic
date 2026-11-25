@@ -11,6 +11,10 @@ fn init(_md: Metadata) -> Result<()> {
         .fixed_delay()
         .build()
         .map_err(|_| "timer failed")?;
+    let _ = myrmic_sdk::interval(Callback::of::<tick_b>(), Duration::from_millis(80))
+        .fixed_delay()
+        .build()
+        .map_err(|_| "timer_b failed")?;
     Ok(())
 }
 
@@ -33,6 +37,21 @@ fn tick(_md: Metadata) -> Result<()> {
     myrmic_sdk::info!("fixed_delay tick: returning").ok();
     LAST_EXIT_US.store(uptime_us()?, Ordering::Relaxed);
 
+    Ok(())
+}
+
+/// Second fixed-delay tick: sleeps 60ms, then publishes `fixed_delay_tick_b`.
+///
+/// No test in this repository uses it, but it isn't unused: the HIL tests in swarm-ci run this
+/// fixture on a board (`fixed_delay_two_timers_both_fire`) and check that two fixed-delay timers
+/// both keep firing. It can only delay `tick`'s next entry, never bring it forward, so it doesn't
+/// disturb the lower bound that sorg-execution's fixed-delay test checks.
+#[myrmic_sdk::cmd]
+fn tick_b(_md: Metadata) -> Result<()> {
+    myrmic_sdk::info!("fixed_delay tick_b: entering").ok();
+    myrmic_sdk::wait(Duration::from_millis(60)).map_err(|_| "wait failed")?;
+    publish("fixed_delay_tick_b", &JsonValue::from("tick_b"))?;
+    myrmic_sdk::info!("fixed_delay tick_b: returning").ok();
     Ok(())
 }
 
