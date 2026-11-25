@@ -1,0 +1,28 @@
+[workspace]
+
+[package]
+name    = "linux_spi_pins_pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "linux_spi_pins_pipeline"
+path = "src/main.rs"
+
+[dependencies]
+signal-layer-ipc      = { path = "../signal-layer-ipc" }
+signal-layer-linux-rt = { path = "../../../swarm/signal-layer/signal-layer-linux-rt" }
+linux-i2c-shim        = { path = "../../../swarm/signal-layer/linux-i2c-shim" }
+linux-gpio-shim       = { path = "../../../swarm/signal-layer/linux-gpio-shim" }
+linux-spi-shim        = { path = "../../../swarm/signal-layer/linux-spi-shim" }
+signal-layer-core     = { path = "../signal-layer-core" }
+signal-layer-types    = { package = "myrmic-signal-layer-types", path = "../signal-layer-types" }
+tokio                 = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio-stream          = { version = "0.1", features = ["time"] }
+critical-section      = { version = "1", features = ["std"] }
+log                   = { version = "0.4", default-features = false }
+env_logger            = "0.11"
+spi_pins_driver = { path = "../../../signal-modules/drivers/spi-pins", package = "spi-pins-driver" }
+
+[dev-dependencies]
+tempfile = "3"

@@ -25,6 +25,22 @@ initial_memory = 131_072
 max_memory = 262_144
 ```
 
+A crate with several cargo targets can give each target its own settings. Keys in `[package.metadata.myrmic.lib]` apply to the library, and keys in `[package.metadata.myrmic.bin.<name>]` apply to that binary; either overrides the package-level value of the same key. A table for a binary the crate doesn't declare is an error.
+
+**Example:**
+```toml
+[package.metadata.myrmic]
+heap_size = 32_768
+
+[package.metadata.myrmic.lib]
+heap_size = 65_536
+
+[package.metadata.myrmic.bin.sensor-node]
+firmware = "esp32"
+```
+
+A firmware crate sets `firmware = "esp32"` (aliases: `firmware-family`, `family`) instead of the memory keys. Its own cargo features pick the chip, and `myrmic flash` refuses an image built for a different chip than the attached board's. The chip names `esp32c5`, `esp32c6` and `esp32c61` are still accepted, but are deprecated.
+
 > **Note:** For workspaces there is no way to configure memory at the workspace level - only through the `Cargo.toml` of each member Cell.
 
 ## Application
@@ -38,21 +54,21 @@ The YAML application specification file accepts the following top-level keys:
 *(optional)* - Unique name used to identify the application in the swarm. Defaults to the spec file's parent directory name.
 
 ### `classes`
-A list of buildable classes. Each entry has an `id` and is either a **cell** (built from a crate) or a **bridge** (described by a spec file). `build` and `spec` are mutually exclusive.
+A list of buildable classes. Each entry has an `id` and is either a **cell** (built from a crate, key `build`) or a **bridge** (described by a spec file, key `spec` or its aliases `http` / `mqtt`). `build` and `spec` are mutually exclusive, and no other key is accepted: in particular `cell:` is rejected with a hint to use `build:`.
 
 - `id` - **Required.** Identifier for the class, referenced from `instances`.
 - `build` - Cell classes. Build configuration; a bare string is taken as the crate path. Omitting both `build` and `spec` builds the crate in the app-specs folder (`path: "."`) with automatic target selection.
   - `path` *(optional)* - Aliases: `source`, `directory`, `dir`. Path to the Cell's `Cargo.toml` or source directory. Defaults to `.`.
   - `target` *(optional)* - A single cargo target: `lib` or a target name. A class produces exactly one artifact, so at most one target may be named. Omit to auto-select (sole binary, else sole library).
   - `platforms` *(optional)* - One or a list of build platforms: `linux`, `esp32c5`, `esp32c6`, `esp32c61`. Defaults to `linux`.
-- `spec` - Bridge classes. Aliases: `http`, `mqtt`, `cell`. Path to the bridge specification YAML file, relative to the app-specs file.
+- `spec` - Bridge classes. Aliases: `http`, `mqtt`. Path to the bridge specification YAML file, relative to the app-specs file.
 
 ### `instances`
 A list of instances to deploy. Each entry references exactly one entry from `classes`:
 
 - `class` - References a cell `classes` entry by `id`.
 - `bridge` - References a bridge `classes` entry by `id`.
-- `sri` *(optional)* - SRI to deploy this instance under. Defaults to the referenced class id.
+- `srn` *(optional)* - SRN to deploy this instance under. Defaults to the referenced class id.
 - `tags` *(optional)* - Capability tags the target runtime must advertise - controls which runtimes this Cell is placed on. Defaults to an empty list, meaning it deploys to any runtime.
 - `init` *(optional)* - **Cell instances only.** Arguments delivered to the Cell's initialization handler on deploy. Encoded as JSON by default; a value that isn't valid JSON is sent as a JSON string.
 - `init_file` *(optional)* - **Cell instances only.** Path to a file relative to the app-spec directory, whose raw bytes are delivered verbatim to the Cell's initialization handler.
@@ -123,15 +139,15 @@ classes:
 
 instances:
   - class: my-cell-class-id-1
-    sri: my-cell-1
+    srn: my-cell-1
     tags: [my-tag-1]
 
   - class: my-cell-class-id-2
-    sri: my-cell-2
+    srn: my-cell-2
     tags: [my-tag-2]
 
   - bridge: my-mqtt-bridge
-    sri: bridge.mqtt
+    srn: bridge.mqtt
 ```
 
 ## See Also

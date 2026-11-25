@@ -94,6 +94,7 @@ wasm-runtime-macros
 # Cell crates. The wasm lint job compiles them for wasm32, and the `no_std` ones
 # have no host `cdylib` at all, but `cargo test` builds the lib as a test binary
 # against std - so a `#[cfg(test)]` module in any cell runs here.
+cell-ble-sensor-client
 cell-blinky-periodic-logic
 cell-cb-receiver-logic
 cell-cb-sender-logic

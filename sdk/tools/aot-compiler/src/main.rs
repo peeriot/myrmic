@@ -1,4 +1,4 @@
-//! `aot-compiler` CLI to compile `.wasm` files into `.meta` and `.aot` files
+//! `aot-compiler` CLI to compile `.wasm` files into `.aot` files
 #![warn(missing_docs)]
 
 use std::path::PathBuf;
@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use aot_compiler::{Target, compile, ensure_wamrc};
 use clap::Parser;
 
-/// WASM AOT compiler that compiles a `.wasm` file into a `.meta` `.aot` file pair
+/// WASM AOT compiler that compiles a `.wasm` file into an `.aot` file
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -32,8 +32,8 @@ fn main() -> anyhow::Result<()> {
         None => std::env::current_dir()?,
     };
 
-    let artifacts = compile(&args.wasm_file, args.target, &out_dir)?;
-    println!("Metadata file {} generated.", artifacts.meta.display());
+    let aot = compile(&args.wasm_file, args.target, &out_dir)?;
+    println!("AOT file {} generated.", aot.display());
 
     Ok(())
 }

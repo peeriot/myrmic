@@ -1,12 +1,20 @@
 use alloc::{borrow::ToOwned, string::String};
 use serde::{Deserialize, Serialize};
 
-/// Represents a validated command identifier
+/// Longest accepted event or command name in bytes. A name becomes the
+/// schema of its event scope, so it ends up in zenoh key expressions and db
+/// store keys; matches the spawn ref's class-name bound
+/// ([`SPAWN_REF_MAX_NAME`](super::spawn_ref::SPAWN_REF_MAX_NAME)).
+pub const MAX_NAME_LEN: usize = 128;
+
+/// Represents a validated command identifier. Deserializing validates too.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(try_from = "String")]
 pub struct Command(String);
 
-/// Represents a validated event identifier
+/// Represents a validated event identifier. Deserializing validates too.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(try_from = "String")]
 pub struct Event(String);
 
 // generates the convenience impls for the name types
@@ -59,10 +67,14 @@ impl_name_type!(Event);
 
 /// Validates that a string can be used as a component of a function name (we need this for the command and event names).
 /// Since function names will be prefixed (e.g., "command_" or "event_"),
-/// the component can start with a number.
+/// the component can start with a number. It is at most [`MAX_NAME_LEN`] bytes.
 ///
 /// Returns `Ok(())` if valid, `Err(&'static str)` with an error message if invalid.
 fn validate_function_name_component(input: &str) -> Result<(), &'static str> {
+    if input.len() > MAX_NAME_LEN {
+        return Err("name is too long");
+    }
+
     // Check for empty string
     if input.is_empty() {
         return Err("name cannot be empty");
@@ -82,8 +94,67 @@ fn validate_function_name_component(input: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_function_name_component;
+    use super::{Command, Event, MAX_NAME_LEN, validate_function_name_component};
+    use crate::cells::EventPublishRequest;
+    use alloc::string::String;
     use claims::{assert_err, assert_ok};
+
+    #[test]
+    fn deserialize_rejects_every_name_new_rejects() {
+        let rejected = [
+            String::new(),
+            String::from(" "),
+            String::from("a b"),
+            String::from("/"),
+            String::from("a/b"),
+            String::from("*"),
+            String::from("**"),
+            String::from("$*"),
+            String::from("x?"),
+            String::from("#"),
+            String::from("@"),
+            String::from(".."),
+            String::from("\0"),
+            String::from("\u{e9}"),
+            "a".repeat(MAX_NAME_LEN + 1),
+        ];
+
+        for name in rejected {
+            let bytes = postcard::to_allocvec(&name).unwrap();
+
+            assert_err!(Event::new(name.clone()));
+            assert_err!(Command::new(name));
+            assert_err!(postcard::from_bytes::<Event>(&bytes));
+            assert_err!(postcard::from_bytes::<Command>(&bytes));
+        }
+    }
+
+    #[test]
+    fn deserialize_keeps_valid_names_and_their_wire_format() {
+        let name = "a".repeat(MAX_NAME_LEN);
+        let event = Event::new(name.clone()).unwrap();
+        let bytes = postcard::to_allocvec(&event).unwrap();
+
+        // Same bytes as a plain string: old peers and stored rows still decode.
+        assert_eq!(bytes, postcard::to_allocvec(&name).unwrap());
+        assert_eq!(postcard::from_bytes::<Event>(&bytes).unwrap(), event);
+        assert_eq!(
+            postcard::from_bytes::<Command>(&bytes).unwrap(),
+            Command::new(name).unwrap()
+        );
+    }
+
+    #[test]
+    fn publish_request_from_the_guest_abi_rejects_a_forbidden_name() {
+        // The bytes a hostile cell hands the raw `cell.publish_event` import:
+        // `EventPublishRequest { event: "x?", payload: None }`.
+        assert_err!(postcard::from_bytes::<EventPublishRequest>(&[
+            0x02, b'x', b'?', 0x00
+        ]));
+        assert_ok!(postcard::from_bytes::<EventPublishRequest>(&[
+            0x02, b'x', b'y', 0x00
+        ]));
+    }
 
     #[test]
     fn validate_function_name_component_valid_cases() {
@@ -204,6 +275,12 @@ mod tests {
 
         // Only special characters
         assert_err!(validate_function_name_component("!@#$"));
+
+        // Length bound
+        assert_err!(validate_function_name_component(
+            &"a".repeat(MAX_NAME_LEN + 1)
+        ));
+        assert_ok!(validate_function_name_component(&"a".repeat(MAX_NAME_LEN)));
 
         // Valid but edge cases
         assert_ok!(validate_function_name_component("a")); // single letter

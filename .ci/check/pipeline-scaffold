@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Scaffold a Signal Layer pipeline with `myrmic new --pipeline` and compile it,
+# Scaffold a Signal Layer pipeline with `myrmic signal-layer new` and compile it,
 # for both the Linux and firmware targets, and scaffold + test a driver and a
-# step with `myrmic new --driver`/`--step`.
+# step with `myrmic signal-layer driver`/`step`.
 #
 # This is the only CI gate that *builds* a generated pipeline. The myrmic-cli
 # unit tests assert the scaffold's file contents but never compile it, and the
@@ -56,7 +56,7 @@ cargo build --bin myrmic
 
 printf "\n\n--== Linux pipeline: scaffold + build ==--\n\n"
 LINUX="$WORK/linux"
-"$MYRMIC" new --pipeline "$LINUX" --sdk "$REPO"
+"$MYRMIC" signal-layer new "$LINUX" --sdk "$REPO"
 # `myrmic build` recognises the scaffold's `[package.metadata.myrmic] pipeline`
 # marker and compiles the native tokio binary for the host. A full build links
 # it, catching missing-backend link errors a `check` would miss.
@@ -64,16 +64,38 @@ LINUX="$WORK/linux"
 
 printf "\n\n--== Firmware pipeline: scaffold + build ==--\n\n"
 FIRMWARE="$WORK/firmware"
-"$MYRMIC" new --firmware=esp32c6 --pipeline "$FIRMWARE" --sdk "$REPO"
+"$MYRMIC" signal-layer new --firmware=esp32c6 "$FIRMWARE" --sdk "$REPO"
 # `myrmic build` supplies the toolchain + link flags + chip feature the firmware
 # needs; the chip comes from the scaffold manifest's default feature.
 "$MYRMIC" build "$FIRMWARE"
 
+# The scaffold's `.cargo/config.toml` and build script carry everything a plain
+# `cargo build` needs (an IDE, rust-analyzer, a user's own CI), and the image
+# must come out with the layout `myrmic build` produces: the segments, which
+# are what gets flashed. The symbol and string tables differ with cargo's
+# metadata hash and are not part of the image. Same target dir: the differing
+# rustflags give the two builds separate artifacts, and the final ELF is read
+# before the second build overwrites it.
+FIRMWARE_ELF="$CARGO_TARGET_DIR/riscv32imac-unknown-none-elf/release/firmware"
+readelf -l --wide "$FIRMWARE_ELF" > "$WORK/myrmic.layout"
+( cd "$FIRMWARE" && cargo build --release )
+readelf -l --wide "$FIRMWARE_ELF" > "$WORK/cargo.layout"
+diff "$WORK/myrmic.layout" "$WORK/cargo.layout"
+
+# A crate trimmed to its one chip must not warn about the other chips' cfgs,
+# which `esp_firmware::board!` expands in the crate.
+sed -i -E '/^esp32c(5|61) *=/d' "$FIRMWARE/Cargo.toml"
+( cd "$FIRMWARE" && cargo build --release 2>&1 | tee "$WORK/trimmed.log" )
+if grep -q 'unexpected_cfgs' "$WORK/trimmed.log"; then
+    printf 'the firmware scaffold trimmed to one chip warns about unexpected cfgs\n' >&2
+    exit 1
+fi
+
 printf "\n\n--== Signal Layer modules: scaffold + build ==--\n\n"
 MODS="$WORK/mods"
-"$MYRMIC" new demo_i2c  --driver=i2c --registry-dir "$MODS" --sdk "$REPO"
-"$MYRMIC" new demo_spi  --driver=spi --registry-dir "$MODS" --sdk "$REPO"
-"$MYRMIC" new demo_step --step        --registry-dir "$MODS" --sdk "$REPO"
+"$MYRMIC" signal-layer driver demo_i2c  --bus i2c --registry-dir "$MODS"
+"$MYRMIC" signal-layer driver demo_spi  --bus spi --registry-dir "$MODS"
+"$MYRMIC" signal-layer step   demo_step           --registry-dir "$MODS" --sdk "$REPO"
 # The scaffolds are standalone crates with a stubbed test suite; `cargo test`
 # catches a template that renders non-compiling code.
 ( cd "$MODS/drivers/demo_i2c" && cargo test )

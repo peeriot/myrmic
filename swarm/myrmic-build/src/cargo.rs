@@ -6,6 +6,9 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::CargoTarget;
+use crate::compile::{self, Selector};
+
 /// Workspace context surrounding a `Cargo.toml`.
 #[derive(Debug)]
 pub struct Workspace {
@@ -103,6 +106,27 @@ pub struct TargetInfo {
     /// Cargo target kinds, e.g. `["lib"]` or `["bin"]`.
     pub kinds: Vec<String>,
     pub name: String,
+}
+
+/// The names of the binary and the library targets among `targets`.
+pub(crate) fn bin_and_lib_names(targets: &[TargetInfo]) -> (Vec<&str>, Vec<&str>) {
+    let named = |is_kind: fn(&str) -> bool| {
+        targets
+            .iter()
+            .filter(|t| t.kinds.iter().any(|k| is_kind(k)))
+            .map(|t| t.name.as_str())
+            .collect()
+    };
+    (named(|k| k == "bin"), named(is_lib_kind))
+}
+
+/// Cargo metadata reports every library kind (`lib`, `rlib`, `cdylib`, …) as a
+/// distinct target kind; treat any of them as "the library".
+fn is_lib_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
+    )
 }
 
 /// Returns the cargo targets (lib/bin/…) declared by the package at
@@ -233,11 +257,18 @@ fn target_dir(metadata: &Value) -> PathBuf {
 }
 
 /// Parses `manifest_path` and returns the value at `[package.metadata.myrmic]`
-/// deserialized as `M`.
+/// for the target `cargo_target` selects, deserialized as `M`.
+///
+/// A target's own table, `[package.metadata.myrmic.lib]` or
+/// `[package.metadata.myrmic.bin.<name>]`, overrides the package-level keys.
+/// The crate's targets are only resolved when such a table exists.
 ///
 /// Returns `Ok(None)` when the manifest has no `[package]` (virtual workspace
 /// root). When `[package.metadata.myrmic]` is absent, `M::default()` is used.
-pub fn read_package_metadata<M>(manifest_path: &Path) -> anyhow::Result<Option<M>>
+pub fn read_package_metadata<M>(
+    manifest_path: &Path,
+    cargo_target: &CargoTarget,
+) -> anyhow::Result<Option<M>>
 where
     M: Default + DeserializeOwned,
 {
@@ -250,22 +281,67 @@ where
         return Ok(None);
     };
 
-    let metadata = package
+    let Some(mut metadata) = package
         .get("metadata")
         .and_then(|m| m.get("myrmic"))
-        .cloned();
-
-    let parsed = match metadata {
-        Some(value) => value.try_into().with_context(|| {
-            format!(
-                "unable to parse [package.metadata.myrmic]: {}",
-                manifest_path.display()
-            )
-        })?,
-        None => M::default(),
+        .cloned()
+    else {
+        return Ok(Some(M::default()));
     };
 
-    Ok(Some(parsed))
+    let context = || {
+        format!(
+            "unable to parse [package.metadata.myrmic]: {}",
+            manifest_path.display()
+        )
+    };
+    if let toml::Value::Table(table) = &mut metadata {
+        apply_target_table(table, manifest_path, cargo_target).with_context(context)?;
+    }
+
+    Ok(Some(metadata.try_into().with_context(context)?))
+}
+
+/// Replaces the per-target tables in `table` with the keys of the one
+/// `cargo_target` selects. A table for a target the crate lacks is an error.
+fn apply_target_table(
+    table: &mut toml::Table,
+    manifest_path: &Path,
+    cargo_target: &CargoTarget,
+) -> anyhow::Result<()> {
+    let lib = table.remove("lib");
+    let bins = match table.remove("bin") {
+        Some(toml::Value::Table(bins)) => Some(bins),
+        Some(_) => anyhow::bail!("`bin` must be a table of binary names"),
+        None => None,
+    };
+    if lib.is_none() && bins.is_none() {
+        return Ok(());
+    }
+
+    let targets = package_targets(manifest_path)?;
+    let (bin_names, lib_names) = bin_and_lib_names(&targets);
+    if lib.is_some() && lib_names.is_empty() {
+        anyhow::bail!("`lib` is set, but the crate has no library target");
+    }
+    let mut bins = bins.unwrap_or_default();
+    if let Some(unknown) = bins.keys().find(|name| !bin_names.contains(&name.as_str())) {
+        anyhow::bail!(
+            "`bin.{unknown}` names no binary; available binaries: [{}]",
+            bin_names.join(", ")
+        );
+    }
+
+    let own = match compile::select_among(&targets, cargo_target)? {
+        Selector::Lib => lib,
+        Selector::Bin(name) => bins.remove(&name),
+    };
+    match own {
+        Some(toml::Value::Table(own)) => table.extend(own),
+        Some(_) => anyhow::bail!("a per-target entry must be a table"),
+        None => {}
+    }
+    Ok(())
 }
 
 /// Expects a `cargo build` invocation, and will add `"--message-format", "json-render-diagnostics"` to the command args,
@@ -441,5 +517,88 @@ mod tests {
                 ("TARGET_RUSTFLAGS", Some("-C lto")),
             ]
         );
+    }
+
+    #[derive(Debug, Default, PartialEq, serde::Deserialize)]
+    struct Probe {
+        firmware: Option<String>,
+        heap_size: Option<usize>,
+    }
+
+    /// A crate with a library and the binaries `a` and `b`.
+    fn crate_with(myrmic_table: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("src/bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), "").unwrap();
+        for bin in ["a", "b"] {
+            std::fs::write(bin_dir.join(format!("{bin}.rs")), "fn main() {}").unwrap();
+        }
+        let path = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[package]\nname = \"multi\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+                 [workspace]\n{myrmic_table}"
+            ),
+        )
+        .unwrap();
+        (dir, path)
+    }
+
+    fn read_for(path: &Path, cargo_target: &CargoTarget) -> anyhow::Result<Probe> {
+        Ok(read_package_metadata::<Probe>(path, cargo_target)?.unwrap())
+    }
+
+    const PER_TARGET: &str = "[package.metadata.myrmic]\nheap_size = 1024\n\
+         [package.metadata.myrmic.lib]\nheap_size = 4096\n\
+         [package.metadata.myrmic.bin.a]\nfirmware = \"esp32c6\"\n";
+
+    #[test]
+    fn a_bin_table_overrides_the_package_keys_for_that_bin() {
+        let (_dir, path) = crate_with(PER_TARGET);
+        let a = read_for(&path, &CargoTarget::Named("a".into())).unwrap();
+        assert_eq!(
+            a,
+            Probe {
+                firmware: Some("esp32c6".into()),
+                heap_size: Some(1024),
+            }
+        );
+        let b = read_for(&path, &CargoTarget::Named("b".into())).unwrap();
+        assert_eq!(
+            b,
+            Probe {
+                firmware: None,
+                heap_size: Some(1024),
+            }
+        );
+    }
+
+    #[test]
+    fn the_lib_table_applies_only_to_the_lib() {
+        let (_dir, path) = crate_with(PER_TARGET);
+        let lib = read_for(&path, &CargoTarget::Lib).unwrap();
+        assert_eq!(
+            lib,
+            Probe {
+                firmware: None,
+                heap_size: Some(4096),
+            }
+        );
+    }
+
+    #[test]
+    fn a_table_for_an_unknown_bin_is_an_error() {
+        let (_dir, path) = crate_with("[package.metadata.myrmic.bin.c]\nheap_size = 1\n");
+        let err = format!("{:#}", read_for(&path, &CargoTarget::Lib).unwrap_err());
+        assert!(err.contains("bin.c") && err.contains("a, b"), "{err}");
+    }
+
+    #[test]
+    fn per_target_tables_need_an_unambiguous_target() {
+        let (_dir, path) = crate_with(PER_TARGET);
+        let err = format!("{:#}", read_for(&path, &CargoTarget::Auto).unwrap_err());
+        assert!(err.contains("ambiguous"), "{err}");
     }
 }

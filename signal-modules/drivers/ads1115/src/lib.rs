@@ -21,14 +21,22 @@
 //! # Timing
 //!
 //! Each [`Ads1115::sample`] sequentially performs four single-shot
-//! conversions and waits (by polling the OS status bit) for each to
-//! complete. Total sample time is roughly `4 / data_rate_sps`. At very low
-//! data rates (≤ 16 SPS) the internal poll budget (`MAX_OS_POLLS`) may not
-//! be sufficient and the driver will return `ConversionTimeout`.
+//! conversions. For each, the driver writes the configuration, waits one
+//! conversion period of the configured data rate (`1000 / sps` ms rounded
+//! up, handled with `embassy_time` under `#[cfg(not(test))]`; host tests skip
+//! the waits) and then confirms completion through the OS status bit, with a
+//! few retries to absorb the device's data-rate tolerance. Total sample time
+//! is roughly `4 / data_rate_sps`; `ConversionTimeout` means a conversion did
+//! not finish within that budget.
 
 #![cfg_attr(not(test), no_std)]
 
 use embedded_hal_async::i2c::I2c;
+
+// `embassy_time` is only awaited under `#[cfg(not(test))]`; keep it referenced in
+// test builds so it never trips `unused_crate_dependencies`.
+#[cfg(test)]
+use embassy_time as _;
 
 const REG_CONVERSION: u8 = 0x00;
 const REG_CONFIG: u8 = 0x01;
@@ -40,11 +48,14 @@ const CFG_COMP_DISABLE: u16 = 0x0003; // Disable comparator
 
 const MUX: [u16; 4] = [0x4000, 0x5000, 0x6000, 0x7000]; // AIN0..AIN3 vs GND
 
-// At 128 SPS a conversion takes ~8 ms; 64 polls gives >500 ms of margin
-// assuming each I2C poll takes >8 ms. At slower data rates (8/16/32 SPS)
-// this may be insufficient and the driver will surface
-// `Ads1115Error::ConversionTimeout`.
-const MAX_OS_POLLS: u32 = 64;
+// The driver sleeps one nominal conversion period (`conversion_wait_ms`)
+// before the first OS poll, so that poll normally confirms completion. The
+// retries absorb the datasheet's ±10 % data-rate tolerance: a slow part at
+// 8 SPS needs up to 12.5 ms beyond the nominal 125 ms, which the 15 sleeps of
+// 1 ms exceed at every rate. The polls themselves buy no time: one two-byte
+// register read is ~0.1 ms on a 400 kHz bus.
+const MAX_OS_POLLS: u32 = 16;
+const OS_POLL_INTERVAL_MS: u64 = 1;
 
 /// PGA full-scale range.
 #[repr(u8)]
@@ -129,8 +140,9 @@ pub struct Ads1115Readings {
 pub enum Ads1115Error<E: core::fmt::Debug> {
     /// Underlying I2C bus error.
     Bus(E),
-    /// OS bit did not go high within `MAX_OS_POLLS` polls — likely due to a
-    /// very low data rate or a stuck conversion. Retry or raise the data rate.
+    /// OS bit still clear after one conversion period and `MAX_OS_POLLS`
+    /// confirmation polls — the conversion did not complete, which points to
+    /// a stuck or reset device rather than the data rate.
     ConversionTimeout,
 }
 
@@ -145,15 +157,17 @@ pub struct Ads1115 {
     addr: u8,
     pga_bits: u16,
     dr_bits: u16,
+    wait_ms: u64,
     lsb_mv: f32,
 }
 
 impl Ads1115 {
     /// Construct a driver instance without touching the bus.
     ///
-    /// Pre-computes the PGA + data-rate config bits and per-count LSB for the
-    /// configured full-scale range. The device is **not** probed until
-    /// [`Ads1115::init`] is called, which must happen before [`Ads1115::sample`].
+    /// Pre-computes the PGA + data-rate config bits, the per-conversion wait
+    /// and the per-count LSB for the configured full-scale range. The device
+    /// is **not** probed until [`Ads1115::init`] is called, which must happen
+    /// before [`Ads1115::sample`].
     #[must_use]
     pub fn new(cfg: &Ads1115Config) -> Self {
         let (pga_bits, lsb_mv) = pga(cfg.fs_mv);
@@ -161,6 +175,7 @@ impl Ads1115 {
             addr: cfg.i2c_addr,
             pga_bits,
             dr_bits: u16::from(cfg.data_rate as u8) << 5,
+            wait_ms: conversion_wait_ms(cfg.data_rate),
             lsb_mv,
         }
     }
@@ -185,7 +200,8 @@ impl Ads1115 {
     ///
     /// Sequential single-shot conversions — total time roughly
     /// `4 / data_rate_sps`. Returns [`Ads1115Error::ConversionTimeout`] if
-    /// any channel's OS bit does not go high within the poll budget.
+    /// any channel's OS bit does not go high within the conversion wait and
+    /// the poll budget.
     // ch comes from enumerate() over a 4-element array (0..3), so ch as u16 never truncates.
     #[allow(clippy::cast_possible_truncation)]
     pub async fn sample<I: I2c>(
@@ -204,8 +220,9 @@ impl Ads1115 {
         })
     }
 
-    /// Trigger one single-shot conversion on `ch` and poll the OS bit until
-    /// the conversion completes (or `MAX_OS_POLLS` is reached).
+    /// Trigger one single-shot conversion on `ch`, wait one conversion period
+    /// and confirm completion through the OS bit (retrying up to
+    /// `MAX_OS_POLLS` times).
     // ch is 0..3, passed from sample()'s enumerate() over a 4-element array.
     #[allow(clippy::cast_possible_truncation)]
     async fn read_channel<I: I2c>(
@@ -222,6 +239,8 @@ impl Ads1115 {
         let cfg_bytes = cfg.to_be_bytes();
         bus.write(self.addr, &[REG_CONFIG, cfg_bytes[0], cfg_bytes[1]])
             .await?;
+        #[cfg(not(test))]
+        embassy_time::Timer::after_millis(self.wait_ms).await;
         // Poll OS bit (bit 15): reads 0 while conversion is in progress, 1 when done.
         let mut polls = 0u32;
         loop {
@@ -235,6 +254,8 @@ impl Ads1115 {
             if polls >= MAX_OS_POLLS {
                 return Err(Ads1115Error::ConversionTimeout);
             }
+            #[cfg(not(test))]
+            embassy_time::Timer::after_millis(OS_POLL_INTERVAL_MS).await;
         }
         let mut raw = [0u8; 2];
         bus.write_read(self.addr, &[REG_CONVERSION], &mut raw)
@@ -256,6 +277,28 @@ fn pga(fs: FullScale) -> (u16, f32) {
     }
 }
 
+/// Nominal conversions per second for a data rate.
+fn sps(dr: DataRate) -> u64 {
+    match dr {
+        DataRate::Sps8 => 8,
+        DataRate::Sps16 => 16,
+        DataRate::Sps32 => 32,
+        DataRate::Sps64 => 64,
+        DataRate::Sps128 => 128,
+        DataRate::Sps250 => 250,
+        DataRate::Sps475 => 475,
+        DataRate::Sps860 => 860,
+    }
+}
+
+/// Milliseconds to wait for one single-shot conversion: the nominal period
+/// `1000 / sps`, floored, plus one. The result always exceeds the period, by
+/// at least 0.19 ms (at 128 SPS), which covers the 25 µs wake-up from
+/// power-down.
+fn conversion_wait_ms(dr: DataRate) -> u64 {
+    1000 / sps(dr) + 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,8 +306,22 @@ mod tests {
 
     const ADDR: u8 = 0x48;
 
+    /// One OS confirmation poll: the config register reads back with the OS
+    /// bit clear while converting and set once the conversion is done.
+    fn os_poll(cfg: u16, ready: bool) -> T {
+        let word = if ready {
+            cfg | CFG_OS_START
+        } else {
+            cfg & !CFG_OS_START
+        };
+        T::write_read(ADDR, vec![REG_CONFIG], word.to_be_bytes().to_vec())
+    }
+
+    /// Transactions of one `sample()` at ±2048 mV: per channel the config
+    /// write, `busy_polls` polls still converting, one poll done, then the
+    /// conversion read.
     #[allow(clippy::cast_possible_truncation)]
-    fn sample_transactions(voltages_mv: [i16; 4], dr_bits: u16) -> Vec<T> {
+    fn sample_transactions(voltages_mv: [i16; 4], dr_bits: u16, busy_polls: u32) -> Vec<T> {
         let (pga_bits, lsb_mv) = pga(FullScale::Mv2048);
         let mut txns = Vec::new();
         for (ch, &mv) in voltages_mv.iter().enumerate() {
@@ -273,8 +330,8 @@ mod tests {
                 CFG_OS_START | MUX[ch] | pga_bits | CFG_MODE_SINGLE | dr_bits | CFG_COMP_DISABLE;
             let cb = cfg.to_be_bytes();
             txns.push(T::write(ADDR, vec![REG_CONFIG, cb[0], cb[1]]));
-            // OS bit poll: return ready (bit 15 set) on first poll.
-            txns.push(T::write_read(ADDR, vec![REG_CONFIG], vec![0x80, 0x00]));
+            txns.extend((0..busy_polls).map(|_| os_poll(cfg, false)));
+            txns.push(os_poll(cfg, true));
             txns.push(T::write_read(
                 ADDR,
                 vec![REG_CONVERSION],
@@ -289,7 +346,7 @@ mod tests {
         futures::executor::block_on(async {
             let dr_bits = u16::from(DataRate::Sps128 as u8) << 5;
             let mut txns = vec![T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83])];
-            txns.extend(sample_transactions([1000, 2000, 500, 1500], dr_bits));
+            txns.extend(sample_transactions([1000, 2000, 500, 1500], dr_bits, 0));
             let mut mock = Mock::new(&txns);
 
             let cfg = Ads1115Config {
@@ -310,11 +367,64 @@ mod tests {
     }
 
     #[test]
+    fn os_ready_on_second_poll_yields_reading() {
+        futures::executor::block_on(async {
+            let dr_bits = u16::from(DataRate::Sps128 as u8) << 5;
+            let mut txns = vec![T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83])];
+            txns.extend(sample_transactions([1000, 2000, 500, 1500], dr_bits, 1));
+            let mut mock = Mock::new(&txns);
+
+            let cfg = Ads1115Config {
+                i2c_addr: ADDR,
+                ..Ads1115Config::default()
+            };
+            let mut driver = Ads1115::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            let r = driver.sample(&mut mock).await.unwrap();
+
+            assert!((r.ain0 - 1.0).abs() < 0.01, "ain0={}", r.ain0);
+            assert!((r.ain1 - 2.0).abs() < 0.01, "ain1={}", r.ain1);
+            assert!((r.ain2 - 0.5).abs() < 0.01, "ain2={}", r.ain2);
+            assert!((r.ain3 - 1.5).abs() < 0.01, "ain3={}", r.ain3);
+
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn os_never_ready_times_out_after_poll_budget() {
+        futures::executor::block_on(async {
+            let (pga_bits, _) = pga(FullScale::Mv2048);
+            let dr_bits = u16::from(DataRate::Sps128 as u8) << 5;
+            let cfg_word =
+                CFG_OS_START | MUX[0] | pga_bits | CFG_MODE_SINGLE | dr_bits | CFG_COMP_DISABLE;
+            let cb = cfg_word.to_be_bytes();
+            let mut txns = vec![T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83])];
+            txns.push(T::write(ADDR, vec![REG_CONFIG, cb[0], cb[1]]));
+            txns.extend((0..MAX_OS_POLLS).map(|_| os_poll(cfg_word, false)));
+            let mut mock = Mock::new(&txns);
+
+            let cfg = Ads1115Config {
+                i2c_addr: ADDR,
+                ..Ads1115Config::default()
+            };
+            let mut driver = Ads1115::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            assert!(matches!(
+                driver.sample(&mut mock).await,
+                Err(Ads1115Error::ConversionTimeout)
+            ));
+            // Exactly the budget was spent: no further poll, no conversion read.
+            mock.done();
+        });
+    }
+
+    #[test]
     fn custom_data_rate_propagates_to_config_register() {
         futures::executor::block_on(async {
             let dr_bits = u16::from(DataRate::Sps860 as u8) << 5;
             let mut txns = vec![T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83])];
-            txns.extend(sample_transactions([0, 0, 0, 0], dr_bits));
+            txns.extend(sample_transactions([0, 0, 0, 0], dr_bits, 0));
             let mut mock = Mock::new(&txns);
 
             let cfg = Ads1115Config {
@@ -342,7 +452,7 @@ mod tests {
             let mut txns = vec![T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83])];
             // only channel 0 — build manually to use Mv256 pga_bits
             txns.push(T::write(ADDR, vec![REG_CONFIG, cb[0], cb[1]]));
-            txns.push(T::write_read(ADDR, vec![REG_CONFIG], vec![0x80, 0x00]));
+            txns.push(os_poll(cfg_word, true));
             txns.push(T::write_read(
                 ADDR,
                 vec![REG_CONVERSION],
@@ -355,7 +465,7 @@ mod tests {
                     CFG_OS_START | *mux | pga_bits2 | CFG_MODE_SINGLE | dr_bits | CFG_COMP_DISABLE;
                 let cb2 = cw.to_be_bytes();
                 txns.push(T::write(ADDR, vec![REG_CONFIG, cb2[0], cb2[1]]));
-                txns.push(T::write_read(ADDR, vec![REG_CONFIG], vec![0x80, 0x00]));
+                txns.push(os_poll(cw, true));
                 txns.push(T::write_read(
                     ADDR,
                     vec![REG_CONVERSION],
@@ -378,6 +488,43 @@ mod tests {
     }
 
     #[test]
+    fn conversion_wait_is_one_period_rounded_up() {
+        let expected = [
+            (DataRate::Sps8, 126),
+            (DataRate::Sps16, 63),
+            (DataRate::Sps32, 32),
+            (DataRate::Sps64, 16),
+            (DataRate::Sps128, 8),
+            (DataRate::Sps250, 5),
+            (DataRate::Sps475, 3),
+            (DataRate::Sps860, 2),
+        ];
+        for (dr, ms) in expected {
+            assert_eq!(conversion_wait_ms(dr), ms, "{dr:?}");
+            // Strictly longer than the nominal period, so the wake-up fits.
+            assert!(ms * sps(dr) > 1000, "{dr:?}");
+        }
+    }
+
+    #[test]
+    fn poll_retries_cover_a_tenth_of_the_slowest_period() {
+        let retry_budget_ms = u64::from(MAX_OS_POLLS - 1) * OS_POLL_INTERVAL_MS;
+        assert!(retry_budget_ms * 10 >= 1000 / sps(DataRate::Sps8));
+    }
+
+    #[test]
+    fn driver_waits_for_the_configured_data_rate() {
+        let cfg = Ads1115Config {
+            data_rate: DataRate::Sps8,
+            ..Ads1115Config::default()
+        };
+        assert_eq!(
+            Ads1115::new(&cfg).wait_ms,
+            conversion_wait_ms(DataRate::Sps8)
+        );
+    }
+
+    #[test]
     fn reinit_recovers_after_first_bring_up() {
         // The generated source task re-runs init() to recover a degraded sensor.
         futures::executor::block_on(async {
@@ -386,7 +533,7 @@ mod tests {
                 T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83]), // first probe
                 T::write_read(ADDR, vec![REG_CONFIG], vec![0x85, 0x83]), // recovery re-probe
             ];
-            txns.extend(sample_transactions([1000, 0, 0, 0], dr_bits));
+            txns.extend(sample_transactions([1000, 0, 0, 0], dr_bits, 0));
             let mut mock = Mock::new(&txns);
 
             let cfg = Ads1115Config {

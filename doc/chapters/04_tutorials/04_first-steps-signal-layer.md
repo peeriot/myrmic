@@ -4,8 +4,8 @@ In this tutorial you build the smallest complete Signal Layer system: a pipeline
 value, a cell that reads it, and then the payoff — moving that cell from a Linux machine onto an
 ESP32 with one command, without changing a line of it.
 
-You write two small YAML files and about thirty lines of Rust. `myrmic new` scaffolds the rest,
-and everything else is generated at build time.
+You write two small YAML files and about thirty lines of Rust. `myrmic signal-layer new` and
+`myrmic new` scaffold the rest, and everything else is generated at build time.
 
 ![The Signal Layer runs drivers and steps as native code on the target machine; a cell in the WebAssembly runtime reads sensor values through a tap and drives actuators through an outlet. This tutorial builds the tap (read) side.](../../images/signal-layer-tap-outlet.png)
 
@@ -23,18 +23,19 @@ the physical machine, differs between the two.
 
 To use the Signal Layer you must clone the Myrmic repository.
 
-`myrmic new` creates the skeleton of every project in this tutorial, and it has to know where your
-clone is. Tell it once, with an environment variable:
+The scaffolding commands (`myrmic signal-layer new` for a pipeline, `myrmic new` for a cell) create
+the skeleton of every project in this tutorial, and they have to know where your clone is. Tell
+them once, with an environment variable:
 
 ```bash
 export PEERIOT_MYRMIC_SDK=~/myrmic   # the path to your clone
 ```
 
-Set this in the shell you run the tutorial from, before the first `myrmic new`. It is read only when
+Set this in the shell you run the tutorial from, before the first scaffold. It is read only when
 a project is created, so setting it afterwards will not fix a project you already created. Delete
 that project and create it again.
 
-The other option is to add `--sdk ~/myrmic` to every `myrmic new` command. If you set both, the flag
+The other option is to add `--sdk ~/myrmic` to every scaffolding command. If you set both, the flag
 wins.
 
 **Part 1 and 2, the Linux half:**

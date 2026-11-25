@@ -1,41 +1,47 @@
+//! Docker images built by the framework.
+
 use std::path::Path;
 
 use bollard::{body_full, query_parameters::BuildImageOptionsBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 
-use crate::docker::{DockerDaemon, managed::ManagedContainer};
+use crate::docker::DockerDaemon;
 
-/// a thin wrapper around docker images identified by their tag
+/// A docker image the daemon has: only [`Self::find`] and [`Self::build`] create one.
 pub struct Image {
-    image_tag: String,
+    /// the image's reference, e.g. `myrmic-swarm:0123456789abcdef`
+    tag: String,
 }
 
 impl Image {
-    /// create image from a known reference
-    pub fn new(image_tag: String) -> Self {
-        Self { image_tag }
+    /// the image `tag`, or `None` if the daemon doesn't have it
+    pub async fn find(docker: &DockerDaemon, tag: impl Into<String>) -> Option<Self> {
+        let tag = tag.into();
+        match docker.inspect_image(&tag).await {
+            Ok(_) => Some(Self { tag }),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => None,
+            Err(err) => panic!("failed to inspect image `{tag}`: {err}"),
+        }
     }
 
-    /// create image by building it from `dockerfile` with an in-memory tar build context
-    /// containing the given `files` as `(host path, name in context)` pairs
+    /// Build the image `tag` from `dockerfile` with an in-memory tar build context containing the
+    /// given `files` as `(host path, name in context)` pairs.
     pub async fn build(
         docker: &DockerDaemon,
-        image_tag: impl Into<String>,
+        tag: impl Into<String>,
         dockerfile: &Path,
         files: &[(&Path, &str)],
     ) -> Self {
-        let image_tag = image_tag.into();
+        let tag = tag.into();
         let context = build_context(dockerfile, files);
-
-        let build_opts = BuildImageOptionsBuilder::new()
+        let options = BuildImageOptionsBuilder::new()
             .dockerfile("Dockerfile")
-            .t(&image_tag)
+            .t(&tag)
             .build();
-
-        let docker_for_build = docker.clone();
-        let mut stream =
-            docker_for_build.build_image(build_opts, None, Some(body_full(Bytes::from(context))));
+        let mut stream = docker.build_image(options, None, Some(body_full(Bytes::from(context))));
         while let Some(result) = stream.next().await {
             let info = result.unwrap();
             if let Some(error) = info
@@ -46,28 +52,12 @@ impl Image {
                 panic!("Docker build failed: {error}");
             }
         }
-
-        Self { image_tag }
+        Self { tag }
     }
 
-    /// the image tag (e.g. `myrmic-e2e:latest`)
+    /// the image's reference, e.g. `myrmic-swarm:0123456789abcdef`
     pub fn tag(&self) -> &str {
-        &self.image_tag
-    }
-
-    /// start the docker container with idle command
-    pub async fn run_idle(&self, docker: DockerDaemon, name: &str) -> ManagedContainer {
-        ManagedContainer::run(self, docker, &["sh", "-c", "tail -f /dev/null"], &[], name).await
-    }
-
-    /// start the docker container with specified command
-    pub async fn run_command(
-        &self,
-        docker: DockerDaemon,
-        command: &[&str],
-        name: &str,
-    ) -> ManagedContainer {
-        ManagedContainer::run(self, docker, command, &[], name).await
+        &self.tag
     }
 }
 

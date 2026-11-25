@@ -15,7 +15,7 @@ signal-layer-linux-rt = { path = "../../../swarm/signal-layer/signal-layer-linux
 linux-i2c-shim        = { path = "../../../swarm/signal-layer/linux-i2c-shim" }
 signal-layer-core     = { path = "../signal-layer-core" }
 signal-layer-types    = { package = "myrmic-signal-layer-types", path = "../signal-layer-types" }
-tokio                 = { version = "1", features = ["full"] }
+tokio                 = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 tokio-stream          = { version = "0.1", features = ["time"] }
 critical-section      = { version = "1", features = ["std"] }
 log                   = { version = "0.4", default-features = false }
@@ -25,5 +25,4 @@ veml7700_driver = { path = "../../../signal-modules/drivers/veml7700", package =
 moving_average = { path = "../../../signal-modules/steps/moving-average", package = "moving-average" }
 
 [dev-dependencies]
-tokio    = { version = "1", features = ["full"] }
 tempfile = "3"

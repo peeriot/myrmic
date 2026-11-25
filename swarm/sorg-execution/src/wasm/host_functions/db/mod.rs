@@ -1,6 +1,9 @@
 use wasmtime::Caller;
 
-use db_client::v1::models::{Deferrable, Operation, Scope as DbScope, TxId};
+use db_client::v1::models::{
+    Deferrable, MAX_KEY_PART_LEN, MAX_SEGMENT_LEN, Operation, Scope as DbScope, TxId, check_segment,
+};
+use myrmic_common::cells::MAX_NAME_LEN;
 use myrmic_common::db::{Namespace, Scope as WasmScope};
 
 use crate::wasm::cell::state::CellState;
@@ -21,6 +24,8 @@ mod kv;
 mod sem;
 mod tb;
 mod ts;
+#[cfg(test)]
+mod wiring;
 
 pub(super) fn transform_scope(
     caller: &mut Caller<'_, CellState>,
@@ -61,24 +66,29 @@ pub(super) fn transform_scope(
     Ok(scope)
 }
 
-/// A segment the guest named explicitly must be a valid [`key_name`] and
-/// non-empty — `Some("")` is a guest bug, not a request for the default.
+/// A guest-named scope segment: a valid [`key_name`] and [`check_segment`], no `@`.
 fn segment(segment: std::borrow::Cow<'static, str>) -> Result<String, i32> {
     key_name(&segment)?;
-    if segment.is_empty() {
+    if check_segment(&segment).is_err() || segment.contains('@') {
         return Err(EINVAL);
     }
 
     Ok(segment.into_owned())
 }
 
-/// Any name the guest hands the db to build a key from — scope segments, kv
-/// keys and prefixes, tables, measurements, paths — must not contain NUL.
-/// Keys end each name at a NUL, so one inside would let the name reach into
-/// another scope's keys. The db refuses such a name too; this makes it an
-/// `EINVAL` rather than a failed call.
+/// A name the guest hands the db for a key: no NUL, at most [`MAX_KEY_PART_LEN`] bytes.
 pub(super) fn key_name(name: &str) -> Result<(), i32> {
-    if name.contains('\0') {
+    if name.len() > MAX_KEY_PART_LEN || name.contains('\0') {
+        return Err(EINVAL);
+    }
+
+    Ok(())
+}
+
+/// A table entity id the guest chose is part of the row's store key, so it
+/// gets the same bound as [`key_name`].
+pub(super) fn entity_id(eid: &[u8]) -> Result<(), i32> {
+    if eid.len() > MAX_KEY_PART_LEN {
         return Err(EINVAL);
     }
 
@@ -163,12 +173,17 @@ pub(super) async fn apply<T: Operation>(
     })
 }
 
+// An event name becomes its scope's schema, so every valid event name must be
+// a valid segment.
+const _: () = assert!(MAX_NAME_LEN <= MAX_SEGMENT_LEN);
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
     use super::{DbScope, GATEWAY_ASSETS_DB, NAMESPACE_GATEWAY, Sri, is_own_asset_scope};
     use super::{EINVAL, is_reserved_namespace, key_name, segment};
+    use super::{MAX_KEY_PART_LEN, MAX_SEGMENT_LEN, entity_id};
 
     fn gateway_scope(database: &str, schema: &str) -> DbScope {
         DbScope {
@@ -232,28 +247,83 @@ mod tests {
     }
 
     #[test]
-    fn empty_segments_are_rejected() {
-        assert_eq!(segment(Cow::Borrowed("")), Err(EINVAL));
-        assert_eq!(segment(Cow::Borrowed("d")).as_deref(), Ok("d"));
-    }
-
-    #[test]
-    fn nul_in_a_segment_is_rejected() {
-        // Would encode into the `sorg` keyspace were it accepted.
-        assert_eq!(
-            segment(Cow::Borrowed("sorg\0*node-lease\0*p\0:tbentries\0")),
-            Err(EINVAL)
-        );
-        assert_eq!(segment(Cow::Borrowed("a\0*b")), Err(EINVAL));
-        assert_eq!(segment(Cow::Borrowed("\0")), Err(EINVAL));
-    }
-
-    #[test]
     fn nul_in_a_key_name_is_rejected() {
         assert_eq!(key_name("a\0b"), Err(EINVAL));
         assert_eq!(key_name("\0"), Err(EINVAL));
         assert_eq!(key_name("a*b:c@d"), Ok(()));
         // An empty kv prefix lists everything; only segments must be non-empty.
         assert_eq!(key_name(""), Ok(()));
+    }
+
+    #[test]
+    fn over_long_key_parts_are_rejected() {
+        let name = |len: usize| "a".repeat(len);
+
+        assert_eq!(
+            segment(Cow::Owned(name(MAX_SEGMENT_LEN))),
+            Ok(name(MAX_SEGMENT_LEN))
+        );
+        assert_eq!(key_name(&name(MAX_KEY_PART_LEN)), Ok(()));
+        assert_eq!(key_name(&name(MAX_KEY_PART_LEN + 1)), Err(EINVAL));
+        // The lsm-tree key cap itself.
+        assert_eq!(key_name(&name(usize::from(u16::MAX))), Err(EINVAL));
+
+        assert_eq!(entity_id(&[0; MAX_KEY_PART_LEN]), Ok(()));
+        assert_eq!(entity_id(&[0; MAX_KEY_PART_LEN + 1]), Err(EINVAL));
+    }
+
+    #[test]
+    fn segment_rejects_the_adversarial_name_matrix() {
+        // Names a guest can make a panic, beyond the key-expression syntax.
+        let long = |len: usize| "a".repeat(len);
+
+        for name in [
+            String::new(),
+            String::from("\0"),
+            String::from("a\0b"),
+            // Would encode into the `sorg` keyspace were it accepted.
+            String::from("sorg\0*node-lease\0*p\0:tbentries\0"),
+            long(MAX_SEGMENT_LEN + 1),
+            long(usize::from(u16::MAX) - 1),
+            long(usize::from(u16::MAX)),
+            long(usize::from(u16::MAX) + 1),
+        ] {
+            assert_eq!(
+                segment(Cow::Owned(name.clone())),
+                Err(EINVAL),
+                "{} bytes: {:?}",
+                name.len(),
+                name.chars().take(8).collect::<String>()
+            );
+        }
+    }
+
+    #[test]
+    fn key_expression_syntax_in_a_segment_is_rejected() {
+        // The names that panicked the db plugin, and every other character
+        // zenoh gives a meaning in a chunk.
+        for name in ["x?", "x#", "*", "**", "$*", "a*b", "a/b", "/", "@x", "x@"] {
+            assert_eq!(segment(Cow::Borrowed(name)), Err(EINVAL), "{name:?}");
+        }
+
+        // What legitimately passes through: public names, the gateway's
+        // namespace and assets database, an SRI as asset schema, the defaults.
+        let sri = Sri::of_path("chatty").expect("srn").to_string();
+        for name in [
+            "chatty",
+            "CELLSISH",
+            "my-app_v2.1",
+            "gw",
+            GATEWAY_ASSETS_DB,
+            &sri,
+            "d",
+            "p",
+        ] {
+            assert_eq!(
+                segment(Cow::Owned(name.to_owned())).as_deref(),
+                Ok(name),
+                "{name:?}"
+            );
+        }
     }
 }

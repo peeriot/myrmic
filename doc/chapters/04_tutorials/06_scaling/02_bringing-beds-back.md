@@ -8,7 +8,7 @@ It continues where [Part 1](./01_roots-that-spawn.md) left off: four runtimes, t
 
 ## Step 6 - Copies First
 
-You are about to kill nodes, so remember the lesson of the [Resilience](../05_resilience.md) tutorial before you do: a cell's state has one copy by default, on a node the swarm picks. That is true for the beds' moisture, and it is true for the bed root's list of beds. Ask for copies on every node - all four carry the automatic `linux` tag - and give the swarm half a minute to make them:
+You are about to kill nodes, so remember the lesson of the [Resilience](../02_resilience.md) tutorial before you do: a cell's state has one copy by default, on a node the swarm picks. That is true for the beds' moisture, and it is true for the bed root's list of beds. Ask for copies on every node - all four carry the automatic `linux` tag - and give the swarm half a minute to make them:
 
 ```bash
 myrmic replicate app:greenhouse -t linux

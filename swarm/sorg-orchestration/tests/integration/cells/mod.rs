@@ -3,6 +3,7 @@ mod embedded;
 mod gateway;
 mod lifecycle;
 mod placement_routing;
+mod restart;
 mod tagged_placement;
 
 use cell_protocol::{PlacementEntry, PlacementKind, RuntimeId};

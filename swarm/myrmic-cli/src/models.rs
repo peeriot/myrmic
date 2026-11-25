@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sorg_common::{HttpBridgeConfig, MqttBridgeConfig, RestartPolicy, RestartType};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -34,8 +34,18 @@ pub struct ClassDef {
     #[serde(default)]
     pub build: Option<StringOr<Build>>,
     /// Path to a bridge specification file, relative to the app-specs file.
-    #[serde(default, alias = "http", alias = "mqtt", alias = "cell")]
+    #[serde(default, alias = "http", alias = "mqtt")]
     pub spec: Option<std::path::PathBuf>,
+    /// `cell:` is a plausible spelling for a cell class; refuse it with a hint
+    /// rather than serde's field list.
+    #[serde(default, deserialize_with = "reject_cell_key")]
+    cell: (),
+}
+
+fn reject_cell_key<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D::Error> {
+    Err(serde::de::Error::custom(
+        "`cell:` is not a class key; a cell class is built from a crate with `build:`",
+    ))
 }
 
 /// The resolved kind of a [`ClassDef`].
@@ -55,7 +65,12 @@ impl ClassDef {
     ///   app-specs folder (`path: "."`, automatic target)
     /// - both               → error
     pub fn resolve(self) -> anyhow::Result<(String, ClassKind)> {
-        let ClassDef { id, build, spec } = self;
+        let ClassDef {
+            id,
+            build,
+            spec,
+            cell: (),
+        } = self;
         match (build, spec) {
             (Some(_), Some(_)) => {
                 anyhow::bail!("class `{id}` sets both a build and a bridge spec; use one")
@@ -216,7 +231,7 @@ impl Instance {
 
 /// Internal representation of a resolved cell instance (built from an
 /// [`Instance`] that references a cell type, or reconstructed from a `.nest`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellInstance {
     pub id: String,
     #[serde(default, alias = "sri")]
@@ -442,15 +457,16 @@ impl Repo {
     /// For git repos, we rely on cargo searching and reporting the error.
     /// But if a path is provided, we can look at the known path.
     pub fn resolve_or_assume_correct(self, known_path: &str) -> CargoDep {
-        match self {
-            Repo::Version(req) => CargoDep::Version(req),
-            Repo::Git(url, rev) => CargoDep::Git(url, rev),
+        let source = match self {
+            Repo::Version(req) => DepSource::Version(req),
+            Repo::Git(url, rev) => DepSource::Git(url, rev),
             Repo::Path(path) => {
                 let resolved = path.join(known_path);
                 let path = if resolved.exists() { resolved } else { path };
-                CargoDep::Path(path)
+                DepSource::Path(path)
             }
-        }
+        };
+        CargoDep::from_source(source)
     }
 }
 
@@ -493,24 +509,94 @@ impl std::str::FromStr for Repo {
     }
 }
 
-/// Where a scaffolded crate gets one myrmic crate from. Renders as the
-/// right-hand side of a `[dependencies]` entry.
-pub enum CargoDep {
+/// Where a scaffolded crate gets one crate from. Renders as the right-hand
+/// side of a `[dependencies]` entry and is the one place that knows the
+/// dependency-table syntax: a plain version requirement stays a bare string,
+/// anything else is an inline table with the source keys first, then
+/// `package`, then `optional`.
+pub struct CargoDep {
+    source: DepSource,
+    package: Option<String>,
+    optional: bool,
+}
+
+enum DepSource {
     /// A published release, as a cargo version requirement.
     Version(String),
     Git(String, Option<String>),
     Path(std::path::PathBuf),
 }
 
+impl CargoDep {
+    fn from_source(source: DepSource) -> Self {
+        Self {
+            source,
+            package: None,
+            optional: false,
+        }
+    }
+
+    /// Depends on the crate under a different name: `package = "<real name>"`.
+    pub fn renamed_from(mut self, package: &str) -> Self {
+        self.package = Some(package.to_owned());
+        self
+    }
+
+    /// Marks the dependency `optional = true`, so a feature can enable it.
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
+    }
+}
+
 impl std::fmt::Display for CargoDep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CargoDep::Version(req) => write!(f, r#""{req}""#),
-            CargoDep::Path(path) => write!(f, r#"{{ path = "{}" }}"#, path.display()),
-            CargoDep::Git(git, None) => write!(f, r#"{{ git = "{git}" }}"#),
-            CargoDep::Git(git, Some(rev)) => {
-                write!(f, r#"{{ git = "{git}", rev = "{rev}" }}"#)
+        match &self.source {
+            DepSource::Version(req) if self.package.is_none() && !self.optional => {
+                return write!(f, r#""{req}""#);
             }
+            DepSource::Version(req) => write!(f, r#"{{ version = "{req}""#)?,
+            DepSource::Path(path) => write!(f, r#"{{ path = "{}""#, path.display())?,
+            DepSource::Git(git, None) => write!(f, r#"{{ git = "{git}""#)?,
+            DepSource::Git(git, Some(rev)) => write!(f, r#"{{ git = "{git}", rev = "{rev}""#)?,
         }
+        if let Some(package) = &self.package {
+            write!(f, r#", package = "{package}""#)?;
+        }
+        if self.optional {
+            write!(f, ", optional = true")?;
+        }
+        write!(f, " }}")
+    }
+}
+
+/// `[dependencies]` entries, rendered as one `<name> = <dep>` line each.
+pub struct CargoDeps(pub Vec<(String, CargoDep)>);
+
+impl std::fmt::Display for CargoDeps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, (name, dep)) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("\n")?;
+            }
+            write!(f, "{name} = {dep}")?;
+        }
+        Ok(())
+    }
+}
+
+/// The `dep:` entries of a cargo feature, rendered as one indented
+/// `"dep:<name>",` line each for a feature array spread over several lines.
+pub struct DepFeatures(pub Vec<String>);
+
+impl std::fmt::Display for DepFeatures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, name) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("\n")?;
+            }
+            write!(f, r#"    "dep:{name}","#)?;
+        }
+        Ok(())
     }
 }

@@ -47,6 +47,6 @@ Partition Tolerance replicates authority and uses fencing to allow one active se
 
 ## See also
 
-- [Target Groups](../03_target-groups.md) - the other entry points Myrmic supports
+- [Application Domains](../03_target-groups.md) - the other entry points Myrmic supports
 - [Understanding Myrmic](../02_why-myrmic/02_understanding-myrmic.md) - the swarm and node model behind this approach
 - [Signal Layer](../02_why-myrmic/04_connecting-physical-systems.md) - how Cells relate to native drivers and hardware I/O

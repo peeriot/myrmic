@@ -6,7 +6,14 @@ Because cells are Wasm modules, the same binary runs on a Linux host or on embed
 
 A cell has a defined role: it handles commands, reacts to events, and stores data. Myrmic solutions are composed of cells.
 
-Each cell is identified by its unique SRN (Stable Resource Name) - the address it is reached at.
+Each cell has two identifiers:
+
+- **SRN** (Stable Resource Name) - the human-readable name used in the CLI and config files, allowing a better user experience.
+- **SRI** - the UUID the swarm uses internally to route messages.
+
+Each cell instance is created from a **class** - a named blueprint that holds the compiled binary for each target the cell can run on. Many instances can be created from one class, each with its own SRN and its own state.
+
+To manage classes, see [`list`](../10_reference/02_myrmic-cli/06_cells/03_classes/01_list.md), [`add`](../10_reference/02_myrmic-cli/06_cells/03_classes/02_add.md), [`delete`](../10_reference/02_myrmic-cli/06_cells/03_classes/03_delete.md), and [`info`](../10_reference/02_myrmic-cli/06_cells/03_classes/04_info.md).
 
 The **Myrmic SDK** powers the cell model with the functionality to build scalable solutions - such as inter-cell messaging, data storage, hardware peripherals, scheduling, and integrations with external systems both inbound and outbound.
 
@@ -27,6 +34,8 @@ The result looks like:
 ```
 my-cell/
   Cargo.toml
+  rust-toolchain.toml
+  .gitignore
   src/
     lib.rs
 ```
@@ -96,12 +105,12 @@ The code above defines a cell that keeps a counter in state and exposes three co
 
 - **State** - `State<T>` is a typed handle to a state value that persists. It lives on the runtime database - not in Wasm memory. By default it is private to the cell. See [State and Storage](./06_state-and-storage.md) for more information and how to use it.
 
-- **Initialization handler** - Runs once per deployment of the cell, before it handles anything else; redeploying runs it again. Use it for any initialization logic your cell needs - setting up initial state, logging startup info, or running custom business logic before the cell starts handling requests. It can also accept initialization args that are passed at deploy time. Here is an example:
+- **Initialization handler** - Runs before the cell handles anything else: on first deploy, and again on restart under the same SRI. Use it for any initialization logic your cell needs - setting up initial state, logging startup info, or running custom business logic before the cell starts handling requests. It can also accept initialization args that are passed at deploy time. Here is an example:
 
     ```rust
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
 
-    #[derive(Deserialize, myrmic_sdk::Message)]
+    #[derive(Serialize, Deserialize, myrmic_sdk::Message)]
     struct Config {
         start: i32,
         step: i32,
@@ -119,7 +128,7 @@ The code above defines a cell that keeps a counter in state and exposes three co
     }
     ```
 
-    To pass init args at deploy time, use `--init` or `--init-file` with [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md), or `instance_data` / `instance_data_file` in the [Application Configuration](../10_reference/01_configuration/02_cell-and-application-configuration.md#application).
+    To pass init args at deploy time, use `--init` or `--init-file` with [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md), or `init` / `init_file` in the [Application Configuration](../10_reference/01_configuration/02_cell-and-application-configuration.md#application).
 
     If your cell has nothing to initialize, omit it entirely.
 
@@ -178,9 +187,9 @@ When a project grows beyond a single cell, you need to decide how to organize yo
 
    instances:
      - class: sensor
-       sri: sensor
+       srn: greenhouse/sensor-1   # omit srn and the instance is named after its class, here `sensor`
      - class: actuator
-       sri: actuator
+       srn: greenhouse/pump-1
    ```
 
    To build or deploy a single cell from the crate, pass `--target` to select which bin to use - see [`myrmic build`](../10_reference/02_myrmic-cli/03_build.md) and [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md) for details.
@@ -224,9 +233,9 @@ When a project grows beyond a single cell, you need to decide how to organize yo
 
    instances:
      - class: sensor
-       sri: sensor
+       srn: greenhouse/sensor-1   # omit srn and the instance is named after its class, here `sensor`
      - class: actuator
-       sri: actuator
+       srn: greenhouse/pump-1
    ```
 
 ## Cell execution and placement
@@ -249,7 +258,23 @@ This is solved with placement tags - information about what a runtime offers and
 - a runtime advertises capability tags at startup
 - a cell declares the tags it requires at deploy time
 
-The swarm places the cell only on a matching runtime. Tags and execution behavior are configurable - see [runtimes start](../10_reference/02_myrmic-cli/04_runtimes/01_start.md), [`myrmic deploy`](../10_reference/02_myrmic-cli/05_deploy.md), [Cell and Application Configuration](../10_reference/01_configuration/02_cell-and-application-configuration.md#application), and [runtime configuration](../10_reference/01_configuration/01_runtime-configuration.md#execution) for all available options.
+The swarm places the cell only on a matching runtime. Tags and execution behavior are configurable - see [myrmic runtimes start](../10_reference/02_myrmic-cli/04_runtimes/01_start.md), [myrmic deploy](../10_reference/02_myrmic-cli/05_deploy.md), [Cell and Application Configuration](../10_reference/01_configuration/02_cell-and-application-configuration.md#application), and [Runtime Configuration](../10_reference/01_configuration/01_runtime-configuration.md#execution) for all available options.
+
+For example, suppose only one machine in the swarm has a camera attached. Start its runtime with a tag that says so:
+
+```bash
+myrmic runtimes start --tag camera
+```
+
+Then deploy the cell that takes pictures, requiring the same tag:
+
+```bash
+myrmic deploy camera-cell.wasm --tag camera
+```
+
+The cell is placed on that machine and no other. If no runtime carries the tag, the cell is not placed at all, rather than landing somewhere it cannot work.
+
+A cell is only placed where **all** its required tags are present. Some tags are carried by default: every Linux runtime carries `linux`, and every runtime carries its own runtime id as `@<runtime id>` tag.
 
 ## Myrmic CLI
 

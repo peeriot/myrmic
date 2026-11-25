@@ -1,7 +1,8 @@
 use std::time::Duration;
 
+use cell_protocol::{BlobHash, Sri};
 use claims::{assert_err, assert_matches};
-use sorg_common::DeploymentError;
+use sorg_common::{DeploymentError, RequirementTags};
 use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 
 use crate::integration::{spawn_empty_test_app, spawn_test_app_with_swarm};
@@ -11,17 +12,17 @@ const DUMMY_CELL_SRI: &str = "dummy_cell";
 // Liveness cell: `cell-counter-logic` (already on the new SDK). Its fire-and-forget
 // `increment` command bumps an `i32` stored at `counter/count` in the cell's own KV space —
 // the observable effect we assert on now that commands don't return a value.
-const COUNTER_LOGIC: &str = "../../tests/fixtures/cell-counter-logic";
-const COUNTER_CLASS: &str = "counter";
-const COUNTER_SRI: &str = "counter_cell";
+pub(super) const COUNTER_LOGIC: &str = "../../tests/fixtures/cell-counter-logic";
+pub(super) const COUNTER_CLASS: &str = "counter";
+pub(super) const COUNTER_SRI: &str = "counter_cell";
 // The cell's `Kv::new("counter/")` prefix already ends in `/`, and `Kv::full_key` inserts
 // another separator — so the actual stored key is `counter//count` (double slash). We read
 // the exact key the guest writes.
-const COUNT_KEY: &str = "counter//count";
+pub(super) const COUNT_KEY: &str = "counter//count";
 
 /// Encodes an `increment` payload. The handler takes a bare `i32`, which the SDK
 /// carries on the wire as a JSON number.
-fn incr_payload(by: i32) -> Vec<u8> {
+pub(super) fn incr_payload(by: i32) -> Vec<u8> {
     serde_json::to_vec(&by).expect("encode increment payload")
 }
 
@@ -75,7 +76,7 @@ pub async fn load_error_no_exec() {
 
     // Act - try to load the dummy cell;
     let result = test_app
-        .try_deploy_wasm_cell("dummy_cell.wasm", DUMMY_CELL_SRI)
+        .try_deploy_wasm_cell("dummy.wasm", DUMMY_CELL_SRI)
         .await;
 
     // Assert - no exec runtime is registered at all
@@ -91,9 +92,14 @@ pub async fn load_error_no_orch() {
     // Arrange - bare peer, no orch or exec
     let test_app = spawn_empty_test_app().await;
 
-    // Act - try to load a cell when no orch is available
-    let result = test_app
-        .try_deploy_wasm_cell("dummy_cell.wasm", DUMMY_CELL_SRI)
+    // Act - try to load a cell when no orch is available (no db either, so the
+    // class goes by id rather than by a name to resolve)
+    let result = sorg_client::Client::new(test_app.session().clone())
+        .deploy_wasm_cell(
+            Sri::from_target(DUMMY_CELL_SRI).unwrap(),
+            BlobHash::of(b"dummy"),
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert - no orchestrator responded
@@ -111,14 +117,20 @@ pub async fn load_error_unregistered_class() {
     let test_app = spawn_test_app_with_swarm(swarm).await;
 
     // Act - try to load a cell whose class was never registered
-    let result = test_app
-        .try_deploy_wasm_cell("nonexistent.wasm", DUMMY_CELL_SRI)
+    let missing = BlobHash::of(b"nonexistent");
+    let sorg = sorg_client::Client::new(test_app.session().clone());
+    let result = sorg
+        .deploy_wasm_cell(
+            Sri::from_target(DUMMY_CELL_SRI).unwrap(),
+            missing,
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert - the class is named, not reported as every runtime lacking an artifact
     assert_matches!(
         assert_err!(result),
-        DeploymentError::UnknownClass { class } if class == "nonexistent.wasm",
+        DeploymentError::UnknownClass { class } if class == missing,
         "expected UnknownClass naming the class that is not registered"
     );
 }
@@ -137,8 +149,12 @@ pub async fn load_error_unregistered_class_does_not_affect_existing_cell() {
     test_app.deploy_wasm_cell("counter.wasm", COUNTER_SRI).await;
 
     // Act - try to load a cell whose class was never registered
-    let result = test_app
-        .try_deploy_wasm_cell("nonexistent.wasm", MISSING_CELL_SRI)
+    let result = sorg_client::Client::new(test_app.session().clone())
+        .deploy_wasm_cell(
+            Sri::from_target(MISSING_CELL_SRI).unwrap(),
+            BlobHash::of(b"nonexistent"),
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert I - the load should fail

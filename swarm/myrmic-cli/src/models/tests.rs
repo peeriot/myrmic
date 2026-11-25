@@ -119,7 +119,7 @@ fn class_build_map_form_carries_target() {
 
 #[test]
 fn class_spec_and_its_aliases_resolve_to_a_bridge() {
-    for key in ["spec", "http", "mqtt", "cell"] {
+    for key in ["spec", "http", "mqtt"] {
         let yaml = format!("{{ id: st, {key}: ./bridges/st.yml }}");
         match class_def(&yaml).resolve().expect("resolves") {
             (id, ClassKind::Bridge(path)) => {
@@ -129,6 +129,13 @@ fn class_spec_and_its_aliases_resolve_to_a_bridge() {
             (_, ClassKind::Cell(_)) => panic!("expected a bridge for key `{key}`"),
         }
     }
+}
+
+#[test]
+fn class_rejects_cell_key_with_a_hint() {
+    let err = serde_yaml::from_str::<ClassDef>("{ id: sensor, cell: ./sensor }")
+        .expect_err("`cell:` is not a class key");
+    assert!(err.to_string().contains("build:"), "{err}");
 }
 
 #[test]
@@ -367,14 +374,91 @@ fn cargo_dep_path_renders_an_inline_table() {
 #[test]
 fn repo_path_resolves_to_the_known_crate_dir() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let CargoDep::Path(path) = Repo::Path(root.clone()).resolve_or_assume_correct("sdk/myrmic-sdk")
-    else {
-        panic!("a path repo resolves to a path dep");
-    };
-    assert_eq!(path, root.join("sdk/myrmic-sdk"));
+    let dep = Repo::Path(root.clone()).resolve_or_assume_correct("sdk/myrmic-sdk");
+    assert_eq!(
+        dep.to_string(),
+        format!(
+            r#"{{ path = "{}" }}"#,
+            root.join("sdk/myrmic-sdk").display()
+        )
+    );
 }
 
 #[test]
 fn cargo_dep_rejects_a_missing_path() {
     assert!(Repo::from_str("does/not/exist").is_err());
+}
+
+/// A bare version requirement cannot carry `optional`; it has to become a
+/// `version = ...` table.
+#[test]
+fn optional_version_dep_becomes_an_inline_table() {
+    let dep = Repo::Version("0.2.1".into())
+        .resolve_or_assume_correct("sdk/x")
+        .optional();
+    assert_eq!(dep.to_string(), r#"{ version = "0.2.1", optional = true }"#);
+}
+
+#[test]
+fn optional_path_dep_extends_the_table() {
+    let here = env!("CARGO_MANIFEST_DIR");
+    let dep = Repo::Path(here.into())
+        .resolve_or_assume_correct("does/not/exist")
+        .optional();
+    assert_eq!(
+        dep.to_string(),
+        format!(r#"{{ path = "{here}", optional = true }}"#)
+    );
+}
+
+#[test]
+fn renamed_git_dep_keeps_the_source_keys_first() {
+    let dep = Repo::Git(
+        "https://github.com/peeriot/swarm.git".into(),
+        Some("abc12345".into()),
+    )
+    .resolve_or_assume_correct("sdk/x")
+    .renamed_from("myrmic-x");
+    assert_eq!(
+        dep.to_string(),
+        r#"{ git = "https://github.com/peeriot/swarm.git", rev = "abc12345", package = "myrmic-x" }"#
+    );
+}
+
+#[test]
+fn renamed_optional_dep_renders_package_before_optional() {
+    let dep = Repo::Version("1".into())
+        .resolve_or_assume_correct("x")
+        .renamed_from("real-name")
+        .optional();
+    assert_eq!(
+        dep.to_string(),
+        r#"{ version = "1", package = "real-name", optional = true }"#
+    );
+}
+
+#[test]
+fn cargo_deps_render_one_entry_per_line() {
+    let deps = CargoDeps(vec![
+        (
+            "a-driver".to_owned(),
+            Repo::Version("1".into())
+                .resolve_or_assume_correct("x")
+                .optional(),
+        ),
+        (
+            "b".to_owned(),
+            Repo::Version("2".into()).resolve_or_assume_correct("x"),
+        ),
+    ]);
+    assert_eq!(
+        deps.to_string(),
+        "a-driver = { version = \"1\", optional = true }\nb = \"2\""
+    );
+}
+
+#[test]
+fn dep_features_render_an_indented_dep_entry_per_line() {
+    let feats = DepFeatures(vec!["a-driver".to_owned(), "b".to_owned()]);
+    assert_eq!(feats.to_string(), "    \"dep:a-driver\",\n    \"dep:b\",");
 }

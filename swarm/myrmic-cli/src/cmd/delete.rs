@@ -321,7 +321,7 @@ mod tests {
     fn instance(name: &str, parent: Option<&str>) -> CellInstance {
         CellInstance {
             sri: sri(name),
-            class_name: "test".to_owned(),
+            class: cell_protocol::BlobHash::of(b"test"),
             gen_id: Gen::from_parts(0, 0),
             lineage: SpawnLineage {
                 parent: parent.map(sri),

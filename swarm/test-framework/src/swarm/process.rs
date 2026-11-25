@@ -135,10 +135,9 @@ impl SwarmProcess {
         );
     }
 
-    /// Blocks until the class registry row for `class` is visible to a routed read from this
-    /// session and carries at least one artifact (a wasm hash or a target artifact) — the same
-    /// lookup the orchestrator's placement preprocessing does when it decides whether a runtime
-    /// can load the cell.
+    /// Blocks until the class name `class` resolves for a routed read from this session and the
+    /// class it points to is readable — the class row is the same lookup the orchestrator's
+    /// placement preprocessing does when it decides whether a runtime can load the cell.
     ///
     /// Class registration (a routed write moments earlier) and the deploy's placement read are
     /// separate transactions with nothing ordering them; the gap used to be papered over by the
@@ -154,11 +153,14 @@ impl SwarmProcess {
             std::time::Duration::from_mins(1),
             std::time::Duration::from_millis(250),
             || async {
-                sorg_common::class_registry::get_class_info(&self.session, class)
+                let Ok(Some(id)) =
+                    sorg_common::class_registry::resolve_name(&self.session, class).await
+                else {
+                    return false;
+                };
+                sorg_common::class_registry::get_class_info(&self.session, id)
                     .await
-                    .ok()
-                    .flatten()
-                    .is_some_and(|info| info.wasm_hash.is_some() || !info.artifacts.is_empty())
+                    .is_ok_and(|info| info.is_some())
             },
         )
         .await;

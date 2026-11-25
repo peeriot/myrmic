@@ -1,13 +1,4 @@
 <p align="center">
-  <a href="https://hackthething.io">
-    <img src="https://img.shields.io/badge/%F0%9F%8F%86%20Build%20%2F%20Break%20Challenge-%E2%82%AC3%2C000%20prize%20pool-8A2BE2?style=for-the-badge" alt="Build / Break Challenge - &euro;3,000 prize pool">
-  </a><br>
-  Help us make Myrmic better: build something with it, break it, or extend it - and share what you find.<br>
-  &euro;3,000 prize pool as a thank you. Open until <b>11 October 2026</b>.<br>
-  <b>&rarr; <a href="https://hackthething.io">Join the challenge</a> &larr;</b>
-</p>
-
-<p align="center">
   <a href="https://book.myrmic.dev">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="doc/images/myrmic-logo-dark.svg">
@@ -38,8 +29,6 @@
     <a href="https://book.myrmic.dev">Docs Site</a>
     <span> | </span>
     <a href="https://docs.rs/myrmic-sdk">Rust Docs</a>
-    <span> | </span>
-    <a href="https://hackthething.io">Build / Break Challenge</a>
   </h3>
 </div>
 <br/>
@@ -61,8 +50,6 @@
 **When your cells interact with hardware,** Myrmic adds the **Signal Layer**: native Rust that runs besides the runtime on the node at full speed, outside the sandbox. Cells talk to it to read sensors and drive actuators.
 
 Myrmic is in **Developer Preview**: it works, people use it, and its APIs will still change.
-
-Help us make Myrmic better: join the [Build / Break Challenge](https://hackthething.io). Build something with Myrmic, break it, or extend it. Open until **11 October**, with a 🏆 **&euro;3,000 prize pool** as a thank you.
 
 ## Getting started
 
@@ -196,7 +183,7 @@ What holds today, and what the roadmap adds next.
 | Node loss | Lost nodes are detected and reported after about a minute; cells with a restart policy can be brought back on another qualifying node | The responsibility to run that cell moves to another node in seconds |
 | Cell state | One copy, survives a runtime restart; replication across nodes is explicit admin configuration, and unreplicated data is lost with its node | Quorum-held state and mailboxes: kill a node, keep the cell (Durability) |
 | Messaging | Tracked delivery to the node where the cell runs, plus best-effort delivery. Strict ordering per cell, none across cells. One transaction per command handler covering mailbox, state and outbound messages | Durable mailboxes |
-| Isolation | WebAssembly sandbox, cells only reach host functions they were granted | Time and throughput isolation |
+| Isolation | WebAssembly sandbox without WASI, private memory per cell; every cell on a node reaches the same host functions | Per-cell host-function, time and memory limits; throughput isolation |
 | Security | Assumes a trusted network; no cryptographic sender proof between nodes yet | Authenticated fabric, membership reconfiguration, upgrade semantics (Secure Swarm) |
 | APIs | Change without notice until the API freeze | Stable SDK and CLI |
 

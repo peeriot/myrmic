@@ -5,14 +5,16 @@ use sorg_common::RejectionReason;
 
 use super::super::super::PlacementContext;
 use super::super::{CellMappings, preprocess};
-use super::{class_esp32c6_only, class_wasm_only, esp32c6_rt, linux_rt, rt_id, wasm_cell};
+use super::{
+    class_esp32c6_only, class_id, class_wasm_only, esp32c6_rt, linux_rt, rt_id, wasm_cell,
+};
 
 #[test]
 fn occupied_esp32c6_runtime_is_rejected() {
     let id = rt_id("e689604085684e3e8469c5536703ec14");
     let ctx = PlacementContext {
         execs: vec![esp32c6_rt(id)],
-        class_info: HashMap::from([("cls".to_string(), class_esp32c6_only("cls"))]),
+        class_info: HashMap::from([(class_id("cls"), class_esp32c6_only())]),
         cells_per_runtime: HashMap::from([(id, vec![Sri::from_target("existing-cell").unwrap()])]),
     };
     let cell = wasm_cell("cls");
@@ -34,7 +36,7 @@ fn occupied_linux_runtime_is_not_rejected() {
     let id = rt_id("e689604085684e3e8469c5536703ec14");
     let ctx = PlacementContext {
         execs: vec![linux_rt(id)],
-        class_info: HashMap::from([("cls".to_string(), class_wasm_only("cls"))]),
+        class_info: HashMap::from([(class_id("cls"), class_wasm_only())]),
         cells_per_runtime: HashMap::from([(id, vec![Sri::from_target("existing-cell").unwrap()])]),
     };
     let cell = wasm_cell("cls");

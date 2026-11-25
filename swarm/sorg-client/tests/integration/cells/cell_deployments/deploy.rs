@@ -1,4 +1,4 @@
-use cell_protocol::Sri;
+use cell_protocol::{BlobHash, Sri};
 use claims::{assert_err, assert_ok};
 use sorg_common::RequirementTags;
 
@@ -9,12 +9,12 @@ async fn happy_path() {
     let (test_app, sorg) = spawn_test_app_with_dummy_cell().await;
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Act — deploy by SRI + class; the deploy registers the instance, so there is no
     // separate create_instance step.
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy should succeed"
     );
@@ -40,7 +40,11 @@ async fn unregistered_class_is_rejected() {
 
     // Act — deploy a class that was never registered
     let result = sorg
-        .deploy_wasm_cell(sri, "nonexistent.wasm", RequirementTags::default())
+        .deploy_wasm_cell(
+            sri,
+            BlobHash::of(b"nonexistent"),
+            RequirementTags::default(),
+        )
         .await;
 
     // Assert
@@ -49,21 +53,21 @@ async fn unregistered_class_is_rejected() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn duplicate_deploy_is_rejected() {
-    let (_test_app, sorg) = spawn_test_app_with_dummy_cell().await;
+    let (test_app, sorg) = spawn_test_app_with_dummy_cell().await;
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Arrange — deploy once (this also registers the instance)
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "first deploy should succeed"
     );
 
     // Act — deploy the same SRI again
     let result = sorg
-        .deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        .deploy_wasm_cell(sri, class, RequirementTags::default())
         .await;
 
     // Assert

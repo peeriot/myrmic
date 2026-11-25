@@ -21,13 +21,15 @@ use esp_radio::wifi::{
 };
 use static_cell::{ConstStaticCell, StaticCell};
 use zenoh_nano::buffers::ZSlice;
+
+use crate::join::{Backoff, JoinFailure, Link, ReasonClass, classify};
 use zenoh_nano::dispatch::SubscriberPool;
 use zenoh_nano::link::{LinkError, StreamingLinkReceive, StreamingLinkSend};
 use zenoh_nano::network::Network;
 use zenoh_nano::rng::RandomSource;
 use zenoh_nano::scout::{
-    SCOUT_BROADCAST_IP_ADDR, SCOUT_BROADCAST_PORT, SCOUT_MTU, ScoutLinkReceive, ScoutLinkSend,
-    WhatAmIMatcher,
+    Locator, SCOUT_BROADCAST_IP_ADDR, SCOUT_BROADCAST_PORT, SCOUT_MTU, ScoutLinkReceive,
+    ScoutLinkSend, WhatAmIMatcher,
 };
 use zenoh_nano::session::{Session, SessionResources};
 
@@ -39,8 +41,20 @@ const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 const WIFI_RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 /// Zenoh session lease duration
 pub const SESSION_LEASE: Duration = Duration::from_secs(30);
-/// Buffer size (bytes) for the streaming link framer
-const LINK_BUFFER_SIZE: u16 = 100;
+/// The largest zenoh batch this link carries, in bytes: offered to the peer as
+/// the transport's batch size, so it bounds every frame in both directions.
+///
+/// Anything larger is sent as fragments, and each fragment is its own TCP write
+/// that waits for the peer's ACK — a db reply or a commit split into many small
+/// fragments pays that wait many times over. At 100 bytes almost every locate
+/// reply and multi-row commit fragmented; 2048 carries them whole. Received
+/// messages are allocated at their actual length, so a large limit costs
+/// nothing until a large message arrives.
+const LINK_BUFFER_SIZE: u16 = 2048;
+/// The TCP socket's send and receive buffers, in bytes. Large enough to hold a
+/// full [`LINK_BUFFER_SIZE`] batch with its length prefix, so one batch never
+/// has to wait for window space mid-write.
+const TCP_BUFFER_SIZE: usize = 4096;
 /// Key-expression prefix for our liveliness token.
 ///
 /// Must stay in sync with `intro_liveliness` in `introspection-common`
@@ -63,23 +77,23 @@ fn stable_zid() -> zenoh_nano::scout::ZenohIdProto {
 }
 
 /// Set your Wifi SSID via the `WIFI_SSID` environment variable
-const WIFI_SSID: &str = if let Some(wifi_ssid) = option_env!("WIFI_SSID") {
-    wifi_ssid
-} else {
-    "test"
+const WIFI_SSID: Option<&str> = match option_env!("WIFI_SSID") {
+    Some(value) if !value.is_empty() => Some(value),
+    _ => None,
 };
 
 /// Set your Wifi password via the `WIFI_PASS` environment variable
-const WIFI_PASS: &str = if let Some(wifi_pass) = option_env!("WIFI_PASS") {
-    wifi_pass
-} else {
-    "test"
+const WIFI_PASS: Option<&str> = match option_env!("WIFI_PASS") {
+    Some(value) if !value.is_empty() => Some(value),
+    _ => None,
 };
 
 /// WiFi station credentials supplied to the network service at startup.
 pub struct WifiCredentials {
     ssid: String,
     password: String,
+    /// Whether these are the build-environment defaults, which may hold placeholders.
+    from_build_env: bool,
 }
 
 /// WiFi driver buffer counts. Every one of these buffers lives in internal RAM, the budget shared
@@ -102,6 +116,7 @@ impl WifiCredentials {
         Self {
             ssid: ssid.into(),
             password: password.into(),
+            from_build_env: false,
         }
     }
 
@@ -118,11 +133,15 @@ impl WifiCredentials {
     }
 }
 
+/// The credentials from the `WIFI_SSID` and `WIFI_PASS` build environment variables. Each one that
+/// is unset or empty falls back to the placeholder `"test"` on its own, and the network service
+/// logs a warning naming it when it starts with these credentials.
 impl Default for WifiCredentials {
     fn default() -> Self {
         Self {
-            ssid: WIFI_SSID.into(),
-            password: WIFI_PASS.into(),
+            ssid: WIFI_SSID.unwrap_or("test").into(),
+            password: WIFI_PASS.unwrap_or("test").into(),
+            from_build_env: true,
         }
     }
 }
@@ -132,6 +151,7 @@ impl core::fmt::Debug for WifiCredentials {
         f.debug_struct("WifiCredentials")
             .field("ssid", &self.ssid)
             .field("password", &"[redacted]")
+            .field("from_build_env", &self.from_build_env)
             .finish()
     }
 }
@@ -157,6 +177,15 @@ pub fn init_stack(
 ) {
     static STACK_RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
     let stack_resources = STACK_RESOURCES.init(StackResources::new());
+
+    if credentials.from_build_env {
+        if WIFI_SSID.is_none() {
+            log::warn!("WIFI_SSID was not set at build time: using the placeholder 'test'");
+        }
+        if WIFI_PASS.is_none() {
+            log::warn!("WIFI_PASS was not set at build time: using the placeholder 'test'");
+        }
+    }
 
     let station_config = station_config(credentials);
     #[expect(
@@ -206,7 +235,8 @@ pub async fn zenoh_session<F, Fut>(
     // All cell takes/inits must stay outside the reconnect loop - they panic on a
     // second call, so these must only run once for the lifetime of the task.
     static UDP_BUFFERS: ConstStaticCell<UdpBuffers<1>> = ConstStaticCell::new(UdpBuffers::new());
-    static TCP_BUFFERS: ConstStaticCell<TcpBuffers<1>> = ConstStaticCell::new(TcpBuffers::new());
+    static TCP_BUFFERS: ConstStaticCell<TcpBuffers<1, TCP_BUFFER_SIZE, TCP_BUFFER_SIZE>> =
+        ConstStaticCell::new(TcpBuffers::new());
     static TCP_STACK: StaticCell<Tcp<'_>> = StaticCell::new();
     // This is Sync (wraps UnsafeCell), letting us hold a &'static SessionResources
     // even though SessionResources<NoopRawMutex> is !Sync. Session::new now takes &'a
@@ -330,27 +360,22 @@ pub async fn zenoh_session<F, Fut>(
 }
 
 /// Establishes and keeps a WiFi connection. `liveness` is invoked once per
-/// liveness round, and `associated` reports whether the station is joined to
-/// its access point — this task owns the controller, so it is the only place
-/// that knows.
+/// liveness round, and `link` reports the station's link to its access point,
+/// with the verdict on why a join fails once there is one — this task owns the
+/// controller, so it is the only place that knows.
 pub async fn connection(
     mut controller: WifiController<'static>,
     credentials: WifiCredentials,
     liveness: fn(),
-    associated: fn(bool),
+    link: fn(Link),
 ) {
     log::info!("start connection task");
 
-    log::info!("Scan");
-    let scan_config = ScanConfig::default().with_max(10);
-    match controller.scan_async(&scan_config).await {
-        Ok(result) => {
-            for ap in result {
-                log::info!("{:?}", ap);
-            }
-        }
-        Err(e) => log::warn!("Wifi scan failed: {e:?}"),
-    }
+    let ssid = credentials.ssid.as_str();
+    let mut ssid_seen = scan_for(&mut controller, ssid).await;
+    let mut backoff = Backoff::new();
+    let mut auth_failures: u8 = 0;
+    let mut reported: Option<JoinFailure> = None;
 
     loop {
         // Liveness (observed): blocks on radio events for unbounded time.
@@ -359,7 +384,7 @@ pub async fn connection(
         if controller.is_connected() {
             // wait until we're no longer connected
             let info = controller.wait_for_disconnect_async().await.ok();
-            associated(false);
+            link(Link::Down(None));
             log::info!("Disconnected: {:?}", info);
             Timer::after(WIFI_RECONNECT_BACKOFF).await;
         }
@@ -368,23 +393,89 @@ pub async fn connection(
 
         match controller.connect_async().await {
             Ok(info) => {
-                associated(true);
+                link(Link::Joined);
+                backoff.reset();
+                auth_failures = 0;
+                reported = None;
                 log::info!("Wifi connected to {:?}", info);
             }
             Err(e) => {
-                associated(false);
-                if let ConnectionError::Failed(info) = e
-                    && matches!(info.reason, DisconnectReason::AuthenticationExpired)
-                {
-                    // This is a soft error. It is actually expected to happen on reboot
-                    log::warn!("Failed to connect to wifi: {e:?}");
-                } else {
-                    log::error!("Failed to connect to wifi: {e:?}");
+                // A scan lists at most ten access points, so keep looking
+                // until the network shows up rather than call it missing on
+                // one miss.
+                if !ssid_seen {
+                    ssid_seen = scan_for(&mut controller, ssid).await;
                 }
+                let class = reason_class(&e);
+                auth_failures = if class == ReasonClass::Authentication {
+                    auth_failures.saturating_add(1)
+                } else {
+                    0
+                };
+                match classify(class, ssid_seen, auth_failures) {
+                    Some(verdict) if reported != Some(verdict) => {
+                        report_join_failure(ssid, verdict, &e);
+                        reported = Some(verdict);
+                    }
+                    _ => log::debug!("Failed to connect to wifi '{ssid}': {e:?}"),
+                }
+                link(Link::Down(reported));
                 reset_station(&mut controller, &credentials);
-                Timer::after(WIFI_RECONNECT_BACKOFF).await;
+                Timer::after(Duration::from_secs(backoff.next_wait())).await;
             }
         }
+    }
+}
+
+/// Scans for access points, listing them at debug, and reports whether `ssid`
+/// is among them. A failed scan counts as seen, so it cannot turn an unrelated
+/// failure into "network not found".
+async fn scan_for(controller: &mut WifiController<'static>, ssid: &str) -> bool {
+    let scan_config = ScanConfig::default().with_max(10);
+    match controller.scan_async(&scan_config).await {
+        Ok(result) => {
+            let mut seen = false;
+            for ap in result {
+                log::debug!("{:?}", ap);
+                seen |= ap.ssid.as_str() == ssid;
+            }
+            seen
+        }
+        Err(e) => {
+            log::warn!("Wifi scan failed: {e:?}");
+            true
+        }
+    }
+}
+
+/// Which bucket the driver's reason for a failed join falls in.
+fn reason_class(error: &ConnectionError) -> ReasonClass {
+    match error {
+        ConnectionError::Failed(info) => match info.reason {
+            DisconnectReason::NoAccessPointFound
+            | DisconnectReason::NoAccessPointFoundWithCompatibleSecurity
+            | DisconnectReason::NoAccessPointFoundInAuthmodeThreshold
+            | DisconnectReason::NoAccessPointFoundInRssiThreshold
+            | DisconnectReason::BeaconTimeout => ReasonClass::NoAccessPoint,
+            DisconnectReason::AuthenticationExpired
+            | DisconnectReason::AuthenticationFailed
+            | DisconnectReason::FourWayHandshakeTimeout
+            | DisconnectReason::HandshakeTimeout
+            | DisconnectReason::MicFailure => ReasonClass::Authentication,
+            _ => ReasonClass::Other,
+        },
+        _ => ReasonClass::Other,
+    }
+}
+
+/// Names the verdict on a failed join; called once per change of it.
+fn report_join_failure(ssid: &str, verdict: JoinFailure, error: &ConnectionError) {
+    match verdict {
+        JoinFailure::NetworkNotFound => log::error!("network '{ssid}' not found: {error:?}"),
+        JoinFailure::PasswordRejected => {
+            log::error!("password rejected for '{ssid}': {error:?}");
+        }
+        JoinFailure::Other => log::error!("Failed to connect to wifi '{ssid}': {error:?}"),
     }
 }
 
@@ -468,37 +559,15 @@ where
         UdpScoutLink(send),
         WhatAmIMatcher::empty().peer().client().router(),
         None,
-        |_, hello| {
-            for locator in &hello.locators {
-                if locator.protocol().as_ref() != "tcp" {
-                    continue;
-                }
-                log::info!("Discovered Zenoh node at {}", locator);
+        |from, hello| {
+            let candidate = choose_locator(from, &hello.locators);
 
-                let Ok(candidate) = locator.address().as_ref().parse::<SocketAddr>() else {
-                    continue;
-                };
-                let IpAddr::V4(ip) = candidate.ip() else {
-                    continue;
-                };
-
-                // A peer announces every address it listens on, including ones that only mean
-                // anything on the host itself: `127.0.0.1` (its own loopback) and `0.0.0.0`
-                // (the wildcard it bound). Dialing either from here reaches this device, not
-                // the peer, and the session then sits dead until the lease expires. Keep
-                // scanning the hello for an address that is actually routable over the WiFi
-                // link instead of taking the first TCP locator on offer.
-                if ip.is_loopback() || ip.is_unspecified() {
-                    log::debug!("Skipping non-routable locator {locator}");
-                    continue;
-                }
-
-                socket_addr = Some(candidate);
-                log::info!("Using Zenoh node at {candidate}");
-                return true;
-            }
-
-            false
+            let Some(candidate) = candidate else {
+                return false;
+            };
+            socket_addr = Some(candidate);
+            log::info!("Using Zenoh node at {candidate} (hello from {})", from.ip());
+            true
         },
     )
     .await
@@ -510,6 +579,46 @@ where
         when a Some(socket_addr) is found. This is unreachable"
     )]
     socket_addr.unwrap()
+}
+
+/// The address to dial out of a peer's hello, which `from` arrived from.
+///
+/// Only TCP v4 locators are worth dialling, and not every one of those: a peer announces every
+/// address it listens on, including ones that only mean anything on the host itself: `127.0.0.1`
+/// (its own loopback) and `0.0.0.0` (the wildcard it bound). Dialing either from here reaches
+/// this device, not the peer, and the session then sits dead until the lease expires.
+///
+/// A host with several interfaces — container bridges, VPNs — also announces addresses that mean
+/// nothing on this network, and may list one of those first. The address the hello arrived from
+/// just reached us, so a locator on it is routable from here: prefer it, and only fall back to
+/// the first routable locator when the peer answered from an address it doesn't listen on.
+fn choose_locator(from: &SocketAddr, locators: &[Locator]) -> Option<SocketAddr> {
+    let routable = |locator: &Locator| {
+        if locator.protocol().as_ref() != "tcp" {
+            return None;
+        }
+        let candidate = locator.address().as_ref().parse::<SocketAddr>().ok()?;
+        let IpAddr::V4(ip) = candidate.ip() else {
+            return None;
+        };
+        if ip.is_loopback() || ip.is_unspecified() {
+            log::debug!("Skipping non-routable locator {locator}");
+            return None;
+        }
+        Some(candidate)
+    };
+
+    for locator in locators {
+        if locator.protocol().as_ref() == "tcp" {
+            log::info!("Discovered Zenoh node at {locator}");
+        }
+    }
+
+    locators
+        .iter()
+        .filter_map(routable)
+        .find(|candidate| candidate.ip() == from.ip())
+        .or_else(|| locators.iter().find_map(routable))
 }
 
 /// Obtains the peer address either by scouting or by using the [`TCP_DIRECT_ADDR`] env

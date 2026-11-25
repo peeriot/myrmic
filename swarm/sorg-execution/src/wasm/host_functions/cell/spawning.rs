@@ -25,34 +25,33 @@ use wasmtime::Caller;
 
 const DEPLOY_TIMEOUT: Duration = Duration::from_secs(20);
 
-async fn resolve_class_name(session: &zenoh::Session, class: ClassRef) -> Result<String, i32> {
-    match class {
-        ClassRef::Name(name) => match class_registry::get_class_info(session, &name).await {
-            Ok(Some(_)) => Ok(name),
+/// The id of the class to spawn, checked to be registered: a hash is the id
+/// itself, a name is resolved through the name table.
+async fn resolve_class(session: &zenoh::Session, class: ClassRef) -> Result<BlobHash, i32> {
+    let id = match class {
+        ClassRef::Name(name) => match class_registry::resolve_name(session, &name).await {
+            Ok(Some(id)) => id,
             Ok(None) => {
                 error!("spawn: class '{name}' not found");
-                Err(SPAWN_ERR_CLASS_NOT_FOUND)
+                return Err(SPAWN_ERR_CLASS_NOT_FOUND);
             }
             Err(err) => {
                 error!("spawn: failed to look up class '{name}': {err}");
-                Err(SPAWN_ERR_CLASS_NOT_FOUND)
+                return Err(SPAWN_ERR_CLASS_NOT_FOUND);
             }
         },
-        ClassRef::Hash(hash) => {
-            let target = BlobHash::Sha2(hash);
-            match class_registry::list_classes(session).await {
-                Ok(classes) => match classes.into_iter().find(|c| c.wasm_hash == Some(target)) {
-                    Some(info) => Ok(info.name),
-                    None => {
-                        error!("spawn: no class found for hash {hash:?}");
-                        Err(SPAWN_ERR_CLASS_NOT_FOUND)
-                    }
-                },
-                Err(err) => {
-                    error!("spawn: failed to list classes: {err}");
-                    Err(SPAWN_ERR_CLASS_NOT_FOUND)
-                }
-            }
+        ClassRef::Hash(hash) => BlobHash::Sha2(hash),
+    };
+
+    match class_registry::get_class_info(session, id).await {
+        Ok(Some(_)) => Ok(id),
+        Ok(None) => {
+            error!("spawn: no class {} registered", id.to_hex());
+            Err(SPAWN_ERR_CLASS_NOT_FOUND)
+        }
+        Err(err) => {
+            error!("spawn: failed to look up class {}: {err}", id.to_hex());
+            Err(SPAWN_ERR_CLASS_NOT_FOUND)
         }
     }
 }
@@ -81,8 +80,8 @@ pub(crate) async fn spawn_cell(
     let parent = *caller.data().sri();
     let parent_gen_id = caller.data().gen_id();
 
-    let class_name = match resolve_class_name(&session, request.class).await {
-        Ok(name) => name,
+    let class = match resolve_class(&session, request.class).await {
+        Ok(class) => class,
         Err(code) => return code,
     };
 
@@ -124,7 +123,7 @@ pub(crate) async fn spawn_cell(
     let result = deploy_wasm_cell(
         &session,
         child,
-        &class_name,
+        class,
         tags,
         DEPLOY_TIMEOUT,
         lineage,
@@ -229,10 +228,10 @@ async fn gate_existing_instance(
                     }
                 }
             }
-            // Aborting on erase failure keeps the corpse row from silently
+            // Aborting on a failed removal keeps the corpse row from silently
             // suppressing the fresh cell's #[init].
             if let Some(gen_id) = existing_gen {
-                match instance_registry::erase_instance(session, &child, gen_id).await {
+                match instance_registry::remove_instance(session, &child, gen_id).await {
                     Ok(FenceOutcome::Applied | FenceOutcome::Absent) => {}
                     Ok(FenceOutcome::Superseded { current }) => {
                         error!("spawn: instance '{child}' moved to generation {current} mid-gate");
@@ -240,7 +239,7 @@ async fn gate_existing_instance(
                         return Err(SPAWN_ERR_DEPLOY_FAILED);
                     }
                     Err(err) => {
-                        error!("spawn: failed to erase stale instance '{child}': {err}");
+                        error!("spawn: failed to remove stale instance '{child}': {err}");
                         notify_spawn_failed(session, parent, child, local_name, detached).await;
                         return Err(SPAWN_ERR_DEPLOY_FAILED);
                     }
@@ -330,9 +329,9 @@ pub(crate) async fn terminate_cell(
         return TERMINATE_ERR_UNDEPLOY_FAILED;
     }
 
-    // Undeploy usually erases the row itself; an absent row is that, not a failure.
-    if let Err(err) = instance_registry::erase_instance(&session, &sri, target.gen_id).await {
-        error!("terminate: failed to erase instance '{sri}': {err}");
+    // Undeploy usually removes the row itself; an absent row is that, not a failure.
+    if let Err(err) = instance_registry::remove_instance(&session, &sri, target.gen_id).await {
+        error!("terminate: failed to remove instance '{sri}': {err}");
         return TERMINATE_ERR_ERASE_FAILED;
     }
 
@@ -382,8 +381,8 @@ async fn reap_cells(session: &zenoh::Session, cells: Vec<(Sri, Gen)>) {
         if let Err(err) = undeploy_cell(session, sri, DEPLOY_TIMEOUT).await {
             tracing::debug!("reap: undeploy '{sri}' pending fencing: {err}");
         }
-        if let Err(err) = instance_registry::erase_instance(session, &sri, gen_id).await {
-            tracing::debug!("reap: erase '{sri}': {err}");
+        if let Err(err) = instance_registry::remove_instance(session, &sri, gen_id).await {
+            tracing::debug!("reap: remove '{sri}': {err}");
         }
     }
 }

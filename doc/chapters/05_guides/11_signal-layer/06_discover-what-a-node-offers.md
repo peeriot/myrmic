@@ -131,3 +131,13 @@ turns into "not found" instead of a compile-time-obvious change.
 Discovery earns its cost when the cell genuinely does not know what it will find: a logger, a
 diagnostic, a bridge that forwards whatever a node produces, or a cell you intend to deploy
 across boards that differ. For everything else, knowing the name is better than finding it.
+
+## See also
+
+- [Read values](./03_read-values.md) - reading values from a cell
+- [Know when hardware fails](./04_know-when-hardware-fails.md) - driver health
+
+## Related SDK reference
+
+- [Signal taps](../../10_reference/03_myrmic-sdk/07_signal-io/01_signal-taps.md)
+- [Signal outlets](../../10_reference/03_myrmic-sdk/07_signal-io/02_signal-outlets.md)

@@ -8,7 +8,7 @@
 //! accounting.
 
 use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
@@ -16,11 +16,11 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of;
 
 use cell_protocol::Sri;
-use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
 use embassy_sync::signal::Signal;
 use esp_radio_rtos_driver::queue::QueueHandle;
+use portable_atomic::Ordering;
 use portable_atomic_util::Arc;
 use static_cell::StaticCell;
 use wasm_storage::WasmStorage;
@@ -30,7 +30,7 @@ use wasm_storage::metadata::Metadata;
 use crate::async_request::Ble;
 use crate::async_request::cell_host::CellHost;
 use crate::async_request::{CELL_MSG_CHANNEL, DbClient, send_request_and_wait};
-use crate::{CellMessage, TimerCompletionGuard, WamrRuntime, is_terminated};
+use crate::{CellMessage, IDLE, TimerCompletionGuard, WamrRuntime, is_terminated};
 
 /// Moves a value across an `esp_radio_rtos_driver` thread spawn, through the
 /// entry point's `*mut c_void` argument. The `Send` bound restores the check
@@ -57,8 +57,8 @@ pub enum WasmTransfer {
         metadata: Metadata,
         /// Deployment SRI
         sri: Sri,
-        /// Class Name
-        class_name: String,
+        /// Id of the cell's class: the AOT binary being deployed
+        class: cell_protocol::BlobHash,
         /// Deployment payload (used as args for init)
         payload: Option<Vec<u8>>,
         /// Generation minted for this deploy: the body's fencing identity
@@ -110,11 +110,17 @@ type ModuleItem = (
     *const u8,
     usize,
     Sri,
-    String,
+    cell_protocol::BlobHash,
     cell_protocol::Gen,
     cell_protocol::SpawnLineage,
     Option<Vec<u8>>,
 );
+
+/// Raised by the WAMR thread each time it takes a message off the RTOS queue, so a pump facing a
+/// full queue can await room instead of blocking the executor inside the RTOS call. Also raised
+/// by [`crate::terminate_module`], so a parked pump drops its message before the next cell's
+/// init clears the termination flag.
+pub(crate) static CELL_QUEUE_FREED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Gathers the system's data and provides back-pressure via embassy channels to the RTOS queue.
 pub async fn cell_pump(cell_message_queue: &'static QueueHandle, liveness: fn()) {
@@ -129,8 +135,10 @@ pub async fn cell_pump(cell_message_queue: &'static QueueHandle, liveness: fn())
         let ptr = Box::into_raw(boxed);
         // safety: Made sure already the type is correct in `WamrContext`
         unsafe {
-            // Use deadline, so that we can avoid deadlocking the embassy executor if the Cell is
-            // waiting on us
+            // Never block in the RTOS call: this task shares the executor with the request
+            // handler that serves the cell's host calls, so a blocking wait here stalls every
+            // handoff while the queue is full. Try, and if full, await the WAMR thread taking a
+            // message or a termination request; the 100 ms timeout is only a safety net.
             loop {
                 // The cell is tearing down; forwarding now would misdeliver this message
                 // to whatever cell deploys next, so drop it instead of pushing.
@@ -138,10 +146,14 @@ pub async fn cell_pump(cell_message_queue: &'static QueueHandle, liveness: fn())
                     drop(Box::from_raw(ptr));
                     break;
                 }
-                if cell_message_queue.send_to_back(addr_of!(ptr).cast(), Some(1_000)) {
+                if cell_message_queue.send_to_back(addr_of!(ptr).cast(), Some(0)) {
                     break;
                 }
-                yield_now().await;
+                let _ = embassy_time::with_timeout(
+                    embassy_time::Duration::from_millis(100),
+                    CELL_QUEUE_FREED.wait(),
+                )
+                .await;
             }
         }
     }
@@ -240,7 +252,7 @@ impl WamrContext {
     ) -> (
         &[u8],
         Sri,
-        String,
+        cell_protocol::BlobHash,
         cell_protocol::Gen,
         cell_protocol::SpawnLineage,
         Option<Vec<u8>>,
@@ -257,12 +269,12 @@ impl WamrContext {
         // safety: We initialized it with what we received from the queue
         let ptr = unsafe { ptr_out.assume_init() };
         // safety: We own the Box now and there's no other pathway that takes ownership of this object
-        let (data, len, sri, class_name, gen_id, lineage, payload) = unsafe { *Box::from_raw(ptr) };
+        let (data, len, sri, class, gen_id, lineage, payload) = unsafe { *Box::from_raw(ptr) };
         // safety: This matches the signature of the Box that was sent
         (
             unsafe { core::slice::from_raw_parts(data, len) },
             sri,
-            class_name,
+            class,
             gen_id,
             lineage,
             payload,
@@ -290,6 +302,7 @@ impl WamrContext {
                     .cell_message_queue
                     .receive(ptr_out.as_mut_ptr().cast(), Some(500_000));
                 if did_receive {
+                    CELL_QUEUE_FREED.signal(());
                     break;
                 } else if is_terminated() {
                     return CellMessage::Destroy;
@@ -353,23 +366,25 @@ pub async fn runtime_handler(
         log::info!("Waiting for new incoming module");
         // Load the next incoming module
         let sri;
-        let class_name;
+        let class;
         let payload;
         let gen_id;
         let lineage;
+        IDLE.store(true, Ordering::Release);
         let new_metadata = loop {
             if let WasmTransfer::Start {
                 metadata: new_metadata,
                 sri: new_sri,
-                class_name: new_class_name,
+                class: new_class,
                 payload: new_payload,
                 gen_id: new_gen_id,
                 lineage: new_lineage,
                 reply,
             } = wasm_file_transfer.receive().await
             {
+                IDLE.store(false, Ordering::Release);
                 sri = new_sri;
-                class_name = new_class_name;
+                class = new_class;
                 payload = new_payload;
                 gen_id = new_gen_id;
                 lineage = new_lineage;
@@ -406,7 +421,7 @@ pub async fn runtime_handler(
                 module_slice.as_ptr(),
                 module_slice.len(),
                 sri,
-                class_name,
+                class,
                 gen_id,
                 lineage,
                 payload,
@@ -497,20 +512,19 @@ extern "C" fn wamr_runtime(wamr_context_box: *mut c_void) {
 
     loop {
         log::info!("[WAMR] Waiting for WASM module");
-        let (module_bytes, sri, class_name, gen_id, lineage, payload) = ctx.wait_for_module();
+        let (module_bytes, sri, class, gen_id, lineage, payload) = ctx.wait_for_module();
         log::info!("[WAMR] Initializing runtime");
         let runtime = match WamrRuntime::init_with_module(
             module_bytes,
             &sri,
-            &class_name,
+            class,
             gen_id,
             &lineage,
             payload,
         ) {
             Ok(runtime) => runtime,
             Err(e) => {
-                log::error!("[WAMR] Runtime initialization failed: {e}");
-                // `#[init]` may have created timers before failing.
+                log::error!("[WAMR] Runtime initialization failed: {e}"); // `#[init]` may have created timers before failing.
                 ctx.discard_cell_leftovers();
                 send_request_and_wait(DbClient::ConfirmDeployment {
                     sri,

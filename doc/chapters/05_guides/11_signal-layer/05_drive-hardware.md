@@ -190,3 +190,13 @@ report, or has to keep working while a cell is reloaded, the decision belongs in
 a step driving the outlet directly, with no cell in the path. The
 [pipeline page](./02_design-your-pipeline.md) covers how to wire that, and the trade is the same
 one it describes: the pipeline for reflexes, the cell for judgement.
+
+## See also
+
+- [Design your pipeline](./02_design-your-pipeline.md) - building a pipeline
+- [Read values](./03_read-values.md) - reading values from a cell
+- [Drivers](../../10_reference/04_signal-layer/03_drivers.md) - the available drivers
+
+## Related SDK reference
+
+- [Signal outlets](../../10_reference/03_myrmic-sdk/07_signal-io/02_signal-outlets.md)

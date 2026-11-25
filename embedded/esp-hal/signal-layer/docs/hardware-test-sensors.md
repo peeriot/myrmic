@@ -89,8 +89,8 @@ myrmic flash --monitor
 ```
 
 `myrmic flash` builds and flashes a firmware crate, so it controls the partition
-layout the image is written into. Scaffold a pipeline firmware with `myrmic new
---firmware esp32c6 --pipeline` and place the pipeline in it. It auto-detects the
+layout the image is written into. Scaffold a pipeline firmware with `myrmic signal-layer
+new --firmware esp32c6` and place the pipeline in it. It auto-detects the
 serial port; pass `-p /dev/ttyUSB0` if auto-detect fails.
 
 What to expect in the boot log:

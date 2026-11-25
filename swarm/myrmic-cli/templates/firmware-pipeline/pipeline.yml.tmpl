@@ -1,0 +1,21 @@
+# Signal Layer pipeline: sources, steps, and the taps the cell reads.
+pipeline:
+  id: {{name}}
+
+# `sim` emits a deterministic ramp (0, 10, ... 100, 0, ...) so this
+# builds and runs with no hardware attached.
+sources:
+  - id: sim
+    device: sim
+    config:
+      sample_interval_ms: 500
+      start: 0.0
+      step: 10.0
+      max: 100.0
+
+# A tap is a value the cell can read by name.
+taps:
+  - name: sim_value
+    kind: retained
+    type: f32
+    source: sim.value

@@ -258,3 +258,11 @@ cycle in the step graph, an application setting that belongs in the board file.
 
 What it cannot check is intent. Nothing will tell you that a threshold is wrong for your room
 or that you cadenced away resolution a controller needed. For that, run it and watch.
+
+## See also
+
+- [Describe your hardware](./01_describe-your-hardware.md) - describing your hardware
+- [Read values](./03_read-values.md) - reading values from a cell
+- [Pipeline file](../../10_reference/04_signal-layer/01_pipeline-file.md) - the pipeline file format
+- [Drivers](../../10_reference/04_signal-layer/03_drivers.md) - the available drivers
+- [Steps](../../10_reference/04_signal-layer/04_steps.md) - the available steps

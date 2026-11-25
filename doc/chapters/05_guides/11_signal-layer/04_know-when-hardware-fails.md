@@ -122,3 +122,12 @@ tooling that reports on nodes, cells and logs.
 
 A source reporting `Up` means its last sample succeeded. It does not mean the value is correct,
 only that the device answered.
+
+## See also
+
+- [Read values](./03_read-values.md) - reading values from a cell
+- [Observability](../10_observability.md) - node, cell and log health
+
+## Related SDK reference
+
+- [Signal taps](../../10_reference/03_myrmic-sdk/07_signal-io/01_signal-taps.md)

@@ -54,6 +54,6 @@ Myrmic is not a certified safety controller. Keep hard-real-time and functional-
 
 ## See also
 
-- [Target Groups](../03_target-groups.md) - the other entry points Myrmic supports
+- [Application Domains](../03_target-groups.md) - the other entry points Myrmic supports
 - [Connecting Physical Systems](../02_why-myrmic/04_connecting-physical-systems.md) - how Cells relate to native drivers and hardware I/O
 - [Recovery Models](../06_concepts/06_recovery-models.md) - what happens to a Cell after a restart or Node loss

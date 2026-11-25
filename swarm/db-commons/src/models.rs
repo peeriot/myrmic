@@ -35,6 +35,65 @@ pub type RawKey = Vec<u8>;
 pub type Id = Vec<u8>;
 pub type Value = Vec<u8>;
 
+/// Longest kv key, prefix, table name, measurement name, blob path or table
+/// entity id the db accepts, in bytes: Linux's `PATH_MAX`.
+pub const MAX_KEY_PART_LEN: usize = 4096;
+
+/// Longest [`Scope`] segment (namespace, database or schema) the db accepts,
+/// in bytes; the same bound as an event name, which becomes an event scope's
+/// schema.
+pub const MAX_SEGMENT_LEN: usize = 128;
+
+// The longest store key the limits allow is a table row: three segments and a
+// table name (each NUL-terminated), an entity id (8-byte length prefix) and 30
+// bytes of tags and version trailer. lsm-tree panics above 65535 bytes.
+const _: () = assert!(
+    3 * (MAX_SEGMENT_LEN + 1) + (MAX_KEY_PART_LEN + 1) + (MAX_KEY_PART_LEN + 8) + 30 < 65_535
+);
+
+/// Why [`check_segment`] refuses a segment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SegmentError {
+    /// Zenoh has no empty chunk, so no key expression holds one.
+    Empty,
+    /// Longer than [`MAX_SEGMENT_LEN`] bytes.
+    TooLong,
+    /// Carries one of the characters zenoh gives a meaning in a chunk.
+    KeyexprSyntax,
+}
+
+impl core::fmt::Display for SegmentError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("is empty"),
+            Self::TooLong => write!(f, "is longer than {MAX_SEGMENT_LEN} bytes"),
+            Self::KeyexprSyntax => f.write_str("contains key-expression syntax"),
+        }
+    }
+}
+
+/// Checks a name that becomes one segment of a scope: a store key built from
+/// a segment past [`MAX_SEGMENT_LEN`] bytes can exceed what the storage engine
+/// takes (it panics), and an empty one or one with `/ * $ ? #` is no
+/// key-expression chunk.
+///
+/// # Errors
+///
+/// The first rule `segment` breaks.
+pub fn check_segment(segment: &str) -> Result<(), SegmentError> {
+    if segment.is_empty() {
+        return Err(SegmentError::Empty);
+    }
+    if segment.len() > MAX_SEGMENT_LEN {
+        return Err(SegmentError::TooLong);
+    }
+    if segment.contains(KEYEXPR_SPECIAL) {
+        return Err(SegmentError::KeyexprSyntax);
+    }
+
+    Ok(())
+}
+
 /// Where to start a listing from.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Cursor {
@@ -123,6 +182,23 @@ impl Scope {
             database: database.into(),
             schema: schema.into(),
         }
+    }
+
+    /// Refuses a scope any of whose segments fails [`check_segment`].
+    ///
+    /// # Errors
+    ///
+    /// A message naming the first offending segment and the rule it breaks.
+    pub fn check(&self) -> Result<(), String> {
+        [
+            ("namespace", &self.namespace),
+            ("database", &self.database),
+            ("schema", &self.schema),
+        ]
+        .into_iter()
+        .try_for_each(|(what, segment)| {
+            check_segment(segment).map_err(|err| alloc::format!("{what} {err}"))
+        })
     }
 }
 
@@ -214,6 +290,8 @@ impl Subject {
         }
     }
 
+    /// Whether `scope` falls under this subject. Pure membership: a scope from
+    /// a peer is checked ([`Scope::check`]) before it is looked up.
     pub fn contains(&self, scope: &Scope) -> bool {
         match self {
             Self::Namespace(ns) => &scope.namespace == ns,
@@ -225,6 +303,13 @@ impl Subject {
 
 pub mod events {
     use super::{Scope, Table, Version};
+
+    /// The name a scope's key-value writes publish their events under, in place
+    /// of a table name: a commit that put keys into a scope sends one event for
+    /// them, as a commit that inserted rows into a table does for that table.
+    /// The `@` keeps it apart from table names in topics, where a `*` doesn't
+    /// match it.
+    pub const KEY_EVENTS: &str = "@keys";
 
     #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
     pub enum TableEvent {
@@ -454,6 +539,7 @@ operations! {
     key_get => KeyGet, tail, "KEY_GET";
     key_delete => KeyDelete, deferrable, "KEY_DELETE";
     key_prefix => KeyPrefix, tail, "KEY_PREFIX";
+    key_list => KeyList, tail, "KEY_LIST";
     tb_insert => TbInsert, tail, "TB_INSERT";
     tb_append => TbAppend, deferrable, "TB_APPEND";
     tb_insert_batched => TbInsertBatched, tail, "TB_INSERT_BATCHED";
@@ -827,6 +913,30 @@ pub mod key_prefix {
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     pub struct Response {
         pub keys: Vec<String>,
+    }
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    pub struct Error {
+        pub message: String,
+    }
+}
+
+/// Like [`key_prefix`], with each key's value: one round trip for what would
+/// otherwise take a [`key_get`] per key.
+pub mod key_list {
+    use super::{Scope, String, Value, Vec};
+
+    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+    pub struct Op {
+        pub scope: Scope,
+        pub prefix: String,
+    }
+
+    pub type Request = super::Tx<Op>;
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    pub struct Response {
+        pub entries: Vec<(String, Value)>,
     }
 
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1475,9 +1585,17 @@ pub mod tb_peek {
     }
 }
 
+/// Characters zenoh gives a meaning in a key-expression chunk: the separator,
+/// the wildcards and the forbidden `?` and `#`. A scope segment becomes a
+/// chunk of the key expressions the db declares, so none may carry one. `@`
+/// is left out: it makes a chunk verbatim, so wildcard subscribers skip it,
+/// but the host itself stamps such scopes (`@events`).
+const KEYEXPR_SPECIAL: [char; 5] = ['/', '*', '$', '?', '#'];
+
 #[cfg(test)]
 mod tests {
     use super::Subject;
+    use super::{MAX_SEGMENT_LEN, SegmentError, check_segment};
     use super::{Operation, Scope, TxOp, tb_append, tx_apply, tx_begin};
 
     /// Pins the write-side wire. Postcard discriminants are declaration indices
@@ -1504,7 +1622,7 @@ mod tests {
                 // Target::New, Constraint::Routed("n"/"d"/"s")
                 0, 0, 1, b'n', 1, b'd', 1, b's', // Access::Write, retention_period: None
                 1, 0, // one op: TxOp::TbAppend
-                1, 7, // scope "n"/"d"/"s", table "t"
+                1, 8, // scope "n"/"d"/"s", table "t"
                 1, b'n', 1, b'd', 1, b's', 1, b't', // eid Some([7]), value [9]
                 1, 1, 7, 1, 9, // Finish::Commit
                 1,
@@ -1542,5 +1660,58 @@ mod tests {
 
         let scope = Subject::Scope(super::Scope::new("n", "d", "s"));
         assert_eq!(scope.as_keyexprs(), ("n", "d", "s"));
+    }
+
+    #[test]
+    fn a_segment_the_db_cannot_key_is_refused() {
+        let long = "s".repeat(MAX_SEGMENT_LEN + 1);
+
+        assert_eq!(check_segment(&"s".repeat(MAX_SEGMENT_LEN)), Ok(()));
+        assert_eq!(check_segment("@events"), Ok(()));
+        assert_eq!(check_segment(""), Err(SegmentError::Empty));
+        assert_eq!(check_segment(&long), Err(SegmentError::TooLong));
+        for name in ["x?", "x#", "*", "**", "$*", "a/b", "/"] {
+            assert_eq!(
+                check_segment(name),
+                Err(SegmentError::KeyexprSyntax),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scope_the_db_cannot_key_is_refused() {
+        let long = "s".repeat(MAX_SEGMENT_LEN + 1);
+        let at_bound = "s".repeat(MAX_SEGMENT_LEN);
+
+        assert!(Scope::new(at_bound.as_str(), "d", "s").check().is_ok());
+        // The host stamps verbatim `@` chunks itself (the event bus).
+        assert!(Scope::new("cells", "@events", "x").check().is_ok());
+
+        for bad in [
+            Scope::new(long.as_str(), "d", "s"),
+            Scope::new("n", long.as_str(), "s"),
+            Scope::new("n", "d", long.as_str()),
+            Scope::new("n", "d", "x?"),
+            Scope::new("n", "d", "x#"),
+            Scope::new("*", "d", "s"),
+            Scope::new("n", "$*", "s"),
+            Scope::new("n", "d", "a/b"),
+            Scope::new("", "d", "s"),
+            Scope::new("n", "", "s"),
+            Scope::new("n", "d", ""),
+        ] {
+            assert!(bad.check().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_subject_contains_by_membership_alone() {
+        let scope = Scope::new("n", "d", "x?");
+
+        assert!(Subject::Namespace("n".into()).contains(&scope));
+        assert!(Subject::Database("n".into(), "d".into()).contains(&scope));
+        assert!(Subject::Scope(scope.clone()).contains(&scope));
+        assert!(!Subject::Namespace("m".into()).contains(&scope));
     }
 }

@@ -1,6 +1,6 @@
 use db_client::replica_v1::Client as ReplicaClient;
 use db_commons::models::{ReplicaMessage, Subject};
-use zenoh::Session;
+use zenoh::{Result as ZResult, Session};
 
 #[derive(Clone)]
 pub(crate) struct ZenohTransport {
@@ -16,27 +16,37 @@ pub(crate) struct ZenohTransport {
 }
 
 impl ZenohTransport {
+    /// # Errors
+    ///
+    /// When `subject` does not form valid key expressions, see
+    /// [`ReplicaClient::new`], or is a single scope the db refuses: no replica
+    /// could serve it.
     pub fn new<M: Send + Sync + 'static>(
         session: &Session,
         subject: &Subject,
         store: &db::store::fjall::Store<M>,
         role: &'static str,
-    ) -> Self {
-        let client = ReplicaClient::new(session, subject.clone())
-            .expect("unable to create replication client");
+    ) -> ZResult<Self> {
+        if let Subject::Scope(scope) = subject {
+            scope.check().map_err(zenoh::Error::from)?;
+        }
+
+        let client = ReplicaClient::new(session, subject)?;
 
         let store = store.clone();
-        ZenohTransport {
+
+        Ok(ZenohTransport {
             client,
             role,
             now: std::sync::Arc::new(move || store.now()),
-        }
+        })
     }
 }
 
 impl ZenohTransport {
-    /// Publishes `msg`, recording it; returns its encoded size.
-    async fn send(&self, msg: ReplicaMessage) -> usize {
+    /// Publishes `msg`, recording it; returns its encoded size, or `None` when
+    /// zenoh refused the put.
+    async fn send(&self, msg: ReplicaMessage) -> Option<usize> {
         let kind = msg.name();
 
         if let ReplicaMessage::Announce(announce) = &msg {
@@ -51,9 +61,18 @@ impl ZenohTransport {
             );
         }
 
-        let bytes = self.client.publish(msg).await;
-        super::metrics::record_msg_sent(kind, bytes);
-        bytes
+        match self.client.publish(msg).await {
+            Ok(bytes) => {
+                super::metrics::record_msg_sent(kind, bytes);
+
+                Some(bytes)
+            }
+            Err(err) => {
+                tracing::warn!("unable to publish a replica {kind}: {err}");
+
+                None
+            }
+        }
     }
 }
 
@@ -67,8 +86,9 @@ impl db::replication::ReplicaTransport for ZenohTransport {
         reason: db::replication::AnnounceReason,
         announce: db_commons::models::replication::Announce,
     ) {
-        let bytes = self.send(ReplicaMessage::Announce(announce)).await;
-        super::metrics::record_announce_reason(self.role, reason.name(), bytes);
+        if let Some(bytes) = self.send(ReplicaMessage::Announce(announce)).await {
+            super::metrics::record_announce_reason(self.role, reason.name(), bytes);
+        }
     }
 
     async fn publish_probe(

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use espflash::cli::monitor::parser::ResolvingPrinter;
 
-pub use myrmic_flash::{Board, config, espflash_chip, picked};
+pub use myrmic_flash::{Board, config, picked};
 
 use crate::args::Ctx;
 

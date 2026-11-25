@@ -31,6 +31,9 @@ pub fn format_error(err: &anyhow::Error) -> String {
 /// context `Uuid::now_v7` uses internally. Because several inserts can share one
 /// transaction timestamp (a batch, or same-millisecond requests), the counter is
 /// what keeps their ids distinct and sortable rather than colliding.
+///
+/// Needs uuid >= 1.28.0: older `ContextV7` jumps about a second ahead when a
+/// timestamp from the previous second arrives, so ids stop rising.
 static EID_CONTEXT: std::sync::Mutex<uuid::ContextV7> =
     std::sync::Mutex::new(uuid::ContextV7::new());
 
@@ -39,11 +42,12 @@ static EID_CONTEXT: std::sync::Mutex<uuid::ContextV7> =
 /// wall-clock read.
 pub fn eid_from_ts(ts: uhlc::Timestamp) -> uuid::Uuid {
     let dur = ts.get_time().to_duration();
-    uuid::Uuid::new_v7(uuid::Timestamp::from_unix(
-        &EID_CONTEXT,
-        dur.as_secs(),
-        dur.subsec_nanos(),
-    ))
+
+    eid_from_parts(&EID_CONTEXT, dur.as_secs(), dur.subsec_nanos())
+}
+
+fn eid_from_parts(ctx: &std::sync::Mutex<uuid::ContextV7>, secs: u64, nanos: u32) -> uuid::Uuid {
+    uuid::Uuid::new_v7(uuid::Timestamp::from_unix(ctx, secs, nanos))
 }
 
 fn key_scope(scope: &Scope) -> db::domain::Scope<'_> {
@@ -55,6 +59,8 @@ fn key_scope(scope: &Scope) -> db::domain::Scope<'_> {
 /// An `Err` aborts the whole application: the caller rolls the transaction back
 /// and reports which op failed.
 pub fn apply(tx: &mut StoreTx, op: TxOp) -> Result<TxOpResponse, String> {
+    check_names(&op)?;
+
     Ok(match op {
         TxOp::ScopeBackup(op) => scope_backup(tx, op)?.into(),
         TxOp::ScopeRestore(op) => scope_restore(tx, op)?.into(),
@@ -62,6 +68,7 @@ pub fn apply(tx: &mut StoreTx, op: TxOp) -> Result<TxOpResponse, String> {
         TxOp::KeyGet(op) => key_get(tx, op)?.into(),
         TxOp::KeyDelete(op) => key_delete(tx, op)?.into(),
         TxOp::KeyPrefix(op) => key_prefix(tx, op)?.into(),
+        TxOp::KeyList(op) => key_list(tx, op)?.into(),
         TxOp::TbInsert(op) => tb_insert(tx, op)?.into(),
         TxOp::TbAppend(op) => tb_append(tx, op)?.into(),
         TxOp::TbInsertBatched(op) => tb_insert_batched(tx, op)?.into(),
@@ -84,6 +91,97 @@ pub fn apply(tx: &mut StoreTx, op: TxOp) -> Result<TxOpResponse, String> {
         TxOp::SemConstruct(op) => sem_construct(tx, op)?.into(),
         TxOp::SemDescribe(op) => sem_describe(tx, op)?.into(),
     })
+}
+
+/// Refuses an op that names a scope [`Scope::check`] rejects, or a key,
+/// prefix, table, measurement, path or entity id longer than
+/// [`MAX_KEY_PART_LEN`] bytes, before it touches the store. Every request path
+/// (the wasm host, the esp runtime, any zenoh client) lands here, and the store
+/// key such a name builds can pass lsm-tree's 65535-byte cap, which panics.
+fn check_names(op: &TxOp) -> Result<(), String> {
+    match op {
+        TxOp::ScopeBackup(op) => op.scope.check(),
+        TxOp::ScopeRestore(op) => op.scope.check(),
+        TxOp::KeyPut(op) => op.scope.check().and(check_part("key", op.key.as_bytes())),
+        TxOp::KeyGet(op) => op.scope.check().and(check_part("key", op.key.as_bytes())),
+        TxOp::KeyDelete(op) => op.scope.check().and(check_part("key", op.key.as_bytes())),
+        TxOp::KeyPrefix(op) => op
+            .scope
+            .check()
+            .and(check_part("prefix", op.prefix.as_bytes())),
+        TxOp::KeyList(op) => op
+            .scope
+            .check()
+            .and(check_part("prefix", op.prefix.as_bytes())),
+        TxOp::TbInsert(op) => check_row(&op.scope, &op.table, op.eid.as_deref()),
+        TxOp::TbAppend(op) => check_row(&op.scope, &op.table, op.eid.as_deref()),
+        TxOp::TbInsertBatched(op) => {
+            check_row(&op.scope, &op.table, None)?;
+
+            op.entries
+                .iter()
+                .try_for_each(|(eid, _)| check_row(&op.scope, &op.table, eid.as_deref()))
+        }
+        TxOp::TbCount(op) => check_row(&op.scope, &op.table, None),
+        TxOp::TbGet(op) => check_row(&op.scope, &op.table, Some(&op.eid)),
+        TxOp::TbDelete(op) => check_row(&op.scope, &op.table, Some(&op.eid)),
+        TxOp::TbList(op) => check_row(&op.scope, &op.table, cursor_id(op.cursor.as_ref())),
+        TxOp::TsPublish(op) => op
+            .scope
+            .check()
+            .and(check_part("measurement", op.measurement.as_bytes())),
+        TxOp::TsFind(op) => op
+            .scope
+            .check()
+            .and(check_part("measurement", op.measurement.as_bytes())),
+        TxOp::BlobStore(op) => op.scope.check(),
+        TxOp::BlobLink(op) => op
+            .blob_id
+            .scope
+            .check()
+            .and(check_part("path", op.path.as_bytes())),
+        TxOp::BlobUnlink(op) => op.scope.check().and(check_part("path", op.path.as_bytes())),
+        TxOp::BlobMove(op) => op
+            .scope
+            .check()
+            .and(check_part("path", op.old_path.as_bytes()))
+            .and(check_part("path", op.new_path.as_bytes())),
+        TxOp::BlobResolve(op) => op.blob_id.scope.check(),
+        TxOp::PathResolve(op) => op.scope.check().and(check_part("path", op.path.as_bytes())),
+        TxOp::PathsList(op) => op.scope.check(),
+        // Semantic terms are hashed when big, so only the scope reaches a key.
+        TxOp::SemUpdate(op) => op.scope.check(),
+        TxOp::SemSelect(op) => op.scope.check(),
+        TxOp::SemAsk(op) => op.scope.check(),
+        TxOp::SemConstruct(op) => op.scope.check(),
+        TxOp::SemDescribe(op) => op.scope.check(),
+    }
+}
+
+/// A table row's key parts: the scope, the table and, when given, the id.
+pub(super) fn check_row(scope: &Scope, table: &str, eid: Option<&[u8]>) -> Result<(), String> {
+    scope.check()?;
+    check_part("table", table.as_bytes())?;
+
+    eid.map_or(Ok(()), |eid| check_part("entity id", eid))
+}
+
+/// The entity id a list cursor starts from, if it names one.
+pub(super) fn cursor_id(cursor: Option<&Cursor>) -> Option<&[u8]> {
+    match cursor {
+        Some(Cursor::After(eid) | Cursor::At(eid)) => Some(eid),
+        Some(Cursor::Skip(_)) | None => None,
+    }
+}
+
+/// Refuses a key part (`what` names it in the error) longer than
+/// [`MAX_KEY_PART_LEN`] bytes.
+fn check_part(what: &str, part: &[u8]) -> Result<(), String> {
+    if part.len() > MAX_KEY_PART_LEN {
+        return Err(format!("{what} longer than {MAX_KEY_PART_LEN} bytes"));
+    }
+
+    Ok(())
 }
 
 fn scope_backup(tx: &mut StoreTx, op: scope_backup::Op) -> Result<scope_backup::Response, String> {
@@ -115,6 +213,8 @@ fn key_put(tx: &mut StoreTx, op: key_put::Op) -> Result<key_put::Response, Strin
 
     tx.key_put(key, &op.value)
         .map_err(|err| format_error(&err))?;
+    tx.metadata_or_default()
+        .insert((op.scope, String::from(events::KEY_EVENTS)));
 
     Ok(key_put::Response {})
 }
@@ -141,6 +241,14 @@ fn key_prefix(tx: &mut StoreTx, op: key_prefix::Op) -> Result<key_prefix::Respon
         .map_err(|err| format_error(&err))?;
 
     Ok(key_prefix::Response { keys })
+}
+
+fn key_list(tx: &mut StoreTx, op: key_list::Op) -> Result<key_list::Response, String> {
+    let entries = tx
+        .key_list(key_scope(&op.scope), &op.prefix)
+        .map_err(|err| format_error(&err))?;
+
+    Ok(key_list::Response { entries })
 }
 
 /// Inserts a row and reports the id it landed under. `eid: None` mints one from
@@ -559,4 +667,222 @@ fn sem_graph(
 
     tx.sem_graph(key_scope(scope), query, skip, limit)
         .map_err(|err| format_error(&err))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ids minted across a second boundary with a slightly older clock reading
+    /// must still rise; uuid before 1.28 jumped ahead of the real time there.
+    #[test]
+    fn eids_rise_across_a_second_boundary() {
+        const BASE_SECS: u64 = 1_700_000_000;
+
+        let ctx = std::sync::Mutex::new(uuid::ContextV7::new());
+        let ids = [
+            eid_from_parts(&ctx, BASE_SECS, 6_000_000),
+            eid_from_parts(&ctx, BASE_SECS - 1, 975_000_000),
+            eid_from_parts(&ctx, BASE_SECS, 265_000_000),
+        ];
+
+        assert!(
+            ids.windows(2).all(|w| matches!(w, [a, b] if a < b)),
+            "{ids:?}"
+        );
+    }
+
+    /// Every op kind that carries a key part, with that part `len` bytes long: at
+    /// the bound each passes, one past it and at `u16::MAX` bytes (lsm-tree's key
+    /// cap) each is refused, never a panic.
+    #[test]
+    fn check_names_refuses_over_long_parts_of_every_op_kind() {
+        for op in part_ops(MAX_KEY_PART_LEN) {
+            assert!(check_names(&op).is_ok(), "{op:?}");
+        }
+        for len in [
+            MAX_KEY_PART_LEN + 1,
+            usize::from(u16::MAX) - 1,
+            usize::from(u16::MAX),
+            usize::from(u16::MAX) + 1,
+        ] {
+            for op in part_ops(len) {
+                assert!(check_names(&op).is_err(), "{len}: {op:?}");
+            }
+        }
+    }
+
+    /// A scope a segment of which is too long or carries key-expression syntax is
+    /// refused by every op that names one, whatever else the op holds.
+    #[test]
+    fn check_names_refuses_a_bad_scope_in_every_op_kind() {
+        let ops = |scope: &Scope| {
+            vec![
+                TxOp::ScopeBackup(scope_backup::Op {
+                    scope: scope.clone(),
+                }),
+                TxOp::KeyGet(key_get::Op {
+                    scope: scope.clone(),
+                    key: String::from("k"),
+                }),
+                TxOp::TbInsert(tb_insert::Op {
+                    scope: scope.clone(),
+                    table: String::from("t"),
+                    eid: None,
+                    value: Vec::new(),
+                }),
+                TxOp::TbInsertBatched(tb_insert_batched::Op {
+                    scope: scope.clone(),
+                    table: String::from("t"),
+                    entries: Vec::new(),
+                }),
+                TxOp::TbCount(tb_count::Op {
+                    scope: scope.clone(),
+                    table: String::from("t"),
+                }),
+                TxOp::TsFind(ts_find::Op {
+                    scope: scope.clone(),
+                    measurement: String::from("m"),
+                    limit: None,
+                    start: None,
+                    end: None,
+                    order: None,
+                }),
+                TxOp::BlobStore(blob_store::Op {
+                    scope: scope.clone(),
+                    blob: Vec::new(),
+                }),
+                TxOp::PathsList(paths_list::Op {
+                    scope: scope.clone(),
+                    limit: None,
+                }),
+                TxOp::SemAsk(sem_ask::Op {
+                    scope: scope.clone(),
+                    query: String::new(),
+                    base_iri: None,
+                }),
+            ]
+        };
+
+        let too_long = "s".repeat(MAX_SEGMENT_LEN + 1);
+        let mut bad = vec![
+            Scope::new(too_long.clone(), "d", "s"),
+            Scope::new("n", too_long.clone(), "s"),
+            Scope::new("n", "d", too_long),
+            Scope::new("n", "d", "x".repeat(usize::from(u16::MAX) + 1)),
+        ];
+        for name in ["x?", "x#", "*", "**", "$*", "a/b", "/"] {
+            bad.push(Scope::new("n", "d", name));
+            bad.push(Scope::new(name, "d", "s"));
+        }
+
+        for scope in bad {
+            for op in ops(&scope) {
+                assert!(check_names(&op).is_err(), "{scope}: {op:?}");
+            }
+        }
+
+        // The host stamps `@` scopes itself (the event bus), so they stay valid.
+        for op in ops(&Scope::new("cells", "@events", "x")) {
+            assert!(check_names(&op).is_ok(), "{op:?}");
+        }
+    }
+
+    /// Every op kind that carries a key part, with that part `len` bytes long.
+    fn part_ops(len: usize) -> Vec<TxOp> {
+        let scope = Scope::new("testing", "events", "public");
+        let part = |len: usize| "k".repeat(len);
+
+        vec![
+            TxOp::KeyPut(key_put::Op {
+                scope: scope.clone(),
+                key: part(len),
+                value: Vec::new(),
+            }),
+            TxOp::KeyGet(key_get::Op {
+                scope: scope.clone(),
+                key: part(len),
+            }),
+            TxOp::KeyDelete(key_delete::Op {
+                scope: scope.clone(),
+                key: part(len),
+            }),
+            TxOp::KeyPrefix(key_prefix::Op {
+                scope: scope.clone(),
+                prefix: part(len),
+            }),
+            TxOp::TbInsert(tb_insert::Op {
+                scope: scope.clone(),
+                table: part(len),
+                eid: None,
+                value: Vec::new(),
+            }),
+            TxOp::TbInsert(tb_insert::Op {
+                scope: scope.clone(),
+                table: String::from("t"),
+                eid: Some(part(len).into_bytes()),
+                value: Vec::new(),
+            }),
+            TxOp::TbAppend(tb_append::Op {
+                scope: scope.clone(),
+                table: part(len),
+                eid: None,
+                value: Vec::new(),
+            }),
+            // An empty batch still names a table, so it is checked too.
+            TxOp::TbInsertBatched(tb_insert_batched::Op {
+                scope: scope.clone(),
+                table: part(len),
+                entries: Vec::new(),
+            }),
+            TxOp::TbInsertBatched(tb_insert_batched::Op {
+                scope: scope.clone(),
+                table: String::from("t"),
+                entries: vec![(Some(part(len).into_bytes()), Vec::new())],
+            }),
+            TxOp::TbCount(tb_count::Op {
+                scope: scope.clone(),
+                table: part(len),
+            }),
+            TxOp::TbGet(tb_get::Op {
+                scope: scope.clone(),
+                table: String::from("t"),
+                eid: part(len).into_bytes(),
+            }),
+            TxOp::TbDelete(tb_delete::Op {
+                scope: scope.clone(),
+                table: String::from("t"),
+                eid: part(len).into_bytes(),
+            }),
+            TxOp::TbList(tb_list::Op {
+                scope: scope.clone(),
+                table: String::from("t"),
+                cursor: Some(Cursor::After(part(len).into_bytes())),
+                limit: None,
+                order: None,
+            }),
+            TxOp::TsFind(ts_find::Op {
+                scope: scope.clone(),
+                measurement: part(len),
+                limit: None,
+                start: None,
+                end: None,
+                order: None,
+            }),
+            TxOp::BlobUnlink(blob_unlink::Op {
+                scope: scope.clone(),
+                path: part(len),
+            }),
+            TxOp::BlobMove(blob_move::Op {
+                scope: scope.clone(),
+                old_path: String::from("a"),
+                new_path: part(len),
+            }),
+            TxOp::PathResolve(path_resolve::Op {
+                scope: scope.clone(),
+                path: part(len),
+                range: None,
+            }),
+        ]
+    }
 }

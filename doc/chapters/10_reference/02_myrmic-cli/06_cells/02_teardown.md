@@ -14,7 +14,7 @@ Purges a running cell identified by its SRI (UUID) or SRN name. Unlike [`myrmic 
 ## Options
 `--remove-class`
 
-Also remove the cell class from the data layer after teardown, if no other instances still reference it.
+Also remove the cell's class after teardown. For a root cell, the class name equal to its SRN (the name `myrmic deploy` gave the class) is removed first; then the class itself goes, unless something still references it, such as another name or another cell.
 
 `-v` / `--verbose`
 
@@ -26,7 +26,7 @@ Prints help information.
 
 ## Examples
 
-1. teardown a cell and remove the class if no other instances use it:
+1. teardown a cell and remove its class if nothing else uses it:
 
 ```bash
 myrmic cells teardown my-cell --remove-class

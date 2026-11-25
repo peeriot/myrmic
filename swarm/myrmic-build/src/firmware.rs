@@ -1,10 +1,11 @@
-//! Building a firmware crate — an `esp-firmware` binary — for its chip.
+//! Building a firmware crate — an `esp-firmware` binary.
 //!
-//! A firmware crate names its chip in `[package.metadata.myrmic] firmware`,
-//! which is what tells it apart from a cell crate. It compiles in release mode
-//! for the chip's bare-metal RISC-V target with the link flags esp-hal needs,
-//! and hands `esp-firmware-build` a default partition layout when the crate
-//! ships no `partitions.toml` of its own.
+//! A firmware crate names its chip family in `[package.metadata.myrmic]
+//! firmware`, which is what tells it apart from a cell crate; its own cargo
+//! features pick the chip. It compiles in release mode for the family's
+//! bare-metal RISC-V target with the flags esp-hal needs, and hands
+//! `esp-firmware-build` a default partition layout when the crate ships no
+//! `partitions.toml` of its own.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,8 +22,9 @@ use crate::compile::{Selector, TOOLCHAIN, resolve_selector};
 /// The bare-metal target every supported chip compiles for.
 pub const TARGET: &str = "riscv32imac-unknown-none-elf";
 const RUSTFLAGS_ENV: &str = "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS";
-/// esp-hal's linker script, frame pointers for its backtraces, and lld.
-const RUSTFLAGS: &str = "-C link-arg=-Tlinkall.x -C force-frame-pointers -C linker=rust-lld";
+/// Frame pointers for esp-hal's backtraces, and lld. esp-hal's linker script
+/// comes from the crate's build script (`esp_firmware_build::configure`).
+const RUSTFLAGS: &str = "-C force-frame-pointers -C linker=rust-lld";
 /// Compile-time configuration the firmware expects. A value already in the
 /// caller's environment wins, so `ESP_LOG=debug myrmic build` works.
 const DEFAULT_ENV: [(&str, &str); 2] = [
@@ -74,16 +76,74 @@ impl std::str::FromStr for Chip {
     }
 }
 
+/// The chip family a firmware crate targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum Firmware {
+    Esp32,
+    /// A single chip: the deprecated spelling of [`Firmware::Esp32`].
+    Chip(Chip),
+}
+
+impl Firmware {
+    /// The chip a deprecated `firmware = "<chip>"` names.
+    pub fn deprecated_chip(self) -> Option<Chip> {
+        match self {
+            Self::Esp32 => None,
+            Self::Chip(chip) => Some(chip),
+        }
+    }
+}
+
+impl std::fmt::Display for Firmware {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Esp32 => f.write_str("esp32"),
+            Self::Chip(chip) => chip.fmt(f),
+        }
+    }
+}
+
+impl std::str::FromStr for Firmware {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "esp32" => Ok(Self::Esp32),
+            other => other
+                .parse()
+                .map(Self::Chip)
+                .map_err(|_| anyhow::anyhow!("unknown firmware family `{s}`; expected `esp32`")),
+        }
+    }
+}
+
+impl TryFrom<String> for Firmware {
+    type Error = anyhow::Error;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
 /// The `[package.metadata.myrmic]` keys a firmware crate sets.
 #[derive(Deserialize, Default)]
 struct Metadata {
-    firmware: Option<Chip>,
+    #[serde(alias = "firmware-family", alias = "family")]
+    firmware: Option<Firmware>,
 }
 
-/// The chip named by `[package.metadata.myrmic] firmware`, or `None` for a
-/// cell crate (or a manifest with no `[package]` at all).
-pub fn chip_of(manifest_path: &Path) -> anyhow::Result<Option<Chip>> {
-    Ok(cargo::read_package_metadata::<Metadata>(manifest_path)?.and_then(|m| m.firmware))
+/// The family named by `[package.metadata.myrmic] firmware` for the target
+/// `cargo_target` selects, or `None` for a cell (or a manifest with no
+/// `[package]` at all).
+pub fn firmware_of(
+    manifest_path: &Path,
+    cargo_target: &CargoTarget,
+) -> anyhow::Result<Option<Firmware>> {
+    Ok(
+        cargo::read_package_metadata::<Metadata>(manifest_path, cargo_target)?
+            .and_then(|m| m.firmware),
+    )
 }
 
 /// What a firmware build produced.
@@ -261,25 +321,42 @@ mod tests {
             .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
     }
 
-    #[test]
-    fn chip_of_reads_the_firmware_chip_from_myrmic_metadata() {
-        let (_dir, path) = manifest_with("[package.metadata.myrmic]\nfirmware = \"esp32c6\"\n");
-        assert_eq!(chip_of(&path).unwrap(), Some(Chip::Esp32c6));
+    fn firmware_in(metadata: &str) -> anyhow::Result<Option<Firmware>> {
+        let (_dir, path) = manifest_with(metadata);
+        firmware_of(&path, &CargoTarget::Auto)
     }
 
     #[test]
-    fn chip_of_is_none_for_a_cell_crate() {
-        let (_dir, path) = manifest_with("[package.metadata.myrmic]\nheap_size = 2048\n");
-        assert_eq!(chip_of(&path).unwrap(), None);
-        let (_dir, path) = manifest_with("");
-        assert_eq!(chip_of(&path).unwrap(), None);
+    fn firmware_of_reads_the_family_under_each_key() {
+        for key in ["firmware", "firmware-family", "family"] {
+            let firmware = firmware_in(&format!("[package.metadata.myrmic]\n{key} = \"esp32\"\n"));
+            assert_eq!(firmware.unwrap(), Some(Firmware::Esp32), "{key}");
+        }
     }
 
     #[test]
-    fn chip_of_rejects_an_unknown_chip() {
-        let (_dir, path) = manifest_with("[package.metadata.myrmic]\nfirmware = \"esp32\"\n");
-        let err = format!("{:#}", chip_of(&path).unwrap_err());
-        assert!(err.contains("esp32"), "{err}");
+    fn firmware_of_accepts_a_chip_as_deprecated() {
+        let firmware = firmware_in("[package.metadata.myrmic]\nfirmware = \"esp32c6\"\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(firmware.deprecated_chip(), Some(Chip::Esp32c6));
+        assert_eq!(Firmware::Esp32.deprecated_chip(), None);
+    }
+
+    #[test]
+    fn firmware_of_is_none_for_a_cell_crate() {
+        assert_eq!(
+            firmware_in("[package.metadata.myrmic]\nheap_size = 2048\n").unwrap(),
+            None
+        );
+        assert_eq!(firmware_in("").unwrap(), None);
+    }
+
+    #[test]
+    fn firmware_of_rejects_an_unknown_family() {
+        let err = firmware_in("[package.metadata.myrmic]\nfirmware = \"esp32c3\"\n").unwrap_err();
+        let err = format!("{err:#}");
+        assert!(err.contains("esp32c3"), "{err}");
     }
 
     #[test]
@@ -292,17 +369,16 @@ mod tests {
     const M: u64 = 1024 * 1024;
 
     #[test]
-    fn configure_links_with_the_esp_flags_for_the_riscv_target() {
+    fn configure_sets_the_esp_flags_without_the_linker_script() {
         let dir = tempfile::tempdir().unwrap();
         let mut cmd = Command::new("cargo");
         configure(&mut cmd, dir.path(), None, None, |_| false).unwrap();
 
+        // The firmware's build script links the script; passing it here too
+        // would define every memory region twice.
         let rustflags = env_of(&cmd, RUSTFLAGS_ENV).expect("rustflags are set");
-        for flag in [
-            "link-arg=-Tlinkall.x",
-            "force-frame-pointers",
-            "linker=rust-lld",
-        ] {
+        assert!(!rustflags.contains("linkall"), "{rustflags}");
+        for flag in ["force-frame-pointers", "linker=rust-lld"] {
             assert!(rustflags.contains(flag), "{rustflags}");
         }
         assert_eq!(env_of(&cmd, "ESP_LOG").as_deref(), Some("info"));

@@ -16,4 +16,3 @@ espflash = { workspace = true, features = ["cli"] }
 libc = { workspace = true }
 miette = { workspace = true }
 serialport = { workspace = true }
-myrmic-build = { workspace = true }

@@ -114,7 +114,7 @@ Understand Node roles, placement, data locations, gateways, what happens after N
 
 Different teams enter Myrmic through different needs: modelling physical assets, building connected products, running real-time rooms, coordinating workflows and agents, or providing a stateful platform primitive.
 
-[Explore the target groups](./03_target-groups.md)
+[Explore the application domains](./03_target-groups.md)
 
 ## Put the preview to work
 

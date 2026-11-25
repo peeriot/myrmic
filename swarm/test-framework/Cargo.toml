@@ -16,7 +16,8 @@ rumqttc = { workspace = true }
 rumqttd = { workspace = true }
 cell-protocol = { workspace = true, default-features = true }
 claims = { workspace = true }
-db-client = { workspace = true, features = ["zenoh"] }
+db-client = { workspace = true, features = ["zenoh", "replica"] }
+enum-map = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 introspection-client = { workspace = true }
@@ -27,6 +28,7 @@ rand = { workspace = true }
 reqwest = { version = "0.13.3", features = ["query", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 sorg-client = { workspace = true }
 sorg-common = { workspace = true }
 swarm = { workspace = true }

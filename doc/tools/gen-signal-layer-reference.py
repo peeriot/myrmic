@@ -67,8 +67,14 @@ actuators = [d for d in drivers if d.get("writes")]
 lines = ["# Drivers\n", BANNER,
  "A driver is what knows one device. A board file names a driver on a device; a pipeline then\n"
  "reads that device as a source or writes to it through an outlet.\n\n"
- f"There are {len(drivers)} drivers in the tree. A device's `driver:` value is the directory name\n"
- "below, and the crate it resolves to is that name plus `-driver`.\n"]
+ "Every driver in the tree is listed below. A device's `driver:` value is its directory\n"
+ "name, and the crate it resolves to is that name plus `-driver`.\n"]
+
+def pin_label(p):
+    """An optional pin is a bare name (input) or a `{name, direction}` map."""
+    if isinstance(p, str):
+        return f"`{p}`"
+    return f"`{p['name']}`" + (" (output)" if p.get("direction") == "output" else "")
 
 lines.append("\n## Sensor drivers\n\nThese produce values a pipeline can tap.\n")
 lines.append("\n| Driver | Reads over | Publishes | Extra pins |\n|---|---|---|---|")
@@ -76,14 +82,14 @@ for d in sensors:
     outs = ", ".join(f"`{o['name']}` ({o.get('type','?')}{', '+o['unit'] if o.get('unit') else ''})"
                      for o in d.get("outputs", []))
     buses = ", ".join(b["transport"].upper() for b in (d.get("requires") or {}).get("buses", [])) or "-"
-    pins = ", ".join(f"`{p}`" for p in (d.get("requires") or {}).get("optional_pins", [])) or "-"
+    pins = ", ".join(pin_label(p) for p in (d.get("requires") or {}).get("optional_pins", [])) or "-"
     lines.append(f"| `{d['_dir']}` | {buses} | {outs} | {pins} |")
 
 lines.append("\n## Output drivers\n\nThese consume a command written to an outlet.\n")
 lines.append("\n| Driver | Command | Mode | Pins | Reports back |\n|---|---|---|---|---|")
 for d in actuators:
     w = d.get("writes") or {}
-    pins = ", ".join(f"`{p}`" for p in (d.get("requires") or {}).get("optional_pins", [])) or "-"
+    pins = ", ".join(pin_label(p) for p in (d.get("requires") or {}).get("optional_pins", [])) or "-"
     back = ", ".join(f"`{o['name']}`" for o in d.get("outputs", [])) or "nothing"
     lines.append(f"| `{d['_dir']}` | `{w.get('type','?')}` | {w.get('mode','?')} | {pins} | {back} |")
 
@@ -94,7 +100,7 @@ for d in drivers:
     req = d.get("requires") or {}
     bits = []
     if req.get("buses"): bits.append("bus: " + ", ".join(b["transport"].upper() for b in req["buses"]))
-    if req.get("optional_pins"): bits.append("pins: " + ", ".join(f"`{p}`" for p in req["optional_pins"]))
+    if req.get("optional_pins"): bits.append("pins: " + ", ".join(pin_label(p) for p in req["optional_pins"]))
     if bits: lines.append("\n**Requires** - " + "; ".join(bits) + "\n")
     if d.get("outputs"):
         lines.append("\n**Publishes**\n")

@@ -73,9 +73,9 @@ pub(crate) fn emit_spawn_sources(
             .cloned()
             .unwrap_or_default();
         let mut pin_args = TokenStream::new();
-        for pin_name in &schema.requires.optional_pins {
-            if device_driver.pins.contains_key(pin_name.as_str()) {
-                let field_ident = snake_ident(&format!("{}_{}", device_driver.id, pin_name));
+        for pin in &schema.requires.optional_pins {
+            if device_driver.pins.contains_key(pin.name.as_str()) {
+                let field_ident = snake_ident(&format!("{}_{}", device_driver.id, pin.name));
                 pin_args.extend(quote! { peripherals.#field_ident, });
             }
         }
@@ -97,9 +97,9 @@ pub(crate) fn emit_spawn_sources(
                 .get(odevice.driver.as_str())
                 .cloned()
                 .unwrap_or_default();
-            for pin_name in &oschema.requires.optional_pins {
-                if odevice.pins.contains_key(pin_name.as_str()) {
-                    let field_ident = snake_ident(&format!("{}_{}", odevice.id, pin_name));
+            for pin in &oschema.requires.optional_pins {
+                if odevice.pins.contains_key(pin.name.as_str()) {
+                    let field_ident = snake_ident(&format!("{}_{}", odevice.id, pin.name));
                     pin_args.extend(quote! { peripherals.#field_ident, });
                 }
             }
@@ -133,9 +133,9 @@ pub(crate) fn emit_spawn_sources(
             .cloned()
             .unwrap_or_default();
         let mut pin_args = TokenStream::new();
-        for pin_name in &schema.requires.optional_pins {
-            if device.pins.contains_key(pin_name.as_str()) {
-                let field_ident = snake_ident(&format!("{}_{}", device.id, pin_name));
+        for pin in &schema.requires.optional_pins {
+            if device.pins.contains_key(pin.name.as_str()) {
+                let field_ident = snake_ident(&format!("{}_{}", device.id, pin.name));
                 pin_args.extend(quote! { peripherals.#field_ident, });
             }
         }

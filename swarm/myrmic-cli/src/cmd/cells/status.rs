@@ -3,12 +3,14 @@ use std::fmt::Write as _;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use cell_protocol::{CellInstance, Gen, PlacementEntry, PlacementKind, Sri};
+use cell_protocol::{BlobHash, CellInstance, Gen, PlacementEntry, PlacementKind, Sri};
 use sorg_common::{RestartType, root_restart};
 
 use crate::args::Ctx;
 use crate::live::{self, Phase, Pops};
-use crate::render::{BOLD, DIMMED, NONE, RESET, styled_id, unique_prefix_lengths, width};
+use crate::render::{
+    BOLD, DIMMED, NONE, RESET, class_label, names_by_class, styled_id, unique_prefix_lengths, width,
+};
 
 #[cfg(test)]
 mod tests;
@@ -52,16 +54,18 @@ type Snapshot = (
     Vec<PlacementEntry>,
     Vec<CellInstance>,
     HashMap<Sri, RestartType>,
+    HashMap<BlobHash, Vec<String>>,
 );
 
 impl live::View for View {
     type Snapshot = Snapshot;
 
     async fn fetch(&self) -> Result<Snapshot> {
-        let (cells, instances, restarts) = tokio::join!(
+        let (cells, instances, restarts, names) = tokio::join!(
             self.client.list_placements(),
             self.client.list_instances(),
             root_restart::list_specs(self.client.session()),
+            self.client.list_class_names(),
         );
         let cells = cells?;
         let instances = instances?;
@@ -72,7 +76,7 @@ impl live::View for View {
             .map(|d| (d.sri, d.restart.restart_type))
             .collect();
 
-        Ok((cells, instances, policies))
+        Ok((cells, instances, policies, names_by_class(names?)))
     }
 
     fn apply(&mut self, snapshot: Snapshot, now: Instant) {
@@ -98,6 +102,8 @@ struct Listing {
     /// the listing rather than passed straight through so a row held for the
     /// fade can keep the spec it departed with.
     policies: HashMap<Sri, RestartType>,
+    /// The names bound to each class, from the latest snapshot.
+    class_names: HashMap<BlobHash, Vec<String>>,
     pops: Pops<Sri, Gen>,
 }
 
@@ -107,11 +113,12 @@ impl Listing {
             targets,
             rows: HashMap::new(),
             policies: HashMap::new(),
+            class_names: HashMap::new(),
             pops: Pops::new(live::FADE),
         }
     }
 
-    fn apply(&mut self, (cells, instances, mut policies): Snapshot, now: Instant) {
+    fn apply(&mut self, (cells, instances, mut policies, class_names): Snapshot, now: Instant) {
         self.pops
             .observe(now, cells.iter().map(|c| (c.sri, c.gen_id)));
 
@@ -134,6 +141,7 @@ impl Listing {
         }
         self.rows = rows;
         self.policies = policies;
+        self.class_names = class_names;
     }
 
     fn draw(&self, now: Instant, styled: bool) -> String {
@@ -144,11 +152,10 @@ impl Listing {
             .map(|(entry, instance)| (entry.clone(), instance.clone()))
             .unzip();
         let instances = instances.into_iter().flatten().collect();
+        let forest = Forest::build(cells, instances, &self.policies, &self.class_names);
         let highlight = |sri: &Sri| styled.then(|| self.pops.phase(sri, now).sgr()).flatten();
         render(
-            cells,
-            instances,
-            &self.policies,
+            &forest,
             &self.targets,
             styled,
             SystemTime::now(),
@@ -169,6 +176,8 @@ struct Node {
     instance: Option<CellInstance>,
     name: Option<String>,
     policy: &'static str,
+    /// The names of the cell's class, as synonyms.
+    class: String,
     children: Vec<usize>,
 }
 
@@ -178,20 +187,11 @@ struct Forest {
     index: HashMap<Sri, usize>,
 }
 
-/// The cell's own SRN segment: the spawn-time local name, or for roots the
-/// class name when it derives back to the SRI (how the CLI names deploys).
-/// SRIs are one-way hashes, so a name that survived neither way is gone.
-fn name_segment(entry: &PlacementEntry, instance: Option<&CellInstance>) -> Option<String> {
-    let instance = instance?;
-    if let Some(name) = &instance.lineage.local_name {
-        return Some(name.clone());
-    }
-    if instance.lineage.parent.is_none()
-        && Sri::of_path(&instance.class_name).is_ok_and(|sri| sri == entry.sri)
-    {
-        return Some(instance.class_name.clone());
-    }
-    None
+/// The cell's own SRN segment: the name it was spawned under, or for a root the
+/// SRN the CLI deployed it as. SRIs are one-way hashes, so without one the
+/// name is gone.
+fn name_segment(instance: Option<&CellInstance>) -> Option<String> {
+    instance?.lineage.local_name.clone()
 }
 
 /// The restart policy in force for this cell, as `--policy` spells it.
@@ -221,6 +221,7 @@ impl Forest {
         cells: Vec<PlacementEntry>,
         instances: Vec<CellInstance>,
         policies: &HashMap<Sri, RestartType>,
+        class_names: &HashMap<BlobHash, Vec<String>>,
     ) -> Self {
         let mut by_sri: HashMap<Sri, CellInstance> =
             instances.into_iter().map(|i| (i.sri, i)).collect();
@@ -230,8 +231,11 @@ impl Forest {
             .map(|entry| {
                 let instance = by_sri.remove(&entry.sri);
                 Node {
-                    name: name_segment(&entry, instance.as_ref()),
+                    name: name_segment(instance.as_ref()),
                     policy: policy_label(&entry, instance.as_ref(), policies),
+                    class: instance
+                        .as_ref()
+                        .map_or_else(|| NONE.to_owned(), |i| class_label(i.class, class_names)),
                     entry,
                     instance,
                     children: vec![],
@@ -365,15 +369,12 @@ fn place_tree(forest: &Forest, idx: usize, groups: &mut Vec<Group>, visited: &mu
 
 /// `highlight` gives a row's colour when it is fading in or out.
 fn render(
-    cells: Vec<PlacementEntry>,
-    instances: Vec<CellInstance>,
-    policies: &HashMap<Sri, RestartType>,
+    forest: &Forest,
     targets: &[(String, Sri)],
     styled: bool,
     now: SystemTime,
     highlight: &dyn Fn(&Sri) -> Option<&'static str>,
 ) -> String {
-    let forest = Forest::build(cells, instances, policies);
     let mut out = String::new();
     let mut groups: Vec<Group> = vec![];
 
@@ -383,11 +384,11 @@ fn render(
         }
         let mut visited = HashSet::new();
         for &root in &forest.roots {
-            place_tree(&forest, root, &mut groups, &mut visited);
+            place_tree(forest, root, &mut groups, &mut visited);
         }
         // Nodes stranded by a parent cycle still get a top-level row.
         for idx in 0..forest.nodes.len() {
-            place_tree(&forest, idx, &mut groups, &mut visited);
+            place_tree(forest, idx, &mut groups, &mut visited);
         }
         groups.sort_by_key(|(app, _)| (app.is_none(), app.clone().unwrap_or_default()));
     } else {
@@ -410,7 +411,7 @@ fn render(
 
     if !groups.is_empty() {
         table(
-            &forest,
+            forest,
             &groups,
             targets.is_empty(),
             styled,
@@ -489,10 +490,7 @@ fn table(
                         runtime: node.entry.kind.host().map(|id| id.to_string()),
                         age: incarnation_age(&node.entry.gen_id, now),
                         policy: node.policy,
-                        class: node
-                            .instance
-                            .as_ref()
-                            .map_or_else(|| NONE.to_owned(), |i| i.class_name.clone()),
+                        class: node.class.clone(),
                         srn: forest.srn(*idx),
                     }
                 })

@@ -84,6 +84,12 @@ enum WhichRow {
     ParentRow,
 }
 
+/// Whether a deploy of `gen_id` still owes its `#[init]` and registry row: no row, or an older
+/// incarnation's corpse. Same gen means init already ran; newer means this body was superseded.
+pub fn init_pending(existing: Option<Gen>, gen_id: Gen) -> bool {
+    existing.is_none_or(|g| g < gen_id)
+}
+
 const CONFIRM_ABSENT_AFTER: u8 = 2;
 
 /// Tracks consecutive confirmed-absent reads per (cell, row): "absent" only
@@ -196,8 +202,8 @@ impl FencingState {
 /// Observer-local lease staleness. Expiry is measured on the observer's own
 /// monotonic tick from the last seq *advance* it saw, against the ttl the
 /// node declared in that lease; wall clocks and row timestamps are never
-/// compared. First sight counts as an advance, so a cold-started observer
-/// errs late, never early.
+/// compared. First sight starts the staleness clock, so a cold-started
+/// observer errs late, never early.
 #[derive(Debug, Default)]
 pub struct LeaseTracker {
     seen: Vec<Observed>,
@@ -211,6 +217,8 @@ struct Observed {
     advanced_at_ms: u64,
     /// The ttl the node declared in that lease.
     ttl_ms: u64,
+    /// Whether a later scan saw the seq move past its first sight.
+    advanced: bool,
 }
 
 impl LeaseTracker {
@@ -229,6 +237,7 @@ impl LeaseTracker {
                     o.seq = seq;
                     o.advanced_at_ms = now_ms;
                     o.ttl_ms = ttl_ms;
+                    o.advanced = true;
                 }
             }
             None => self.seen.push(Observed {
@@ -236,6 +245,7 @@ impl LeaseTracker {
                 seq,
                 advanced_at_ms: now_ms,
                 ttl_ms,
+                advanced: false,
             }),
         }
     }
@@ -257,6 +267,11 @@ impl LeaseTracker {
             .iter()
             .find(|o| o.id == id)
             .map(|o| now_ms.saturating_sub(o.advanced_at_ms))
+    }
+
+    /// Whether the node's seq has moved since first sight.
+    pub fn has_advanced(&self, id: RuntimeId) -> bool {
+        self.seen.iter().any(|o| o.id == id && o.advanced)
     }
 
     /// The ttl an observed node declared in its last advancing lease.
@@ -337,6 +352,22 @@ mod tests {
             parent_row: RowRead::Ok((rt(9), id(2))),
             parent_lease_expired: Some(false),
         }
+    }
+
+    #[test]
+    fn has_advanced_needs_a_seq_above_the_first_sight() {
+        let mut t = LeaseTracker::new();
+        assert!(!t.has_advanced(rt(1)));
+        t.observe(rt(1), 5, 45_000, 0);
+        assert!(!t.has_advanced(rt(1)));
+        t.observe(rt(1), 5, 45_000, 10);
+        t.observe(rt(1), 4, 45_000, 20);
+        assert!(!t.has_advanced(rt(1)));
+        t.observe(rt(1), 6, 45_000, 30);
+        assert!(t.has_advanced(rt(1)));
+        t.forget(rt(1));
+        t.observe(rt(1), 7, 45_000, 40);
+        assert!(!t.has_advanced(rt(1)));
     }
 
     #[test]
@@ -648,5 +679,29 @@ mod tests {
         assert_eq!(t.expired(50_000), Vec::from([rt(1)]));
         t.forget(rt(1));
         assert!(t.expired(50_000).is_empty());
+    }
+
+    fn at(time: u64) -> Gen {
+        Gen::from_parts(time, 1)
+    }
+
+    #[test]
+    fn init_runs_for_an_unregistered_sri() {
+        assert!(init_pending(None, at(2)));
+    }
+
+    #[test]
+    fn stale_corpse_row_does_not_suppress_init() {
+        assert!(init_pending(Some(at(1)), at(2)));
+    }
+
+    #[test]
+    fn own_registration_skips_init() {
+        assert!(!init_pending(Some(at(2)), at(2)));
+    }
+
+    #[test]
+    fn newer_incarnations_row_is_left_alone() {
+        assert!(!init_pending(Some(at(3)), at(2)));
     }
 }

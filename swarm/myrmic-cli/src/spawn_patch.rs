@@ -52,10 +52,10 @@ pub async fn patch_spawn_refs(
 
     let mut registry: HashMap<String, Hash> = HashMap::new();
     for name in &external {
-        let info = sorg_common::class_registry::get_class_info(session, name)
+        let id = sorg_common::class_registry::resolve_name(session, name)
             .await
             .with_context(|| format!("unable to look up class '{name}' in registry"))?;
-        if let Some(BlobHash::Sha2(hash)) = info.and_then(|i| i.wasm_hash) {
+        if let Some(BlobHash::Sha2(hash)) = id {
             registry.insert(name.clone(), hash);
         }
     }

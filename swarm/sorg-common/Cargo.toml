@@ -32,6 +32,8 @@ zenoh = { workspace = true, features = ["unstable"] }
 cell-protocol = { workspace = true, default-features = true }
 cell-mailbox = { workspace = true }
 myrmic-common = { workspace = true, features = ["cells", "codegen"] }
+# Only for the CRC the boards check AOT binaries against.
+wasm-storage = { workspace = true }
 
 [dev-dependencies]
 claims = { workspace = true }

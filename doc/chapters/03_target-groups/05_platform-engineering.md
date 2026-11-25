@@ -43,6 +43,6 @@ Application teams define state, handlers, Commands, Events, timers, Application 
 
 ## See also
 
-- [Target Groups](../03_target-groups.md) - the other entry points Myrmic supports
+- [Application Domains](../03_target-groups.md) - the other entry points Myrmic supports
 - [Concepts](../06_concepts.md) - the vocabulary every other page assumes
 - [Guarantees](../08_guarantees.md) - what the current release promises, and what it doesn't yet

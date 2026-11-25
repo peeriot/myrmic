@@ -1,20 +1,23 @@
 use std::ops::Deref;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::Path;
+use std::sync::Arc;
 
 use bollard::{
     Docker,
     container::LogOutput,
     exec::{CreateExecOptions, StartExecResults},
-    models::{EndpointSettings, NetworkConnectRequest},
-    query_parameters::LogsOptionsBuilder,
+    models::{
+        ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
+    },
+    query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions},
 };
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 
 use crate::CommandOutput;
-use crate::docker::DockerDaemon;
+use crate::docker::{DockerDaemon, image::Image, network::ManagedNetwork, run_cleanup};
 
 #[derive(Clone)]
-/// a thin wrapper for interacting with a running docker container (exec, logs, network shaping)
+/// a thin wrapper for interacting with a running docker container (address, networks, exec)
 pub struct ConnectedContainer {
     docker: DockerDaemon,
     container_id: String,
@@ -70,127 +73,8 @@ impl ConnectedContainer {
             .unwrap()
     }
 
-    /// tries to find the zenoh tcp port that is usually printed in logs
-    pub async fn zenoh_tcp_port(&self) -> u16 {
-        self.find_in_logs(
-            "zenoh tcp port",
-            Duration::from_mins(1),
-            Duration::from_secs(30),
-            |line| {
-                let prefix = line.split("Zenoh can be reached at:").nth(1)?;
-                let (_, port) = prefix.trim().rsplit_once(':')?;
-                port.parse::<u16>().ok()
-            },
-        )
-        .await
-    }
-
-    /// tries to find the zenoh id that is usually printed in logs
-    pub async fn zenoh_zid(&self) -> String {
-        self.find_in_logs(
-            "zenoh zid",
-            Duration::from_mins(1),
-            Duration::from_secs(30),
-            |line| {
-                if !line.contains("region: Local") {
-                    return None;
-                }
-                let zid: String = line
-                    .split("zid: ")
-                    .nth(1)?
-                    .chars()
-                    .take_while(char::is_ascii_hexdigit)
-                    .collect();
-                (!zid.is_empty()).then_some(zid)
-            },
-        )
-        .await
-    }
-
-    /// Waits for a log line containing `needle`, considering output from `lookback` before
-    /// now, and reports whether it arrived before `timeout` elapsed.
-    pub async fn wait_for_log_line(
-        &self,
-        needle: &str,
-        timeout: Duration,
-        lookback: Duration,
-    ) -> bool {
-        self.try_find_in_logs(timeout, lookback, |line| {
-            line.contains(needle).then_some(())
-        })
-        .await
-        .is_some()
-    }
-
-    /// [`Self::try_find_in_logs`], panicking with `what` when nothing was found.
-    async fn find_in_logs<T>(
-        &self,
-        what: &str,
-        timeout: Duration,
-        lookback: Duration,
-        extract: impl FnMut(&str) -> Option<T>,
-    ) -> T {
-        self.try_find_in_logs(timeout, lookback, extract)
-            .await
-            .unwrap_or_else(|| {
-                panic!(
-                    "{what} not found in logs for container `{}` after {timeout:?}",
-                    self.container_id
-                )
-            })
-    }
-
-    /// Streams container logs starting `lookback` before now, following new output as it
-    /// arrives, and returns the first value for which `extract` returns `Some`.
-    /// Returns `None` if `timeout` elapses or the log stream ends first.
-    async fn try_find_in_logs<T>(
-        &self,
-        timeout: Duration,
-        lookback: Duration,
-        mut extract: impl FnMut(&str) -> Option<T>,
-    ) -> Option<T> {
-        let since = SystemTime::now()
-            .checked_sub(lookback)
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .and_then(|d| i32::try_from(d.as_secs()).ok())
-            .expect("since timestamp fits in i32 until 2038");
-
-        let mut logs = self.docker.logs(
-            &self.container_id,
-            Some(
-                LogsOptionsBuilder::new()
-                    .stdout(true)
-                    .stderr(true)
-                    .timestamps(true)
-                    .since(since)
-                    .follow(true)
-                    .build(),
-            ),
-        );
-
-        tokio::time::timeout(timeout, async {
-            let mut buf = String::new();
-            loop {
-                let chunk = logs
-                    .try_next()
-                    .await
-                    .expect("failed to read container logs")?;
-                buf.push_str(&String::from_utf8_lossy(chunk.as_ref()));
-                while let Some(idx) = buf.find('\n') {
-                    let line = buf[..idx].to_owned();
-                    buf.drain(..=idx);
-                    if let Some(value) = extract(&line) {
-                        return Some(value);
-                    }
-                }
-            }
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-
-    /// execute a command in this container
+    /// Run `cmd` in the container and capture its output. Panics when docker cannot run it:
+    /// broken test infrastructure, not a result.
     pub async fn exec(&self, cmd: &[&str]) -> CommandOutput {
         let exec = self
             .docker
@@ -204,35 +88,36 @@ impl ConnectedContainer {
                 },
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|err| panic!("failed to create exec of {cmd:?}: {err}"));
+        let StartExecResults::Attached { mut output, .. } = self
+            .docker
+            .start_exec(&exec.id, None)
+            .await
+            .unwrap_or_else(|err| panic!("failed to start exec of {cmd:?}: {err}"))
+        else {
+            panic!("an exec started without `detach` is attached");
+        };
 
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-
-        if let StartExecResults::Attached { mut output, .. } =
-            self.docker.start_exec(&exec.id, None).await.unwrap()
-        {
-            while let Some(msg) = output.next().await {
-                match msg.unwrap() {
-                    LogOutput::StdOut { message } => stdout.extend_from_slice(&message),
-                    LogOutput::StdErr { message } => stderr.extend_from_slice(&message),
-                    _ => {}
-                }
+        let mut stdout = vec![];
+        let mut stderr = vec![];
+        while let Some(chunk) = output.next().await {
+            match chunk.unwrap_or_else(|err| panic!("failed to read output of {cmd:?}: {err}")) {
+                LogOutput::StdOut { message } => stdout.extend_from_slice(&message),
+                LogOutput::StdErr { message } => stderr.extend_from_slice(&message),
+                other => panic!("an exec without a tty or stdin printed {other:?}"),
             }
         }
-
-        let inspect = self.docker.inspect_exec(&exec.id).await.unwrap();
+        let inspect = self
+            .docker
+            .inspect_exec(&exec.id)
+            .await
+            .unwrap_or_else(|err| panic!("failed to inspect exec of {cmd:?}: {err}"));
 
         CommandOutput {
             success: inspect.exit_code == Some(0),
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
         }
-    }
-
-    /// run a shell script inside the container
-    pub async fn shell(&self, script: &str) -> CommandOutput {
-        self.exec(&["sh", "-lc", script]).await
     }
 
     /// connect container to a network
@@ -248,207 +133,168 @@ impl ConnectedContainer {
             .await
             .unwrap();
     }
+}
 
-    /// return the network interface that is used by the container for the specified network
-    ///
-    /// The interface is looked up by the address [`Self::container_ip`] reports, so this
-    /// inherits that method's blindness to an address changed inside the network namespace:
-    /// once the address no longer matches, the lookup finds nothing and returns an empty
-    /// name. Capture the interface before such a change.
-    pub async fn network_interface(&self, network: &str) -> String {
-        let ip = self.container_ip(network).await;
-        let output = self
-            .shell(&format!(
-                "ip -o addr show | awk '$4 ~ /^{}\\// {{ print $2; exit }}'",
-                ip
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to resolve interface for network `{network}`"),
-        );
+/// a [`ManagedContainer`] is a docker container that was started by this framework and is
+/// force-removed when dropped (panic-safe cleanup)
+///
+/// Not `Clone`: exactly one value owns the container. Borrow it (it derefs to
+/// [`ConnectedContainer`]) to work with it, or share it in an `Arc`, e.g.
+/// `Myrmic::attach(Arc::new(container))`.
+pub struct ManagedContainer {
+    container: ConnectedContainer,
+    /// Kept alive for the network it is attached to: fields drop after [`Drop::drop`], so the
+    /// network is released only once the container is removed.
+    _network: Option<Arc<ManagedNetwork>>,
+}
 
-        output.stdout.trim().to_owned()
-    }
+impl Deref for ManagedContainer {
+    type Target = ConnectedContainer;
 
-    /// run iptables command with arguments
-    pub async fn iptables(&self, args: &[&str]) -> CommandOutput {
-        let mut cmd = vec!["iptables"];
-        cmd.extend_from_slice(args);
-        self.exec(&cmd).await
-    }
-
-    /// run tc command with arguments
-    pub async fn tc(&self, args: &[&str]) -> CommandOutput {
-        let mut cmd = vec!["tc"];
-        cmd.extend_from_slice(args);
-        self.exec(&cmd).await
-    }
-
-    /// clear any network rules
-    pub async fn clear_network_rules(&self, network: &str) {
-        let iface = self.network_interface(network).await;
-        let ingress_chain = format!("TFW-IN-{iface}");
-        let egress_chain = format!("TFW-OUT-{iface}");
-
-        let output = self
-            .shell(&format!(
-                "iptables -w -F {ingress_chain} 2>/dev/null || true; \
-                 iptables -w -F {egress_chain} 2>/dev/null || true"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to clear iptables rules for network `{network}`"),
-        );
-    }
-
-    /// allow all traffic
-    pub async fn allow_all_traffic(&self, network: &str) {
-        self.clear_network_rules(network).await;
-    }
-
-    /// setup rules to reject all traffic
-    pub async fn reject_all_traffic(&self, network: &str) {
-        let (_, ingress_chain, egress_chain) = self.network_chains(network).await;
-        let output = self
-            .shell(&format!(
-                "iptables -w -F {ingress_chain}; \
-                 iptables -w -F {egress_chain}; \
-                 iptables -w -A {ingress_chain} -j REJECT; \
-                 iptables -w -A {egress_chain} -j REJECT"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to reject all traffic for network `{network}`"),
-        );
-    }
-
-    /// allow multicast on network
-    pub async fn allow_multicast(&self, network: &str) {
-        let (_, ingress_chain, egress_chain) = self.network_chains(network).await;
-        let output = self
-            .shell(&format!(
-                "iptables -w -I {ingress_chain} 1 -s 224.0.0.0/4 -j ACCEPT; \
-                 iptables -w -I {egress_chain} 1 -d 224.0.0.0/4 -j ACCEPT"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to allow multicast for network `{network}`"),
-        );
-    }
-
-    /// reject connections from/to a specific remote on network
-    pub async fn reject_remote(&self, network: &str, remote: &str) {
-        let (_, ingress_chain, egress_chain) = self.network_chains(network).await;
-        let output = self
-            .shell(&format!(
-                "iptables -w -A {ingress_chain} -s {remote} -j REJECT; \
-                 iptables -w -A {egress_chain} -d {remote} -j REJECT"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to reject remote `{remote}` on network `{network}`"),
-        );
-    }
-
-    /// allow connections from/to a specific remote on network
-    pub async fn allow_remote(&self, network: &str, remote: &str) {
-        let (_, ingress_chain, egress_chain) = self.network_chains(network).await;
-        let output = self
-            .shell(&format!(
-                "iptables -w -I {ingress_chain} 1 -s {remote} -j ACCEPT; \
-                 iptables -w -I {egress_chain} 1 -d {remote} -j ACCEPT"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to allow remote `{remote}` on network `{network}`"),
-        );
-    }
-
-    /// move `interface` from `old_address` to `new_address`, both in `<ip>/<prefix>` form
-    ///
-    /// Docker learns nothing about this, so every later lookup that goes through its inspect
-    /// API - [`Self::container_ip`] and [`Self::network_interface`] - keeps reporting the old
-    /// address. Dropping the address also drops the on-link route the default route needs, so
-    /// the default route is captured first and put back afterwards.
-    pub async fn change_address(&self, interface: &str, old_address: &str, new_address: &str) {
-        // The captured route is re-split into words on purpose: it is a whole route
-        // specification (`default via <gateway> dev <interface>`), not a single argument.
-        let output = self
-            .shell(&format!(
-                "set -eu; \
-                 default_route=$(ip -4 route show default | head -n 1); \
-                 ip addr del {old_address} dev {interface}; \
-                 ip addr add {new_address} dev {interface}; \
-                 [ -z \"$default_route\" ] || ip -4 route replace $default_route"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to move `{interface}` from `{old_address}` to `{new_address}`"),
-        );
-    }
-
-    async fn network_chains(&self, network: &str) -> (String, String, String) {
-        let iface = self.network_interface(network).await;
-        self.ensure_network_chains(&iface).await;
-        let ingress_chain = format!("TFW-IN-{iface}");
-        let egress_chain = format!("TFW-OUT-{iface}");
-        (iface, ingress_chain, egress_chain)
-    }
-
-    /// clear network emulation (removes the tc root qdisc)
-    pub async fn clear_netem(&self, network: &str) {
-        let iface = self.network_interface(network).await;
-        let output = self
-            .shell(&format!(
-                "tc qdisc del dev {iface} root 2>/dev/null || true"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to clear tc netem on network `{network}`"),
-        );
-    }
-
-    /// set network emulation with a tc netem `spec` (e.g. `delay 100ms loss 5%`)
-    pub async fn set_netem(&self, network: &str, spec: &str) {
-        let iface = self.network_interface(network).await;
-        let output = self
-            .shell(&format!(
-                "tc qdisc del dev {iface} root 2>/dev/null || true; tc qdisc add dev {iface} root netem {spec}"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to set tc netem `{spec}` on network `{network}`"),
-        );
-    }
-
-    async fn ensure_network_chains(&self, iface: &str) {
-        let ingress_chain = format!("TFW-IN-{iface}");
-        let egress_chain = format!("TFW-OUT-{iface}");
-
-        let output = self
-            .shell(&format!(
-                "iptables -w -N {ingress_chain} 2>/dev/null || true; \
-                 iptables -w -N {egress_chain} 2>/dev/null || true; \
-                 iptables -w -C INPUT -i {iface} -j {ingress_chain} 2>/dev/null || iptables -w -I INPUT 1 -i {iface} -j {ingress_chain}; \
-                 iptables -w -C OUTPUT -o {iface} -j {egress_chain} 2>/dev/null || iptables -w -I OUTPUT 1 -o {iface} -j {egress_chain}"
-            ))
-            .await;
-        assert_command_success(
-            &output,
-            format_args!("failed to prepare iptables chains for interface `{iface}`"),
-        );
+    fn deref(&self) -> &Self::Target {
+        &self.container
     }
 }
 
-fn assert_command_success(output: &CommandOutput, context: std::fmt::Arguments<'_>) {
-    assert!(output.success, "{context}: {}", output.stderr);
+impl ManagedContainer {
+    /// describe a container `name` of the docker image `image` on `docker`; finish with
+    /// [`ContainerBuilder::run`]
+    pub(crate) fn builder<'a>(
+        image: &'a Image,
+        docker: DockerDaemon,
+        name: &'a str,
+    ) -> ContainerBuilder<'a> {
+        ContainerBuilder {
+            image,
+            docker,
+            name,
+            command: &[],
+            capabilities: &[],
+            tmpfs: vec![],
+            network: None,
+        }
+    }
+}
+
+/// Options for one docker container, created by [`ManagedContainer::builder`].
+pub(crate) struct ContainerBuilder<'a> {
+    image: &'a Image,
+    docker: DockerDaemon,
+    name: &'a str,
+    command: &'a [&'a str],
+    capabilities: &'a [&'a str],
+    tmpfs: Vec<(&'a str, &'a str)>,
+    network: Option<Arc<ManagedNetwork>>,
+}
+
+impl<'a> ContainerBuilder<'a> {
+    /// the command the container runs; defaults to the image's
+    pub(crate) fn command(mut self, command: &'a [&'a str]) -> Self {
+        self.command = command;
+        self
+    }
+
+    /// extra Linux capabilities, e.g. `NET_ADMIN`
+    pub(crate) fn capabilities(mut self, capabilities: &'a [&'a str]) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// a tmpfs mounted at `path`, with the mount `options` (e.g. `size=64m`)
+    pub(crate) fn tmpfs(mut self, path: &'a str, options: &'a str) -> Self {
+        self.tmpfs.push((path, options));
+        self
+    }
+
+    /// the network the container is attached to; it stays alive at least as long as the
+    /// container
+    pub(crate) fn network(mut self, network: Arc<ManagedNetwork>) -> Self {
+        self.network = Some(network);
+        self
+    }
+
+    /// Create and start the container.
+    pub(crate) async fn run(self) -> ManagedContainer {
+        let options = CreateContainerOptionsBuilder::default()
+            .name(self.name)
+            .build();
+        let created = self
+            .docker
+            .create_container(Some(options), self.create_body())
+            .await
+            .unwrap();
+        // owned from here on, so a failure below still removes the container
+        let managed = ManagedContainer {
+            container: ConnectedContainer::attach(self.docker, created.id),
+            _network: self.network,
+        };
+
+        managed
+            .start_container(managed.id(), None::<StartContainerOptions>)
+            .await
+            .unwrap();
+
+        managed
+    }
+
+    /// the container's settings for docker's create API
+    fn create_body(&self) -> ContainerCreateBody {
+        let mut env = None;
+        let mut binds = None;
+
+        if let Ok(profile_file) = std::env::var("LLVM_PROFILE_FILE") {
+            let profile_path = Path::new(&profile_file);
+            let host_dir = profile_path
+                .parent()
+                .map_or_else(|| ".".to_owned(), |p| p.to_string_lossy().into_owned());
+            let filename = profile_path.file_name().map_or_else(
+                || "default.profraw".to_owned(),
+                |f| f.to_string_lossy().into_owned(),
+            );
+            env = Some(vec![format!("LLVM_PROFILE_FILE=/coverage/{filename}")]);
+            binds = Some(vec![format!("{host_dir}:/coverage")]);
+        }
+
+        ContainerCreateBody {
+            image: Some(self.image.tag().to_owned()),
+            cmd: (!self.command.is_empty()).then(|| {
+                self.command
+                    .iter()
+                    .map(|arg| (*arg).to_owned())
+                    .collect::<Vec<_>>()
+            }),
+            env,
+            networking_config: self.network.as_deref().map(|network| NetworkingConfig {
+                endpoints_config: Some(std::collections::HashMap::from([(
+                    network.name().to_owned(),
+                    EndpointSettings::default(),
+                )])),
+            }),
+            host_config: Some(HostConfig {
+                binds,
+                cap_add: Some(
+                    self.capabilities
+                        .iter()
+                        .map(|capability| (*capability).to_owned())
+                        .collect(),
+                ),
+                tmpfs: Some(
+                    self.tmpfs
+                        .iter()
+                        .map(|(path, options)| ((*path).to_owned(), (*options).to_owned()))
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+}
+
+impl Drop for ManagedContainer {
+    fn drop(&mut self) {
+        let mut rm = self.container.docker_cli();
+        rm.args(["rm", "-f", self.container.id()]);
+        run_cleanup("ManagedContainer", rm);
+    }
 }

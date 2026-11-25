@@ -1,4 +1,8 @@
-# Target Groups
+---
+sidebar_label: Application Domains
+---
+
+# Application Domains
 
 Myrmic provides one edge-first application model, but different teams reach it through different problems.
 

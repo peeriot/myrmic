@@ -71,7 +71,7 @@ Each driver, the per-device piece introduced above, declares which settings it h
 
 ## What you will do
 
-Scaffold a project first with `myrmic new --pipeline` (Linux) or `myrmic new --firmware=<chip> --pipeline` (ESP32): it writes the board and pipeline files described below and generates the pipeline from them at build time, with no separate generate step. The [First Steps with the Signal Layer](../04_tutorials/04_first-steps-signal-layer.md) tutorial walks the whole path end to end. Then:
+Scaffold a project first with `myrmic signal-layer new` (Linux) or `myrmic signal-layer new --firmware=<chip>` (ESP32): it writes the board and pipeline files described below and generates the pipeline from them at build time, with no separate generate step. The [First Steps with the Signal Layer](../04_tutorials/04_first-steps-signal-layer.md) tutorial walks the whole path end to end. Then:
 
 1. [Describe your hardware](./11_signal-layer/01_describe-your-hardware.md) in the board file.
 2. [Design your pipeline](./11_signal-layer/02_design-your-pipeline.md): the parts, their connections and their parameters.
@@ -94,3 +94,12 @@ Both platforms support sensors over I2C and SPI, actuators, and processing steps
 The platforms also run the Signal Layer differently. On embedded it is part of the firmware, so it is there whenever the cell is. On Linux it is a separate process that has to be running before a cell can use it.
 
 That difference has one symptom worth knowing. On Linux, if every tap a cell asks for comes back as not present, check that the pipeline process is running before you check the names in your pipeline file. A cell cannot tell the difference between a tap that does not exist and a pipeline that is not there.
+
+## See also
+
+- [Signal Layer reference](../10_reference/04_signal-layer.md) - the file formats, drivers and steps
+
+## Related SDK reference
+
+- [Signal taps](../10_reference/03_myrmic-sdk/07_signal-io/01_signal-taps.md)
+- [Signal outlets](../10_reference/03_myrmic-sdk/07_signal-io/02_signal-outlets.md)

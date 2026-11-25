@@ -222,3 +222,13 @@ Read at the rate you actually need values, and set the source's sample interval 
 to match. Reading faster than the pipeline samples just returns the same value again, and
 sampling faster than anyone reads spends power for nothing. The two numbers are set in different
 files, so it is worth checking they agree.
+
+## See also
+
+- [Know when hardware fails](./04_know-when-hardware-fails.md) - driver health
+- [Running on Linux](../../10_reference/04_signal-layer/05_running-on-linux.md) - running the Signal Layer on Linux
+
+## Related SDK reference
+
+- [Signal taps](../../10_reference/03_myrmic-sdk/07_signal-io/01_signal-taps.md)
+- [Transient state](../../10_reference/03_myrmic-sdk/05_state-and-storage/02_transient-state.md)

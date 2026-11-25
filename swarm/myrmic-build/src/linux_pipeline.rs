@@ -31,11 +31,13 @@ pub enum PipelineKind {
     Linux,
 }
 
-/// Whether the crate at `manifest_path` is a standalone Linux signal-layer
-/// pipeline, per `[package.metadata.myrmic] pipeline = "linux"`.
-pub fn is_linux_pipeline(manifest_path: &Path) -> anyhow::Result<bool> {
+/// Whether the target `cargo_target` selects in the crate at `manifest_path`
+/// is a standalone Linux signal-layer pipeline, per `[package.metadata.myrmic]
+/// pipeline = "linux"`.
+pub fn is_linux_pipeline(manifest_path: &Path, cargo_target: &CargoTarget) -> anyhow::Result<bool> {
     Ok(
-        cargo::read_package_metadata::<Metadata>(manifest_path)?.and_then(|m| m.pipeline)
+        cargo::read_package_metadata::<Metadata>(manifest_path, cargo_target)?
+            .and_then(|m| m.pipeline)
             == Some(PipelineKind::Linux),
     )
 }
@@ -103,14 +105,14 @@ mod tests {
     #[test]
     fn is_linux_pipeline_reads_the_marker() {
         let (_dir, path) = manifest_with("[package.metadata.myrmic]\npipeline = \"linux\"\n");
-        assert!(is_linux_pipeline(&path).unwrap());
+        assert!(is_linux_pipeline(&path, &CargoTarget::Auto).unwrap());
     }
 
     #[test]
     fn is_linux_pipeline_is_false_without_the_marker() {
         let (_dir, path) = manifest_with("[package.metadata.myrmic]\nfirmware = \"esp32c6\"\n");
-        assert!(!is_linux_pipeline(&path).unwrap());
+        assert!(!is_linux_pipeline(&path, &CargoTarget::Auto).unwrap());
         let (_dir, path) = manifest_with("");
-        assert!(!is_linux_pipeline(&path).unwrap());
+        assert!(!is_linux_pipeline(&path, &CargoTarget::Auto).unwrap());
     }
 }

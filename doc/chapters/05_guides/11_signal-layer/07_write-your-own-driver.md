@@ -4,10 +4,13 @@ A driver is the piece that knows one kind of device, a sensor or an actuator: ho
 how to ask it for a reading, or how to make it act. Everything else in the Signal Layer is
 generic, so supporting a new sensor or a new actuator means writing a driver and nothing more.
 
-The work happens in a checkout of the `myrmic` repository. A driver is a small Rust crate, a
-directory under `signal-modules/drivers/` holding `Cargo.toml`, `src/lib.rs` with the logic, and
-a `descriptor.yaml` telling the generator what it needs and what it produces; the shipped drivers
-around it are working examples of everything this page describes.
+A driver is a small Rust crate: a directory holding `Cargo.toml`, `src/lib.rs` with the logic, and
+a `descriptor.yaml` telling the generator what it needs and what it produces. `myrmic signal-layer
+driver my-sensor --bus i2c` (or `--bus spi`) scaffolds all three, already compiling with a stubbed test suite,
+so you fill in only what is specific to your device; the shipped drivers under
+`signal-modules/drivers/` are working examples of everything this page describes. You can author a
+driver inside the repository or, as [Authoring out of the tree](#authoring-out-of-the-tree) below
+shows, in a directory of your own.
 
 Start `src/lib.rs` with `#![cfg_attr(not(test), no_std)]`. Every shipped driver has it, and without
 it your crate builds on your laptop and fails the moment someone compiles it for a board.
@@ -141,6 +144,13 @@ pins the board file will assign. `outputs` names what a sensor produces, and tho
 what a pipeline points a tap at. An actuator declares `writes` instead, which the next section
 covers.
 
+A sensor's `optional_pins` entries are inputs by default. To declare a pin the driver drives, such
+as a reset line, write it as a map: `{ name: reset, direction: output }`. A driver with pins of
+both directions gives its pins struct one generic per pin. On Linux an `output` pin is a
+`LinuxOutputPin` that starts low, so the driver sets its level in `init()`; an `input` pin is a
+`LinuxInputPin` whose `Wait` implementation polls the level every millisecond. On ESP32 both are
+a `Flex` pin.
+
 `config_schema` is where a driver states its knobs, and the `scope` on each one is load-bearing.
 `hardware` means the value is a fact about the wiring, so it belongs in the board file.
 `application` means it can change without touching a wire, so it belongs in the pipeline. Pick
@@ -267,7 +277,9 @@ descriptor is not read at all, so correcting that alone fixes nothing.
 ## Configuration and defaults
 
 Every `config_schema` field needs a default that works, because a board file or pipeline may not
-mention it. Prefer defaults matching the most common wiring of the part.
+mention it. Prefer defaults matching the most common wiring of the part. A numeric field can also
+carry `min` and `max`, inclusive bounds the generator checks the configured value and the default
+against, so a value the part cannot take fails the build rather than reaching the driver.
 
 For a knob with a fixed set of choices, use a typed enum rather than a raw number. The generator
 maps it, the pipeline reads legibly, and an invalid value is caught during generation rather than
@@ -322,9 +334,24 @@ a reading.
 These are the tests that catch the errors that matter. Whether the wiring is right is a question
 for the bench; whether your maths is right is a question you can answer at your desk.
 
+## Authoring out of the tree
+
+You do not have to work inside the Myrmic checkout. `myrmic signal-layer driver my-sensor --bus i2c --registry-dir ~/sl-modules`
+scaffolds the crate under `~/sl-modules/drivers/my-sensor`, and a pipeline builds against it by naming
+that registry directory. In a Linux pipeline's `build.rs` that is the third argument,
+`build_pipeline("board.yml", "pipeline.yml", Some("../sl-modules"))`; on a firmware pipeline it is
+`.include("../sl-modules")` on the `esp_firmware_build::pipeline()` builder. Either way, add an
+ordinary path dependency on the crate. The path is relative to the pipeline crate, and codegen
+overlays your descriptors onto the shipped set, so a board file and pipeline name your driver exactly
+as they would a built-in.
+
+This is the path for authoring a driver locally, before it is ready to move into the tree. The
+[module authoring tutorial](../../04_tutorials/05_authoring-signal-layer-modules.md) walks through it
+end to end.
+
 ## Adding it to the tree
 
-The repository is one Cargo workspace, and `signal-modules/drivers/*` is a workspace-member glob, so a driver crate placed alongside the others is picked up automatically.
+When a driver has earned its place, it moves into the repository. The repository is one Cargo workspace, and `signal-modules/drivers/*` is a workspace-member glob, so a driver crate placed alongside the others is picked up automatically.
 It also needs an entry in the root `[workspace.dependencies]`, because the generated pipeline
 crate refers to it as a workspace dependency; without that, generation emits a `Cargo.toml`
 that does not resolve. Once that is in place, a board file can name the driver on a device and
@@ -332,3 +359,8 @@ a pipeline can point at it.
 
 From there, the [board file](./01_describe-your-hardware.md) decides where the device is wired
 and the [pipeline](./02_design-your-pipeline.md) decides what happens to its values.
+
+## See also
+
+- [Write your own step](./08_write-your-own-step.md) - writing a step
+- [Drivers](../../10_reference/04_signal-layer/03_drivers.md) - the available drivers

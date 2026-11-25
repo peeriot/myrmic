@@ -1,0 +1,25 @@
+# Board manifest: the hardware the Signal Layer pipeline runs on.
+id: {{name}}
+chip: {{chip}}
+
+# Buses the pipeline may use. The sim-source device below is bound to
+# this bus for codegen symmetry but never touches it, so nothing needs
+# to be wired up to build and run.
+buses:
+  i2c0:
+    transport: i2c
+    pins:
+      scl: {{scl}}
+      sda: {{sda}}
+    freq_khz: 400
+
+# Every usable GPIO on this chip, minus the bus pins above. Pins listed
+# here that the pipeline does not claim are offered to the cell.
+gpios:
+  general_purpose: [{{general_purpose}}]
+
+# Devices on the buses. Swap sim-source for a real sensor once wired up.
+devices:
+  - id: sim
+    driver: sim-source
+    bus: i2c0

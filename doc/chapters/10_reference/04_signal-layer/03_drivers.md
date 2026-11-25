@@ -6,8 +6,8 @@
 A driver is what knows one device. A board file names a driver on a device; a pipeline then
 reads that device as a source or writes to it through an outlet.
 
-There are 11 drivers in the tree. A device's `driver:` value is the directory name
-below, and the crate it resolves to is that name plus `-driver`.
+Every driver in the tree is listed below. A device's `driver:` value is its directory
+name, and the crate it resolves to is that name plus `-driver`.
 
 
 ## Sensor drivers
@@ -21,6 +21,7 @@ These produce values a pipeline can tap.
 | `bme280` | I2C | `temperature` (f32, °C), `pressure` (f32, hPa), `humidity` (f32, %RH) | - |
 | `bmp180` | I2C | `temperature` (f32, °C), `pressure` (f32, hPa) | - |
 | `ccs811` | I2C | `eco2` (f32, ppm), `tvoc` (f32, ppb) | `nint` |
+| `lsm6dso32` | SPI | `accel_x` (f32, g), `accel_y` (f32, g), `accel_z` (f32, g), `gyro_x` (f32, dps), `gyro_y` (f32, dps), `gyro_z` (f32, dps), `temperature` (f32, °C) | - |
 | `sim-source` | I2C | `value` (f32) | - |
 | `spi-loopback` | SPI | `echo_ok` (f32), `counter` (f32) | - |
 | `veml7700` | I2C | `lux` (f32, lux) | - |
@@ -198,6 +199,39 @@ single GPIO high/low, honouring active-low wiring.
 |---|---|---|---|
 | `active_low` | board file | `bool` | `false` |
 | `min_switch_interval_ms` | board file | `u64` | `0` |
+
+
+### `lsm6dso32`
+
+STMicroelectronics LSM6DSO32 6-axis IMU over SPI. Reports 3-axis acceleration (g), 3-axis
+angular rate (dps), and die temperature.
+
+
+**Requires** - bus: SPI
+
+
+**Publishes**
+
+
+| Name | Type | Unit |
+|---|---|---|
+| `accel_x` | `f32` | g |
+| `accel_y` | `f32` | g |
+| `accel_z` | `f32` | g |
+| `gyro_x` | `f32` | dps |
+| `gyro_y` | `f32` | dps |
+| `gyro_z` | `f32` | dps |
+| `temperature` | `f32` | °C |
+
+**Configuration**
+
+| Field | Where it is set | Type | Default |
+|---|---|---|---|
+| `accel_odr` | pipeline | `Odr` | `Hz104` |
+| `gyro_odr` | pipeline | `Odr` | `Hz104` |
+| `accel_scale` | pipeline | `AccelScale` | `G4` |
+| `gyro_scale` | pipeline | `GyroScale` | `Dps250` |
+| `sample_interval_ms` | pipeline | `u64` | `1000` |
 
 
 ### `pwm-output`

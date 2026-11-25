@@ -51,7 +51,7 @@ impl<'u> Sidecar<'u> {
         sidecar_binary: impl Into<PathBuf>,
         tag: &str,
     ) {
-        let _image = Image::build(
+        Image::build(
             docker,
             tag,
             sidecar_dockerfile.into().iter().as_path(),

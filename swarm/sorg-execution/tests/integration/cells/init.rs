@@ -67,7 +67,7 @@ pub async fn deploy_with_init_arguments_seeds_state() {
         client
             .deploy_wasm_cell_with_arguments(
                 Sri::from_target(ROOM_SRI).unwrap(),
-                ROOM_CLASS,
+                test_app.class_id(ROOM_CLASS).await,
                 RequirementTags::default(),
                 Some(args),
                 None,

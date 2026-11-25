@@ -37,16 +37,16 @@ async fn spawn_test_app_with_slow_init_cell() -> (sorg_tests::TestApp, zenoh::Se
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn deploy_succeeds_with_sufficient_timeout() {
-    let (_test_app, session) = spawn_test_app_with_slow_init_cell().await;
+    let (test_app, session) = spawn_test_app_with_slow_init_cell().await;
     let sorg = sorg_client_with_timeout(&session, SLOW_INIT_DURATION + Duration::from_secs(8));
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Act + Assert — deploy succeeds because the client timeout (20s) is
     // propagated to the Zenoh query, overriding the 10s default.
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy should succeed when client timeout exceeds init duration"
     );
@@ -54,15 +54,15 @@ async fn deploy_succeeds_with_sufficient_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn deploy_timeout_reports_clear_error() {
-    let (_test_app, session) = spawn_test_app_with_slow_init_cell().await;
+    let (test_app, session) = spawn_test_app_with_slow_init_cell().await;
     let sorg = sorg_client_with_timeout(&session, Duration::from_secs(5));
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Act — deploy with a timeout shorter than the cell's init
     let result = sorg
-        .deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        .deploy_wasm_cell(sri, class, RequirementTags::default())
         .await;
 
     // Assert — error should be a query timeout

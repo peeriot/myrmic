@@ -53,11 +53,7 @@ pub fn link_outlet_functions<S: CellIdentity + Send + 'static>(
             "outlet_resolve",
             move |mut caller: Caller<'_, S>, (name_ptr, name_len): (i32, i32)| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     // Reject a negative or over-long name_len before it is used
                     // to allocate host memory or to build a request frame (same
                     // guard as tap_resolve — the connection is shared).
@@ -122,13 +118,9 @@ pub fn link_outlet_functions<S: CellIdentity + Send + 'static>(
         linker.func_wrap_async(
             "outlet",
             "outlet_list_len",
-            move |caller: Caller<'_, S>, (): ()| {
+            move |_caller: Caller<'_, S>, (): ()| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     match client.outlet_list_len().await {
                         Some(count) => count as i32,
                         // None means unreachable, timed out, or a server that
@@ -151,11 +143,7 @@ pub fn link_outlet_functions<S: CellIdentity + Send + 'static>(
             move |mut caller: Caller<'_, S>,
                   (index, name_ptr, name_len, out_kind_ptr): (i32, i32, i32, i32)| {
                 let client = Arc::clone(&client);
-                let __denied = super::sl_claim::gate(caller.data()).err();
                 Box::new(async move {
-                    if let Some(code) = __denied {
-                        return code;
-                    }
                     // Reject negative name_len before any cast to usize.
                     if name_len < 0 {
                         return -1i32;

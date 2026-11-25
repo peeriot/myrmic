@@ -1,11 +1,27 @@
-//! Runtime bootstrap: bind the tap server socket with correct permissions and
-//! delegate to `signal_layer_ipc::serve`.
+//! Runtime bootstrap: bind the tap server socket with correct permissions,
+//! delegate to `signal_layer_ipc::serve`, and unlink the socket once the
+//! server is gone.
 
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use signal_layer_ipc::{OutletStore, TapStore};
+
+/// The bound socket's file on disk, unlinked on drop so that however the
+/// server ends (returning, failing part-way through setup, or its future
+/// being dropped) no stale path is left behind.
+struct SocketFile {
+    path: PathBuf,
+}
+
+impl Drop for SocketFile {
+    fn drop(&mut self) {
+        // Nothing to report a failure to from here, and a path that is
+        // already gone is the state being established anyway.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// [`run_signal_server`] without an outlet store: outlet requests answer
 /// `Unsupported`. The entry-point used by generated sensors-only pipelines;
@@ -19,6 +35,11 @@ pub async fn run_tap_server(path: PathBuf, store: Arc<dyn TapStore>) -> io::Resu
 /// the tap store and (when present) the outlet store.
 ///
 /// This is the entry-point used by generated Linux pipeline binaries (SR-16).
+///
+/// The socket file is unlinked once the server is gone, including when the
+/// returned future is dropped, so cancelling the task is the orderly
+/// shutdown. A crash still leaves the file; the next start removes it before
+/// binding.
 ///
 /// Security properties (S2 + S3):
 /// - Stale-socket removal is unconditional (ignores `NotFound`) to avoid the
@@ -42,10 +63,13 @@ pub async fn run_signal_server(
     }
 
     let listener = tokio::net::UnixListener::bind(&path)?;
+    let socket_file = SocketFile { path };
 
     // S2: set socket permissions to 0o660 immediately after bind.
     let path_cstr = std::ffi::CString::new(
-        path.to_str()
+        socket_file
+            .path
+            .to_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF-8 socket path"))?,
     )
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL byte in socket path"))?;
@@ -182,6 +206,27 @@ mod tests {
         assert_eq!(resp, signal_layer_ipc::Response::Handle { handle: 1 });
 
         server_handle.abort();
+    }
+
+    /// Stopping the server unlinks its socket file.
+    #[tokio::test]
+    async fn aborting_the_server_removes_the_socket_file() {
+        let dir = TempDir::new().unwrap();
+        let socket_path = dir.path().join("abort.sock");
+
+        let server_handle =
+            tokio::spawn(run_signal_server(socket_path.clone(), make_store(), None));
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(socket_path.exists(), "server should have bound the socket");
+
+        server_handle.abort();
+        let _ = server_handle.await;
+
+        assert!(
+            !socket_path.exists(),
+            "socket file should be removed once the server is gone"
+        );
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

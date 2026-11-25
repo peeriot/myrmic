@@ -167,7 +167,7 @@ gpios:
 devices: []
 ";
     let manifest = parse_manifest(yaml).expect("parse manifest");
-    let errors = validate_linux_manifest(&manifest, Some(yaml));
+    let errors = validate_linux_manifest(&manifest);
     assert!(
         !errors.is_empty(),
         "expected errors for missing dev_path, got none"
@@ -187,7 +187,7 @@ fn spi_bus_without_dev_path_is_rejected() {
     let yaml = std::fs::read_to_string(fixtures_dir().join("spi-manifest.yaml"))
         .expect("reading spi-manifest.yaml");
     let manifest = parse_manifest(&yaml).expect("parse manifest");
-    let errors = validate_linux_manifest(&manifest, Some(&yaml));
+    let errors = validate_linux_manifest(&manifest);
     assert!(!errors.is_empty(), "expected dev_path rejection, got none");
     assert!(
         errors
@@ -203,7 +203,7 @@ fn spi_manifest_with_dev_path_passes() {
     let yaml = std::fs::read_to_string(fixtures_dir().join("linux-spi-manifest.yaml"))
         .expect("reading linux-spi-manifest.yaml");
     let manifest = parse_manifest(&yaml).expect("parse manifest");
-    let errors = validate_linux_manifest(&manifest, Some(&yaml));
+    let errors = validate_linux_manifest(&manifest);
     assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
 }
 
@@ -428,4 +428,104 @@ fn malformed_pwm_chip_is_rejected() {
             .any(|e| e.to_string().contains("invalid PWM chip name")),
         "expected a PWM chip name error, got: {errors:?}"
     );
+}
+
+// ── Sensor extra pins ────────────────────────────────────────────────────────
+
+/// A driver's `input` pin is generated as a `LinuxInputPin` field and handed
+/// to the driver (ccs811's `nint`).
+#[test]
+fn ccs811_nint_is_generated_as_linux_input_pin() {
+    let output = generate_linux(
+        &fixtures_dir().join("linux-ccs811-manifest.yaml"),
+        &fixtures_dir().join("linux-ccs811.yaml"),
+        &drivers_root(),
+        &steps_root(),
+    )
+    .unwrap_or_else(|e| panic!("generation failed: {e:#}"));
+
+    assert!(
+        output
+            .main_rs
+            .contains("pub air_nint: linux_gpio_shim::LinuxInputPin"),
+        "missing nint input pin field in:\n{}",
+        output.main_rs
+    );
+    assert!(
+        output.main_rs.contains("nint: Some(nint)"),
+        "nint must reach the driver in:\n{}",
+        output.main_rs
+    );
+    assert!(
+        output.cargo_toml.contains("linux-gpio-shim"),
+        "pin types need the gpio shim dependency in:\n{}",
+        output.cargo_toml
+    );
+}
+
+/// A pin the driver does not declare is still rejected on Linux.
+#[test]
+fn undeclared_sensor_pin_is_rejected() {
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let manifest_path = scratch.path().join("manifest.yaml");
+    let manifest = std::fs::read_to_string(fixtures_dir().join("linux-ccs811-manifest.yaml"))
+        .expect("reading linux-ccs811-manifest.yaml")
+        .replace("nint: 17", "nint: 17\n      reset: 18");
+    std::fs::write(&manifest_path, manifest).expect("writing manifest");
+
+    let err = generate_linux(
+        &manifest_path,
+        &fixtures_dir().join("linux-ccs811.yaml"),
+        &drivers_root(),
+        &steps_root(),
+    )
+    .expect_err("undeclared pin must be rejected");
+
+    assert!(
+        format!("{err:#}").contains("pin `reset` is not declared"),
+        "unexpected error: {err:#}"
+    );
+}
+
+/// The `gpio_chip` check covers a sensor's extra pins, not just actuator pins.
+#[test]
+fn malformed_gpio_chip_on_sensor_with_pins_is_rejected() {
+    let yaml = std::fs::read_to_string(fixtures_dir().join("linux-spi-pins-manifest.yaml"))
+        .expect("reading linux-spi-pins-manifest.yaml")
+        .replace("/dev/gpiochip1", "/dev/gpio1");
+
+    let (manifest, errors) = linux_codegen::backend::validate_linux_manifest_from_yaml(&yaml);
+    manifest.expect("manifest should still parse");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.to_string().contains("invalid GPIO chip path")),
+        "expected a GPIO chip path error, got: {errors:?}"
+    );
+}
+
+/// An output pin boots low and the driver gets the typed pins; the generated
+/// crate depends on the gpio shim.
+#[test]
+fn output_sensor_pin_opens_low_and_shim_is_a_dependency() {
+    let output = generate_linux(
+        &fixtures_dir().join("linux-spi-pins-manifest.yaml"),
+        &fixtures_dir().join("linux-spi-pins.yaml"),
+        &fixtures_dir().join("drivers"),
+        &steps_root(),
+    )
+    .unwrap_or_else(|e| panic!("generation failed: {e:#}"));
+    let main_rs: String = output.main_rs.split_whitespace().collect();
+
+    assert!(
+        main_rs.contains("LinuxOutputPin::open(\"/dev/gpiochip1\",24u32,false,)"),
+        "reset must open low in:\n{}",
+        output.main_rs
+    );
+    assert!(
+        main_rs.contains("pubprobe1_irq:linux_gpio_shim::LinuxInputPin"),
+        "irq must be an input pin in:\n{}",
+        output.main_rs
+    );
+    assert!(output.cargo_toml.contains("linux-gpio-shim"));
 }

@@ -10,6 +10,10 @@ pub const GENERIC_ERROR: i32 = i32::MIN;
 /// Operation not permitted (POSIX `EPERM`).
 pub const EPERM: i32 = -1;
 
+/// No such entry (POSIX `ENOENT`): what was asked for does not exist, as
+/// opposed to failing to look it up.
+pub const ENOENT: i32 = -2;
+
 /// Resource temporarily unavailable, try again (POSIX `EAGAIN`).
 pub const EAGAIN: i32 = -11;
 

@@ -32,3 +32,11 @@ serde_json = { workspace = true, features = ["std"] }
 reqwest = { workspace = true }
 openidconnect = { workspace = true }
 tower-sessions = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+zenoh = { workspace = true, features = ["unstable", "default"] }
+wiremock = { workspace = true }
+chrono = { workspace = true }
+tokio-tungstenite = { workspace = true }
+rsa = { workspace = true }

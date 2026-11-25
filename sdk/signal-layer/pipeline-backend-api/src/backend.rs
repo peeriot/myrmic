@@ -4,7 +4,7 @@
 use indexmap::IndexMap;
 use proc_macro2::TokenStream;
 
-use crate::descriptor::DriverSchema;
+use crate::descriptor::{DriverSchema, PinDirection};
 use crate::manifest::BoardManifest;
 use crate::scaffold;
 use crate::validate_types::ValidationError;
@@ -103,6 +103,14 @@ pub trait ChipBackend {
     /// Example for ESP32: `esp_hal::gpio::Input<'static>`
     fn gpio_input_type(&self) -> TokenStream {
         panic!("this backend does not support GPIO input")
+    }
+
+    /// Pin type tokens for an optional sensor-driver pin of the given
+    /// direction, used as the task param type handed to `<Driver>Pins`. The
+    /// default is [`gpio_flex_type`](Self::gpio_flex_type) for both directions;
+    /// backends with typed pins override it.
+    fn sensor_pin_type(&self, _direction: PinDirection) -> TokenStream {
+        self.gpio_flex_type()
     }
 
     /// Pointer width of the target in bits (32 or 64). Used by the validator

@@ -65,6 +65,7 @@ mod cmd {
     pub mod replicate;
     pub mod runtimes;
     pub mod send;
+    pub mod signal_layer;
     pub mod subscribe;
     pub mod tags;
     #[cfg(feature = "telemetry")]
@@ -112,6 +113,7 @@ fn main() -> std::process::ExitCode {
     let result = match command {
         // Project
         args::Command::New(cmd) => cmd::new::handle(&ctx, cmd),
+        args::Command::SignalLayer(cmd) => cmd::signal_layer::handle(&ctx, cmd),
         args::Command::Build(cmd) => cmd::build::handle(&ctx, cmd),
         args::Command::Flash(cmd) => cmd::flash::handle(&ctx, cmd),
         args::Command::Monitor(cmd) => cmd::monitor::handle(ctx.clone(), cmd),

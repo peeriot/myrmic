@@ -6,7 +6,7 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use pipeline_codegen::ChipBackend;
-use pipeline_codegen::descriptor::{DriverSchema, OutputMode};
+use pipeline_codegen::descriptor::{DriverSchema, OutputMode, PinDirection};
 use pipeline_codegen::manifest::{BoardManifest, BusTransport};
 
 pub struct Esp32Backend;
@@ -213,13 +213,21 @@ impl ChipBackend for Esp32Backend {
                 let param_ident = snake_ident(&format!("{}_{}_gpio", device.id, pin_name));
                 let pin_ty = gpio_ty(pin_num);
                 let gpio_field = Ident::new(&format!("GPIO{pin_num}"), Span::call_site());
+                let is_output = driver_schemas.get(&device.driver).is_some_and(|schema| {
+                    schema.requires.pin_direction(pin_name) == PinDirection::Output
+                });
+                let enable_call = if is_output {
+                    quote! { set_output_enable(true) }
+                } else {
+                    quote! { set_input_enable(true) }
+                };
                 field_decls.push(quote! {
                     pub #field_ident: esp_hal::gpio::Flex<'static>,
                 });
                 new_params.push(quote! { #param_ident: #pin_ty, });
                 constructions.push(quote! {
                     let mut #field_ident = esp_hal::gpio::Flex::new(#param_ident);
-                    #field_ident.set_input_enable(true);
+                    #field_ident.#enable_call;
                 });
                 field_inits.push(quote! { #field_ident, });
                 macro_args.push(quote! { $p.#gpio_field, });
@@ -535,6 +543,29 @@ impl ChipBackend for Esp32Backend {
                             )));
                         }
                     }
+                }
+            }
+        }
+
+        // Linux-only fields have no meaning here; refuse them rather than let
+        // a manifest written for the wrong backend pass.
+        for (bus_id, bus) in &manifest.buses {
+            if bus.dev_path.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "bus `{bus_id}`: `dev_path` is a Linux field; the ESP backend drives the pins itself"
+                )));
+            }
+        }
+        for device in &manifest.devices {
+            for (field, value) in [
+                ("gpio_chip", &device.gpio_chip),
+                ("pwm_chip", &device.pwm_chip),
+            ] {
+                if value.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "device `{}`: `{field}` is a Linux field and has no meaning on ESP32",
+                        device.id
+                    )));
                 }
             }
         }

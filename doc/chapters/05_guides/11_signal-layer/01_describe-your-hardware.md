@@ -231,3 +231,10 @@ cannot. This is exactly why a feedback-capable output driver exists: it reads th
 from a separate input line rather than inferring it from the value it just wrote. If
 knowing an actuator's true state matters, that is the driver to reach for. Otherwise your
 only instrument is the hardware itself.
+
+## See also
+
+- [Design your pipeline](./02_design-your-pipeline.md) - building a pipeline
+- [Board file](../../10_reference/04_signal-layer/02_board-file.md) - the board file format
+- [Drivers](../../10_reference/04_signal-layer/03_drivers.md) - the available drivers
+- [Running on Linux](../../10_reference/04_signal-layer/05_running-on-linux.md) - running the Signal Layer on Linux

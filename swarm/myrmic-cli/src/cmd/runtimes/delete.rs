@@ -6,19 +6,23 @@ use crate::pid::*;
 
 #[derive(clap::Parser)]
 pub struct Delete {
-    /// Directory holding runtime PID files, or a full PID file path.
+    /// Directory holding runtime PID files, or a single PID file.
     ///
-    /// If the given path is (or will be created as) a directory, the PID
-    /// file sits inside it as `<name>.pid`. If the path's parent is an
-    /// existing directory, the path itself is taken as the PID file.
-    ///
-    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when set (the per-user
-    /// runtime tmpfs under systemd), otherwise `<tempdir>/myrmic-<user>/`.
+    /// Defaults to `$XDG_RUNTIME_DIR/myrmic/` when that directory exists (the
+    /// per-user runtime tmpfs under systemd), otherwise
+    /// `<tempdir>/myrmic-<user>/`.
     #[clap(long = "pid-path")]
     pub pid_path: Option<PathBuf>,
 
     #[clap(short = 'y')]
     pub yes: bool,
+
+    /// Signal sent to the runtime.
+    ///
+    /// `term` lets the runtime shut down: it says goodbye to the swarm and
+    /// cleans up. `kill` ends it abruptly, as a crash or power loss would.
+    #[clap(long, value_enum, default_value_t = Signal::Term)]
+    pub signal: Signal,
 
     /// Name of this runtime instance.
     /// Must be unique among runtimes sharing the same pid directory.
@@ -26,10 +30,37 @@ pub struct Delete {
     pub name: Vec<String>,
 }
 
+/// The signals [`Delete`] can send: both end the runtime, so the delete can
+/// wait for it to exit.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum Signal {
+    /// SIGTERM
+    Term,
+    /// SIGKILL
+    Kill,
+}
+
+impl Signal {
+    fn number(self) -> libc::c_int {
+        match self {
+            Self::Term => libc::SIGTERM,
+            Self::Kill => libc::SIGKILL,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Term => "SIGTERM",
+            Self::Kill => "SIGKILL",
+        }
+    }
+}
+
 pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
     let Delete {
         pid_path,
         yes: _,
+        signal,
         name: mut names,
     } = cmd;
 
@@ -63,11 +94,12 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
     let pids = filtered;
 
     for pid in pids {
-        match pid.sigterm()? {
+        match pid.send_signal(signal.number())? {
             SignalOutcome::Sent(p) => {
                 crate::info!(
                     &ctx,
-                    "sent SIGTERM to runtime {:?} (pid {p})",
+                    "sent {} to runtime {:?} (pid {p})",
+                    signal.name(),
                     pid.file_stem()
                 );
                 wait_for_exit(&pid, p)?;
@@ -108,11 +140,9 @@ pub fn handle(ctx: &Ctx, cmd: Delete) -> anyhow::Result<()> {
 
 /// Wait for a signalled runtime's process to exit, then remove its PID file.
 ///
-/// Waits on the process, not on the lock: the runtime lets go of its PID file
-/// as soon as it receives the SIGTERM, before it has shut down and released
-/// its resources (e.g. its listen port). A SIGTERM can also arrive during
-/// daemon startup before the runtime installs its shutdown handler; in that
-/// case the process exits without cleaning up the file.
+/// Waits on the process, not on the lock: the process may still be releasing
+/// resources after it drops the PID file lock. SIGKILL, or SIGTERM before the
+/// shutdown handler is installed, can leave a stale PID file behind.
 fn wait_for_exit(pid: &Pid, process: libc::pid_t) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     while process_is_alive(process) {

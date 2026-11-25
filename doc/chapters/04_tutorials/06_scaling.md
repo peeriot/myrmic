@@ -10,8 +10,8 @@ Every cell you have deployed so far was a **root**: listed in `app_specs.yml`, d
 
 ## Prerequisites
 
-- Completed the [Smart Greenhouse](./02_smart-greenhouse.md): you know what the grow-bed and the sensor do, and how the dashboard reaches the browser.
-- Completed [Resilience](./05_resilience.md): you know what placement tags, restart policies and `myrmic replicate` do.
+- Completed the [Smart Greenhouse](./01_smart-greenhouse.md): you know what the grow-bed and the sensor do, and how the dashboard reaches the browser.
+- Completed [Resilience](./02_resilience.md): you know what placement tags, restart policies and `myrmic replicate` do.
 - No Myrmic runtime running. If one is, stop it: `myrmic runtimes delete <name>`.
 
 You will use three terminals:

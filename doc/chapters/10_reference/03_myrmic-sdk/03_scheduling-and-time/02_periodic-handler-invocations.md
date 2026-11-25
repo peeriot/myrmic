@@ -72,7 +72,7 @@ Each tick invokes the handler with the usual metadata and no payload. Only a com
 
 The countdown to the next tick starts either when the current tick begins, or when its handler finishes.
 
-Counting from the start keeps a steady rate. If the handler takes longer than the period, invocations pile up in the cell's queue, which holds ten. Once it is full:
+Counting from the start keeps a steady rate. If the handler takes longer than the period, invocations pile up in the cell's queue, which holds ten on Linux and eight on embedded targets. Once it is full:
 
 - the embedded runtime drops one and skips the periods it missed
 - the Linux runtime delivers it late rather than losing it

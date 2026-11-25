@@ -13,15 +13,12 @@ use myrmic_tags::Platform;
 
 use crate::{cargo, compile_cell};
 
-/// AOT artifacts (`.aot` + `.meta`) produced for an embedded target.
-pub use aot_compiler::Artifacts as AotArtifacts;
-
 /// Artifacts produced by [`build`] for a single cell and target.
 pub struct CellBuild {
     /// The compiled `wasm32v1-none` module — produced for every target.
     pub wasm: PathBuf,
-    /// AOT artifacts, present only for embedded targets.
-    pub aot: Option<AotArtifacts>,
+    /// The AOT-compiled `.aot` binary, present only for embedded targets.
+    pub aot: Option<PathBuf>,
 }
 
 /// Which cargo target within a crate to compile to wasm.

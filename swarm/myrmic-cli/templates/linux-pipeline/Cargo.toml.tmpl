@@ -11,7 +11,24 @@ pipeline = "linux"
 
 [dependencies]
 # Linux Signal Layer runtime.
-{{runtime_deps}}
+signal-layer-ipc      = {{signal_layer_ipc}}
+signal-layer-linux-rt = {{signal_layer_linux_rt}}
+linux-i2c-shim        = {{linux_i2c_shim}}
+linux-gpio-shim       = {{linux_gpio_shim}}
+linux-spi-shim        = {{linux_spi_shim}}
+signal-layer-core     = {{signal_layer_core}}
+signal-layer-types    = {{signal_layer_types}}
+# Only what the generated pipeline calls: `#[tokio::main]` (macros,
+# rt-multi-thread), `tokio::spawn` (rt), `tokio::time::interval` (time) and
+# `tokio::signal::ctrl_c` (signal). The runtime crates declare their own.
+tokio                 = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio-stream          = { version = "0.1", features = ["time"] }
+critical-section      = { version = "1", features = ["std"] }
+log                   = { version = "0.4", default-features = false }
+env_logger            = "0.11"
+# Real drivers use embassy-time async delays; on the tokio runtime the std
+# driver plus a timer queue provide the backend embedded gets from esp-rtos.
+embassy-time          = { version = "0.5", features = ["std", "generic-queue-8"] }
 
 # Signal Layer driver and step crates, seeded for every module shipped with
 # myrmic so any pipeline built from board.yml + pipeline.yml compiles. Only

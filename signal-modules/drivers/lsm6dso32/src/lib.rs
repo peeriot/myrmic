@@ -32,10 +32,13 @@
 //! # Timing
 //!
 //! [`Lsm6dso32::init`] issues a software reset and waits for the mandatory
-//! boot time before configuring the device (handled with `embassy_time` under
-//! `#[cfg(not(test))]`; host tests skip the wait). [`Lsm6dso32::sample`] is
-//! non-blocking - it burst-reads the latest data registers with block-data-
-//! update enabled so a sample is never torn across an update.
+//! boot time before configuring the device, then polls `STATUS_REG` until
+//! every enabled block has produced its first sample (the data registers read
+//! as zeros until then, and the gyroscope alone takes ~70 ms to turn on). The
+//! waits use `embassy_time` under `#[cfg(not(test))]`; host tests skip them.
+//! [`Lsm6dso32::sample`] is non-blocking - it burst-reads the latest data
+//! registers with block-data-update enabled so a sample is never torn across
+//! an update.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -51,6 +54,7 @@ const REG_WHO_AM_I: u8 = 0x0F;
 const REG_CTRL1_XL: u8 = 0x10;
 const REG_CTRL2_G: u8 = 0x11;
 const REG_CTRL3_C: u8 = 0x12;
+const REG_STATUS_REG: u8 = 0x1E;
 const REG_OUT_TEMP_L: u8 = 0x20; // TEMP, GYRO X/Y/Z, ACCEL X/Y/Z are contiguous
 
 // WHO_AM_I fixed value shared by the LSM6DSO family (datasheet §9.10).
@@ -68,6 +72,17 @@ const SPI_READ: u8 = 0x80;
 const CTRL3_C_SW_RESET: u8 = 0x01; // software reset, self-clearing
 const CTRL3_C_IF_INC: u8 = 0x04; // auto-increment register address on burst
 const CTRL3_C_BDU: u8 = 0x40; // block data update: output regs frozen until read
+
+// STATUS_REG bits (datasheet §9): new data available per block; each clears
+// when that block's output registers are read.
+const STATUS_XLDA: u8 = 0x01; // accelerometer
+const STATUS_GDA: u8 = 0x02; // gyroscope
+const STATUS_TDA: u8 = 0x04; // temperature
+
+// Bring-up readiness poll in 10 ms steps, sized for the gyroscope turn-on
+// time (70 ms, datasheet Table 3) plus two output data periods at the slowest
+// ODR (12.5 Hz).
+const READY_MAX_POLLS: u32 = 25;
 
 // TEMP: 256 LSB/degC, 0 LSB at 25 degC (datasheet §4.3).
 const TEMP_SENS_LSB_PER_C: f32 = 256.0;
@@ -195,6 +210,9 @@ pub enum Lsm6dso32Error<E: core::fmt::Debug> {
     Bus(E),
     /// `WHO_AM_I` register did not return `0x6C` - likely wrong device or wiring.
     InvalidId(u8),
+    /// `STATUS_REG` did not report new data from every enabled block within
+    /// the bring-up poll budget - the sensor is not converting.
+    DataReadyTimeout,
 }
 
 impl<E: core::fmt::Debug> From<E> for Lsm6dso32Error<E> {
@@ -222,8 +240,9 @@ impl Lsm6dso32 {
     }
 
     /// (Re-)initialise the sensor: verify `WHO_AM_I`, software-reset, enable
-    /// block-data-update plus address auto-increment, then apply the configured
-    /// accelerometer and gyroscope output data rate and full scale.
+    /// block-data-update plus address auto-increment, apply the configured
+    /// accelerometer and gyroscope output data rate and full scale, then wait
+    /// for the first sample of every enabled block.
     ///
     /// Safe to call repeatedly - the generated source task re-runs `init` to
     /// recover a sensor that started failing. A failed re-init leaves the
@@ -233,6 +252,8 @@ impl Lsm6dso32 {
     ///
     /// - [`Lsm6dso32Error::Bus`] on any SPI transaction failure.
     /// - [`Lsm6dso32Error::InvalidId`] if `WHO_AM_I` does not read `0x6C`.
+    /// - [`Lsm6dso32Error::DataReadyTimeout`] if an enabled block produces no
+    ///   sample within the bring-up poll budget.
     pub async fn init<S: SpiDevice>(
         &mut self,
         spi: &mut S,
@@ -266,6 +287,22 @@ impl Lsm6dso32 {
         write_reg(spi, REG_CTRL3_C, CTRL3_C_BDU | CTRL3_C_IF_INC).await?;
         write_reg(spi, REG_CTRL1_XL, ctrl1_xl(cfg.accel_odr, cfg.accel_scale)).await?;
         write_reg(spi, REG_CTRL2_G, ctrl2_g(cfg.gyro_odr, cfg.gyro_scale)).await?;
+
+        // The reset leaves every data register at zero until its block has
+        // converted once; poll STATUS_REG so the first sample is a real one.
+        let mask = ready_mask(cfg);
+        let mut polls = 0;
+        loop {
+            if read_reg(spi, REG_STATUS_REG).await? & mask == mask {
+                break;
+            }
+            if polls >= READY_MAX_POLLS {
+                return Err(Lsm6dso32Error::DataReadyTimeout);
+            }
+            polls += 1;
+            #[cfg(not(test))]
+            embassy_time::Timer::after_millis(10).await;
+        }
 
         log::info!("[lsm6dso32] init OK");
 
@@ -382,6 +419,21 @@ fn ctrl2_g(odr: Odr, scale: GyroScale) -> u8 {
     ((odr as u8) << 4) | scale.fs_bits()
 }
 
+/// `STATUS_REG` bits that must all be set before the first burst: one per
+/// block that is powered on. The temperature sensor runs alongside the
+/// accelerometer, so its bit is only waited for when that block is on.
+fn ready_mask(cfg: Lsm6dso32Config) -> u8 {
+    let mut mask = 0;
+    if cfg.accel_odr != Odr::PowerDown {
+        mask |= STATUS_XLDA | STATUS_TDA;
+    }
+    if cfg.gyro_odr != Odr::PowerDown {
+        mask |= STATUS_GDA;
+    }
+
+    mask
+}
+
 /// Read a single register (address byte with the read flag, one dummy clock).
 async fn read_reg<S: SpiDevice>(spi: &mut S, reg: u8) -> Result<u8, S::Error> {
     let mut rx = [0u8; 2];
@@ -431,7 +483,9 @@ mod tests {
         ]
     }
 
-    fn init_transactions(cfg: Lsm6dso32Config) -> Vec<T<u8>> {
+    /// Probe, reset and configure, up to the point where init starts waiting
+    /// for the first conversion of every enabled block.
+    fn config_transactions(cfg: Lsm6dso32Config) -> Vec<T<u8>> {
         let mut v = read_reg_txns(REG_WHO_AM_I, WHO_AM_I);
         v.extend(write_reg_txns(REG_CTRL3_C, CTRL3_C_SW_RESET));
         v.extend(write_reg_txns(REG_CTRL3_C, CTRL3_C_BDU | CTRL3_C_IF_INC));
@@ -442,6 +496,18 @@ mod tests {
         v.extend(write_reg_txns(
             REG_CTRL2_G,
             ctrl2_g(cfg.gyro_odr, cfg.gyro_scale),
+        ));
+
+        v
+    }
+
+    /// A full bring-up whose first `STATUS_REG` poll already reports every
+    /// block ready.
+    fn init_transactions(cfg: Lsm6dso32Config) -> Vec<T<u8>> {
+        let mut v = config_transactions(cfg);
+        v.extend(read_reg_txns(
+            REG_STATUS_REG,
+            STATUS_XLDA | STATUS_GDA | STATUS_TDA,
         ));
 
         v
@@ -501,6 +567,77 @@ mod tests {
             assert!((r.accel_z - 1.0).abs() < 0.1, "az={}", r.accel_z);
             assert!(r.accel_x.abs() < 0.1 && r.accel_y.abs() < 0.1, "ax/ay off");
             assert!(r.gyro_x.abs() < 5.0 && r.gyro_z.abs() < 5.0, "gyro off");
+
+            spi.done();
+        });
+    }
+
+    #[test]
+    fn first_sample_waits_for_data_ready() {
+        // After the software reset the data registers read as zeros (0 g,
+        // 0 dps, exactly 25 degC) until each block has converted once: init
+        // must keep polling STATUS_REG until every enabled block reports new
+        // data, so the first published value comes from the read after the
+        // ready poll.
+        futures::executor::block_on(async {
+            let cfg = Lsm6dso32Config::default();
+            let mut txns = config_transactions(cfg);
+            txns.extend(read_reg_txns(REG_STATUS_REG, 0x00));
+            txns.extend(read_reg_txns(
+                REG_STATUS_REG,
+                STATUS_XLDA | STATUS_GDA | STATUS_TDA,
+            ));
+            txns.extend(sample_txns());
+            let mut spi = Mock::new(&txns);
+
+            let mut driver = Lsm6dso32::new(&cfg);
+            driver.init(&mut spi).await.unwrap();
+            let r = driver.sample(&mut spi).await.unwrap();
+            assert!((r.accel_z - 1.0).abs() < 0.1, "az={}", r.accel_z);
+            assert!((r.temperature - 27.0).abs() < 0.1, "T={}", r.temperature);
+
+            spi.done();
+        });
+    }
+
+    #[test]
+    fn gyro_only_waits_for_gyro_data_only() {
+        // A powered-down block never raises its data-available bit, so init
+        // must only wait for the blocks it switched on.
+        futures::executor::block_on(async {
+            let cfg = Lsm6dso32Config {
+                accel_odr: Odr::PowerDown,
+                ..Lsm6dso32Config::default()
+            };
+            let mut txns = config_transactions(cfg);
+            txns.extend(read_reg_txns(REG_STATUS_REG, STATUS_GDA));
+            txns.extend(sample_txns());
+            let mut spi = Mock::new(&txns);
+
+            let mut driver = Lsm6dso32::new(&cfg);
+            driver.init(&mut spi).await.unwrap();
+            let r = driver.sample(&mut spi).await.unwrap();
+            assert!((r.gyro_x - 0.875).abs() < 0.01, "gx={}", r.gyro_x);
+
+            spi.done();
+        });
+    }
+
+    #[test]
+    fn init_fails_when_gyro_never_starts() {
+        // The accelerometer and temperature come up, the gyroscope never does:
+        // a bring-up fault reported from init rather than published as zeros.
+        futures::executor::block_on(async {
+            let cfg = Lsm6dso32Config::default();
+            let mut txns = config_transactions(cfg);
+            for _ in 0..=READY_MAX_POLLS {
+                txns.extend(read_reg_txns(REG_STATUS_REG, STATUS_XLDA | STATUS_TDA));
+            }
+            let mut spi = Mock::new(&txns);
+
+            let mut driver = Lsm6dso32::new(&cfg);
+            let result = driver.init(&mut spi).await;
+            assert!(matches!(result, Err(Lsm6dso32Error::DataReadyTimeout)));
 
             spi.done();
         });

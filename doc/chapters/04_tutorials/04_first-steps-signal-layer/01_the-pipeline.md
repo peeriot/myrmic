@@ -8,11 +8,12 @@ them, and watch it come alive. Everything happens on the Linux machine.
 
 ## Step 1 - Scaffold the project
 
-`myrmic new --pipeline` creates a standalone Linux pipeline project — the two YAML files you will
-edit, and a `build.rs` that generates the pipeline from them at build time:
+`myrmic signal-layer new` creates a standalone Linux pipeline project — the two YAML files you
+will edit, and a `build.rs` that generates the pipeline from them at build time. `myrmic sl new`
+is the short spelling:
 
 ```bash
-myrmic new --pipeline ~/sl-tutorial/first-steps
+myrmic signal-layer new ~/sl-tutorial/first-steps
 cd ~/sl-tutorial/first-steps
 ```
 

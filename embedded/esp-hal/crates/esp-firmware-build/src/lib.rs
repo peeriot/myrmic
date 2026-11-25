@@ -238,7 +238,9 @@ pub fn spell_size(bytes: u64) -> String {
 }
 
 /// Generates the flash layout, the app partition table, and the main-stack and
-/// firmware-size link asserts for the calling firmware crate.
+/// firmware-size link asserts for the calling firmware crate, and links
+/// esp-hal's `linkall.x`. A crate must not pass that script in its rustflags as
+/// well: the linker would define every memory region twice.
 ///
 /// # Panics
 ///
@@ -287,9 +289,15 @@ pub fn configure_with_partitions(partitions: &Partitions) {
 
     let layout = Layout::derive(&chip, firmware_size, aot_size, flash_size);
 
+    // `esp_firmware::board!` expands the chip cfgs in the calling crate, which
+    // may declare only its own chip's feature.
+    println!("cargo::rustc-check-cfg=cfg(feature, values(\"esp32c5\", \"esp32c6\", \"esp32c61\"))");
+
     write_layout_rs(&layout);
     let csv = write_partitions_csv(&layout, firmware_size);
     write_espflash_config(&csv);
+    // esp-hal's script first; the asserts below refer to symbols it defines.
+    println!("cargo:rustc-link-arg=-Tlinkall.x");
     write_stack_assert();
     write_firmware_size_assert(firmware_size);
 }

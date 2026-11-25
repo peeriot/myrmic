@@ -1,9 +1,12 @@
 # Write your own step
 
-A step is a small Rust crate in a checkout of the `myrmic` repository, a directory under
-`signal-modules/steps/` next to the shipped ones. Start its `src/lib.rs` with
-`#![cfg_attr(not(test), no_std)]`: every shipped step has it, and without it your crate builds on
-your laptop and fails when someone compiles it for a board.
+A step is a small Rust crate: a directory holding `Cargo.toml`, `src/lib.rs`, and a
+`descriptor.yaml`. `myrmic signal-layer step my-step` scaffolds all three, already compiling with
+a stubbed test suite. You can author it in the repository, under `signal-modules/steps/` next to
+the shipped ones, or, as [Authoring out of the tree](#authoring-out-of-the-tree) below shows, in a
+directory of your own. Start its `src/lib.rs` with `#![cfg_attr(not(test), no_std)]`: every
+shipped step has it, and without it your crate builds on your laptop and fails when someone
+compiles it for a board.
 
 A step is a transform. It takes a value on its way through the pipeline, does something to it,
 and passes on the result: smoothing a noisy reading, converting a unit, turning a temperature
@@ -149,6 +152,11 @@ say. Note this one is a convention rather than a rule: unlike driver config, a s
 enforced, and a step declaring `hardware` would still be read from the pipeline. If you find
 yourself wanting it, that is a hint the value belongs to a driver instead.
 
+A numeric field can carry `min` and `max`, inclusive bounds the generator checks a pipeline's
+value and the field's own default against. Declare them wherever the step would otherwise clamp
+or misbehave, so a pipeline with `window: 300` fails to build instead of silently running with
+a different window.
+
 Write the description as if it will be the only thing a reader sees, because on the [steps reference](../../10_reference/04_signal-layer/04_steps.md) it is. Say what the step computes,
 what each config field does in behavioural terms, and what it emits when it has no answer yet.
 
@@ -165,9 +173,23 @@ pass a value along, never what the value is, so it is generic and declares no fi
 is worth copying when it is true, and worth avoiding when it is not. Being generic to seem
 flexible costs you the type check that would have caught a mis-wired pipeline.
 
+## Authoring out of the tree
+
+You do not have to work inside the Myrmic checkout. `myrmic signal-layer step my-step --registry-dir ~/sl-modules`
+scaffolds the crate under `~/sl-modules/steps/my-step`, and a pipeline builds against it by naming that
+registry directory in its `build.rs`: `build_pipeline("board.yml", "pipeline.yml", Some("../sl-modules"))`
+for a Linux pipeline, or `.include("../sl-modules")` for a firmware one, together with an ordinary path
+dependency on the crate. The path is relative to the pipeline crate, and codegen overlays your
+descriptors onto the shipped set, so a pipeline names your step as an `op` exactly as it would a
+built-in.
+
+This is the path for authoring a step locally, before it is ready to move into the tree. The
+[module authoring tutorial](../../04_tutorials/05_authoring-signal-layer-modules.md) walks through it
+end to end.
+
 ## Adding it to the tree
 
-Step crates live beside the others under `signal-modules/steps/<id>/`, and a step's crate is
+When a step has earned its place, it moves into the repository. Step crates live beside the others under `signal-modules/steps/<id>/`, and a step's crate is
 named exactly its `id`, with no suffix. That differs from drivers, which are always
 `{id}-driver`, so it is worth checking rather than assuming.
 
@@ -191,3 +213,8 @@ behaviours a description promises, and they are cheap to pin down.
 
 If you find a step hard to test, it is usually a sign it is doing something a step should not:
 reaching for time, for a slot, or for the outside world. That work belongs in a driver or a cell.
+
+## See also
+
+- [Write your own driver](./07_write-your-own-driver.md) - writing a driver
+- [Design your pipeline](./02_design-your-pipeline.md) - building a pipeline

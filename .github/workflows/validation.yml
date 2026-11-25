@@ -27,7 +27,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: Guidelines
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1-2
+    container: ghcr.io/peeriot/rust:1.98.1-3
     concurrency:
       group: guidelines-${{ github.ref }}
       cancel-in-progress: true
@@ -46,7 +46,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: Tests
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1-2
+    container: ghcr.io/peeriot/rust:1.98.1-3
     concurrency:
       group: tests-${{ github.ref }}
       cancel-in-progress: true
@@ -67,7 +67,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: Licenses
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1-2
+    container: ghcr.io/peeriot/rust:1.98.1-3
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
@@ -78,7 +78,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: aarch64
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/archiver:1.98.1-2
+    container: ghcr.io/peeriot/archiver:1.98.1-3
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
@@ -104,7 +104,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: WASM
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust:1.98.1-2
+    container: ghcr.io/peeriot/rust:1.98.1-3
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6
@@ -116,7 +116,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: Embedded ${{ matrix.chip }}
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1-2
+    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1-3
     strategy:
       fail-fast: false
       matrix:
@@ -128,13 +128,13 @@ jobs:
           submodules: true
       - run: .ci/check/embedded ${{ matrix.chip }}
 
-  # Scaffolds a Signal Layer pipeline with `myrmic new --pipeline` and compiles
+  # Scaffolds a Signal Layer pipeline with `myrmic signal-layer new` and compiles
   # it for both the Linux and firmware targets.
   scaffold:
     if: ${{ !github.event.pull_request.draft }}
     name: Pipeline Scaffold
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1-2
+    container: ghcr.io/peeriot/rust-riscv32imac-unknown-none-elf:1.98.1-3
     steps:
       - uses: peeriot/actions/setup-rust@a83fea7814b7cf873fd153a725c4889ecfa76a2c
       - uses: actions/checkout@v6

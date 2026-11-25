@@ -16,10 +16,10 @@ Connects to an external MQTT broker. The cell can send commands to the bridge to
 The configuration file for MQTT bridge has the following fields.
 
 - `name` - **Required.** Name of the bridge cell.
-- `broker_url` - **Required.** Alias: `broker`. MQTT broker URL.
+- `broker_url` - **Required.** Alias: `broker`. MQTT broker URL, `mqtt://host[:port]` or `mqtts://host[:port]` (default port 1883 or 8883). The scheme is case-insensitive. An IPv6 address goes in square brackets (`mqtts://[::1]:8883`); a zone id (a numeric interface index, `mqtt://[fe80::1%3]`) works for `mqtt://` only, because it cannot be verified over TLS. A trailing `/` is fine. User info, any other path, a query, port 0, underscores and non-ASCII characters in host names are rejected. `mqtt://` is unencrypted: topics and payloads cross the network in plaintext. `mqtts://` uses TLS, checks the broker certificate against the public web PKI roots (webpki roots) and its host name, and never falls back to plaintext. Brokers with a private CA, client certificates and broker credentials are not supported yet.
 - `ingress` - **Required.** Alias: `ingresses`. List of inbound subscriptions - each MQTT message received on a subscribed topic is published as a swarm event.
   - `id` - **Required.** The swarm event name published when a message arrives on this topic.
-  - `topic` - **Required.** MQTT topic to subscribe to.
+  - `topic` - **Required.** MQTT topic filter to subscribe to. Wildcards follow MQTT semantics: `+` matches one level (`plant/+/temp`), `#` matches the rest, including nothing (`site/#` receives `site` as well as `site/x/y`). Topics starting with `$` only match a filter whose first level is spelled out (`$SYS/+`, not `+/+` or `#`).
   - `qos` *(optional)* - QoS level. Accepts `0`, `1` or `2`. Defaults to `0`.
   - `payload` - **Required.** Maps the MQTT message payload to a field in the event type. Uses the `${type:name}` format - `name` is a field name in the event type, `type` is the encoding (`string`, `json`, or `bytes`). See [Template Syntax](#template-syntax).
 - `egress` - **Required.** Alias: `egresses`. List of outbound publishers - each entry defines a command the bridge cell accepts and triggers as an MQTT publish.
@@ -43,6 +43,11 @@ egress:
     qos: 1
     payload: "${json:config}"
 ```
+
+The example above defines a bridge cell that sits between an MQTT broker and the swarm, carrying messages both ways:
+
+- **Inbound** - each reading the broker pushes to `sensors/temperature` becomes a swarm event any cell can subscribe to.
+- **Outbound** - a cell can set one device's threshold by sending the bridge a command, which it publishes to `devices/<device_id>/threshold` - the device id is taken from the command's payload.
 
 ## HTTP Bridge
 Connects to an external HTTP service. The cell sends a command to the bridge, which makes an HTTP request and returns the response.
@@ -109,6 +114,13 @@ endpoints:
       200: "${json:Device}"
       404: "${json:error}"
 ```
+
+The example above defines an HTTP bridge cell that exposes two endpoints of an external HTTP service to the swarm. A cell sends one of these commands to the bridge:
+
+- **`store_reading`** - the bridge posts the reading to `/api/devices/<device_id>/readings` - the device id is taken from the command's payload.
+- **`get_device`** - the bridge fetches one device from `/api/devices/<device_id>` and returns it as a typed value.
+
+For both, the bridge reads the bearer token from the swarm key-value store and puts it in the `Authorization` header of the request.
 
 ## Template Syntax
 From inside your cell, a bridge looks like any other cell - you send commands to it and receive events from it. But behind the scenes, the bridge has to translate those commands and events to and from raw MQTT messages or HTTP requests. Something has to describe that mapping - which field becomes the topic, which becomes the payload, how to decode an incoming message into an event field. Template syntax is how you define that translation, directly in the config.

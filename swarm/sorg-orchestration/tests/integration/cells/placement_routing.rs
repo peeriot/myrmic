@@ -1,5 +1,5 @@
 //! Placement makes four reads - the cell-class registry, the exec registry, the
-//! node leases and the placement table - and each of them lives in its own DB
+//! node leases and the placements - and each of them lives in its own DB
 //! scope. A scope is resolved to a holder by its own locate round on its own
 //! keyexpr, so a read addressed through some other scope's holder can be
 //! answered by a node that does not have the rows.
@@ -17,18 +17,22 @@
 //! in `NoRuntimesAvailable`, so without that refusal a read that wandered into
 //! the wrong stand-in would look like the outcome the test wants.
 //!
-//! The placement table has a fifth reader on the same terms: the guard that
-//! stops an instance erase from removing a live cell's row. That erase writes
+//! The placements have a fifth reader on the same terms: the guard that
+//! stops an instance removal from removing a live cell's row. That removal writes
 //! in the instance registry's scope, so its placement read has to be located
 //! on its own rather than ride the transaction doing the writing.
 
 use std::time::{Duration, Instant};
 
-use cell_protocol::{CellInstance, ClassInfo, Gen, PlacementEntry, PlacementKind, SpawnLineage};
+use cell_protocol::generations::generation_key;
+use cell_protocol::{
+    ArtifactPlatform, BlobHash, CellInstance, ClassInfo, Gen, PlacementEntry, PlacementKind,
+    SpawnLineage,
+};
 use claims::{assert_err, assert_ok};
 use db_commons::models::{
-    self, DbRequest, Scope, TxOp, TxOpResponse, locate, tb_get, tb_list, tx_apply, tx_commit,
-    tx_rollback,
+    self, DbRequest, Scope, TxOp, TxOpResponse, key_list, locate, tb_get, tb_list, tx_apply,
+    tx_commit, tx_rollback,
 };
 use sorg_common::{
     DeploymentError, RejectionReason, RequirementTags, class_registry, exec_registry,
@@ -48,12 +52,12 @@ const PROBE_SRI: &str = "routing_probe_cell";
 /// while the placement decision is still being made.
 const UNMET_TAG: &str = "fpga";
 
-/// The cell whose instance row the erase test seeds, and the generation it
-/// carries. The erase names that generation, and so does the placement row the
-/// stand-in serves - a guard only refuses on a placement of the erase's own
+/// The cell whose instance row the removal test seeds, and the generation it
+/// carries. The removal names that generation, and so does the placement row the
+/// stand-in serves - a guard only refuses on a placement of the removal's own
 /// incarnation.
-const ERASE_SRI: &str = "instance_erase_probe";
-const ERASE_GEN: Gen = Gen::from_parts(1, 1);
+const REMOVAL_SRI: &str = "instance_removal_probe";
+const REMOVAL_GEN: Gen = Gen::from_parts(1, 1);
 
 /// The stand-in holder's node id. Every byte is non-zero, so its `uhlc::ID`
 /// renders in full and the store keyexpr derived from it is stable.
@@ -86,6 +90,9 @@ async fn placement_locates_the_class_registry_scope() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // A recorder on the class registry's locate keyexpr. It never replies and
     // drops every query, so the real holder still wins the round untouched -
@@ -104,7 +111,7 @@ async fn placement_locates_the_class_registry_scope() {
     // the exec's own module load reads the class registry too, and its locate
     // would be indistinguishable from placement's.
     let started = Instant::now();
-    let result = deploy_probe(&test_app, RequirementTags::new(vec![UNMET_TAG])).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::new(vec![UNMET_TAG])).await;
     let elapsed = started.elapsed();
 
     // Assert I - the deploy really did stop at the placement decision, on the
@@ -155,13 +162,15 @@ async fn placement_class_read_follows_the_class_registry_holder() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass: an unregistered class fails the same way
     // this test asserts. Read the class through its own scope while the real
     // holder is still the only answer, so the failure below can only come from
     // the stand-in.
-    let registered =
-        assert_ok!(class_registry::get_class_info(test_app.session(), PROBE_CLASS).await);
+    let registered = assert_ok!(class_registry::get_class_info(test_app.session(), class).await);
     assert!(
         registered.is_some(),
         "the probe class must be readable on the class registry's own holder \
@@ -173,17 +182,17 @@ async fn placement_class_read_follows_the_class_registry_holder() {
     declare_stand_in_holder(&mut test_app, &cell_protocol::class_registry_scope(), None).await;
 
     let started = Instant::now();
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
     let elapsed = started.elapsed();
 
     // Assert - placement consulted the holder its own locate picked, found no
     // row there, and said so.
     let err = result.expect_err("the class registry holder has no rows, so the deploy must fail");
-    let DeploymentError::UnknownClass { class } = &err else {
+    let DeploymentError::UnknownClass { class: unknown } = &err else {
         panic!("expected UnknownClass from the located class-registry holder, got: {err:?}");
     };
     assert_eq!(
-        class, PROBE_CLASS,
+        *unknown, class,
         "the error must name the class that was read"
     );
 
@@ -207,6 +216,9 @@ async fn placement_exec_registry_read_follows_its_own_scope() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass: a genuinely empty exec registry yields the
     // same error this test asserts. Wait for the node's own exec to register
@@ -230,7 +242,7 @@ async fn placement_exec_registry_read_follows_its_own_scope() {
     )
     .await;
 
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
 
     // Assert - placement consulted the holder its own locate picked, found no
     // runtimes there, and said so. The lease read cannot be what produced this:
@@ -255,6 +267,9 @@ async fn placement_node_lease_read_follows_its_own_scope() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass twice over: a node that never leased, and a
     // node that never registered, both end the deploy the same way. Confirm
@@ -275,7 +290,7 @@ async fn placement_node_lease_read_follows_its_own_scope() {
     // down only nodes that are hosting cells - none are.
     declare_stand_in_holder(&mut test_app, &cell_protocol::node_lease_scope(), None).await;
 
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
 
     // Assert - the exec registry still lists the node, and placement dropped it
     // anyway, because the holder its lease locate picked had no lease for it.
@@ -301,36 +316,37 @@ async fn placement_retries_while_only_an_artifact_is_missing() {
     register_fixture_class(PROBE_CELL_CRATE, PROBE_CLASS_STEM, &swarm).await;
 
     let mut test_app = spawn_test_app_with_swarm(swarm).await;
+    // Resolved before any stand-in or recorder: the name lives in the class
+    // registry's scope too.
+    let class = test_app.class_id(PROBE_CLASS).await;
 
     // Guard against a vacuous pass: the class carries its wasm artifact on its
     // own holder before the stand-in exists, so the rejection below can only
     // come from the artifact-less row the stand-in serves.
-    let registered =
-        assert_ok!(class_registry::get_class_info(test_app.session(), PROBE_CLASS).await)
-            .expect("the probe class must be readable before the stand-in exists");
+    let registered = assert_ok!(class_registry::get_class_info(test_app.session(), class).await)
+        .expect("the probe class must be readable before the stand-in exists");
     assert!(
-        registered.wasm_hash.is_some(),
+        matches!(registered, ClassInfo::Wasm { .. }),
         "the probe class must carry its wasm artifact on its own holder, \
          otherwise this test proves nothing"
     );
 
-    // Act - a stand-in serving a class row with no artifacts at all. The class
-    // is found, so this is not an unknown class; no runtime can load it, so
-    // every rejection names the artifact; and nothing will ever change that, so
-    // the deploy runs the retry to the end.
+    // Act - a stand-in serving a class row the linux runtime cannot load: an
+    // AOT-only class. The class is found, so this is not an unknown class; no
+    // runtime can load it, so every rejection names the artifact; and nothing
+    // will ever change that, so the deploy runs the retry to the end.
     declare_stand_in_holder(
         &mut test_app,
         &cell_protocol::class_registry_scope(),
-        Some(encode(&ClassInfo {
-            name: PROBE_CLASS.to_owned(),
-            wasm_hash: None,
-            artifacts: Vec::new(),
-        })),
+        Some(StandInRow::Table(encode(&ClassInfo::Aot {
+            platform: ArtifactPlatform::Riscv32imac,
+            crc: 0,
+        }))),
     )
     .await;
 
     let started = Instant::now();
-    let result = deploy_probe(&test_app, RequirementTags::default()).await;
+    let result = deploy_probe(&test_app, class, RequirementTags::default()).await;
     let elapsed = started.elapsed();
 
     // Assert - the outcome names the artifact, and getting it took the whole
@@ -356,21 +372,21 @@ async fn placement_retries_while_only_an_artifact_is_missing() {
     );
 }
 
-// The instance erase writes in the instance registry's scope and reads the
-// placement to refuse erasing a live cell's row. An op carries its own scope
+// The instance removal writes in the instance registry's scope and reads the
+// placement to refuse removing a live cell's row. An op carries its own scope
 // wherever it lands, so a placement read riding that write transaction is
 // answered by the node holding the instance registry - which can be a write
 // behind on the placement scope. That read has to be located on its own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn instance_erase_reads_the_placement_through_its_own_scope() {
+async fn instance_removal_reads_the_placement_through_its_own_scope() {
     // Arrange - an instance row and no placement for it. No cell class and no
     // exec: nothing here deploys, the rows are seeded and read directly.
     let mut test_app = spawn_test_app_with_swarm(swarm_config!("cells/orch_only.jsonnet")).await;
-    let sri = to_sri(ERASE_SRI);
+    let sri = to_sri(REMOVAL_SRI);
     let record = CellInstance {
         sri,
-        class_name: "erase_probe".to_owned(),
-        gen_id: ERASE_GEN,
+        class: BlobHash::of(b"removal_probe"),
+        gen_id: REMOVAL_GEN,
         lineage: SpawnLineage::default(),
     };
     assert_ok!(
@@ -378,8 +394,8 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
         "seeding the instance row should succeed"
     );
 
-    // Guard against a vacuous pass: the erase is refused only by a placement,
-    // and there is none on the real holder, so an erase that reads the
+    // Guard against a vacuous pass: the removal is refused only by a placement,
+    // and there is none on the real holder, so a removal that reads the
     // placement anywhere else finds nothing in its way and goes through. The
     // refusal below can therefore only come from the stand-in.
     let placed = assert_ok!(get_placement(test_app.session(), &sri).await);
@@ -389,42 +405,50 @@ async fn instance_erase_reads_the_placement_through_its_own_scope() {
          otherwise this test proves nothing"
     );
 
-    // Act - a stand-in holder serving a placement of the erase's own
+    // Act - a stand-in holder serving a placement of the removal's own
     // generation, which is what the guard refuses on.
+    let placement = PlacementEntry {
+        sri,
+        kind: PlacementKind::Placeholder,
+        app: None,
+        gen_id: REMOVAL_GEN,
+    };
     declare_stand_in_holder(
         &mut test_app,
         &cell_protocol::placement_scope(),
-        Some(encode(&PlacementEntry {
-            sri,
-            kind: PlacementKind::Placeholder,
-            app: None,
-            gen_id: ERASE_GEN,
-        })),
+        Some(StandInRow::Key(
+            generation_key(&sri, REMOVAL_GEN),
+            encode(&placement.row()),
+        )),
     )
     .await;
 
-    // Assert - the erase consulted the holder the placement scope resolves to,
+    // Assert - the removal consulted the holder the placement scope resolves to,
     // found the cell deployed there, and refused. Had that read gone through
     // the instance registry's holder it would have found no placement and
-    // erased a row that a live cell owns.
+    // removed a row that a live cell owns.
     assert_err!(
-        instance_registry::erase_instance(test_app.session(), &sri, ERASE_GEN).await,
-        "erasing an instance the placement scope reports as deployed must fail"
+        instance_registry::remove_instance(test_app.session(), &sri, REMOVAL_GEN).await,
+        "removing an instance the placement scope reports as deployed must fail"
     );
     let instances = assert_ok!(instance_registry::list_instances(test_app.session()).await);
     assert_eq!(
         instances.len(),
         1,
-        "the refused erase must leave the instance row alone"
+        "the refused removal must leave the instance row alone"
     );
 }
 
 /// Deploys the probe cell through a client of the test's own, which carries the
 /// client default deadline rather than the shorter one the shared test app
 /// pins, and - unlike the shared app's deploy helper - can carry tags.
-async fn deploy_probe(test_app: &TestApp, tags: RequirementTags) -> Result<(), DeploymentError> {
+async fn deploy_probe(
+    test_app: &TestApp,
+    class: BlobHash,
+    tags: RequirementTags,
+) -> Result<(), DeploymentError> {
     sorg_client::Client::new(test_app.session().clone())
-        .deploy_wasm_cell(to_sri(PROBE_SRI), PROBE_CLASS, tags)
+        .deploy_wasm_cell(to_sri(PROBE_SRI), class, tags)
         .await
 }
 
@@ -462,7 +486,15 @@ fn store_topic_of(node: models::NodeId) -> OwnedKeyExpr {
 /// carries its own scope whatever holder it reaches, so a read that belongs
 /// elsewhere and lands here fails the deploy with an internal error instead of
 /// passing for an empty registry and standing in for the property under test.
-async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Option<Vec<u8>>) {
+/// The one row a stand-in holder serves, in the shape its scope stores rows.
+enum StandInRow {
+    /// A table row's value, served to any table read.
+    Table(Vec<u8>),
+    /// A key-value row, served to a listing of a prefix of its key.
+    Key(String, Vec<u8>),
+}
+
+async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Option<StandInRow>) {
     test_app
         .set_up_queryable_with_reply(locate_topic_of(scope), |_| {
             Ok(encode(&locate::Response {
@@ -477,7 +509,7 @@ async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Opt
     let held = scope.clone();
     test_app
         .set_up_queryable_with_reply(store_topic_of(STAND_IN_HOLDER), move |payload| {
-            stand_in_store_reply(&payload, &held, row.as_deref())
+            stand_in_store_reply(&payload, &held, row.as_ref())
         })
         .await;
 }
@@ -489,7 +521,7 @@ async fn declare_stand_in_holder(test_app: &mut TestApp, scope: &Scope, row: Opt
 fn stand_in_store_reply(
     payload: &[u8],
     held: &Scope,
-    row: Option<&[u8]>,
+    row: Option<&StandInRow>,
 ) -> Result<Vec<u8>, Vec<u8>> {
     let Ok(request) = postcard::from_bytes::<DbRequest>(payload) else {
         return Err(refusal("an unreadable db request", held));
@@ -504,14 +536,31 @@ fn stand_in_store_reply(
             let last = match application.ops.last() {
                 None => None,
                 Some(TxOp::TbGet(op)) if op.scope == *held => {
-                    Some(TxOpResponse::TbGet(tb_get::Response {
-                        value: row.map(<[u8]>::to_vec),
-                    }))
+                    let value = match row {
+                        Some(StandInRow::Table(value)) => Some(value.clone()),
+                        None => None,
+                        Some(StandInRow::Key(..)) => {
+                            panic!("a stand-in holding a key-value row got a table read")
+                        }
+                    };
+                    Some(TxOpResponse::TbGet(tb_get::Response { value }))
                 }
                 Some(TxOp::TbList(op)) if op.scope == *held => {
                     Some(TxOpResponse::TbList(tb_list::Response {
                         entities: Vec::new(),
                     }))
+                }
+                Some(TxOp::KeyList(op)) if op.scope == *held => {
+                    let entries = match row {
+                        Some(StandInRow::Key(key, value)) if key.starts_with(&op.prefix) => {
+                            vec![(key.clone(), value.clone())]
+                        }
+                        Some(StandInRow::Key(..)) | None => vec![],
+                        Some(StandInRow::Table(_)) => {
+                            panic!("a stand-in holding a table row got a key-value read")
+                        }
+                    };
+                    Some(TxOpResponse::KeyList(key_list::Response { entries }))
                 }
                 Some(other) => return Err(refusal(other.name(), held)),
             };

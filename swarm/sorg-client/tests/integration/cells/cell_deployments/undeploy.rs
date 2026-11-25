@@ -9,11 +9,11 @@ async fn deploy_then_undeploy() {
     let (test_app, sorg) = spawn_test_app_with_dummy_cell().await;
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Arrange — deploy (this also registers the instance)
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy_cell should succeed"
     );
@@ -40,14 +40,14 @@ async fn deploy_then_undeploy() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn undeploy_erases_instance_row() {
-    let (_test_app, sorg) = spawn_test_app_with_dummy_cell().await;
+    let (test_app, sorg) = spawn_test_app_with_dummy_cell().await;
 
     let sri = Sri::from_target(CELL_SRI).unwrap();
-    let class_name = format!("{CELL_CLASS}.wasm");
+    let class = test_app.class_id(&format!("{CELL_CLASS}.wasm")).await;
 
     // Arrange — deploy (registers the instance), then undeploy
     assert_ok!(
-        sorg.deploy_wasm_cell(sri, &class_name, RequirementTags::default())
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
             .await,
         "deploy should succeed"
     );
@@ -59,15 +59,15 @@ async fn undeploy_erases_instance_row() {
 
     // Act — the follow-up sweep teardown does: finds nothing, tolerates it
     let outcome = assert_ok!(
-        sorg.erase_instance(&sri, instance.gen_id).await,
-        "redundant erase should be tolerated after undeploy"
+        sorg.remove_instance(&sri, instance.gen_id).await,
+        "redundant removal should be tolerated after undeploy"
     );
 
-    // Assert — undeploy itself erased the row, and none remain
+    // Assert — undeploy itself removed the row, and none remain
     assert_eq!(
         outcome,
         FenceOutcome::Absent,
-        "undeploy should have already erased the instance row"
+        "undeploy should have already removed the instance row"
     );
     let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
     assert!(

@@ -1,0 +1,96 @@
+use claims::{assert_err, assert_ok};
+
+use cell_protocol::{Gen, Sri};
+use sorg_common::{FenceOutcome, RequirementTags};
+
+use super::{INSTANCE_SRI, SEEDED_GEN, seed_instance, sorg_client};
+use crate::integration::spawn_db_test_app;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn happy_path() {
+    let test_app = spawn_db_test_app().await;
+    let sorg = sorg_client(test_app.session());
+    let sri = Sri::from_target(INSTANCE_SRI).unwrap();
+
+    // Arrange — seed an instance
+    seed_instance(test_app.session(), &sri).await;
+
+    // Act
+    assert_eq!(
+        assert_ok!(
+            sorg.remove_instance(&sri, SEEDED_GEN).await,
+            "remove_instance should succeed"
+        ),
+        FenceOutcome::Applied
+    );
+
+    // Assert — instance no longer appears in list
+    let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
+    assert!(
+        instances.is_empty(),
+        "instance list should be empty after removal"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn deployed_is_rejected() {
+    let swarm = sorg_tests::swarm_config!("full.jsonnet");
+    let cell_class = "dummy";
+    let cell_sri = "test-deployed-remove";
+    sorg_tests::register_fixture_class("../../tests/fixtures/dummy_cell", cell_class, &swarm).await;
+    let test_app = crate::integration::spawn_full_test_app_with_swarm(swarm).await;
+    let sorg = sorg_client(test_app.session());
+    let sri = Sri::from_target(cell_sri).unwrap();
+    let class = test_app.class_id(&format!("{cell_class}.wasm")).await;
+
+    // Arrange — deploy the cell (this registers the instance)
+    assert_ok!(
+        sorg.deploy_wasm_cell(sri, class, RequirementTags::default())
+            .await,
+        "deploy should succeed"
+    );
+    let instance = assert_ok!(sorg.inspect_instance(&sri).await);
+
+    // Act — try to remove the deployed instance under its own generation
+    assert_err!(
+        sorg.remove_instance(&sri, instance.gen_id).await,
+        "remove_instance for deployed instance should fail"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn absent_is_reported() {
+    let test_app = spawn_db_test_app().await;
+    let sorg = sorg_client(test_app.session());
+    let sri = Sri::from_target(INSTANCE_SRI).unwrap();
+
+    // Act — remove an SRI that was never created
+    assert_eq!(
+        assert_ok!(
+            sorg.remove_instance(&sri, SEEDED_GEN).await,
+            "removing a missing instance is an outcome, not an error"
+        ),
+        FenceOutcome::Absent
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn other_generation_is_refused() {
+    let test_app = spawn_db_test_app().await;
+    let sorg = sorg_client(test_app.session());
+    let sri = Sri::from_target(INSTANCE_SRI).unwrap();
+    seed_instance(test_app.session(), &sri).await;
+
+    // Act — a removal issued for another incarnation of the same SRI
+    let outcome = assert_ok!(sorg.remove_instance(&sri, Gen::from_parts(2, 1)).await);
+
+    // Assert — refused, and the row is untouched
+    assert_eq!(
+        outcome,
+        FenceOutcome::Superseded {
+            current: SEEDED_GEN
+        }
+    );
+    let instances = assert_ok!(sorg.list_instances().await, "list_instances should succeed");
+    assert_eq!(instances.len(), 1, "the row should still be there");
+}

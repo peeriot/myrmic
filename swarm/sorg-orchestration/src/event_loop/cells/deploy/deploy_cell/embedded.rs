@@ -1,8 +1,8 @@
 use cell_protocol::{
-    DEPLOYMENT_TABLE, DeploymentCommand, DeploymentConfirmation, ExecRuntimeInfo, Gen,
-    PlacementKind, Sri, scope_of_deployment,
+    ArtifactPlatform, BlobHash, DEPLOYMENT_TABLE, DeploymentCommand, DeploymentConfirmation,
+    ExecRuntimeInfo, Gen, PlacementKind, Sri, scope_of_deployment,
 };
-use sorg_common::{DbClient, SorgPayload, SpawnLineage, bail, tb_insert};
+use sorg_common::{DbClient, SorgPayload, SpawnLineage, bail, class_registry, tb_insert};
 
 use crate::Result;
 use crate::event_loop::Runtime;
@@ -15,7 +15,7 @@ impl Runtime {
     pub(super) async fn deploy_wasm_cell_embedded(
         &self,
         cell_sri: &Sri,
-        class_name: &str,
+        class: BlobHash,
         runtime: &ExecRuntimeInfo,
         gen_id: Gen,
         lineage: SpawnLineage,
@@ -24,10 +24,25 @@ impl Runtime {
         let target = runtime.id();
         let sri = *cell_sri;
 
+        // The board fetches the AOT binary by id and checks it against the CRC,
+        // without reading the registry itself. Placement admitted this runtime
+        // only for a class with an AOT for its platform.
+        let Some((aot, crc)) =
+            class_registry::aot_for(&self.session, class, ArtifactPlatform::Riscv32imac).await?
+        else {
+            bail!(
+                "class {} has no AOT binary for {} (removed since placement?)",
+                class.to_hex(),
+                ArtifactPlatform::Riscv32imac
+            );
+        };
+
         // The firmware writes the instance row itself (before confirming),
         // so the command carries the full edge.
         let command = DeploymentCommand::Deploy {
-            class: class_name.to_owned(),
+            class,
+            aot,
+            crc,
             sri,
             payload,
             gen_id,

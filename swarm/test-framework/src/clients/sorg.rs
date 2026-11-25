@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
-use cell_protocol::{RuntimeId, Sri};
+use cell_protocol::{BlobHash, RuntimeId, Sri};
 use db_client::v1::{Client as DbClient, models::Scope};
 use serde::de::DeserializeOwned;
 use sorg_client::Client;
@@ -146,9 +146,19 @@ impl SorgHandle {
         arguments: Option<Vec<u8>>,
     ) -> Result<(), DeploymentError> {
         let sri = Sri::from_target(cell_sri).expect("invalid cell SRI/name");
+        let class = self.class_id(class_name).await;
         self.sorg_client
-            .deploy_wasm_cell_with_arguments(sri, class_name, tags.clone(), arguments, None)
+            .deploy_wasm_cell_with_arguments(sri, class, tags.clone(), arguments, None)
             .await
+    }
+
+    /// The class `class_name` is bound to. Tests register a class before using it by name.
+    async fn class_id(&self, class_name: &str) -> BlobHash {
+        self.sorg_client
+            .resolve_class_name(class_name)
+            .await
+            .expect("class name lookup failed")
+            .unwrap_or_else(|| panic!("class '{class_name}' is not registered"))
     }
 
     /// Undeploy the cell at `cell_sri`, leaving its persisted state and instance record intact.
@@ -177,7 +187,7 @@ impl SorgHandle {
         let sri = Sri::of_path(cell_sri).expect("invalid cell sri");
         let record = cell_protocol::CellInstance {
             sri,
-            class_name: class_name.to_owned(),
+            class: self.class_id(class_name).await,
             gen_id: cell_protocol::Gen::from_parts(1, 1),
             lineage: cell_protocol::SpawnLineage::default(),
         };

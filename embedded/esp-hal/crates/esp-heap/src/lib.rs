@@ -29,6 +29,8 @@
 
 #![cfg_attr(not(test), no_std)]
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 /// Bytes reserved at the top of RWDATA for the main stack; the heap takes the
 /// rest. Feature-independent: the value that makes the budget robust. Measured
 /// peak main-stack use is ~2 KB (deep chains live on `NET_STACK`), so this has
@@ -50,6 +52,20 @@ const _: () = assert!(HEAP_WARN_FLOOR > HEAP_MIN_FLOOR);
 
 /// Size of the reclaimed `dram2` segment added as internal heap.
 pub const DRAM2_SIZE: usize = 64 * 1024;
+
+static PSRAM_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+/// Records the PSRAM size mapped at boot; [`setup_heap!`] calls it.
+pub fn record_psram(size: usize) {
+    PSRAM_SIZE.store(size, Ordering::Relaxed);
+}
+
+/// PSRAM bytes mapped at boot: 0 before [`setup_heap!`] ran, and on a module
+/// without a PSRAM chip whatever the target feature says.
+#[must_use]
+pub fn psram_size() -> usize {
+    PSRAM_SIZE.load(Ordering::Relaxed)
+}
 
 #[cfg(target_os = "none")]
 unsafe extern "C" {
@@ -172,7 +188,7 @@ pub unsafe fn claim_dram2() -> usize {
 /// `Internal`-capped DMA/controller allocations). [`setup_heap!`] registers it
 /// before the internal regions so general (untagged) allocations prefer PSRAM and
 /// leave internal DRAM for the DMA/stack allocations that require it. Returns the
-/// mapped size in bytes.
+/// mapped size in bytes: 0, with nothing added, on a part without PSRAM.
 ///
 /// # Safety
 ///
@@ -181,6 +197,11 @@ pub unsafe fn claim_dram2() -> usize {
 pub unsafe fn claim_psram(psram: esp_hal::peripherals::PSRAM<'static>) -> usize {
     let psram = esp_hal::psram::Psram::new(psram, esp_hal::psram::PsramConfig::default());
     let (start, size) = psram.raw_parts();
+    // Not every part in the family carries PSRAM (the ESP32-C5FH4 has none);
+    // esp-hal then maps nothing, and an empty heap region is not allowed.
+    if size == 0 {
+        return 0;
+    }
     // SAFETY: (start, size) describe the window esp-hal just mapped; runs once.
     unsafe {
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
@@ -276,6 +297,7 @@ macro_rules! setup_heap {
         let __psram = unsafe { $crate::claim_psram($periphs.PSRAM) };
         #[cfg(not(any(feature = "esp32c5", feature = "esp32c61")))]
         let __psram = 0usize;
+        $crate::record_psram(__psram);
         // SAFETY: `main` is the single `#[esp_rtos::main]` entry point, so each
         // region is claimed exactly once, before the deep tasks run.
         let __carve = unsafe { $crate::claim_internal() };
@@ -311,5 +333,12 @@ mod tests {
     fn carve_flags_no_room_for_the_reserve() {
         let carve = compute_carve(0, 16 * 1024, 32 * 1024);
         assert_eq!(carve, HeapCarve::NoRoom);
+    }
+
+    #[test]
+    fn psram_size_is_zero_until_recorded() {
+        assert_eq!(psram_size(), 0);
+        record_psram(4 * 1024 * 1024);
+        assert_eq!(psram_size(), 4 * 1024 * 1024);
     }
 }

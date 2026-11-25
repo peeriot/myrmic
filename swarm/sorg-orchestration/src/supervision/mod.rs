@@ -7,12 +7,14 @@
 //! after all its cells are gone.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use cell_protocol::{CellInstance, Gen, PlacementEntry, RuntimeId, Sri};
 use sorg_common::root_death::RootDeath;
 use sorg_common::supervision::{
-    ExpiryGate, LeaseTracker, RestartBudget, SupervisionTiming, jittered,
+    ClockSkewWatch, ExpiryGate, LeaseTracker, RESTART_DEPLOY_TIMEOUT, RestartBudget,
+    SupervisionTiming, jittered,
 };
 use sorg_common::{
     CellDeployment, DeployRequest, DeploymentError, FenceOutcome, LostReason, deploy_cells,
@@ -37,11 +39,11 @@ pub(crate) struct CellLostNote {
 pub(crate) struct HygienePlan {
     pub notes: Vec<CellLostNote>,
     /// Ordered: placement rows are released before instance rows —
-    /// instance-erase refuses while a placement row of the same incarnation
+    /// instance removal refuses while a placement row of the same incarnation
     /// exists. Both releases are fenced by the generations of the scan that
     /// produced this plan, so a cell redeployed since is left alone.
     pub release_cells: Vec<Sri>,
-    pub erase_instances: Vec<Sri>,
+    pub remove_instances: Vec<Sri>,
     /// Nodes whose every placed cell is being released: only then may the
     /// exec row and (last) the lease row go — while any placement row
     /// remains, the expired lease must survive as evidence.
@@ -125,7 +127,7 @@ pub(crate) fn plan_hygiene(
             continue;
         }
         plan.release_cells.push(cell.sri);
-        plan.erase_instances.push(cell.sri);
+        plan.remove_instances.push(cell.sri);
 
         let Some(instance) = by_sri.get(&cell.sri) else {
             continue;
@@ -166,27 +168,41 @@ pub(crate) fn plan_hygiene(
     plan
 }
 
+/// The lease tracker shared by the lease watcher, hygiene and placement.
+pub(crate) type SharedLeaseTracker = Arc<Mutex<LeaseTracker>>;
+
+/// Locks the shared tracker. It holds plain data, so a poisoned lock is
+/// recovered: a panic mid-update leaves at worst one stale observation.
+pub(crate) fn lock_tracker(tracker: &SharedLeaseTracker) -> MutexGuard<'_, LeaseTracker> {
+    tracker.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Watches node leases and runs hygiene as leader. Spawned once per
 /// orchestrator; non-leaders keep observing leases (warm tracker) but act on
 /// nothing.
 pub(crate) fn spawn_lease_watcher(
     session: Session,
     state: State,
+    tracker: SharedLeaseTracker,
     timing: SupervisionTiming,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut tracker = LeaseTracker::new();
         let mut gate = ExpiryGate::new(timing.margin);
         // A missing lease row measures silence from the first miss; the
         // gate's threshold is only its teardown deadline.
         let mut absence_gate = ExpiryGate::new(timing.ttl + timing.margin);
         let mut budget = RestartBudget::new();
         let mut sweep = RestartSweep::default();
+        // Placement copes with skew once peers are observed, but the operator
+        // should still hear about it.
+        let mut skew = ClockSkewWatch::new();
         let mut tick: u64 = 0;
         loop {
             tick += 1;
             tokio::time::sleep(jittered(timing.verify, tick)).await;
 
+            let local_now_ms = ClockSkewWatch::local_now_ms();
+            let scan_at = Instant::now();
             let leases = match node_lease::list_leases(&session).await {
                 Ok(leases) => leases,
                 Err(err) => {
@@ -195,8 +211,27 @@ pub(crate) fn spawn_lease_watcher(
                 }
             };
             let now = Instant::now();
-            for (id, lease) in &leases {
-                tracker.observe(*id, lease.seq, Duration::from_millis(lease.ttl_ms), now);
+            {
+                let mut tracker = lock_tracker(&tracker);
+                for (id, lease) in &leases {
+                    tracker.observe(*id, lease.seq, Duration::from_millis(lease.ttl_ms), now);
+                }
+            }
+            if let Some(report) = skew.sample(
+                session.zid().into(),
+                local_now_ms,
+                scan_at,
+                leases
+                    .iter()
+                    .map(|(id, lease)| (*id, lease.seq, lease.ttl_ms)),
+            ) {
+                warn!(
+                    offset_ms = report.offset_ms,
+                    peers = report.peers,
+                    tracked = report.tracked,
+                    "this orchestrator's clock disagrees with its peers by {} ms - check time synchronisation on this node and on its peers",
+                    report.offset_ms
+                );
             }
             let leased: HashSet<RuntimeId> = leases.iter().map(|(id, _)| *id).collect();
 
@@ -213,12 +248,15 @@ pub(crate) fn spawn_lease_watcher(
             // lease measures from the last seq advance; a missing lease row
             // from when it was first missed.
             let mut silence: HashMap<RuntimeId, Duration> = HashMap::new();
-            for node in &placed {
-                if let Some(stale) = tracker.stale_for(*node, now) {
-                    silence.insert(*node, stale);
+            let mut teardown_ready = {
+                let tracker = lock_tracker(&tracker);
+                for node in &placed {
+                    if let Some(stale) = tracker.stale_for(*node, now) {
+                        silence.insert(*node, stale);
+                    }
                 }
-            }
-            let mut teardown_ready = gate.ready(&tracker.expired(now), now);
+                gate.ready(&tracker.expired(now), now)
+            };
 
             for (node, silent) in absence_gate.silences(&lease_missing(&placed, &leased), now) {
                 // A prior observation's silence is the better (longer-armed)
@@ -246,7 +284,7 @@ pub(crate) fn spawn_lease_watcher(
                     &silence,
                     &teardown_ready,
                     &cells,
-                    &mut tracker,
+                    &tracker,
                     &timing,
                 )
                 .await;
@@ -262,7 +300,7 @@ async fn run_hygiene(
     silence: &HashMap<RuntimeId, Duration>,
     teardown_ready: &[RuntimeId],
     cells: &[PlacementEntry],
-    tracker: &mut LeaseTracker,
+    tracker: &SharedLeaseTracker,
     timing: &SupervisionTiming,
 ) {
     let instances = match instance_registry::list_instances(session).await {
@@ -273,11 +311,14 @@ async fn run_hygiene(
         }
     };
 
-    let node_ttls: HashMap<RuntimeId, Duration> = cells
-        .iter()
-        .filter_map(placement_node)
-        .filter_map(|node| tracker.ttl_of(node).map(|ttl| (node, ttl)))
-        .collect();
+    let node_ttls: HashMap<RuntimeId, Duration> = {
+        let tracker = lock_tracker(tracker);
+        cells
+            .iter()
+            .filter_map(placement_node)
+            .filter_map(|node| tracker.ttl_of(node).map(|ttl| (node, ttl)))
+            .collect()
+    };
     let plan = plan_hygiene(
         silence,
         teardown_ready,
@@ -301,7 +342,7 @@ async fn run_hygiene(
     // reconciliation sweep doesn't mistake it for a deliberate removal.
     let instance_by_sri: HashMap<Sri, &CellInstance> =
         instances.iter().map(|i| (i.sri, i)).collect();
-    for sri in &plan.erase_instances {
+    for sri in &plan.remove_instances {
         if let Some(inst) = instance_by_sri
             .get(sri)
             .filter(|i| i.lineage.parent.is_none())
@@ -341,18 +382,18 @@ async fn run_hygiene(
         };
         match remove_placement(session, sri, *gen_id).await {
             Ok(FenceOutcome::Applied) => {}
-            Ok(outcome) => debug!("hygiene: placement row '{sri}' left alone: {outcome:?}"),
+            Ok(outcome) => debug!("hygiene: placement row '{sri}' was not the newest: {outcome:?}"),
             Err(err) => warn!("hygiene: releasing placement row '{sri}' failed: {err}"),
         }
     }
-    for sri in &plan.erase_instances {
+    for sri in &plan.remove_instances {
         let Some(inst) = instance_by_sri.get(sri) else {
             continue;
         };
-        match instance_registry::erase_instance(session, sri, inst.gen_id).await {
+        match instance_registry::remove_instance(session, sri, inst.gen_id).await {
             Ok(FenceOutcome::Applied) => {}
-            Ok(outcome) => debug!("hygiene: instance row '{sri}' left alone: {outcome:?}"),
-            Err(err) => debug!("hygiene: erasing instance row '{sri}': {err}"),
+            Ok(outcome) => debug!("hygiene: instance row '{sri}' was not the newest: {outcome:?}"),
+            Err(err) => debug!("hygiene: removing instance row '{sri}': {err}"),
         }
     }
     for id in &plan.teardown_nodes {
@@ -363,15 +404,12 @@ async fn run_hygiene(
         }
         // The lease row goes last: while any placement row still exists, the
         // expired lease must remain as evidence (missing-row rule).
-        if let Err(err) = node_lease::delete_lease(session, *id).await {
-            warn!("hygiene: deleting lease '{id}' failed: {err}");
+        match node_lease::delete_lease(session, *id).await {
+            Ok(()) => lock_tracker(tracker).forget(*id),
+            Err(err) => warn!("hygiene: deleting lease '{id}' failed: {err}"),
         }
-        tracker.forget(*id);
     }
 }
-
-/// Wall-clock budget for a self-issued restart deploy.
-const RESTART_DEPLOY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Two-pass confirmation for the reconciliation sweep: a spec is dropped only
 /// after looking orphaned (root gone, no death signal) on two consecutive
@@ -615,7 +653,7 @@ mod tests {
     fn instance(s: Sri, parent: Option<Sri>, detached: bool) -> CellInstance {
         CellInstance {
             sri: s,
-            class_name: "c".into(),
+            class: cell_protocol::BlobHash::of(b"c"),
             gen_id: Gen::from_parts(1, 1),
             lineage: cell_protocol::SpawnLineage {
                 parent,
@@ -677,7 +715,7 @@ mod tests {
             &TIMING,
         );
         assert_eq!(plan.release_cells, vec![p, c, d]);
-        assert_eq!(plan.erase_instances, vec![p, c, d]);
+        assert_eq!(plan.remove_instances, vec![p, c, d]);
         assert_eq!(plan.notes.len(), 1);
         assert_eq!(plan.notes[0].parent, gp);
         assert_eq!(plan.notes[0].cell, p);
@@ -900,14 +938,18 @@ mod tests {
     }
 
     fn root_spec(name: &str, restart_type: RestartType, max: u32) -> CellDeployment {
-        CellDeployment::new(sri(name), CellConfig::Wasm { class: "c".into() }).with_restart(
-            RestartPolicy {
-                restart_type,
-                max_restarts: max,
-                window_ms: 60_000,
-                delay_ms: 1_000,
+        CellDeployment::new(
+            sri(name),
+            CellConfig::Wasm {
+                class: cell_protocol::BlobHash::of(b"c"),
             },
         )
+        .with_restart(RestartPolicy {
+            restart_type,
+            max_restarts: max,
+            window_ms: 60_000,
+            delay_ms: 1_000,
+        })
     }
 
     fn entry_gen(s: Sri, node: RuntimeId, gen_id: Gen) -> PlacementEntry {

@@ -19,7 +19,6 @@ use espflash::flasher::{DeviceInfo, FlashData, FlashSettings, Flasher};
 use espflash::image_format::ImageFormat;
 use espflash::image_format::idf::IdfBootloaderFormat;
 use espflash::target::Chip;
-use myrmic_build::firmware;
 use serialport::SerialPort as _;
 
 /// A board held in its flasher stub, ready to be asked about itself and written
@@ -28,15 +27,6 @@ use serialport::SerialPort as _;
 pub struct Board {
     /// Gone once [`Board::flash`] has handed the port over to the caller.
     flasher: Option<Flasher>,
-}
-
-/// The espflash flavour of a firmware crate's chip.
-pub fn espflash_chip(chip: firmware::Chip) -> Chip {
-    match chip {
-        firmware::Chip::Esp32c5 => Chip::Esp32c5,
-        firmware::Chip::Esp32c6 => Chip::Esp32c6,
-        firmware::Chip::Esp32c61 => Chip::Esp32c61,
-    }
 }
 
 /// An espflash diagnostic as an anyhow error, its cause chain intact and its
@@ -128,13 +118,16 @@ impl Board {
     /// Writes `elf` as an ESP-IDF app image alongside the stock bootloader and
     /// `partition_table` (espflash's built-in table without one), then
     /// hard-resets the board so it boots into it. Returns the port's name, to
-    /// reopen it by once the board is back.
+    /// reopen it by once the board is back. An `elf` built for another chip
+    /// than the board's is refused.
     pub fn flash(
         mut self,
         elf: &[u8],
         partition_table: Option<&Path>,
         info: &DeviceInfo,
     ) -> anyhow::Result<String> {
+        espflash::cli::ensure_chip_compatibility(self.chip(), Some(elf))
+            .map_err(|report| diagnostic(&report))?;
         let settings = FlashSettings::new(None, Some(info.flash_size), None);
         let flash_data = FlashData::new(settings, 0, None, self.chip(), info.crystal_frequency);
         let image = IdfBootloaderFormat::new(elf, &flash_data, partition_table, None, None, None)
@@ -170,13 +163,6 @@ fn backed_out(report: &miette::Report) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_supported_chip_maps_to_its_espflash_namesake() {
-        for chip in myrmic_build::firmware::Chip::ALL {
-            assert_eq!(espflash_chip(chip).to_string(), chip.name());
-        }
-    }
 
     #[test]
     fn a_diagnostic_keeps_its_cause_chain() {

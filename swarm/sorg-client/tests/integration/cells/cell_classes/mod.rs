@@ -4,13 +4,16 @@ mod list;
 mod remove;
 mod resolve;
 
-use cell_protocol::{ArtifactLocation, ArtifactPlatform, ClassArtifact, Sri};
+use cell_protocol::{BlobHash, Sri, class_blob_id, class_registry_scope};
 use claims::assert_ok;
-use db_client::v1::{Client as DbClient, models::path_resolve};
+use db_client::v1::{Client as DbClient, models::blob_resolve};
 use sorg_client::Client as SorgClient;
 
 const CLASS_NAME: &str = "test-cell";
+const OTHER_NAME: &str = "other-cell";
 const DUMMY_BINARY: &[u8] = &[0, 1, 2, 3, 4, 5, 6, 7];
+const OTHER_BINARY: &[u8] = &[10, 11, 12, 13, 14, 15];
+const AOT_BINARY: &[u8] = &[40, 41, 42];
 const INSTANCE_SRI: &str = "test-instance";
 
 fn sorg_client(session: &zenoh::Session) -> SorgClient {
@@ -19,10 +22,10 @@ fn sorg_client(session: &zenoh::Session) -> SorgClient {
 
 /// Seeds a bare instance-registry entry so the "class is in use" checks have an
 /// instance referencing the class, without standing up a full swarm.
-async fn seed_instance(session: &zenoh::Session, sri: &Sri, class_name: &str) {
+async fn seed_instance(session: &zenoh::Session, sri: &Sri, class: BlobHash) {
     let record = cell_protocol::CellInstance {
         sri: *sri,
-        class_name: class_name.to_owned(),
+        class,
         gen_id: cell_protocol::Gen::from_parts(1, 1),
         lineage: cell_protocol::SpawnLineage::default(),
     };
@@ -32,16 +35,15 @@ async fn seed_instance(session: &zenoh::Session, sri: &Sri, class_name: &str) {
     );
 }
 
-async fn blob_at_path(db: &DbClient, location: ArtifactLocation) -> Option<Vec<u8>> {
-    let (scope, path) = location.into_parts();
+/// The blob of class `id`, read the way runtimes load it: by hash.
+async fn class_blob(db: &DbClient, id: BlobHash) -> Option<Vec<u8>> {
     let response = db
-        .read_tx_in(scope.clone(), async |client, tx_id| {
+        .read_tx_in(class_registry_scope(), async |client, tx_id| {
             Ok(client
-                .send(path_resolve::Request {
+                .send(blob_resolve::Request {
                     id: tx_id,
-                    op: path_resolve::Op {
-                        scope,
-                        path,
+                    op: blob_resolve::Op {
+                        blob_id: class_blob_id(id),
                         range: None,
                     },
                 })
@@ -54,16 +56,4 @@ async fn blob_at_path(db: &DbClient, location: ArtifactLocation) -> Option<Vec<u
         .await
         .unwrap();
     response.blob.map(|b| b.blob)
-}
-
-fn wasm(binary: &[u8]) -> ClassArtifact {
-    ClassArtifact::Wasm(binary.to_vec())
-}
-
-fn aot(target: ArtifactPlatform, aot_blob: &[u8], meta_blob: &[u8]) -> ClassArtifact {
-    ClassArtifact::Aot {
-        platform: target,
-        aot_blob: aot_blob.to_vec(),
-        meta_blob: meta_blob.to_vec(),
-    }
 }

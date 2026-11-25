@@ -14,6 +14,8 @@ This page covers configuration through the YAML file. It is structured as top-le
 
 Since Myrmic uses Zenoh as its transport layer. Configure it directly under the `zenoh` key - mode, peer discovery, transport, and connectivity. For the fields Zenoh itself documents, see the [Zenoh default config reference](https://github.com/eclipse-zenoh/zenoh/blob/main/DEFAULT_CONFIG.json5). Myrmic runs a fork of Zenoh, so that document does not list every key a runtime accepts. The fork-only keys are documented here:
 
+The `--connect` and `--listen` flags of [`myrmic runtimes start`](../02_myrmic-cli/04_runtimes/01_start.md) merge into `zenoh.connect.endpoints` and `zenoh.listen.endpoints`, and `--multicast-group` overrides `zenoh.scouting.multicast.address`.
+
 - `scouting/interface_poll_interval` *(optional)* - How often the runtime re-reads the host's network interfaces, in milliseconds. This is what lets a runtime notice that its own IP address changed and re-announce itself without a restart - see [Operating a swarm](../../05_guides/09_operating-a-swarm.md#discovery-identity-and-placement) for what it does and which nodes it does not help. Defaults to `10000`. `0` turns the poll off for the life of the process, and a later change to a running runtime cannot turn it back on. The value must be a non-negative whole number: a float or a negative number is rejected at parse time, so a runtime started with one does not come up, and a write of one to a running runtime is refused.
 
 ## `execution`
@@ -23,7 +25,7 @@ Configures the execution behavior.
 - `mailbox_poll_interval_ms` *(optional)* - How often the runtime checks for new inbound messages, in milliseconds. Defaults to `5000`.
 - `mailbox_batch_size` *(optional)* - Number of event rows fetched per mailbox poll interval. Defaults to `8`.
 - `tags` *(optional)* - Capability tags this runtime advertises. Controls which Cells are placed on this runtime. Tags set here are combined with any additional tags passed via the CLI at startup. Defaults to none.
-- `max_fuel_per_handler` *(optional)* - Compute budget the runtime grants to each handler invocation - limits how many wasm instructions a single handler invocation may execute before it is interrupted. Every invocation gets its own fresh budget, independent of the Cell and of previous invocations. See [External Links](#external-links) for the underlying wasmtime fuel mechanism. Defaults to unlimited.
+- `runner_fuel` *(optional)* - Compute budget the runtime grants to each handler invocation - limits how many wasm instructions a single handler invocation may execute before it is interrupted. Every invocation gets its own fresh budget, independent of the Cell and of previous invocations. See [External Links](#external-links) for the underlying wasmtime fuel mechanism. Defaults to unlimited.
 - `fuel_yield_interval` *(optional)* - Number of fuel units a Cell consumes before yielding to the async scheduler, letting other tasks run. See [External Links](#external-links) for the underlying wasmtime fuel mechanism. Defaults to `1000`.
 - `init_timeout_secs` *(optional)* - How long to wait for a Cell to initialize, in seconds. If exceeded, initialization fails and the entire deployment is rolled back. Defaults to `10.0`.
 

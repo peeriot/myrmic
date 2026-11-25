@@ -29,7 +29,7 @@ myrmic flash --monitor
 ```
 
 `myrmic flash` builds and flashes a firmware crate, owning the partition table.
-Scaffold a pipeline firmware with `myrmic new --firmware esp32c6 --pipeline`, place the
+Scaffold a pipeline firmware with `myrmic signal-layer new --firmware esp32c6`, place the
 pipeline (e.g. `<pipeline-name>.yaml`) in it, and the board defaults to this
 chip's devkit.
 

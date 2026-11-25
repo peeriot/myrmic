@@ -14,11 +14,9 @@ use pipeline_codegen::pipeline::PipelineFile;
 use include_dir::{Dir, include_dir};
 
 pub mod backend;
-mod linux_manifest;
 
 pub use backend::LinuxChipBackend;
 use backend::validate_linux_manifest;
-use linux_manifest::parse_linux_overlay;
 
 // ── Public validation API ──────────────────────────────────────────────────
 
@@ -74,15 +72,12 @@ pub(crate) fn generate_pipeline_module_from_roots(
     let driver_schemas = load_schemas_for_drivers(drivers_root, &manifest, &pipeline)?;
     let step_schemas = load_schemas_for_steps(steps_root, &pipeline)?;
 
-    // Parse the Linux overlay for backend-specific fields.
-    let overlay =
-        parse_linux_overlay(&manifest_yaml).with_context(|| "parsing Linux manifest overlay")?;
-    let backend = LinuxChipBackend::with_overlay(overlay);
+    let backend = LinuxChipBackend::new();
 
     // Collect validation errors.
     let mut errors = pipeline_codegen::manifest::validate_manifest(&manifest);
-    // Linux-specific manifest validation (SPI rejection, /dev/i2c-* paths).
-    errors.extend(validate_linux_manifest(&manifest, Some(&manifest_yaml)));
+    // Linux-specific manifest validation (device nodes, chip names).
+    errors.extend(validate_linux_manifest(&manifest));
     errors.extend(
         pipeline_codegen::validate::validate_pipeline_against_manifest(
             &pipeline,
@@ -434,9 +429,8 @@ fn generate_cargo_toml(
 
     use pipeline_backend_api::manifest::BusTransport;
 
-    // The GPIO/PWM shim is needed when the manifest carries output devices
-    // (their pins are opened through it in `BoardPeripherals`) or SPI devices
-    // (their chip-select lines are).
+    // The GPIO/PWM shim opens the pins of output devices, the chip-selects of
+    // SPI devices and any named device pins.
     let has_output_devices = manifest.devices.iter().any(|d| {
         driver_schemas
             .get(&d.driver)
@@ -447,7 +441,8 @@ fn generate_cargo_toml(
         .buses
         .values()
         .any(|b| b.transport == BusTransport::Spi);
-    let gpio_shim_dep = if has_output_devices || has_spi_buses {
+    let has_device_pins = manifest.devices.iter().any(|d| !d.pins.is_empty());
+    let gpio_shim_dep = if has_output_devices || has_spi_buses || has_device_pins {
         "linux-gpio-shim       = { path = \"../../../swarm/signal-layer/linux-gpio-shim\" }\n"
     } else {
         ""
@@ -514,6 +509,9 @@ fn generate_cargo_toml(
         );
     }
 
+    // tokio: only what the generated crate calls (`#[tokio::main]`, `spawn`,
+    // `time::interval`, `signal::ctrl_c`); its tests need nothing more. The
+    // runtime crates declare their own features.
     format!(
         r#"[workspace]
 
@@ -532,14 +530,13 @@ signal-layer-linux-rt = {{ path = "../../../swarm/signal-layer/signal-layer-linu
 linux-i2c-shim        = {{ path = "../../../swarm/signal-layer/linux-i2c-shim" }}
 {gpio_shim_dep}{spi_shim_dep}signal-layer-core     = {{ path = "../signal-layer-core" }}
 signal-layer-types    = {{ package = "myrmic-signal-layer-types", path = "../signal-layer-types" }}
-tokio                 = {{ version = "1", features = ["full"] }}
+tokio                 = {{ version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }}
 tokio-stream          = {{ version = "0.1", features = ["time"] }}
 critical-section      = {{ version = "1", features = ["std"] }}
 log                   = {{ version = "0.4", default-features = false }}
 env_logger            = "0.11"
 {driver_deps}{step_deps}
 [dev-dependencies]
-tokio    = {{ version = "1", features = ["full"] }}
 tempfile = "3"
 "#
     )

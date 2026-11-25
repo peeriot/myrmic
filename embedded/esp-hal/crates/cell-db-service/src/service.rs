@@ -4,7 +4,8 @@ use core::future::pending;
 
 use cell_protocol::supervision::{FencingState, LeaseTracker, WatchedCell};
 use cell_protocol::{
-    DEPLOYMENT_TABLE, MESSAGES_TABLE, Sri, WatchdogResetReport, scope_of_cell, scope_of_deployment,
+    DEPLOYMENT_TABLE, Gen, MESSAGES_TABLE, Sri, WatchdogResetReport, scope_of_cell,
+    scope_of_deployment,
 };
 use db_client::application::Application;
 use db_client::v1::models::{Cursor, Id, Subject};
@@ -39,6 +40,10 @@ fn subscription_fallback_period(session_lease: Duration) -> Duration {
     Duration::from_secs(session_lease.as_secs() + 5)
 }
 const EVENTS_POLL_PERIOD: Duration = Duration::from_millis(250);
+/// Cadence while an event has more batches pending or the cell's channel is
+/// full: one select turn for deploys, commands and the cell's own db calls,
+/// then straight back to the backlog.
+const EVENTS_CATCH_UP_PERIOD: Duration = Duration::from_millis(100);
 /// Retry delay for a command deferred by a full cell message channel. No poke announces free space,
 /// so without it the command would wait out the full mailbox fallback period.
 const COMMAND_DEFERRED_RETRY: Duration = Duration::from_millis(100);
@@ -100,6 +105,7 @@ pub async fn service(
     let mut last_deploy_id = None;
     let mut subscribed_events: Vec<(Event, Cursor)> = Vec::new();
     let mut awaiting_deletion_confirmation: bool = false;
+    let mut pending_deploy: Option<deploy::PendingDeploy> = None;
 
     let node_lease_renewal_interval = node_lease_renewal_interval.clamp(
         core::time::Duration::from_secs(5),
@@ -123,7 +129,7 @@ pub async fn service(
     let mut watched: Option<WatchedCell> = None;
     let mut fencing = FencingState::new();
     let mut lease_tracker = LeaseTracker::new();
-    let mut owed_cleanup: Vec<Sri> = Vec::new();
+    let mut owed_cleanup: Vec<(Sri, Gen)> = Vec::new();
     // Rows left behind by a previous boot are swept once per boot.
     let mut swept = false;
     // A boot returns this node to its flashed tags: the overlay a previous run
@@ -188,11 +194,20 @@ pub async fn service(
         )
         .await;
 
-        // Deployment: wait for a subscription poke, otherwise the fallback timer.
-        let deployment_fut = wait_poke_or_fallback(
-            deployment_sub.as_mut(),
-            next_deployment_fallback,
-            "deployment",
+        // Deployment: a subscription poke, the fallback timer, or the runtime freeing up.
+        let deployment_fut = select(
+            wait_poke_or_fallback(
+                deployment_sub.as_mut(),
+                next_deployment_fallback,
+                "deployment",
+            ),
+            async {
+                if pending_deploy.is_none() {
+                    pending::<()>().await;
+                } else {
+                    deploy::runtime_ready().await;
+                }
+            },
         );
 
         // Mailbox: park while no cell is deployed. While a command is in flight, wait for the
@@ -229,19 +244,24 @@ pub async fn service(
         .await
         {
             // Deployment notification (or fallback)
-            Either6::First(()) => {
+            Either6::First(Either::First(())) => {
                 deploy::handle(
                     &client,
                     zid,
                     &mut last_deploy_id,
-                    wasm_transfer,
                     cell.as_ref(),
                     native.is_some(),
                     &mut awaiting_deletion_confirmation,
-                    &mut watched,
+                    watched.as_ref(),
+                    &mut pending_deploy,
                 )
                 .await;
                 next_deployment_fallback = Instant::now() + subscription_fallback_period;
+            }
+            Either6::First(Either::Second(())) => {
+                if let Some(pending) = pending_deploy.take() {
+                    deploy::run_pending(&client, pending, wasm_transfer, &mut watched).await;
+                }
             }
             Either6::Second(db_client_req) => {
                 requests::handle(
@@ -293,8 +313,13 @@ pub async fn service(
             }
             // Subscribed-event polling
             Either6::Fourth(()) => {
-                next_events_poll = Instant::now() + EVENTS_POLL_PERIOD;
-                forward_events(&client, &mut subscribed_events).await;
+                let backlog = forward_events(&client, &mut subscribed_events).await;
+                next_events_poll = Instant::now()
+                    + if backlog {
+                        EVENTS_CATCH_UP_PERIOD
+                    } else {
+                        EVENTS_POLL_PERIOD
+                    };
             }
             // Node maintenance: exec re-registration and lease renewal,
             // whichever is due (the timer fires at the earlier deadline).
@@ -512,12 +537,32 @@ async fn forward_next_command(
     true
 }
 
-/// Drains every subscribed event with new entries into the cell message channel.
-async fn forward_events(client: &Client, subscribed_events: &mut Vec<(Event, Cursor)>) {
-    let sender = CELL_MSG_CHANNEL.sender();
-    for cell_msg in mailbox::poll_for_events(client, subscribed_events).await {
-        sender.send(cell_msg).await;
+/// Hands each subscribed event's next batch to the cell without ever waiting on
+/// it — this runs on the task that serves the handler's own db calls, so
+/// blocking on the cell would deadlock it. A full channel leaves the cursor at
+/// the first undelivered entry, which is read again next turn. Returns whether
+/// a backlog remains: a full batch, or entries held back by a full channel.
+async fn forward_events(client: &Client, subscribed_events: &mut [(Event, Cursor)]) -> bool {
+    let mut backlog = false;
+    for (event, cursor) in subscribed_events {
+        let batch = mailbox::read_events(client, event, cursor).await;
+        backlog |= batch.len() == mailbox::EVENT_BATCH;
+        for (id, payload) in batch {
+            if let Some(cell_msg) = mailbox::decode_event(event, &id, &payload) {
+                // Leave the last slot free, as timer ticks do, so a busy event
+                // cannot starve the command hand-over.
+                if CELL_MSG_CHANNEL.free_capacity() <= 1
+                    || CELL_MSG_CHANNEL.try_send(cell_msg).is_err()
+                {
+                    log::debug!("[db-client] events deferred — cell message channel full");
+                    backlog = true;
+                    break;
+                }
+            }
+            *cursor = Cursor::After(id);
+        }
     }
+    backlog
 }
 
 /// Declares a DB subscription, logging and returning `None` on failure so the caller can degrade to

@@ -1,10 +1,15 @@
-use cell_protocol::PlacementKind;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use cell_protocol::{
+    BlobHash, CapabilityTag, ExecRuntimeInfo, ExecutionCapabilities, NodeLease, PlacementKind,
+    RuntimeId,
+};
 use claims::{assert_err, assert_ok};
 use sorg_common::{
     CellConfig, CellDeployment, DeployRequest, DeploymentError, HttpBridgeApi, RejectionReason,
-    RequirementTags, check_tag_requirements,
+    RequirementTags, check_tag_requirements, exec_registry, node_lease,
 };
-use sorg_tests::{register_fixture_class, swarm_config};
+use sorg_tests::{Platform, register_fixture_class, scope_test_multicast, swarm_config};
 
 use crate::integration::{spawn_test_app_with_swarm, to_sri};
 
@@ -16,13 +21,8 @@ const TAG_CPU: &str = "cpu";
 const TAG_SENSOR: &str = "sensor";
 const TAG_FPGA: &str = "fpga";
 
-fn wasm_cell(sri: &str) -> CellDeployment {
-    CellDeployment::new(
-        to_sri(sri),
-        CellConfig::Wasm {
-            class: "tagged_cell.wasm".to_owned(),
-        },
-    )
+fn wasm_cell(sri: &str, class: BlobHash) -> CellDeployment {
+    CellDeployment::new(to_sri(sri), CellConfig::Wasm { class })
 }
 
 fn deploy_request(cells: Vec<CellDeployment>) -> DeployRequest {
@@ -56,10 +56,11 @@ async fn single_tag_match() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let tags = RequirementTags::new(vec![TAG_GPU]);
-    let request = deploy_request(vec![wasm_cell(CELL_SRI).with_tags(tags.clone())]);
+    let request = deploy_request(vec![wasm_cell(CELL_SRI, class).with_tags(tags.clone())]);
 
     // Act — deploy an app with one gpu-tagged cell
     let response = assert_ok!(sorg.deploy_cells(request).await);
@@ -95,10 +96,11 @@ async fn multi_tag_and_match() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let tags = RequirementTags::new(vec![TAG_GPU, TAG_SENSOR]);
-    let request = deploy_request(vec![wasm_cell(CELL_SRI).with_tags(tags.clone())]);
+    let request = deploy_request(vec![wasm_cell(CELL_SRI, class).with_tags(tags.clone())]);
 
     // Act — deploy an app with one cell requiring both tags
     assert_ok!(sorg.deploy_cells(request).await);
@@ -126,9 +128,10 @@ async fn untagged_placeable_anywhere() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
-    let request = deploy_request(vec![wasm_cell(CELL_SRI)]);
+    let request = deploy_request(vec![wasm_cell(CELL_SRI, class)]);
 
     // Act — deploy an untagged cell
     assert_ok!(sorg.deploy_cells(request).await);
@@ -150,9 +153,10 @@ async fn untagged_cells_spread_across_nodes() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
-    let request = deploy_request(vec![wasm_cell("cell_a"), wasm_cell("cell_b")]);
+    let request = deploy_request(vec![wasm_cell("cell_a", class), wasm_cell("cell_b", class)]);
 
     // Act — deploy two untagged cells
     assert_ok!(sorg.deploy_cells(request).await);
@@ -182,12 +186,13 @@ async fn untagged_spreads_off_tagged_node() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let gpu_tags = RequirementTags::new(vec![TAG_GPU]);
     let request = deploy_request(vec![
-        wasm_cell("pinned").with_tags(gpu_tags.clone()),
-        wasm_cell("free"),
+        wasm_cell("pinned", class).with_tags(gpu_tags.clone()),
+        wasm_cell("free", class),
     ]);
 
     // Act — deploy one pinned + one free cell
@@ -226,10 +231,11 @@ async fn unplaceable_tag_absent() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let request = deploy_request(vec![
-        wasm_cell(CELL_SRI).with_tags(RequirementTags::new(vec![TAG_FPGA])),
+        wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_FPGA])),
     ]);
 
     // Act — deploy a cell requiring a tag no runtime has
@@ -271,10 +277,11 @@ async fn unplaceable_and_not_satisfiable() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let request = deploy_request(vec![
-        wasm_cell(CELL_SRI).with_tags(RequirementTags::new(vec![TAG_GPU, TAG_CPU])),
+        wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_GPU, TAG_CPU])),
     ]);
 
     // Act — deploy a cell requiring both tags (no single runtime has both)
@@ -359,13 +366,14 @@ async fn standalone_single_tag_match() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let tags = RequirementTags::new(vec![TAG_GPU]);
 
     // Act — load a standalone cell with a gpu tag requirement
     assert_ok!(
-        sorg.deploy_wasm_cell(to_sri(CELL_SRI), "tagged_cell.wasm", tags.clone())
+        sorg.deploy_wasm_cell(to_sri(CELL_SRI), class, tags.clone())
             .await
     );
 
@@ -393,13 +401,14 @@ async fn standalone_unplaceable() {
     register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
 
     let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     // Act — load a standalone cell requiring a tag no runtime has
     let err = assert_err!(
         sorg.deploy_wasm_cell(
             to_sri(CELL_SRI),
-            "tagged_cell.wasm",
+            class,
             RequirementTags::new(vec![TAG_FPGA])
         )
         .await,
@@ -425,5 +434,100 @@ async fn standalone_unplaceable() {
     assert!(
         assert_ok!(sorg.get_placement(&to_sri(CELL_SRI)).await).is_none(),
         "cell should not be registered after failed standalone load"
+    );
+}
+
+// Case 11: a peer whose lease `seq` is 5 min behind the leader's wall clock
+// is still alive; placement must judge it on the leader's own observation
+// clock, not by comparing the peer's `seq` against local time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn deploy_pinned_to_a_peer_behind_the_leaders_clock_selects_that_peer() {
+    const TAG_PEER: &str = "nodea";
+    const SKEW_MS: u64 = 300_000;
+    const RENEW_EVERY: Duration = Duration::from_secs(2);
+
+    // Arrange - single orchestrating node plus a fake peer with no deploy handler
+    let swarm = swarm_config!("cells/orch_only.jsonnet");
+    register_fixture_class("../../tests/fixtures/dummy_cell", "tagged_cell", &swarm).await;
+    let test_app = spawn_test_app_with_swarm(swarm).await;
+    let class = test_app.class_id("tagged_cell.wasm").await;
+
+    let mut config = zenoh::Config::default();
+    scope_test_multicast(&mut config);
+    let peer_session = zenoh::open(config).await.expect("peer session should open");
+    let peer_id = RuntimeId::from(peer_session.zid());
+    let info = ExecRuntimeInfo::new(
+        peer_session.zid(),
+        Some("skewed-peer".to_owned()),
+        ExecutionCapabilities::new(
+            Platform::Linux
+                .get_tags()
+                .into_iter()
+                .chain([TAG_PEER])
+                .map(CapabilityTag::new)
+                .collect(),
+        ),
+    );
+    assert_ok!(exec_registry::register_exec(&peer_session, &info).await);
+
+    let now_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock is after the epoch")
+            .as_millis(),
+    )
+    .expect("millis fit in u64");
+    let renewals = tokio::spawn({
+        let session = peer_session.clone();
+        async move {
+            // Strictly increasing seq, always about 5 min in the leader's past.
+            let mut n = 0u64;
+            loop {
+                let lease = NodeLease {
+                    device_id: peer_id.to_string(),
+                    seq: now_ms - SKEW_MS + n * 2_000,
+                    ttl_ms: 45_000,
+                };
+                node_lease::renew_lease(&session, peer_id, &lease, Duration::from_secs(3_600))
+                    .await
+                    .expect("fake peer lease renewal should succeed");
+                tokio::time::sleep(RENEW_EVERY).await;
+                n += 1;
+            }
+        }
+    });
+
+    let mut client_config = sorg_client::Config::default();
+    client_config.set_query_timeout(Duration::from_secs(5));
+    let sorg = sorg_client::Client::new_with_config(test_app.session().clone(), client_config);
+
+    // Act - deploy a cell pinned to the peer's tag until placement stops
+    // rejecting it; the first reads see the peer's seq before it advances
+    let deadline = Instant::now() + Duration::from_secs(40);
+    let err = loop {
+        let request = deploy_request(vec![
+            wasm_cell(CELL_SRI, class).with_tags(RequirementTags::new(vec![TAG_PEER])),
+        ]);
+        let err = assert_err!(
+            sorg.deploy_cells(request).await,
+            "the fake peer has no deploy handler"
+        );
+        let rejected_at_placement = matches!(
+            err,
+            DeploymentError::Infeasible(_) | DeploymentError::NoRuntimesAvailable
+        );
+        if !rejected_at_placement || Instant::now() >= deadline {
+            break err;
+        }
+    };
+    renewals.abort();
+
+    // Assert - placement selected the peer, so the deploy fails only in the
+    // deploy phase (the fake peer never answers), not at placement
+    assert!(
+        matches!(&err, DeploymentError::DeploymentFailed(failures)
+            if !failures.is_empty() && failures.iter().all(|failure| failure.runtime == peer_id)),
+        "placement must select the live peer despite its lagging lease seq; \
+         expected a deploy-phase failure, got: {err:?}"
     );
 }

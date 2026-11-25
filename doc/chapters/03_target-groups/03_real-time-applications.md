@@ -43,6 +43,6 @@ Partition Tolerance uses fencing to allow one active serving role and adds ackno
 
 ## See also
 
-- [Target Groups](../03_target-groups.md) - the other entry points Myrmic supports
+- [Application Domains](../03_target-groups.md) - the other entry points Myrmic supports
 - [Modelling Applications](../02_why-myrmic/03_modelling-applications.md) - how to think in Cells when designing an application
 - [Guarantees](../08_guarantees.md) - what the current release promises, and what it doesn't yet

@@ -13,10 +13,10 @@ for the one-time setup.
 ## Step 1 - Scaffold the firmware pipeline
 
 On embedded, the pipeline is compiled *into the firmware* rather than run as its own process.
-`myrmic new --firmware` scaffolds that firmware, and `--pipeline` gives it a Signal Layer pipeline:
+`myrmic signal-layer new --firmware` scaffolds that firmware with the pipeline compiled in:
 
 ```bash
-myrmic new --firmware=esp32c6 --pipeline ~/sl-tutorial/first-steps-c6
+myrmic signal-layer new --firmware=esp32c6 ~/sl-tutorial/first-steps-c6
 cd ~/sl-tutorial/first-steps-c6
 ```
 

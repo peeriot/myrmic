@@ -35,8 +35,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "ads1115-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
+ "embassy-time",
  "embedded-hal-async",
  "embedded-hal-mock",
  "futures",
@@ -232,8 +233,6 @@ dependencies = [
  "anyhow",
  "clap",
  "owo-colors",
- "sha2 0.10.9",
- "wasm-storage",
  "which",
 ]
 
@@ -427,7 +426,7 @@ dependencies = [
  "futures-lite",
  "parking",
  "polling",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "slab",
  "windows-sys 0.61.2",
 ]
@@ -883,8 +882,9 @@ dependencies = [
 
 [[package]]
 name = "bme280-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
+ "embassy-time",
  "embedded-hal-async",
  "embedded-hal-mock",
  "futures",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "bmp180-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal-async",
  "embedded-hal-mock",
@@ -965,7 +965,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.3",
+ "heapless 0.9.4",
 ]
 
 [[package]]
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "cadence"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "signal-layer-core",
 ]
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "ccs811-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embassy-time",
  "embedded-hal 1.0.0",
@@ -1131,8 +1131,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cell-ble-sensor-client"
+version = "0.7.1"
+dependencies = [
+ "myrmic-sdk",
+ "serde",
+]
+
+[[package]]
 name = "cell-blinky-periodic-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "myrmic-sdk",
@@ -1142,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "cell-cb-receiver-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1150,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "cell-cb-sender-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1158,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "cell-counter-caller-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "postcard",
@@ -1167,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "cell-counter-delay-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "postcard",
@@ -1175,7 +1183,7 @@ dependencies = [
 
 [[package]]
 name = "cell-counter-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1183,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "cell-db-service"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-protocol",
  "cfg-match",
@@ -1192,6 +1200,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "esp-hal",
+ "esp-heap",
  "esp-watchdog",
  "log",
  "myrmic-common",
@@ -1207,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "cell-docs-counter"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1215,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "cell-event-pub-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1223,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "cell-event-sub-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1231,14 +1240,14 @@ dependencies = [
 
 [[package]]
 name = "cell-failing-init-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-ff-receiver-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1246,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "cell-ff-sender-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1254,14 +1263,14 @@ dependencies = [
 
 [[package]]
 name = "cell-gateway-mount-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-mailbox"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-protocol",
  "db-client",
@@ -1277,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "cell-nested-caller-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1285,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "cell-nested-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1293,28 +1302,28 @@ dependencies = [
 
 [[package]]
 name = "cell-no-init-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-periodic-fixed-delay-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-periodic-macro-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-protocol"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "db-commons",
  "myrmic-common",
@@ -1332,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "cell-room-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "module-examples-common",
  "myrmic-sdk",
@@ -1340,14 +1349,14 @@ dependencies = [
 
 [[package]]
 name = "cell-runtime-tags-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-seq-helper-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1355,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "cell-seq-main-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "serde",
@@ -1363,21 +1372,21 @@ dependencies = [
 
 [[package]]
 name = "cell-spawn-child"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-spawner"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-thermometer"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "myrmic-sdk-macros",
@@ -1386,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "cell-thermostat-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "postcard",
@@ -1395,21 +1404,21 @@ dependencies = [
 
 [[package]]
 name = "cell-timer-cmd-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-timer-init-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "cell-wdt-selftest-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "postcard",
@@ -1418,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "cell-wdt-spin-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "postcard",
@@ -1813,9 +1822,9 @@ dependencies = [
 
 [[package]]
 name = "cookie"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+checksum = "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a"
 dependencies = [
  "percent-encoding",
  "time",
@@ -1920,27 +1929,27 @@ dependencies = [
 
 [[package]]
 name = "cranelift-assembler-x64"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6d504c8c7ba3f3accaf8e98b7096beb98e1a271404357744c7e9e730c6865ff"
+checksum = "aecefa88696b62f833cc0c997d19c93246b0268e2aaf23e0e8692e527f6de088"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
 
 [[package]]
 name = "cranelift-assembler-x64-meta"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c065757905596bc06e82969ebd7b92d691b7fd710a7e9e8181ae0c30dab588d0"
+checksum = "1391a2546f5edf06a0ff5e9430d73c2713fd536aefec53200dc21846d1467f53"
 dependencies = [
  "cranelift-srcgen",
 ]
 
 [[package]]
 name = "cranelift-bforest"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca7162cd4d4fc5f9f2f88d1459d939882203d93a8c5a19ef2c405b2e82ef13f"
+checksum = "9528915fbc2c950702329e08c6d72aaff8ece9b7ecdbd225742825c09a445227"
 dependencies = [
  "cranelift-entity",
  "wasmtime-internal-core",
@@ -1948,9 +1957,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ec2ba2d4f3d959ec4023a10266c3dcfb28381d1938d507a9a5e1abb78bbcc88"
+checksum = "9dd69a6db85c1bcff989809e0e0b3b06506425f32b545c46aeafda5fe7775d6a"
 dependencies = [
  "serde",
  "serde_derive",
@@ -1959,9 +1968,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51a64cb821d5fed56bdd6053acd36fa928cd82b70bf6b19b8b14b8b27d047b9a"
+checksum = "24c2db6c26cd96393cf785c4b51b900738963cc7422aa0045416a7641ae2f6cd"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -1990,9 +1999,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-meta"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "142be1e267a7497ba3c2b5a829eaf5387b92b9bcdba6e0a6020f1ffccae7f2b8"
+checksum = "e284270142e7f1dcb73a992a62a8b3716b4062a65a52d8f2732c6ebf6f7f342f"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -2003,24 +2012,24 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-shared"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e41f75410da6cce8601330137d73718f679db81cb790a33de3871b5c90a0de3"
+checksum = "6595667b7d505cf85d5bdd014e6f57ad6128183238f8e372319d9384782472f5"
 
 [[package]]
 name = "cranelift-control"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c2616c6d01c14921ac9289ef65eb7702d9c760dfdc4537a8ee5bf38ea2832c6"
+checksum = "f26ffdbfcd24c3833d730849e6d132af34a400a2b89b44446015c01eecbea21d"
 dependencies = [
  "arbitrary",
 ]
 
 [[package]]
 name = "cranelift-entity"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a03e8b44c4877cf2fb21e5788d514af6fd291a066ed9ae37adf114a25fecb4aa"
+checksum = "9ffb08ccd8a77fb31cdbbda2afa2333d8f85299b1bc0d1c194259ba66d160d74"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -2030,9 +2039,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "366ff7cb014bd08752210eba55a650969f8db9b52670d69d2ea0b23e1e9e3edf"
+checksum = "b447e4f2bb44b1188185a77f478e5a91b7723a40b3b58c3e2d5b26df2ed5a665"
 dependencies = [
  "cranelift-codegen",
  "hashbrown 0.17.1",
@@ -2043,15 +2052,15 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea6526ebf9064fff8ce3b1e26afad7027f9e6bb0e45d2b9200e4cbab8343345"
+checksum = "2f0989e943f3a9d41989595826bba544df9fda64bcddd4df0c06fb2e26af3cb3"
 
 [[package]]
 name = "cranelift-native"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b44d323f3e5108a8a5bc61f3acd227285ece066e19afe9aece211d66b34a64ea"
+checksum = "5fa10df59e776c42dae5b6ba5216ba5321707a2136abd2219e615c54b234fc1b"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -2060,9 +2069,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-srcgen"
-version = "0.136.3"
+version = "0.136.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc173168f291ff3b95b5d0769d6a05b1eaef5e6d74c2600affab8396b4e7b420"
+checksum = "36508559c8839a8b6ee091f9deaa9cfe620a82f1abb5e358a0a0c65290583622"
 
 [[package]]
 name = "crc"
@@ -2236,7 +2245,7 @@ dependencies = [
  "document-features",
  "mio",
  "parking_lot",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "signal-hook",
  "signal-hook-mio",
  "winapi",
@@ -2524,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "db"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -2560,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "db-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "argh",
  "db-client",
@@ -2574,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "db-client"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "critical-section",
  "db-commons",
@@ -2599,7 +2608,7 @@ dependencies = [
 
 [[package]]
 name = "db-commons"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "hex",
@@ -2944,16 +2953,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "directories-next"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "339ee130d97a610ea5a5872d2bbb130fdf68884ff09d3028b81bec8a1ac23bbc"
-dependencies = [
- "cfg-if",
- "dirs-sys-next",
-]
-
-[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2970,19 +2969,8 @@ checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users 0.5.3",
+ "redox_users",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "dirs-sys-next"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
-dependencies = [
- "libc",
- "redox_users 0.4.6",
- "winapi",
 ]
 
 [[package]]
@@ -3054,7 +3042,7 @@ dependencies = [
 
 [[package]]
 name = "dummy_cell"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "myrmic-sdk-macros",
@@ -3261,7 +3249,7 @@ dependencies = [
  "embassy-time",
  "embedded-io-async 0.7.0",
  "embedded-nal-async",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "managed",
  "smoltcp",
 ]
@@ -3312,7 +3300,7 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "futures-core",
  "futures-sink",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "log",
 ]
 
@@ -3351,7 +3339,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "168297bf80aaf114b3c9ad589bf38b01b3009b9af7f97cd18086c5bbf96f5693"
 dependencies = [
  "embassy-executor-timer-queue",
- "heapless 0.9.3",
+ "heapless 0.9.4",
 ]
 
 [[package]]
@@ -3520,7 +3508,7 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "generic-array 0.14.7",
  "heapless 0.6.1",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "hkdf",
  "hmac",
  "p256",
@@ -3550,6 +3538,26 @@ dependencies = [
  "rustversion",
  "scopeguard",
  "simdutf8",
+]
+
+[[package]]
+name = "enum-map"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4532960034c15ba2f55e9eee631040ecc473c32e6c4b200828c759840f13a06"
+dependencies = [
+ "enum-map-derive",
+]
+
+[[package]]
+name = "enum-map-derive"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7127272f64b3e098f7d81f350d672081b879bff896d219c42370dc858b1af9ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3658,7 +3666,7 @@ dependencies = [
 [[package]]
 name = "esp-alloc"
 version = "0.10.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "allocator-api2 0.3.1",
  "document-features",
@@ -3673,13 +3681,13 @@ dependencies = [
 [[package]]
 name = "esp-backtrace"
 version = "0.19.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "esp-config",
  "esp-metadata-generated 0.5.0",
  "esp-println",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "riscv",
  "xtensa-lx",
 ]
@@ -3687,7 +3695,7 @@ dependencies = [
 [[package]]
 name = "esp-bootloader-esp-idf"
 version = "0.5.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "esp-config",
@@ -3702,7 +3710,7 @@ dependencies = [
 
 [[package]]
 name = "esp-codegen"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "include_dir",
@@ -3716,7 +3724,7 @@ dependencies = [
 
 [[package]]
 name = "esp-common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-db-service",
  "embassy-futures",
@@ -3739,7 +3747,7 @@ dependencies = [
 [[package]]
 name = "esp-config"
 version = "0.8.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "esp-metadata-generated 0.5.0",
@@ -3750,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "esp-firmware"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-protocol",
  "critical-section",
@@ -3766,6 +3774,7 @@ dependencies = [
  "myrmic-common",
  "myrmic-signal-layer-types",
  "serde",
+ "serde_json",
  "signal-layer-core",
  "static_cell",
  "wasm-runtime",
@@ -3774,7 +3783,7 @@ dependencies = [
 
 [[package]]
 name = "esp-firmware-build"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "esp-codegen",
  "esp-mmu-consts",
@@ -3785,7 +3794,7 @@ dependencies = [
 
 [[package]]
 name = "esp-firmware-macros"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3795,7 +3804,7 @@ dependencies = [
 [[package]]
 name = "esp-hal"
 version = "1.2.0-rc.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "bitfield",
  "bytemuck",
@@ -3853,7 +3862,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-procmacros"
 version = "0.23.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "object 0.37.3",
@@ -3866,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "esp-heap"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "esp-alloc",
  "esp-hal",
@@ -3894,7 +3903,7 @@ dependencies = [
 [[package]]
 name = "esp-metadata-generated"
 version = "0.5.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 
 [[package]]
 name = "esp-metadata-generated"
@@ -3904,7 +3913,7 @@ checksum = "911aadae41ec99104efa865bd0b6e486b4b735999f9b571963748a46d16495ab"
 
 [[package]]
 name = "esp-mmu"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cfg-match",
  "critical-section",
@@ -3918,11 +3927,11 @@ dependencies = [
 
 [[package]]
 name = "esp-mmu-consts"
-version = "0.7.0"
+version = "0.7.1"
 
 [[package]]
 name = "esp-network"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "edge-nal",
  "edge-nal-embassy",
@@ -3954,7 +3963,7 @@ dependencies = [
  "esp-hal",
  "esp-radio",
  "flate2",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "log",
  "num_enum",
  "portable-atomic",
@@ -3972,7 +3981,7 @@ dependencies = [
 [[package]]
 name = "esp-phy"
 version = "0.2.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "embassy-sync 0.8.0",
@@ -3992,7 +4001,7 @@ dependencies = [
 [[package]]
 name = "esp-println"
 version = "0.17.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "esp-metadata-generated 0.5.0",
@@ -4004,7 +4013,7 @@ dependencies = [
 [[package]]
 name = "esp-radio"
 version = "1.0.0-beta.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "allocator-api2 0.3.1",
  "bt-hci",
@@ -4039,7 +4048,7 @@ dependencies = [
  "esp32c5",
  "esp32c6",
  "esp32c61",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "instability",
  "log",
  "num-derive",
@@ -4051,7 +4060,7 @@ dependencies = [
 [[package]]
 name = "esp-radio-rtos-driver"
 version = "0.3.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "esp-sync",
  "portable-atomic",
@@ -4060,7 +4069,7 @@ dependencies = [
 [[package]]
 name = "esp-riscv-rt"
 version = "0.15.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "riscv",
@@ -4070,7 +4079,7 @@ dependencies = [
 [[package]]
 name = "esp-rom-sys"
 version = "0.1.5"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "esp-metadata-generated 0.5.0",
@@ -4082,7 +4091,7 @@ dependencies = [
 [[package]]
 name = "esp-rtos"
 version = "0.3.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "allocator-api2 0.3.1",
  "defmt 1.1.1",
@@ -4107,7 +4116,7 @@ dependencies = [
 [[package]]
 name = "esp-storage"
 version = "0.9.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "esp-hal",
@@ -4123,7 +4132,7 @@ dependencies = [
 [[package]]
 name = "esp-sync"
 version = "0.3.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "embassy-sync 0.6.2",
@@ -4136,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "esp-watchdog"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-protocol",
  "critical-section",
@@ -4388,21 +4397,21 @@ dependencies = [
 
 [[package]]
 name = "event_publish"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "event_subscribe"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "event_subscribe_b"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
@@ -4415,7 +4424,7 @@ checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
 name = "fan-curve"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-signal-layer-types",
  "signal-layer-core",
@@ -4468,7 +4477,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "filestore-client"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "claims",
  "db-client",
@@ -4499,7 +4508,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "firmware-examples"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embassy-executor",
  "embassy-time",
@@ -4603,9 +4612,9 @@ dependencies = [
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -4958,7 +4967,7 @@ dependencies = [
 
 [[package]]
 name = "gpio-output-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "log",
@@ -4967,7 +4976,7 @@ dependencies = [
 
 [[package]]
 name = "gpio-output-feedback-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "gpio-output-driver",
@@ -5132,9 +5141,9 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
+checksum = "411fdef4df93751117bd9ef8caa0e7f99c65dafec5bd84313eb8e2fdd75e32f2"
 dependencies = [
  "defmt 1.1.1",
  "hash32 0.3.1",
@@ -5418,7 +5427,7 @@ dependencies = [
 
 [[package]]
 name = "hysteresis"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-signal-layer-types",
  "signal-layer-core",
@@ -5730,7 +5739,7 @@ dependencies = [
 
 [[package]]
 name = "introspection-client"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "claims",
@@ -5746,7 +5755,7 @@ dependencies = [
 
 [[package]]
 name = "introspection-common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -6297,7 +6306,7 @@ checksum = "2b23ac50abb8261cb38c6e2a7192d3302e0836dac1628f6a93b82b4fad185897"
 
 [[package]]
 name = "linux-codegen"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "include_dir",
@@ -6326,16 +6335,18 @@ dependencies = [
 
 [[package]]
 name = "linux-gpio-shim"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "linux-embedded-hal",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
 name = "linux-i2c-shim"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -6357,7 +6368,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "linux-spi-shim"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -6439,7 +6450,7 @@ dependencies = [
 
 [[package]]
 name = "lsm6dso32-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embassy-time",
  "embedded-hal-async",
@@ -6516,7 +6527,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "max-value"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "signal-layer-core",
 ]
@@ -6559,7 +6570,7 @@ version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57804b2c9b69967f1536a56f86297e367a33b19e98852ed624b84551cdbc0d90"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -6661,7 +6672,7 @@ dependencies = [
 
 [[package]]
 name = "min-value"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "signal-layer-core",
 ]
@@ -6705,7 +6716,7 @@ dependencies = [
 
 [[package]]
 name = "modem-esp32"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "ads1115-driver",
  "bme280-driver",
@@ -6739,7 +6750,7 @@ dependencies = [
 
 [[package]]
 name = "moving-average"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "signal-layer-core",
 ]
@@ -6752,7 +6763,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "myrmic-build"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "aot-compiler",
@@ -6775,7 +6786,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "base32",
@@ -6816,6 +6827,7 @@ dependencies = [
  "swarm-telemetry",
  "tar",
  "tempfile",
+ "test-framework",
  "textus",
  "tokio",
  "toml 0.8.23",
@@ -6829,11 +6841,11 @@ dependencies = [
 
 [[package]]
 name = "myrmic-common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "claims",
  "embedded-io 0.6.1",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "heck",
  "http 1.5.0",
  "humantime",
@@ -6854,25 +6866,25 @@ dependencies = [
 
 [[package]]
 name = "myrmic-flash"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "dialoguer",
  "espflash",
  "libc",
  "miette",
- "myrmic-build",
  "serialport",
 ]
 
 [[package]]
 name = "myrmic-sdk"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "chrono",
  "critical-section",
  "embedded-alloc",
  "embedded-hal 1.0.0",
+ "heapless 0.9.4",
  "myrmic-common",
  "myrmic-sdk-macros",
  "myrmic-signal-layer-types",
@@ -6887,7 +6899,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-sdk-macros"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6904,7 +6916,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-signal-layer-types"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "postcard",
  "serde",
@@ -6912,7 +6924,7 @@ dependencies = [
 
 [[package]]
 name = "myrmic-tags"
-version = "0.7.0"
+version = "0.7.1"
 
 [[package]]
 name = "nanorand"
@@ -7563,7 +7575,7 @@ dependencies = [
 
 [[package]]
 name = "outlet-bridge"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "myrmic-signal-layer-types",
@@ -7896,7 +7908,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipeline-backend-api"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "indexmap 2.14.2",
@@ -7909,7 +7921,7 @@ dependencies = [
 
 [[package]]
 name = "pipeline-codegen"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "indexmap 2.14.2",
@@ -8021,7 +8033,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi",
  "pin-project-lite",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -8219,9 +8231,9 @@ dependencies = [
 
 [[package]]
 name = "pulley-interpreter"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def59f28ccaf2cb4f8dfaac83197fd7d56a4470a70e4f2589454c731370101c5"
+checksum = "335e459f9c7809af04768799880504d014d07e8e2fc6ae682fe2a105d8ced33f"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -8231,9 +8243,9 @@ dependencies = [
 
 [[package]]
 name = "pulley-macros"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a1834d3b3ef994f266a0c9ed29a8214f2c2faaa9b1c44babfa57566bb05af83"
+checksum = "dd492ac929a6ca0357362d9fa0a09e31290feac5914550ccfb539b21f89c4b9e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8242,7 +8254,7 @@ dependencies = [
 
 [[package]]
 name = "pwm-output-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "log",
@@ -8529,17 +8541,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags 2.13.2",
-]
-
-[[package]]
-name = "redox_users"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
-dependencies = [
- "getrandom 0.2.17",
- "libredox",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -9066,9 +9067,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.2",
  "errno",
@@ -9153,9 +9154,9 @@ checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -9733,10 +9734,10 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "critical-section",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "myrmic-signal-layer-types",
  "portable-atomic-util",
  "postcard",
@@ -9745,7 +9746,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-ipc"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "libc",
  "postcard",
@@ -9757,7 +9758,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-linux-rt"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "libc",
  "postcard",
@@ -9768,7 +9769,7 @@ dependencies = [
 
 [[package]]
 name = "signal-layer-logger"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "myrmic-sdk-macros",
@@ -9787,7 +9788,7 @@ dependencies = [
 
 [[package]]
 name = "sim-source-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal-async",
  "embedded-hal-mock",
@@ -9837,7 +9838,7 @@ checksum = "85636c14b73d81f541e525f585c0a2109e6744e1565b5c1668e31c70c10ed65c"
 
 [[package]]
 name = "skey"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -9851,7 +9852,7 @@ dependencies = [
 
 [[package]]
 name = "skey-macros"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "darling 0.21.3",
  "heck",
@@ -9874,7 +9875,7 @@ checksum = "e794b692443f8d9b677cd41c867347df2902844d7b7f5775f47fcb37b9e7965b"
 
 [[package]]
 name = "slow-init-cell-logic"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
  "myrmic-sdk-macros",
@@ -9899,7 +9900,7 @@ dependencies = [
  "bitflags 1.3.2",
  "byteorder",
  "cfg-if",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "managed",
 ]
 
@@ -9951,7 +9952,7 @@ dependencies = [
 
 [[package]]
 name = "sorg-client"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-mailbox",
  "cell-protocol",
@@ -9963,12 +9964,13 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "wasm-storage",
  "zenoh",
 ]
 
 [[package]]
 name = "sorg-common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-mailbox",
  "cell-protocol",
@@ -9987,13 +9989,14 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "wasm-storage",
  "zenoh",
  "zenoh-protocol",
 ]
 
 [[package]]
 name = "sorg-ctl"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "clap",
  "comfy-table",
@@ -10012,7 +10015,7 @@ dependencies = [
 
 [[package]]
 name = "sorg-execution"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum 0.8.9",
  "axum-server",
@@ -10027,7 +10030,7 @@ dependencies = [
  "flume 0.11.1",
  "futures",
  "futures-util",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "http 1.5.0",
  "mime_guess",
  "module-examples-common",
@@ -10057,13 +10060,14 @@ dependencies = [
  "tryhard",
  "uuid",
  "wasmtime",
+ "webpki-roots",
  "zenoh",
  "zenoh-protocol",
 ]
 
 [[package]]
 name = "sorg-orchestration"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-protocol",
  "claims",
@@ -10071,7 +10075,6 @@ dependencies = [
  "filestore-client",
  "flume 0.11.1",
  "futures",
- "introspection-client",
  "module-examples-common",
  "postcard",
  "serde",
@@ -10080,6 +10083,7 @@ dependencies = [
  "sorg-common",
  "sorg-execution",
  "sorg-tests",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "topo_sort",
@@ -10087,13 +10091,14 @@ dependencies = [
  "tryhard",
  "uhlc",
  "uuid",
+ "wasm-storage",
  "zenoh",
  "zenoh-protocol",
 ]
 
 [[package]]
 name = "sorg-tests"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cell-protocol",
  "claims",
@@ -10107,6 +10112,7 @@ dependencies = [
  "myrmic-common",
  "myrmic-tags",
  "postcard",
+ "rcgen",
  "rumqttc",
  "rumqttd",
  "rustls",
@@ -10188,7 +10194,7 @@ dependencies = [
 
 [[package]]
 name = "spi-loopback-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embedded-hal-async",
  "embedded-hal-mock",
@@ -10428,7 +10434,7 @@ checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
 
 [[package]]
 name = "swarm"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "cell-protocol",
@@ -10492,7 +10498,7 @@ dependencies = [
 
 [[package]]
 name = "swarm-api"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "flume 0.11.1",
@@ -10505,7 +10511,7 @@ dependencies = [
 
 [[package]]
 name = "swarm-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -10518,31 +10524,35 @@ dependencies = [
 
 [[package]]
 name = "swarm-gateway"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
  "base64 0.22.1",
  "cell-protocol",
+ "chrono",
  "db-client",
  "futures-util",
  "mime_guess",
  "myrmic-common",
  "openidconnect",
  "reqwest 0.12.28",
+ "rsa",
  "serde",
  "serde_json",
  "sorg-common",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tower-sessions",
  "tracing",
  "uuid",
+ "wiremock",
  "zenoh",
 ]
 
 [[package]]
 name = "swarm-onboarding"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -10578,19 +10588,19 @@ dependencies = [
 
 [[package]]
 name = "swarm-onboarding-request"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "swarm-telemetry"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "base32",
  "db-client",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "hex",
  "humantime",
  "itertools 0.14.0",
@@ -10621,11 +10631,11 @@ dependencies = [
 
 [[package]]
 name = "swarm-telemetry-embedded"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "embassy-executor",
  "embassy-sync 0.8.0",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "log",
  "postcard",
  "serde",
@@ -10758,7 +10768,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tap-bridge"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
@@ -10789,7 +10799,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.3",
  "once_cell",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -10808,13 +10818,13 @@ version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "test-control"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "futures",
  "serde",
@@ -10829,7 +10839,7 @@ dependencies = [
 
 [[package]]
 name = "test-control-client"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "sorg-tests",
  "test-control-common",
@@ -10840,7 +10850,7 @@ dependencies = [
 
 [[package]]
 name = "test-control-common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "introspection-client",
  "introspection-common",
@@ -10850,7 +10860,7 @@ dependencies = [
 
 [[package]]
 name = "test-framework"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum 0.8.9",
  "bollard",
@@ -10859,6 +10869,7 @@ dependencies = [
  "claims",
  "config 0.15.27",
  "db-client",
+ "enum-map",
  "futures",
  "hex",
  "introspection-client",
@@ -10871,6 +10882,7 @@ dependencies = [
  "rumqttd",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sorg-client",
  "sorg-common",
  "swarm",
@@ -10967,7 +10979,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-trigger"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-signal-layer-types",
  "signal-layer-core",
@@ -11074,9 +11086,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
@@ -11462,14 +11474,14 @@ dependencies = [
 
 [[package]]
 name = "trace_example_intermediate"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
 
 [[package]]
 name = "trace_example_sink"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "myrmic-sdk",
 ]
@@ -11591,7 +11603,7 @@ dependencies = [
  "embassy-time",
  "embedded-io 0.7.1",
  "futures",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "log",
  "static_cell",
  "trouble-host-macros",
@@ -11896,9 +11908,9 @@ dependencies = [
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -11933,9 +11945,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.26.1"
+version = "1.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -12015,8 +12027,9 @@ dependencies = [
 
 [[package]]
 name = "veml7700-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
+ "embassy-time",
  "embedded-hal-async",
  "embedded-hal-mock",
  "futures",
@@ -12211,7 +12224,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-runtime"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "bitflags 2.13.2",
  "cell-protocol",
@@ -12223,7 +12236,7 @@ dependencies = [
  "esp-hal",
  "esp-nimble-host",
  "esp-radio-rtos-driver",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "log",
  "myrmic-common",
  "myrmic-sdk",
@@ -12244,7 +12257,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-runtime-macros"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12253,7 +12266,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-storage"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cfg-match",
  "crc",
@@ -12316,9 +12329,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fbdd39f5c66f63ba6b5b31391b324b7ade7237d29c866cdb561330118ef436e"
+checksum = "f32390bdc8d7cdb6259a1b855178bfed88226b4004b209fd48fb30e0deb01cd3"
 dependencies = [
  "addr2line 0.26.1",
  "async-trait",
@@ -12339,7 +12352,7 @@ dependencies = [
  "postcard",
  "pulley-interpreter",
  "rayon",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "semver",
  "serde",
  "serde_derive",
@@ -12351,7 +12364,6 @@ dependencies = [
  "wasm-encoder 0.258.3",
  "wasmparser 0.258.3",
  "wasmtime-environ",
- "wasmtime-internal-cache",
  "wasmtime-internal-component-macro",
  "wasmtime-internal-component-util",
  "wasmtime-internal-core",
@@ -12368,9 +12380,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-environ"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e915c27826de4f7b4411b61fd6db32ca448657a5136b8c8e8874a15e90cecbf4"
+checksum = "9c10f8ef1c9ee5e0f125c775fe56a4d07b8525db30a96e6358c61d93bd11dee4"
 dependencies = [
  "anyhow",
  "cpp_demangle 0.5.1",
@@ -12398,30 +12410,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmtime-internal-cache"
-version = "49.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "952086551d2041430a159fe4bda3471cfea3d52846b93c825829cea9dd01954d"
-dependencies = [
- "base64 0.22.1",
- "directories-next",
- "log",
- "postcard",
- "rustix 1.1.5",
- "serde",
- "serde_derive",
- "sha2 0.10.9",
- "toml 1.1.6+spec-1.1.0",
- "wasmtime-environ",
- "windows-sys 0.61.2",
- "zstd",
-]
-
-[[package]]
 name = "wasmtime-internal-component-macro"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d95f531a0b809fd9fd158be6133c97bd2fc628ac47f5812aff3e3b5624eb02c2"
+checksum = "620c53182ebd26c9fff5b90dd53cf8ec3103c381403fd32f8d395da31a9e4a46"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -12434,15 +12426,15 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-component-util"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e754a3ff5690c34eb4713bd7c65f60dd607ead4e39042cbf52ac8011de14455b"
+checksum = "011e31ca343d9ba0ec623153cd94131b6f03973ef1a0ab791161f642e4a16a93"
 
 [[package]]
 name = "wasmtime-internal-core"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba00c5db77adb0749ee059068e5a417bfac3d8969f5a3479d9bd1ca8c1ba248d"
+checksum = "ab15e50a060b746493e6e95ef3ce4e6e7ebfdd7cc336a7dff0f0277e01b447ef"
 dependencies = [
  "anyhow",
  "hashbrown 0.17.1",
@@ -12452,9 +12444,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-cranelift"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97ceeb4325712a253f463e50a69b5a547fbbecd52e45612360c543eaa25a03ff"
+checksum = "dc3d27440a83fba26dd2784a997e13d9acb3606a75fb127c324929b52221c5c5"
 dependencies = [
  "cranelift-codegen",
  "cranelift-control",
@@ -12478,13 +12470,13 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-fiber"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eb3f21bc32b5382ea95f83ce9a5f2f62b68f1b25a37d0802a41a65236eae5ae"
+checksum = "6e54b28d0d453ca8932e4504065ae66a78f01fcb22b1a2ee287128d732fa9d6f"
 dependencies = [
  "cc",
  "libc",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wasmtime-environ",
  "wasmtime-internal-versioned-export-macros",
  "windows-sys 0.61.2",
@@ -12492,21 +12484,21 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-jit-debug"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e786f9925126e0d2e466c5308e572e8b6226f4047596228a3d63d99528a78949"
+checksum = "9293e75a3048b900f7b7c524702abca16d8a2332f970324eefc519f454cd5d69"
 dependencies = [
  "cc",
  "object 0.40.0",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wasmtime-internal-versioned-export-macros",
 ]
 
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92cb1dd5da78f5b21d65e91063bdd8c2eb343c1f077a1dcbc29003d4a794abb0"
+checksum = "b852e568831b913d410541bb37edc45a5002e472208fbdbaf844ed801dd4255f"
 dependencies = [
  "libc",
  "wasmtime-internal-core",
@@ -12515,9 +12507,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-unwinder"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0243d244f6dd07ccd114e6bb099e8dd1197b47de5c054576adc9483f80f65d8"
+checksum = "a1f7349c9834a542275ad757340079e6453fccb429efce581454d23f85af92c0"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -12527,9 +12519,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20fa5616cd875ec78f5b92020fa47ced7c8bb923079185c8475751098b8c4a69"
+checksum = "30b3e0768a450d9dea3e16b83f2498f0b08db0e32bad695e35564eef017be3f1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12538,9 +12530,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-wit-bindgen"
-version = "49.0.3"
+version = "49.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cad5e8cef56790d4741b62f7b6c971af53b2ad4c2d1603f8ffe86872763147aa"
+checksum = "b9d085c540b95d0ffebf98c266e6f152e1acf96a9f676f224a74307b9d422c15"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
@@ -12594,18 +12586,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -12975,8 +12967,9 @@ dependencies = [
 
 [[package]]
 name = "wsen-itds-driver"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
+ "embassy-time",
  "embedded-hal-async",
  "embedded-hal-mock",
  "futures",
@@ -13045,13 +13038,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
- "rustix 1.1.5",
+ "rustix 1.1.6",
 ]
 
 [[package]]
 name = "xtensa-lx"
 version = "0.13.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "critical-section",
 ]
@@ -13059,7 +13052,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx-rt"
 version = "0.23.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "document-features",
  "xtensa-lx",
@@ -13069,7 +13062,7 @@ dependencies = [
 [[package]]
 name = "xtensa-lx-rt-proc-macros"
 version = "0.5.0"
-source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#8db8f5bb4f862479a5a595c3a095dff7785d19d0"
+source = "git+https://github.com/peeriot/esp-hal.git?branch=feature%2Fble-host-npl-upstream#2d554a6b3bfff7b73d76ba97db158ff280f01876"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13530,7 +13523,7 @@ dependencies = [
 
 [[package]]
 name = "zenoh-nano"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-compat",
  "bt-hci",
@@ -13549,7 +13542,7 @@ dependencies = [
  "env_logger",
  "futures",
  "getrandom 0.2.17",
- "heapless 0.9.3",
+ "heapless 0.9.4",
  "log",
  "portable-atomic",
  "rand 0.9.5",
@@ -13675,7 +13668,7 @@ dependencies = [
 
 [[package]]
 name = "zenoh-traits"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "critical-section",
  "defmt 1.1.1",
@@ -13864,31 +13857,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "zstd"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
-dependencies = [
- "zstd-safe",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "7.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
-dependencies = [
- "zstd-sys",
-]
-
-[[package]]
-name = "zstd-sys"
-version = "2.1.0+zstd.1.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ef0a8027ec3ee71300ab3bcbcd0393f434aa72b91ca6d635a39941deae8eea0"
-dependencies = [
- "cc",
- "pkg-config",
-]

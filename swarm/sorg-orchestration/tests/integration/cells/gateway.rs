@@ -2,6 +2,7 @@
 //! `#[init]`, they are there after a successful deploy and gone once the cell
 //! is rolled back as part of a failed batch.
 
+use cell_protocol::BlobHash;
 use claims::{assert_err, assert_ok};
 use sorg_common::gateway_config::{list_cell_assets, list_gateway_routes};
 use sorg_common::{CellConfig, CellDeployment, DeployRequest, DeploymentError};
@@ -21,13 +22,8 @@ const FAILING_SRI: &str = "failing_cell";
 const MOUNT: &str = "/gateway-mount-test";
 const INDEX: &str = "/index.html";
 
-fn wasm_cell(sri: &str, class: &str) -> CellDeployment {
-    CellDeployment::new(
-        to_sri(sri),
-        CellConfig::Wasm {
-            class: class.to_owned(),
-        },
-    )
+fn wasm_cell(sri: &str, class: BlobHash) -> CellDeployment {
+    CellDeployment::new(to_sri(sri), CellConfig::Wasm { class })
 }
 
 async fn routes_owned_by(session: &Session, sri: &str) -> Vec<String> {
@@ -73,15 +69,16 @@ async fn rollback_releases_gateway_resources() {
     let swarm = swarm_config!("cells/cells.jsonnet");
     register_fixture_class(GATEWAY_LOGIC, GATEWAY_CLASS, &swarm).await;
     let test_app = spawn_test_app_with_swarm(swarm).await;
-    test_app
+    let failing = test_app
         .register_raw_class(FAILING_CLASS, vec![0xFF, 0xFF])
         .await;
+    let gateway = test_app.class_id("gateway_mount.wasm").await;
     let sorg = sorg_client::Client::new(test_app.session().clone());
 
     let err = assert_err!(
         sorg.deploy_cells(DeployRequest::new(vec![
-            wasm_cell(GATEWAY_SRI, "gateway_mount.wasm"),
-            wasm_cell(FAILING_SRI, FAILING_CLASS),
+            wasm_cell(GATEWAY_SRI, gateway),
+            wasm_cell(FAILING_SRI, failing),
         ]))
         .await,
         "deploy should fail when the garbage cell fails to load"

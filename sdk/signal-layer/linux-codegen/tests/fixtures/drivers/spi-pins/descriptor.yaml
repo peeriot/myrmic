@@ -1,0 +1,16 @@
+# Test-only driver: an SPI sensor with one output pin (`reset`) and one input
+# pin (`irq`). There is no crate behind it; the snapshot only checks the
+# generated text.
+id: spi-pins
+category: sensor-drivers
+description: Fixture driver declaring pins of both directions.
+requires:
+  buses:
+    - transport: spi
+  optional_pins:
+    - { name: reset, direction: output }
+    - irq
+outputs:
+  - name: value
+    type: f32
+    unit: ""

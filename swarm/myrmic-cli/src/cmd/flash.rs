@@ -50,9 +50,10 @@ pub fn handle(ctx: &Ctx, cmd: Flash) -> anyhow::Result<()> {
     if !matches!(ty, PathType::Toml) {
         anyhow::bail!("not a firmware crate: {}", path.display());
     }
-    let chip = firmware::chip_of(&manifest)?.with_context(|| {
+    let cargo_target = build::to_build_cargo_target(target.unwrap_or(models::CargoTarget::Auto));
+    build::firmware_of(ctx, &manifest, &cargo_target)?.with_context(|| {
         format!(
-            "`{}` is not a firmware crate: `[package.metadata.myrmic] firmware` names no chip \
+            "`{}` is not a firmware crate: `[package.metadata.myrmic] firmware` is not set \
              (a cell is deployed with `myrmic deploy`, not flashed)",
             manifest.display()
         )
@@ -65,17 +66,9 @@ pub fn handle(ctx: &Ctx, cmd: Flash) -> anyhow::Result<()> {
     }
     let config = flash::config()?;
     let mut board = Board::connect(&connect, &config)?;
-    if board.chip() != flash::espflash_chip(chip) {
-        anyhow::bail!(
-            "the board is an {}, but `{}` is built for the {chip}",
-            board.chip(),
-            manifest.display()
-        );
-    }
     let info = board.info()?;
 
-    let cargo_target = build::to_build_cargo_target(target.unwrap_or(models::CargoTarget::Auto));
-    build::report_building(ctx, chip, &manifest, name.as_deref());
+    build::report_building(ctx, &manifest, name.as_deref());
     let flash_size = u64::from(info.flash_size.size());
     let built = firmware::build(
         &manifest,

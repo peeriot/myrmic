@@ -9,7 +9,7 @@ myrmic cells classes info [NAME]
 ```
 
 ## Description
-Show details for the cell class identified by `NAME`, including the hash of its registered wasm binary and any AOT artifacts with their target platform, compiled binary hash, and metadata file hash.
+Show details for the cell class `NAME` points to: every name bound to it, its hash, and its kind, as [`myrmic cells classes list`](./01_list.md) shows them.
 
 ## Options
 `-v` / `--verbose`

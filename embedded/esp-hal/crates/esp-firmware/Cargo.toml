@@ -65,6 +65,7 @@ esp-hal          = { workspace = true, features = ["log-04", "unstable", "rt"] }
 esp-rtos         = { workspace = true, features = ["embassy", "esp-alloc", "esp-radio"] }
 log              = { workspace = true }
 serde            = { workspace = true, default-features = false }
+serde_json       = { workspace = true, features = ["alloc"] }
 static_cell      = { workspace = true }
 
 cell-protocol       = { workspace = true }

@@ -20,22 +20,39 @@
 //!
 //! # Timing
 //!
-//! Continuous-mode sampling. [`WsenItds::sample`] does not block — it issues
-//! a 6-byte burst read of the latest data registers. After init the
-//! datasheet recommends waiting one full ODR period before the first read.
+//! Continuous-mode sampling. The data registers hold a zero image until the
+//! first conversion after bring-up completes, so [`WsenItds::init`] polls
+//! `STATUS.DRDY` (bounded to two output data periods, derived from the
+//! configured ODR, with `embassy_time` sleeps under `#[cfg(not(test))]`)
+//! before returning. [`WsenItds::sample`] does not block — it issues a 6-byte
+//! burst read of the latest data registers, which block data update keeps
+//! consistent across the burst.
 
 #![cfg_attr(not(test), no_std)]
 
 use embedded_hal_async::i2c::I2c;
 
+// `embassy_time` is only awaited under `#[cfg(not(test))]`; keep it referenced in
+// test builds so it never trips `unused_crate_dependencies`.
+#[cfg(test)]
+use embassy_time as _;
+
 const REG_DEVICE_ID: u8 = 0x0F;
 const REG_CTRL_1: u8 = 0x20;
 const REG_CTRL_2: u8 = 0x21;
 const REG_CTRL_6: u8 = 0x25;
+const REG_STATUS: u8 = 0x27;
 const REG_OUT_X_L: u8 = 0x28;
 
 const DEVICE_ID: u8 = 0x44;
 const CTRL_2_AUTOINC: u8 = 0x04; // I2C address auto-increment for burst reads
+const CTRL_2_BDU: u8 = 0x08; // block data update: output regs frozen until read
+const STATUS_DRDY: u8 = 0x01; // new X/Y/Z data available
+
+// Output data periods to wait for the first conversion after bring-up before
+// reporting a fault. The datasheet asks for one full period; the second
+// covers the ODR switch landing mid-period.
+const DRDY_WAIT_PERIODS: u32 = 2;
 
 /// Full-scale measurement range in g.
 #[repr(u8)]
@@ -55,8 +72,6 @@ pub enum FullScale {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Odr {
-    /// Power-down (no sampling).
-    PowerDown = 0,
     /// 1.6 Hz (low-power only).
     Hz1_6 = 1,
     /// 12.5 Hz.
@@ -75,6 +90,24 @@ pub enum Odr {
     Hz800 = 8,
     /// 1600 Hz (high-performance only).
     Hz1600 = 9,
+}
+
+impl Odr {
+    /// Output data period in microseconds.
+    #[must_use]
+    pub const fn period_micros(self) -> u64 {
+        match self {
+            Odr::Hz1_6 => 625_000,
+            Odr::Hz12_5 => 80_000,
+            Odr::Hz25 => 40_000,
+            Odr::Hz50 => 20_000,
+            Odr::Hz100 => 10_000,
+            Odr::Hz200 => 5_000,
+            Odr::Hz400 => 2_500,
+            Odr::Hz800 => 1_250,
+            Odr::Hz1600 => 625,
+        }
+    }
 }
 
 /// Power / resolution mode.
@@ -135,6 +168,9 @@ pub enum WsenItdsError<E: core::fmt::Debug> {
     Bus(E),
     /// `WHO_AM_I` register did not return `0x44`.
     InvalidId(u8),
+    /// `STATUS.DRDY` stayed clear for `DRDY_WAIT_PERIODS` output data
+    /// periods after bring-up — the sensor is not converting.
+    DataReadyTimeout,
 }
 
 impl<E: core::fmt::Debug> From<E> for WsenItdsError<E> {
@@ -164,8 +200,9 @@ impl WsenItds {
         }
     }
 
-    /// (Re-)initialise the sensor: probe (`WHO_AM_I`), apply the configured
-    /// full-scale / ODR / power mode, and enable auto-increment burst reads.
+    /// (Re-)initialise the sensor: probe (`WHO_AM_I`), enable block data
+    /// update and auto-increment burst reads, apply the configured full-scale /
+    /// ODR / power mode, then wait for the first conversion.
     ///
     /// Safe to call repeatedly — the generated source task re-runs `init` to
     /// recover a sensor that started failing.
@@ -174,6 +211,8 @@ impl WsenItds {
     ///
     /// - [`WsenItdsError::Bus`] on any I2C transaction failure.
     /// - [`WsenItdsError::InvalidId`] if `WHO_AM_I` doesn't return `0x44`.
+    /// - [`WsenItdsError::DataReadyTimeout`] if no conversion completes within
+    ///   `DRDY_WAIT_PERIODS` output data periods.
     pub async fn init<I: I2c>(&mut self, bus: &mut I) -> Result<(), WsenItdsError<I::Error>> {
         let cfg = self.cfg;
         let (fs_bits, _sensitivity) = fs_config(cfg.full_scale_g);
@@ -185,13 +224,32 @@ impl WsenItds {
             return Err(WsenItdsError::InvalidId(id[0]));
         }
 
-        // Enable auto-increment (required for burst read of 6 bytes)
-        bus.write(addr, &[REG_CTRL_2, CTRL_2_AUTOINC]).await?;
+        // Block data update keeps a burst from mixing two samples; auto-increment
+        // is required for the 6-byte burst read.
+        bus.write(addr, &[REG_CTRL_2, CTRL_2_AUTOINC | CTRL_2_BDU])
+            .await?;
         // Set full-scale
         bus.write(addr, &[REG_CTRL_6, fs_bits]).await?;
         // CTRL_1: bits 7:4 = ODR, bits 3:2 = power_mode.
         let ctrl_1 = ((cfg.odr as u8) << 4) | ((cfg.power_mode as u8) << 2);
         bus.write(addr, &[REG_CTRL_1, ctrl_1]).await?;
+
+        // The data registers read as zeros until the first conversion at the
+        // new ODR lands; poll DRDY so the first sample is a real one.
+        let mut waited = 0;
+        loop {
+            let mut status = [0u8; 1];
+            bus.write_read(addr, &[REG_STATUS], &mut status).await?;
+            if status[0] & STATUS_DRDY != 0 {
+                break;
+            }
+            if waited >= DRDY_WAIT_PERIODS {
+                return Err(WsenItdsError::DataReadyTimeout);
+            }
+            waited += 1;
+            #[cfg(not(test))]
+            embassy_time::Timer::after_micros(cfg.odr.period_micros()).await;
+        }
 
         log::info!(
             "[wsen-itds] init OK at 0x{addr:02X}, FS={:?}, ODR={:?}",
@@ -246,30 +304,107 @@ mod tests {
 
     const ADDR: u8 = 0x19;
 
-    fn init_transactions(fs_bits: u8, ctrl_1_val: u8) -> Vec<T> {
+    /// Probe and configure, up to the point where init starts waiting for the
+    /// first conversion.
+    fn config_transactions(fs_bits: u8, ctrl_1_val: u8) -> Vec<T> {
         vec![
             T::write_read(ADDR, vec![REG_DEVICE_ID], vec![DEVICE_ID]),
-            T::write(ADDR, vec![REG_CTRL_2, CTRL_2_AUTOINC]),
+            T::write(ADDR, vec![REG_CTRL_2, 0x0C]), // IF_ADD_INC | BDU
             T::write(ADDR, vec![REG_CTRL_6, fs_bits]),
             T::write(ADDR, vec![REG_CTRL_1, ctrl_1_val]),
         ]
     }
 
-    #[test]
+    fn status_read(status: u8) -> T {
+        T::write_read(ADDR, vec![REG_STATUS], vec![status])
+    }
+
+    /// A full bring-up whose first `STATUS` poll already reports data ready.
+    fn init_transactions(fs_bits: u8, ctrl_1_val: u8) -> Vec<T> {
+        let mut txns = config_transactions(fs_bits, ctrl_1_val);
+        txns.push(status_read(STATUS_DRDY));
+        txns
+    }
+
+    /// Burst read returning ~1 g on Z at ±2 g.
     #[allow(clippy::cast_possible_truncation)]
+    fn one_g_on_z_read() -> T {
+        let (_fs_bits, sens) = fs_config(FullScale::G2);
+        let counts_z = (1.0_f32 / sens) as i16;
+        let raw_z = counts_z.to_le_bytes();
+        T::write_read(
+            ADDR,
+            vec![REG_OUT_X_L],
+            vec![0x00, 0x00, 0x00, 0x00, raw_z[0], raw_z[1]],
+        )
+    }
+
+    #[test]
+    fn first_sample_waits_for_data_ready() {
+        // The data registers hold a zero image until the first conversion
+        // completes: init must keep polling STATUS until DRDY is set, so the
+        // first published value comes from the read after the ready poll.
+        futures::executor::block_on(async {
+            let (fs_bits, _sens) = fs_config(FullScale::G2);
+            let ctrl_1_val = ((Odr::Hz100 as u8) << 4) | ((PowerMode::Normal as u8) << 2);
+            let mut txns = config_transactions(fs_bits, ctrl_1_val);
+            txns.push(status_read(0x00));
+            txns.push(status_read(STATUS_DRDY));
+            txns.push(one_g_on_z_read());
+            let mut mock = Mock::new(&txns);
+
+            let cfg = WsenItdsConfig {
+                i2c_addr: ADDR,
+                ..WsenItdsConfig::default()
+            };
+            let mut driver = WsenItds::new(&cfg);
+            driver.init(&mut mock).await.unwrap();
+            let r = driver.sample(&mut mock).await.unwrap();
+            assert!((r.accel_z - 1.0).abs() < 0.01, "z={}", r.accel_z);
+
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn init_fails_when_no_conversion_arrives() {
+        // A sensor that never asserts DRDY within the wait budget is a
+        // bring-up fault, reported from init rather than published as zeros.
+        futures::executor::block_on(async {
+            let (fs_bits, _sens) = fs_config(FullScale::G2);
+            let ctrl_1_val = ((Odr::Hz100 as u8) << 4) | ((PowerMode::Normal as u8) << 2);
+            let mut txns = config_transactions(fs_bits, ctrl_1_val);
+            for _ in 0..=DRDY_WAIT_PERIODS {
+                txns.push(status_read(0x00));
+            }
+            let mut mock = Mock::new(&txns);
+
+            let cfg = WsenItdsConfig {
+                i2c_addr: ADDR,
+                ..WsenItdsConfig::default()
+            };
+            let mut driver = WsenItds::new(&cfg);
+            let result = driver.init(&mut mock).await;
+            assert!(matches!(result, Err(WsenItdsError::DataReadyTimeout)));
+
+            mock.done();
+        });
+    }
+
+    #[test]
+    fn odr_period_matches_rate() {
+        assert_eq!(Odr::Hz1_6.period_micros(), 625_000);
+        assert_eq!(Odr::Hz100.period_micros(), 10_000);
+        assert_eq!(Odr::Hz1600.period_micros(), 625);
+    }
+
+    #[test]
     fn init_and_sample_2g_defaults() {
         futures::executor::block_on(async {
-            let (fs_bits, sens) = fs_config(FullScale::G2);
-            let counts_z = (1.0_f32 / sens) as i16;
-            let raw_z = counts_z.to_le_bytes();
-
+            let (fs_bits, _sens) = fs_config(FullScale::G2);
             let ctrl_1_val = ((Odr::Hz100 as u8) << 4) | ((PowerMode::Normal as u8) << 2);
             let mut txns = init_transactions(fs_bits, ctrl_1_val);
-            txns.push(T::write_read(
-                ADDR,
-                vec![REG_OUT_X_L],
-                vec![0x00, 0x00, 0x00, 0x00, raw_z[0], raw_z[1]],
-            ));
+            txns.push(one_g_on_z_read());
             let mut mock = Mock::new(&txns);
 
             let cfg = WsenItdsConfig {
@@ -323,22 +458,15 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_possible_truncation)]
     fn reinit_recovers_after_first_bring_up() {
         // The generated source task re-runs init() to recover a degraded sensor.
         futures::executor::block_on(async {
-            let (fs_bits, sens) = fs_config(FullScale::G2);
-            let counts_z = (1.0_f32 / sens) as i16;
-            let raw_z = counts_z.to_le_bytes();
+            let (fs_bits, _sens) = fs_config(FullScale::G2);
             let ctrl_1_val = ((Odr::Hz100 as u8) << 4) | ((PowerMode::Normal as u8) << 2);
 
             let mut txns = init_transactions(fs_bits, ctrl_1_val);
             txns.extend(init_transactions(fs_bits, ctrl_1_val)); // recovery re-init
-            txns.push(T::write_read(
-                ADDR,
-                vec![REG_OUT_X_L],
-                vec![0x00, 0x00, 0x00, 0x00, raw_z[0], raw_z[1]],
-            ));
+            txns.push(one_g_on_z_read());
             let mut mock = Mock::new(&txns);
 
             let cfg = WsenItdsConfig {

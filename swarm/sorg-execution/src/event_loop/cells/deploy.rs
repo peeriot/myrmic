@@ -39,14 +39,14 @@ impl Runtime {
         let arguments = request.arguments;
 
         debug!(
-            "deploying cell '{sri}' from class '{class}'",
-            class = request.class_name
+            "deploying cell '{sri}' from class {class}",
+            class = request.class.to_hex()
         );
         let (poison_snd, handle) = run_cell(
             &self.wasm_environment,
             &self.session,
             sri,
-            &request.class_name,
+            request.class,
             request.gen_id,
             lineage.clone(),
             arguments,

@@ -134,7 +134,7 @@ The configuration is read at start, and the running runtime is still the old bin
 myrmic runtimes start my-runtime.yml
 ```
 
-Only telemetry emitted from now on is exported. The counter is gone too: a cell with the default restart policy is not brought back when its runtime stops (the [Resilience](../05_resilience.md) tutorial covers restart policies), and `myrmic cells` answers `No cells registered`. In Terminal 2, deploy it again and produce fresh activity:
+Only telemetry emitted from now on is exported. The counter is gone too: a cell with the default restart policy is not brought back when its runtime stops (the [Resilience](../02_resilience.md) tutorial covers restart policies), and `myrmic cells` answers `No cells registered`. In Terminal 2, deploy it again and produce fresh activity:
 
 ```bash
 myrmic deploy counter
@@ -244,4 +244,4 @@ Results appear as a time-series graph and a table of raw data points below. Use 
 
 - The [Observability guide](../../05_guides/10_observability.md) summarises everything the CLI offers and when to use which command.
 - The [Runtime Configuration reference](../../10_reference/01_configuration/01_runtime-configuration.md#telemetry) lists the remaining telemetry keys, including the batch settings that govern the export overhead.
-- The [Smart Greenhouse](../02_smart-greenhouse.md) gives you a multi-cell application whose command hops make far more interesting traces than a single counter.
+- The [Smart Greenhouse](../01_smart-greenhouse.md) gives you a multi-cell application whose command hops make far more interesting traces than a single counter.

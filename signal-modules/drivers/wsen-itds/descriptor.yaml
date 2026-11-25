@@ -31,7 +31,7 @@ config_schema:
     scope: application
     rust_type: Odr
     default: Hz100
-    # Variants: PowerDown | Hz1_6 | Hz12_5 | Hz25 | Hz50 | Hz100 | Hz200 | Hz400 | Hz800 | Hz1600
+    # Variants: Hz1_6 | Hz12_5 | Hz25 | Hz50 | Hz100 | Hz200 | Hz400 | Hz800 | Hz1600
     description: "Output data rate — how often the sensor produces a new sample."
   power_mode:
     scope: application

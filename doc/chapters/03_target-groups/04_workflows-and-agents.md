@@ -34,6 +34,6 @@ Myrmic does not provide an AI model or inference engine. It provides state, mess
 
 ## See also
 
-- [Target Groups](../03_target-groups.md) - the other entry points Myrmic supports
+- [Application Domains](../03_target-groups.md) - the other entry points Myrmic supports
 - [Messages and Mailboxes](../06_concepts/03_messages-and-mailboxes.md) - how Commands and Events reach a Cell
 - [Roadmap](../09_roadmap.md) - what future stages are intended to add

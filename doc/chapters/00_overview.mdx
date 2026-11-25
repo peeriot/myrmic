@@ -6,7 +6,7 @@ import { DocCards } from '@site/src/components/DocCards/DocCards';
 
 # Overview
 
-Myrmic is an open source edge-native runtime for building and operating distributed applications across fleets of devices. It runs application logic as WebAssembly cells - portable, isolated units that deploy and self-organize across embedded and server targets without orchestrators, brokers, or manual wiring. The project is developed and maintained by [Peeriot](https://peeriot.io/).
+Myrmic is an open source edge-native runtime for building and operating distributed applications across fleets of devices. It runs application logic as WebAssembly cells - portable, isolated units that deploy and self-organize across embedded and server targets without a separate orchestrator, broker, or manual wiring. The project is developed and maintained by [Peeriot](https://peeriot.io/).
 
 export const cards = [
   {
@@ -60,6 +60,7 @@ export const cards = [
       { label: 'Message Encoding', to: '/docs/guides/message-encoding' },
       { label: 'Scheduling Handlers', to: '/docs/guides/scheduling-handlers' },
       { label: 'State and storage', to: '/docs/guides/state-and-storage' },
+      { label: 'Operating a Swarm', to: '/docs/guides/operating-a-swarm' },
       { label: 'Observability', to: '/docs/guides/observability' },
       { label: 'Signal layer', to: '/docs/guides/signal-layer' },
       { label: 'BLE', to: '/docs/guides/ble' },
@@ -79,8 +80,8 @@ export const cards = [
     viewAll: '/docs/architecture',
   },
   {
-    title: 'Target Groups',
-    description: 'Find out which use cases Myrmic is built for.',
+    title: 'Application Domains',
+    description: 'What can I use Myrmic for?',
     links: [
       { label: 'Asset-centric software', to: '/docs/target-groups/asset-centric-software' },
       { label: 'Connected products', to: '/docs/target-groups/connected-products' },
@@ -89,6 +90,7 @@ export const cards = [
       { label: 'Platform engineering', to: '/docs/target-groups/platform-engineering' },
     ],
     viewAll: '/docs/target-groups',
+    viewAllLabel: 'View Application Domains',
   },
   {
     title: 'Reference',

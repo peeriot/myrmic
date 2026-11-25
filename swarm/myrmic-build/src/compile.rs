@@ -89,15 +89,6 @@ pub(crate) enum Selector {
     Bin(String),
 }
 
-/// Cargo metadata reports every library kind (`lib`, `rlib`, `cdylib`, …) as a
-/// distinct target kind; treat any of them as "the library".
-fn is_lib_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
-    )
-}
-
 /// Resolve a [`CargoTarget`] selection against the crate's declared targets,
 /// erroring with the available options when the choice is ambiguous or missing.
 pub(crate) fn resolve_selector(
@@ -105,20 +96,17 @@ pub(crate) fn resolve_selector(
     cargo_target: &CargoTarget,
 ) -> anyhow::Result<Selector> {
     let targets = cargo::package_targets(manifest_path)?;
-
-    let bins: Vec<&str> = targets
-        .iter()
-        .filter(|t| t.kinds.iter().any(|k| k == "bin"))
-        .map(|t| t.name.as_str())
-        .collect();
-    let libs: Vec<&str> = targets
-        .iter()
-        .filter(|t| t.kinds.iter().any(|k| is_lib_kind(k)))
-        .map(|t| t.name.as_str())
-        .collect();
-
-    select(&bins, &libs, cargo_target)
+    select_among(&targets, cargo_target)
         .with_context(|| format!("resolving build target for `{}`", manifest_path.display()))
+}
+
+/// [`resolve_selector`] over targets already read from the manifest.
+pub(crate) fn select_among(
+    targets: &[cargo::TargetInfo],
+    cargo_target: &CargoTarget,
+) -> anyhow::Result<Selector> {
+    let (bins, libs) = cargo::bin_and_lib_names(targets);
+    select(&bins, &libs, cargo_target)
 }
 
 /// Pick a concrete target from a crate's declared `bins`/`libs`.
@@ -172,14 +160,15 @@ pub(crate) fn compile_cell(
 ) -> anyhow::Result<Vec<PathBuf>> {
     ensure_c_linker()?;
 
-    let memory: MemoryConfig = cargo::read_package_metadata::<MemoryMetadata>(manifest_path)?
-        .with_context(|| {
-            format!(
-                "manifest is a workspace, not a cell: {}",
-                manifest_path.display()
-            )
-        })?
-        .into();
+    let memory: MemoryConfig =
+        cargo::read_package_metadata::<MemoryMetadata>(manifest_path, cargo_target)?
+            .with_context(|| {
+                format!(
+                    "manifest is a workspace, not a cell: {}",
+                    manifest_path.display()
+                )
+            })?
+            .into();
 
     let selector = resolve_selector(manifest_path, cargo_target)?;
 
@@ -317,7 +306,12 @@ fn rustflags(memory: &MemoryConfig) -> String {
         format!("-C link-arg=-zstack-size={stack_size}"),
         format!("-C link-arg=--initial-memory={initial_memory}"),
         format!("-C link-arg=--max-memory={max_memory}"),
-        "-C opt-level=z".to_owned(),
+        // `s` rather than `z`: in WAMR AOT code every call that stays a call goes through the
+        // function table and a stack-check wrapper, and `z` leaves many tiny helpers as calls.
+        // `s` inlines them, which makes cells faster and usually smaller as well.
+        // Keep the codegen flags below in sync with `[profile.wasm-release]` in the root
+        // `Cargo.toml`.
+        "-C opt-level=s".to_owned(),
         "-C lto".to_owned(),
         "-C embed-bitcode=yes".to_owned(),
         "-C codegen-units=1".to_owned(),
@@ -450,7 +444,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Cargo.toml");
         std::fs::write(&path, manifest).unwrap();
-        cargo::read_package_metadata::<MemoryMetadata>(&path)
+        cargo::read_package_metadata::<MemoryMetadata>(&path, &CargoTarget::Auto)
             .unwrap()
             .unwrap()
             .into()

@@ -223,7 +223,7 @@ mod tests {
     fn info(s: Sri, parent: Option<Sri>, detached: bool) -> CellInstance {
         CellInstance {
             sri: s,
-            class_name: "c".into(),
+            class: cell_protocol::BlobHash::of(b"c"),
             gen_id: Gen::from_parts(0, 1),
             lineage: cell_protocol::SpawnLineage {
                 parent,

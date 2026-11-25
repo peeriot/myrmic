@@ -16,7 +16,7 @@ linux-i2c-shim        = { path = "../../../swarm/signal-layer/linux-i2c-shim" }
 linux-gpio-shim       = { path = "../../../swarm/signal-layer/linux-gpio-shim" }
 signal-layer-core     = { path = "../signal-layer-core" }
 signal-layer-types    = { package = "myrmic-signal-layer-types", path = "../signal-layer-types" }
-tokio                 = { version = "1", features = ["full"] }
+tokio                 = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 tokio-stream          = { version = "0.1", features = ["time"] }
 critical-section      = { version = "1", features = ["std"] }
 log                   = { version = "0.4", default-features = false }
@@ -28,5 +28,4 @@ hysteresis = { path = "../../../signal-modules/steps/hysteresis", package = "hys
 fan_curve = { path = "../../../signal-modules/steps/fan-curve", package = "fan-curve" }
 
 [dev-dependencies]
-tokio    = { version = "1", features = ["full"] }
 tempfile = "3"

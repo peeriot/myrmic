@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use cell_protocol::{Gen, Sri};
+use cell_protocol::{BlobHash, Gen, Sri};
 use serde::{Deserialize, Serialize};
 use zenoh::Session;
 
@@ -21,12 +21,18 @@ use crate::{
     is_query_timeout, zenoh_err,
 };
 
+/// Appended to a decode failure of a deploy reply: postcard cannot tell an
+/// unknown enum variant from other bad input, so the cause is only probable.
+const VERSION_MISMATCH_HINT: &str = "the node probably runs a different myrmic version than this client; use a client matching the swarm's version";
+
 /// Deserializes a [`DeploymentError`] from an orchestrator error reply, falling
 /// back to [`DeploymentError::Internal`] if the payload can't be decoded.
 fn deploy_err_from_reply(payload: &zenoh::bytes::ZBytes) -> DeploymentError {
     DeploymentError::from_payload(payload, "deser deployment error from orchestrator")
         .unwrap_or_else(|err| {
-            DeploymentError::Internal(format!("failed to deserialize deployment error: {err}"))
+            DeploymentError::Internal(format!(
+                "could not decode the orchestrator's deployment error ({err}); {VERSION_MISMATCH_HINT}"
+            ))
         })
 }
 
@@ -38,7 +44,8 @@ pub use cell_protocol::SpawnLineage;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WasmCellDeployRequest {
     pub cell_sri: Sri,
-    pub class_name: String,
+    /// Id of the wasm class to load.
+    pub class: BlobHash,
     /// Optional payload delivered to the cell's `#[init]` as its argument
     /// buffer. Set by a spawner via `spawn_with`; `None` for root cells.
     pub arguments: Option<Vec<u8>>,
@@ -95,7 +102,11 @@ pub async fn deploy_cells(
                 sample.payload(),
                 "deser deployment response from orchestrator",
             )
-            .map_err(|err| DeploymentError::Internal(err.to_string())),
+            .map_err(|err| {
+                DeploymentError::Internal(format!(
+                    "could not decode the orchestrator's deployment response ({err}); {VERSION_MISMATCH_HINT}"
+                ))
+            }),
             Err(err_reply) => {
                 if is_query_timeout(err_reply) {
                     return Err(DeploymentError::QueryTimeout);
@@ -112,7 +123,7 @@ pub async fn deploy_cells(
 pub async fn deploy_wasm_cell(
     session: &Session,
     cell_sri: Sri,
-    class_name: &str,
+    class: BlobHash,
     tags: RequirementTags,
     timeout: Duration,
     lineage: SpawnLineage,
@@ -122,9 +133,7 @@ pub async fn deploy_wasm_cell(
     deploy_cell(
         session,
         cell_sri,
-        crate::CellConfig::Wasm {
-            class: class_name.to_owned(),
-        },
+        crate::CellConfig::Wasm { class },
         tags,
         timeout,
         lineage,
@@ -247,5 +256,28 @@ pub async fn delete_application(
             }
         },
         Err(_) => bail!("no response from an orchestration runtime for app delete request"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A variant index past the last known one is what an older client sees
+    /// when a newer node adds an error; the message must point at the
+    /// version mismatch.
+    #[test]
+    fn an_unknown_deployment_error_variant_names_a_version_mismatch() {
+        let payload = zenoh::bytes::ZBytes::from(postcard::to_allocvec(&200u32).unwrap());
+
+        let err = deploy_err_from_reply(&payload);
+
+        let DeploymentError::Internal(msg) = err else {
+            panic!("expected Internal, got: {err:?}");
+        };
+        assert!(
+            msg.contains("different myrmic version"),
+            "message should hint at a version mismatch, got: {msg}"
+        );
     }
 }
