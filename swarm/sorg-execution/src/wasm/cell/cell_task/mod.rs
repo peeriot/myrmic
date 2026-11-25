@@ -55,8 +55,8 @@ impl CellRuntime {
         }
     }
 
-    /// Runs the message loop until the cell is poisoned (actively terminated)
-    /// or its message channel closes.
+    /// Runs the message loop until the cell is poisoned (actively terminated),
+    /// its message channel closes, or a handler traps.
     pub(crate) async fn run(self, poison_rcv: PoisonRcv) -> Result<()> {
         let Self {
             instance,
@@ -153,29 +153,39 @@ impl CellRuntime {
                 (Some(Processed::Command(name)), Outcome::Succeeded) => {
                     metrics::record_command_processed(sri, &name);
                 }
-                (Some(Processed::Command(name)), Outcome::Failed) => {
+                (Some(Processed::Command(name)), Outcome::Failed | Outcome::Trapped) => {
                     metrics::record_command_failed(sri, &name);
                 }
                 (Some(Processed::Event(name)), Outcome::Succeeded) => {
                     metrics::record_event_processed(sri, &name);
                 }
-                (Some(Processed::Event(_)), Outcome::Failed) | (None, _) => {}
+                (Some(Processed::Event(_)), Outcome::Failed | Outcome::Trapped) | (None, _) => {}
             }
 
             if let Some(ready) = ready {
                 let _ = ready.send(());
             }
+
+            // A trap leaves the instance memory undefined: end the incarnation,
+            // the watcher reports it Crashed.
+            if outcome == Outcome::Trapped {
+                return Ok(());
+            }
         }
     }
 }
 
-/// Whether a cell function ran to completion. A failed call's transaction is
-/// rolled back, so nothing it did — writes, emitted messages, the mailbox
-/// delete that consumed it — survives.
+/// How a cell function's run ended. Only a succeeded call commits: a failed or
+/// trapped call's transaction is rolled back, so nothing it did - writes,
+/// emitted messages, the mailbox delete that consumed it - survives.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     Succeeded,
+    /// The handler returned an error code, or the host could not run it.
     Failed,
+    /// The call itself errored: the guest trapped. Ends the incarnation, see
+    /// [`CellRuntime::message_loop`].
+    Trapped,
 }
 
 impl Outcome {
@@ -195,7 +205,7 @@ async fn dispatch(
     message: CellMessage,
 ) -> Outcome {
     match message {
-        CellMessage::Command(cmd) => Outcome::of(handle_command(instance, store, sri, cmd).await),
+        CellMessage::Command(cmd) => handle_command(instance, store, sri, cmd).await,
         CellMessage::Event(event) => Outcome::of(handle_event(instance, store, sri, event).await),
         CellMessage::TimerTick(tick) => {
             Outcome::of(handle_timer_tick(instance, store, sri, tick).await)
@@ -205,6 +215,11 @@ async fn dispatch(
             Outcome::Succeeded
         }
     }
+}
+
+/// Logs why a trap ends the incarnation.
+fn log_crash(sri: &Sri, kind: &str, handler: &str, trap: &wasmtime::Error) {
+    tracing::error!("cell '{sri}' crashed: trap in {kind} handler '{handler}': {trap:#}");
 }
 
 /// A message kind pending the `*_processed` metric, captured before the message is moved into
@@ -226,8 +241,8 @@ struct Finished {
 }
 
 /// Finalizes a message: closes its observability span, clears per-message
-/// state, and closes the transaction the call opened, if any — committed when
-/// the call succeeded, rolled back when it did not.
+/// state, and closes the transaction the call opened, if any - committed when
+/// the call succeeded, rolled back when it failed or trapped.
 async fn finish_message(store: &mut Store<CellState>, outcome: Outcome) -> Finished {
     let sri = *store.data().sri();
     let closing = Instant::now();
@@ -246,7 +261,7 @@ async fn finish_message(store: &mut Store<CellState>, outcome: Outcome) -> Finis
         };
     };
 
-    if outcome == Outcome::Failed {
+    if outcome != Outcome::Succeeded {
         if let Err(err) = application.rollback().await {
             tracing::error!("failed to roll back handler transaction: {err}");
         }

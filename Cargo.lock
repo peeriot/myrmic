@@ -1197,6 +1197,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cell-crash-parent"
+version = "0.7.1"
+dependencies = [
+ "myrmic-sdk",
+]
+
+[[package]]
 name = "cell-db-service"
 version = "0.7.1"
 dependencies = [

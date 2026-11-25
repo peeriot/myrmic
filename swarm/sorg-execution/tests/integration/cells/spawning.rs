@@ -60,7 +60,7 @@ async fn class_hash(client: &Client, class_name: &str) -> [u8; 32] {
 
 /// Polls until the cell's placement presence matches `present`. Spawn and
 /// terminate are fire-and-forget, so the placement updates asynchronously.
-async fn wait_for_presence(client: &Client, sri: &Sri, present: bool) {
+pub(super) async fn wait_for_presence(client: &Client, sri: &Sri, present: bool) {
     for _ in 0..50 {
         if assert_ok!(client.placement_exists(sri).await) == present {
             return;

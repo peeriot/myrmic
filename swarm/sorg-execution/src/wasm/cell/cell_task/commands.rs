@@ -1,25 +1,37 @@
 use std::fmt::Debug;
 use std::time::Instant;
 
-use cell_protocol::{CellCommandError, Sri};
+use cell_protocol::Sri;
 use myrmic_common::cells::Command;
-use sorg_common::CellCommandOutcome;
 use tracing::debug;
 use wasmtime::{Instance, Store, WasmParams};
 
-use crate::wasm::cell::cell_task::metrics;
+use crate::wasm::cell::cell_task::{Outcome, log_crash, metrics};
 use crate::wasm::cell::state::CellState;
 use crate::wasm::cell::{CellCommand, CommandOrigin, sri_parts};
 
-/// Returns whether the handler ran to completion; a `false` rolls the command's
-/// transaction back, leaving it in the mailbox.
+/// Why a command export did not complete. A trap is not a `CellCommandError`
+/// but the end of the incarnation.
+enum CommandFailure {
+    /// The cell exports no handler for this command.
+    NotPresent,
+    /// The handler returned an error code, or its arguments could not be
+    /// handed to it.
+    Failed(String),
+    /// The call itself errored: the guest trapped.
+    Trapped(wasmtime::Error),
+}
+
+/// Runs a command's handler. A failed or trapped run rolls the command's
+/// transaction back, leaving it in the mailbox; a trapped one also ends the
+/// incarnation.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-pub(crate) async fn handle_command(
+pub(super) async fn handle_command(
     instance: &Instance,
     store: &mut Store<CellState>,
     sri: &Sri,
     cmd: CellCommand,
-) -> bool {
+) -> Outcome {
     let CellCommand {
         cmd,
         payload,
@@ -35,23 +47,27 @@ pub(crate) async fn handle_command(
     // Commands are fire-and-forget: there is nobody to hand the error back to,
     // so log it and let the rolled-back transaction be the real consequence.
     match execute_command_export(payload, store, instance, sri, &cmd, sender).await {
-        Ok(()) => consume(store, origin),
+        Ok(()) => Outcome::of(consume(store, origin)),
         // A command this cell does not serve can never succeed, so consume it
         // rather than leave it redelivering forever. Anything else is rolled
         // back and comes round again.
-        Err(CellCommandError::CommandNotPresent) => {
+        Err(CommandFailure::NotPresent) => {
             tracing::warn!(
                 "cell '{sri}' does not serve cmd '{c}'; discarding it",
                 c = cmd.as_ref()
             );
-            consume(store, origin)
+            Outcome::of(consume(store, origin))
         }
-        Err(err) => {
-            tracing::warn!(
-                "cell '{sri}' error processing cmd '{c}': {err:?}",
+        Err(CommandFailure::Failed(reason)) => {
+            tracing::error!(
+                "cell '{sri}' error processing cmd '{c}': {reason}",
                 c = cmd.as_ref()
             );
-            false
+            Outcome::Failed
+        }
+        Err(CommandFailure::Trapped(trap)) => {
+            log_crash(sri, "command", cmd.as_ref(), &trap);
+            Outcome::Trapped
         }
     }
 }
@@ -82,7 +98,7 @@ async fn execute_command_export(
     sri: &Sri,
     command: &Command,
     sender: Option<uuid::Uuid>,
-) -> CellCommandOutcome {
+) -> Result<(), CommandFailure> {
     let export_name = cmd_fn_name(command);
     if export_name == ON_CELL_LOST_EXPORT
         && instance
@@ -106,7 +122,7 @@ async fn execute_command_export(
     store
         .data_mut()
         .store_arguments(payload)
-        .map_err(|_| CellCommandError::Internal)?;
+        .map_err(|err| CommandFailure::Failed(format!("failed to store arguments: {err}")))?;
 
     let exit_code = run_command_export(
         &export_name,
@@ -124,11 +140,7 @@ async fn execute_command_export(
             .data_mut()
             .take_err_msg()
             .unwrap_or("Module error; No err msg stored".to_owned());
-        tracing::error!(
-            "cell {sri} errored out while serving command {c}: {stored_err_msg}",
-            c = command.as_ref()
-        );
-        return Err(CellCommandError::CellError(stored_err_msg));
+        return Err(CommandFailure::Failed(stored_err_msg));
     }
 
     Ok(())
@@ -141,7 +153,7 @@ async fn run_command_export<P>(
     sri: &Sri,
     command: &Command,
     params: P,
-) -> Result<i32, CellCommandError>
+) -> Result<i32, CommandFailure>
 where
     P: WasmParams + Send + Sync + Debug,
 {
@@ -156,7 +168,7 @@ where
                 "cell '{sri}' does not offer the requested command '{c}' which could accept the parameters '{params:?}' -- {err}",
                 c = command.as_ref()
             );
-            return Err(CellCommandError::CommandNotPresent);
+            return Err(CommandFailure::NotPresent);
         }
     };
     let lookup = looked_up.elapsed();
@@ -165,17 +177,7 @@ where
     let exit_code = cmd_handler.call_async(&mut (*store), params).await;
     metrics::record_dispatch_split(sri, lookup, called.elapsed());
 
-    let exit_code = exit_code.map_err(|err| {
-        let msg = format!(
-            "cell [{}] encounted an error while serving command [{}]: {}",
-            sri,
-            command.as_ref(),
-            err
-        );
-        tracing::error!("{}", msg);
-        CellCommandError::CellError(msg)
-    })?;
-    Ok(exit_code)
+    exit_code.map_err(CommandFailure::Trapped)
 }
 
 pub(crate) fn cmd_fn_name(cmd: &Command) -> String {

@@ -101,6 +101,7 @@ cell-cb-sender-logic
 cell-counter-delay-logic
 cell-counter-logic
 cell-crash-logic
+cell-crash-parent
 cell-docs-counter
 cell-event-pub-logic
 cell-failing-init-logic

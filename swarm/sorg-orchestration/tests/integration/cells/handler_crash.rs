@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use claims::assert_ok;
 use sorg_client::Client;
-use sorg_common::{CellConfig, CellDeployment, DeployRequest, RestartPolicy, RestartType};
+use sorg_common::{
+    CellConfig, CellDeployment, DeployRequest, LostReason, RestartPolicy, RestartType, root_death,
+    root_restart,
+};
 use sorg_tests::{TestApp, register_fixture_class, swarm_config};
 
 use super::restart::{RESTART_WAIT, eventually, placement_gen};
@@ -19,6 +22,8 @@ const CRASH_SRI: &str = "crash_cell";
 // `Kv::new("crash")` stores `"crash/<key>"`.
 const INCARNATION_KEY: &str = "crash/incarnation";
 const HANDLED_KEY: &str = "crash/handled";
+const PANIC_ONCE_KEY: &str = "crash/panic_once";
+const CRASHED_WRITE_KEY: &str = "crash/crashed_write";
 
 /// How long a handled command takes to show in the db.
 const HANDLE_WAIT: Duration = Duration::from_secs(10);
@@ -112,3 +117,126 @@ async fn handler_crash_returned_errors_keep_the_cell_running() {
         "a returned error must not replace the instance"
     );
 }
+
+// A panic in a command handler of an `on-error` root is a crash: a `Crashed`
+// root death is recorded, the root comes back as a new instance (init runs
+// again), and the command that crashed it is delivered to that instance. The
+// crashed attempt's write is rolled back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn handler_crash_on_error_root_restarts_and_gets_the_command_again() {
+    // Arrange
+    let (test_app, client) = setup().await;
+    let sri = to_sri(CRASH_SRI);
+    deploy_root(&client, RestartType::OnError).await;
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 1, HANDLE_WAIT).await,
+        "crash cell did not initialise"
+    );
+    let session = test_app.session();
+    let first_gen = placement_gen(session, sri)
+        .await
+        .expect("crash root is placed");
+
+    // Act - a command that panics while the incarnation counter is 1
+    test_app.command_send(CRASH_SRI, "panic_once", None).await;
+
+    // Assert I - the root died as a crash. The record lingers until the exec
+    // released the placement and the leader acted on it, so polling sees it.
+    assert!(
+        eventually(RESTART_WAIT, || async move {
+            root_death::list(session).await.is_ok_and(|deaths| {
+                deaths
+                    .iter()
+                    .any(|death| death.sri == sri && death.reason == LostReason::Crashed)
+            })
+        })
+        .await,
+        "no Crashed root death was recorded for the panicking root"
+    );
+
+    // Assert II - restarted as a new instance whose init ran again
+    assert!(
+        eventually(RESTART_WAIT, || async move {
+            placement_gen(session, sri)
+                .await
+                .is_some_and(|gen_id| gen_id > first_gen)
+        })
+        .await,
+        "the crashed root was not re-placed at a newer generation"
+    );
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 2, RESTART_WAIT).await,
+        "the restarted root did not run init again"
+    );
+
+    // Assert III - the crashing command reached the new incarnation, and the
+    // crashed attempt left nothing behind
+    assert!(
+        reaches(&test_app, PANIC_ONCE_KEY, 2, HANDLE_WAIT).await,
+        "the command that crashed the root was not delivered to the new incarnation"
+    );
+    assert_eq!(
+        stored(&test_app, CRASHED_WRITE_KEY).await,
+        None,
+        "a write from the crashed attempt is visible"
+    );
+}
+
+// A `never` root that panics in a command handler stays down; deployed again
+// under the same name, the new incarnation receives the command that crashed
+// the first one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn handler_crash_never_root_stays_down_and_a_redeploy_gets_the_command() {
+    // Arrange
+    let (test_app, client) = setup().await;
+    deploy_root(&client, RestartType::Never).await;
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 1, HANDLE_WAIT).await,
+        "crash cell did not initialise"
+    );
+
+    // Act I - a command that panics while the incarnation counter is 1
+    test_app.command_send(CRASH_SRI, "panic_once", None).await;
+
+    // Assert I - the root ended: the exec released its placement, there is no
+    // spec to restart it from, and no second init ran
+    let app = &test_app;
+    assert!(
+        eventually(RESTART_WAIT, || async move {
+            !app.is_cell_registered(CRASH_SRI).await
+        })
+        .await,
+        "the root kept running after a handler panic"
+    );
+    assert!(
+        root_restart::list_specs(test_app.session())
+            .await
+            .expect("failed to list restart specs")
+            .is_empty(),
+        "a never root has no restart spec"
+    );
+    assert_eq!(
+        stored(&test_app, INCARNATION_KEY).await,
+        Some(1),
+        "a never root must not be restarted"
+    );
+
+    // Act II - deploy it again under the same name
+    test_app.deploy_wasm_cell("crash.wasm", CRASH_SRI).await;
+
+    // Assert II - the new incarnation gets the command that crashed the first
+    assert!(
+        reaches(&test_app, INCARNATION_KEY, 2, HANDLE_WAIT).await,
+        "the redeployed root did not initialise"
+    );
+    assert!(
+        reaches(&test_app, PANIC_ONCE_KEY, 2, HANDLE_WAIT).await,
+        "the command that crashed the root was not delivered to the redeployed incarnation"
+    );
+    assert_eq!(
+        stored(&test_app, CRASHED_WRITE_KEY).await,
+        None,
+        "a write from the crashed attempt is visible"
+    );
+}
+
