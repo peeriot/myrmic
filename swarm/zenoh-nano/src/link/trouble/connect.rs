@@ -13,6 +13,7 @@ use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::zerocopy_channel::{Receiver, Sender};
 
+use trouble_host::advertise::AdStructure;
 use trouble_host::prelude::*;
 use trouble_host::{self, BleHostError, Controller};
 use zenoh_protocol::core::WhatAmI;
