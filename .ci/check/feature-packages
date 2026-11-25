@@ -1,0 +1,5 @@
+# Packages whose every feature combination `check` lints and documents with
+# `cargo hack`.
+#
+# One package per line, followed by its extra `cargo hack` flags.
+zenoh-nano --mutually-exclusive-features defmt,log
