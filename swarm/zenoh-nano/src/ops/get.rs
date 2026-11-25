@@ -204,12 +204,16 @@ impl<'a, M: RawMutex, S: AsRef<str> + 'a> IntoFuture for Get<'a, M, S> {
                 }
                 Ok(GetResponse::Final) => {
                     trace!(
-                        "Response for {query_str} (rid={request_id}) got final response without a reply"
+                        "Response for {} (rid={}) got final response without a reply",
+                        query_str, request_id
                     );
                     return Ok(GetResult::NoReply);
                 }
                 Err(_) => {
-                    trace!("Query {query_str} (rid={request_id}) timed out with no response");
+                    trace!(
+                        "Query {} (rid={}) timed out with no response",
+                        query_str, request_id
+                    );
                     return Ok(GetResult::Timeout);
                 }
             };
@@ -225,7 +229,10 @@ impl<'a, M: RawMutex, S: AsRef<str> + 'a> IntoFuture for Get<'a, M, S> {
                     // A further reply (multi-reply query); the single-shot API keeps the first.
                     Ok(_) => {}
                     Err(_) => {
-                        trace!("Query {request_id} timed out waiting for final; returning reply");
+                        trace!(
+                            "Query {} timed out waiting for final; returning reply",
+                            request_id
+                        );
                         return Ok(result);
                     }
                 }

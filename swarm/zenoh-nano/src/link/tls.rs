@@ -16,7 +16,8 @@
 //! ```
 //!
 //! The runner task handles framing with the same 2-byte LE length prefix used
-//! by [`StreamingLinkReceive`] / [`StreamingLinkSend`], so the Zenoh transport
+//! by [`StreamingLinkReceive`](crate::link::StreamingLinkReceive) /
+//! [`StreamingLinkSend`](crate::link::StreamingLinkSend), so the Zenoh transport
 //! layer is unaffected.
 //!
 //! # Usage (WiFi/TCP path)
@@ -173,8 +174,9 @@ mod tls_impl {
     ///
     /// # Framing
     ///
-    /// Uses the same 2-byte LE length prefix as [`StreamingLinkReceive`] /
-    /// [`StreamingLinkSend`].
+    /// Uses the same 2-byte LE length prefix as
+    /// [`StreamingLinkReceive`](crate::link::StreamingLinkReceive) /
+    /// [`StreamingLinkSend`](crate::link::StreamingLinkSend).
     pub struct TlsLinkRunner<'a, S>
     where
         S: Read + Write,
@@ -273,7 +275,7 @@ mod tls_impl {
         }
     }
 
-    /// Static channel storage for a [`TlsLink`].
+    /// Static channel storage for the link halves of [`tls_link_split`].
     pub struct TlsLinkChannels {
         incoming: embassy_sync::channel::Channel<NoopRawMutex, ZSlice, 1>,
         outgoing: embassy_sync::channel::Channel<NoopRawMutex, ZSlice, 1>,
@@ -329,9 +331,10 @@ mod tls_impl {
     ///
     /// `(runner, receive, send)`
     ///
-    /// - `runner` — must be spawned as an embassy task
-    /// - `receive` — implements [`LinkReceive`]; pass to `Network::connect`
-    /// - `send`    — implements [`LinkSend`];    pass to `Network::connect`
+    /// - `runner` - must be spawned as an embassy task
+    /// - `receive` - implements [`LinkReceive`](crate::link::LinkReceive); pass to
+    ///   `Network::connect`
+    /// - `send` - implements [`LinkSend`](crate::link::LinkSend); pass to `Network::connect`
     pub fn tls_link_split<'a, S>(
         tls: TlsConnection<'a, S, Aes128GcmSha256>,
         channels: &'a TlsLinkChannels,

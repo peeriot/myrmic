@@ -328,11 +328,11 @@ where
         let mut nonce = [0u8; 12];
         self.rng.fill_bytes(&mut nonce);
 
-        let tag = unwrap!(self.cypher.encrypt_in_place_detached(
-            &nonce.into(),
-            b"",
-            &mut self.buf[..self.filled]
-        ));
+        let tag = unwrap!(
+            self.cypher
+                .encrypt_in_place_detached(&nonce.into(), b"", &mut self.buf[..self.filled])
+                .ok()
+        );
 
         let filled = u16::try_from(self.filled).map_err(|_| ErrorKind::InvalidData)?;
 

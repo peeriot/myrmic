@@ -85,7 +85,8 @@ impl<'a, R: BufRead> CBinRead<'a, R> {
     /// # Panics
     /// - If `buf` is less than 255 bytes long.
     pub const fn new(read: R, buf: &'a mut [u8]) -> Self {
-        assert!(buf.len() >= MAX_NAME_LEN);
+        // `core`'s assert: the `defmt` one is not usable in a `const fn`.
+        core::assert!(buf.len() >= MAX_NAME_LEN);
 
         Self { read, buf }
     }

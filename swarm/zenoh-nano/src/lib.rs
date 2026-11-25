@@ -16,6 +16,13 @@ pub mod buffers {
 #[macro_use]
 extern crate defmt_or_log;
 
+/// Bound for values this crate logs, re-exported so generic code that names it
+/// resolves to the same `defmt-or-log` this crate uses.
+///
+/// It means `defmt::Format` with the `defmt` feature and `core::fmt::Debug`
+/// otherwise.
+pub use defmt_or_log::FormatOrDebug;
+
 pub(crate) mod fmt;
 
 pub mod clock;

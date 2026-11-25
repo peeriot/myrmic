@@ -22,7 +22,8 @@ env:
 
 jobs:
 
-  # Formatting, list coverage, lints and docs. No build, no tests.
+  # Formatting, list coverage, lints (including feature combinations) and docs.
+  # No build, no tests.
   guidelines:
     if: ${{ !github.event.pull_request.draft }}
     name: Guidelines

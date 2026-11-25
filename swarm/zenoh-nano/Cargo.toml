@@ -13,6 +13,8 @@ defmt = [
     "dep:defmt",
     "zenoh-protocol/defmt",
     "embassy-sync/defmt",
+    "embassy-time/defmt",
+    "embedded-io-async/defmt",
     "trouble-host?/defmt",
     "heapless/defmt",
 ]
@@ -28,7 +30,7 @@ trouble-connect = ["trouble-host/central", "trouble-host/scan"]
 tls = ["dep:embedded-tls"]
 
 [dependencies]
-defmt = { workspace = true, optional = true, features = ["alloc"] }
+defmt = { workspace = true, optional = true, features = ["alloc", "ip_in_core"] }
 defmt-or-log = { workspace = true }
 log = { workspace = true, optional = true }
 thiserror = { workspace = true, default-features = false }

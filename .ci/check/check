@@ -114,6 +114,57 @@ if [ -z "$COMMAND_SUFFIX" ]; then
 fi
 
 
+# Lint and document every feature combination of the packages in `feature-packages`
+#
+# The workspace and firmware builds each compile a crate with one feature set,
+# so a combination nobody builds can stop compiling unnoticed. `cargo hack`
+# builds every combination. Host target only: the combinations differ in which
+# code compiles, not in what it compiles for.
+if [ -z "$COMMAND_SUFFIX" ] && [[ "$SKIP_CHECKS" != "true" ]]; then
+    printf "\n\n--== Check Feature Combinations ==--\n\n"
+
+    cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} hack --version >/dev/null 2>&1 || {
+        printf 'cargo-hack is required for the feature combination checks\n' >&2
+        exit 1
+    }
+
+    # Fail closed: a failing `sed` in the process substitution below would not
+    # stop the script, and the loop would silently check nothing.
+    FEATURE_PACKAGES_FILE="$SCRIPT_DIR/feature-packages"
+    if [ ! -f "$FEATURE_PACKAGES_FILE" ]; then
+        printf 'missing %s\n' "$FEATURE_PACKAGES_FILE" >&2
+        exit 1
+    fi
+
+    # Comments and blank lines stripped; the first field is the package, the
+    # rest are its extra `cargo hack` flags.
+    while read -r PACKAGE FLAGS; do
+        # shellcheck disable=SC2086 # FLAGS is a list of words
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            hack \
+            clippy \
+            -p "$PACKAGE" \
+            --feature-powerset \
+            $FLAGS \
+            -- \
+                --deny "warnings"
+
+        # Rustdoc lints (e.g. broken intra-doc links) are not part of clippy, and
+        # what they see depends on the enabled features too.
+        # shellcheck disable=SC2086 # FLAGS is a list of words
+        RUSTDOCFLAGS="-D warnings" \
+        cargo ${CARGO_CHANNEL:+"+$CARGO_CHANNEL"} \
+            hack \
+            doc \
+            -p "$PACKAGE" \
+            --feature-powerset \
+            $FLAGS \
+            --no-deps \
+            --document-private-items
+    done < <(sed -E 's/#.*//; /^[[:space:]]*$/d' "$FEATURE_PACKAGES_FILE")
+fi
+
+
 # Run cargo test / nextest
 if [[ "$SKIP_TESTS" != "true" ]]; then
     # The host test-package set lives in a single file (`.ci/check/test-packages`)

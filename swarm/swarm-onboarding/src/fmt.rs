@@ -26,6 +26,6 @@ impl Display for Bytes<'_> {
 #[cfg(feature = "defmt")]
 impl defmt::Format for Bytes<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
-        defmt::write!(f, "{:02x}", self.0)
+        defmt::write!(f, "{:02x}", self.0);
     }
 }
