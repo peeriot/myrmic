@@ -449,9 +449,11 @@ impl StoreContext {
                     );
                 }) else {
                     // drive_offload never ran, so this stop is no retirement:
-                    // no custody row is touched, nothing is released.
-                    forget_drain_signals(&context, &scope, &signals);
+                    // no custody row is touched, nothing is released. Stop
+                    // first, so a drain whose signals are gone never still
+                    // counts as offloading.
                     repl.confirm_shutdown();
+                    forget_drain_signals(&context, &scope, &signals);
 
                     return;
                 };
