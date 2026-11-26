@@ -127,6 +127,7 @@ default-members = [
     "swarm/signal-layer/linux-spi-shim",
     # Signal modules
     "signal-modules/drivers/ads1115",
+    "signal-modules/drivers/adxl345",
     "signal-modules/drivers/bme280",
     "signal-modules/drivers/bmp180",
     "signal-modules/drivers/ccs811",
